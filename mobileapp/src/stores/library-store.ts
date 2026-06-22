@@ -7,7 +7,7 @@ import {
     loadEncryptedCollections,
     loadEncryptedFiles,
     loadEncryptedTagIndex,
-    loadEncryptedTagTypes,
+    saveEncryptedCollections,
     saveEncryptedFiles,
 } from "@/db/kv";
 import { initSessionCacheKey, getSessionCacheKey } from "@/lib/cache-key";
@@ -208,11 +208,10 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
 
         set({ syncStatus: "loadingFromCache", syncError: undefined });
 
-        const [collections, files, tagIndex, tagTypes] = await Promise.all([
+        const [collections, files, tagIndex] = await Promise.all([
             loadEncryptedCollections(cacheKey),
             loadEncryptedFiles(cacheKey),
             loadEncryptedTagIndex(cacheKey),
-            loadEncryptedTagTypes(cacheKey),
         ]);
 
         if (!files?.length && !collections?.length) {
@@ -232,8 +231,6 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             useTagStore.getState().rebuildFromFiles(files);
         }
 
-        useTagStore.getState().hydrateTagTypes(tagTypes);
-
         rebuildFavoritesFromLibrary(userId, collections ?? [], files ?? []);
 
         return Boolean(files?.length);
@@ -251,6 +248,27 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
 
             const collectionsPull = await pullCollections(collections);
             collections = collectionsPull.collections;
+
+            const core = getEnteCore();
+            const organizerBootstrap = await core.bootstrapOrganizerConfig(
+                collections,
+            );
+            if (organizerBootstrap.created) {
+                collections = [
+                    ...collections.filter(
+                        (collection) =>
+                            collection.id !== organizerBootstrap.collection.id,
+                    ),
+                    organizerBootstrap.collection,
+                ];
+                await saveEncryptedCollections(
+                    collections,
+                    getSessionCacheKey(),
+                );
+            }
+            useTagStore.getState().hydrateTagTypes(
+                organizerBootstrap.config.tagTypes,
+            );
 
             const filesPull = await pullFiles({
                 collections,

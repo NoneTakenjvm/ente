@@ -2,7 +2,7 @@ import { deleteDB, openDB, type IDBPDatabase } from "idb";
 
 const dbVersion = 1;
 
-export type KvKey = "collections" | "files" | "tagIndex" | "tagTypes" | "phashIndex";
+export type KvKey = "collections" | "files" | "tagIndex" | "phashIndex";
 
 export interface KvRecord {
     key: KvKey;

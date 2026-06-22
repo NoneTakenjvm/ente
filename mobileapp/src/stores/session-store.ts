@@ -37,6 +37,11 @@ const resetDependentStores = (): void => {
     void import("@/lib/similarity-job").then(({ terminatePhashWorker }) => {
         terminatePhashWorker();
     });
+    void import("@/lib/organizer-config-save-queue").then(
+        ({ resetOrganizerConfigSaveQueue }) => {
+            resetOrganizerConfigSaveQueue();
+        },
+    );
     void import("./library-store").then(({ useLibraryStore }) => {
         useLibraryStore.getState().reset();
     });
