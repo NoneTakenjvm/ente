@@ -1,9 +1,11 @@
 import {
     useEffect,
     useMemo,
+    useRef,
     useState,
     type FormEvent,
     type JSX,
+    type PointerEvent as ReactPointerEvent,
 } from "react";
 import { Check, Plus } from "lucide-react";
 import { TagTypeTabBar } from "@/components/TagTypeTabBar";
@@ -28,6 +30,18 @@ import { normalizeTagName } from "@/lib/tag-writes";
 import { isReservedTag, tagFileCount } from "@/lib/tags";
 import { cn } from "@/lib/utils";
 import { useTagStore } from "@/stores/tag-store";
+
+const SWIPE_DISMISS_THRESHOLD_MIN_PX = 80;
+const SWIPE_DISMISS_THRESHOLD_RATIO = 0.15;
+const SWIPE_DRAG_DEAD_ZONE_PX = 8;
+const SWIPE_SNAP_BACK_MS = 200;
+
+interface DismissDragStart {
+    x: number;
+    y: number;
+    fromHeader: boolean;
+    dragging: boolean;
+}
 
 interface TagPickerSheetProps {
     open: boolean;
@@ -57,6 +71,14 @@ export function TagPickerSheet({
     const [selectedType, setSelectedType] = useState<string>(DEFAULT_TAG_TYPE);
     const [newTag, setNewTag] = useState<string>("");
     const [newType, setNewType] = useState<string>("");
+    const [dragPx, setDragPx] = useState<number>(0);
+    const [snapBackAnimating, setSnapBackAnimating] = useState<boolean>(false);
+
+    const scrollRef = useRef<HTMLDivElement>(null);
+    const sheetRef = useRef<HTMLDivElement>(null);
+    const dragStartRef = useRef<DismissDragStart | undefined>(undefined);
+    const pointerIdRef = useRef<number | undefined>(undefined);
+    const dragPxRef = useRef<number>(0);
 
     const libraryTags = useMemo(
         (): string[] =>
@@ -89,13 +111,108 @@ export function TagPickerSheet({
         setNewType(isSpecificTypeTab ? selectedType : "");
     };
 
+    const resetDragState = (): void => {
+        setDragPx(0);
+        dragPxRef.current = 0;
+        setSnapBackAnimating(false);
+        dragStartRef.current = undefined;
+        pointerIdRef.current = undefined;
+    };
+
     const handleOpenChange = (nextOpen: boolean): void => {
         if (!nextOpen) {
             setNewTag("");
             setNewType("");
             setSelectedType(DEFAULT_TAG_TYPE);
+            resetDragState();
         }
         onOpenChange(nextOpen);
+    };
+
+    const finishDismissDrag = (): void => {
+        const sheetHeight = sheetRef.current?.clientHeight ?? 0;
+        const threshold = Math.max(
+            SWIPE_DISMISS_THRESHOLD_MIN_PX,
+            sheetHeight * SWIPE_DISMISS_THRESHOLD_RATIO,
+        );
+        if (dragPxRef.current > threshold) {
+            resetDragState();
+            handleOpenChange(false);
+            return;
+        }
+        setSnapBackAnimating(true);
+        setDragPx(0);
+        dragPxRef.current = 0;
+        window.setTimeout(() => {
+            setSnapBackAnimating(false);
+        }, SWIPE_SNAP_BACK_MS);
+    };
+
+    const handleDismissPointerDown = (
+        event: ReactPointerEvent<HTMLElement>,
+        fromHeader: boolean,
+    ): void => {
+        if (event.pointerType === "mouse" && event.button !== 0) {
+            return;
+        }
+        pointerIdRef.current = event.pointerId;
+        dragStartRef.current = {
+            x: event.clientX,
+            y: event.clientY,
+            fromHeader,
+            dragging: false,
+        };
+    };
+
+    const handleDismissPointerMove = (
+        event: ReactPointerEvent<HTMLElement>,
+    ): void => {
+        if (
+            pointerIdRef.current !== event.pointerId ||
+            !dragStartRef.current
+        ) {
+            return;
+        }
+        const deltaX = event.clientX - dragStartRef.current.x;
+        const deltaY = event.clientY - dragStartRef.current.y;
+        if (!dragStartRef.current.dragging) {
+            if (
+                deltaY <= SWIPE_DRAG_DEAD_ZONE_PX ||
+                deltaY <= Math.abs(deltaX)
+            ) {
+                return;
+            }
+            if (
+                !dragStartRef.current.fromHeader &&
+                (scrollRef.current?.scrollTop ?? 0) > 0
+            ) {
+                return;
+            }
+            dragStartRef.current.dragging = true;
+            event.currentTarget.setPointerCapture(event.pointerId);
+        }
+        const nextDrag = Math.max(0, deltaY);
+        dragPxRef.current = nextDrag;
+        setDragPx(nextDrag);
+    };
+
+    const handleDismissPointerUp = (
+        event: ReactPointerEvent<HTMLElement>,
+    ): void => {
+        if (pointerIdRef.current !== event.pointerId) {
+            return;
+        }
+        const start = dragStartRef.current;
+        pointerIdRef.current = undefined;
+        dragStartRef.current = undefined;
+        if (start?.dragging) {
+            finishDismissDrag();
+        }
+        try {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+        } catch {
+            // Pointer may already be released.
+        }
     };
 
     const handleCreateTag = (event: FormEvent): void => {
@@ -118,119 +235,154 @@ export function TagPickerSheet({
             <SheetContent
                 side="bottom"
                 className="flex h-[75dvh] max-h-[75dvh] flex-col gap-0 overflow-hidden rounded-t-xl p-0"
+                style={{
+                    transform: dragPx > 0 ? `translateY(${dragPx}px)` : undefined,
+                    transition:
+                        snapBackAnimating ?
+                            `transform ${SWIPE_SNAP_BACK_MS}ms ease-out` :
+                            dragPx > 0 ?
+                                "none" :
+                                undefined,
+                }}
             >
-                <SheetHeader className="shrink-0 gap-2 border-b border-border px-4 pt-4 pb-3">
-                    <SheetTitle>Tags</SheetTitle>
-                    <TagTypeTabBar
-                        types={tagTypes}
-                        selected={selectedType}
-                        onSelect={setSelectedType}
-                    />
-                </SheetHeader>
-
-                <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-2">
-                        {libraryTags.length === 0 ? (
-                            <p className="px-2 py-4 text-sm text-muted-foreground">
-                                No tags in this group yet. Create one below.
-                            </p>
-                        ) : (
-                            <ul className="flex flex-col gap-0.5">
-                                {libraryTags.map((tag) => {
-                                    const applied = appliedTags.includes(tag);
-                                    const count = tagFileCount(
-                                        tag,
-                                        fileIdsByTag,
-                                    );
-                                    return (
-                                        <li key={tag}>
-                                            <Button
-                                                type="button"
-                                                variant="ghost"
-                                                className={cn(
-                                                    "h-10 w-full justify-between gap-2 px-3",
-                                                    applied && "bg-secondary/80",
-                                                )}
-                                                onClick={() => {
-                                                    if (applied) {
-                                                        onRemoveTag(tag);
-                                                    } else {
-                                                        onAddTag(tag);
-                                                    }
-                                                }}
-                                            >
-                                                <span className="flex min-w-0 items-center gap-2">
-                                                    <Check
-                                                        className={cn(
-                                                            "size-4 shrink-0",
-                                                            applied ?
-                                                                "opacity-100" :
-                                                                "opacity-0",
-                                                        )}
-                                                        aria-hidden={!applied}
-                                                    />
-                                                    <span className="truncate">
-                                                        {tag}
-                                                    </span>
-                                                </span>
-                                                <Badge
-                                                    variant="secondary"
-                                                    className="tabular-nums"
-                                                >
-                                                    {count}
-                                                </Badge>
-                                            </Button>
-                                        </li>
-                                    );
-                                })}
-                            </ul>
-                        )}
-                    </div>
-                </div>
-
-                <SheetFooter className="shrink-0 gap-3 border-t border-border p-4">
-                    <form
-                        className="flex w-full flex-col gap-2"
-                        onSubmit={handleCreateTag}
+                <div
+                    ref={sheetRef}
+                    className="flex min-h-0 flex-1 flex-col overflow-hidden"
+                >
+                    <SheetHeader
+                        className="shrink-0 gap-2 border-b border-border px-4 pt-3 pb-3"
+                        onPointerDown={(event) => {
+                            handleDismissPointerDown(event, true);
+                        }}
+                        onPointerMove={handleDismissPointerMove}
+                        onPointerUp={handleDismissPointerUp}
+                        onPointerCancel={handleDismissPointerUp}
                     >
-                        <div className="flex w-full items-center gap-2">
-                            <Button
-                                type="submit"
-                                variant="outline"
-                                size="icon-sm"
-                                disabled={!newTag.trim()}
-                                aria-label="Create tag"
-                            >
-                                <Plus />
-                            </Button>
-                            <Input
-                                placeholder="Create new tag"
-                                value={newTag}
-                                className="min-w-0 flex-1"
-                                onChange={(event) => {
-                                    setNewTag(event.target.value);
-                                }}
-                            />
-                            <Input
-                                placeholder="Type (optional)"
-                                value={newType}
-                                className="min-w-0 w-28 shrink-0"
-                                onChange={(event) => {
-                                    setNewType(event.target.value);
-                                }}
-                            />
+                        <div
+                            className="mx-auto mb-1 h-1 w-10 shrink-0 rounded-full bg-muted-foreground/30"
+                            aria-hidden="true"
+                        />
+                        <SheetTitle>Tags</SheetTitle>
+                        <TagTypeTabBar
+                            types={tagTypes}
+                            selected={selectedType}
+                            onSelect={setSelectedType}
+                        />
+                    </SheetHeader>
+
+                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                        <div
+                            ref={scrollRef}
+                            className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-2"
+                            onPointerDown={(event) => {
+                                handleDismissPointerDown(event, false);
+                            }}
+                            onPointerMove={handleDismissPointerMove}
+                            onPointerUp={handleDismissPointerUp}
+                            onPointerCancel={handleDismissPointerUp}
+                        >
+                            {libraryTags.length === 0 ? (
+                                <p className="px-2 py-4 text-sm text-muted-foreground">
+                                    No tags in this group yet. Create one below.
+                                </p>
+                            ) : (
+                                <ul className="flex flex-col gap-0.5">
+                                    {libraryTags.map((tag) => {
+                                        const applied = appliedTags.includes(tag);
+                                        const count = tagFileCount(
+                                            tag,
+                                            fileIdsByTag,
+                                        );
+                                        return (
+                                            <li key={tag}>
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    className={cn(
+                                                        "h-10 w-full justify-between gap-2 px-3",
+                                                        applied && "bg-secondary/80",
+                                                    )}
+                                                    onClick={() => {
+                                                        if (applied) {
+                                                            onRemoveTag(tag);
+                                                        } else {
+                                                            onAddTag(tag);
+                                                        }
+                                                    }}
+                                                >
+                                                    <span className="flex min-w-0 items-center gap-2">
+                                                        <Check
+                                                            className={cn(
+                                                                "size-4 shrink-0",
+                                                                applied ?
+                                                                    "opacity-100" :
+                                                                    "opacity-0",
+                                                            )}
+                                                            aria-hidden={!applied}
+                                                        />
+                                                        <span className="truncate">
+                                                            {tag}
+                                                        </span>
+                                                    </span>
+                                                    <Badge
+                                                        variant="secondary"
+                                                        className="tabular-nums"
+                                                    >
+                                                        {count}
+                                                    </Badge>
+                                                </Button>
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                            )}
                         </div>
-                    </form>
-                    <p className="text-xs text-muted-foreground">
-                        Tap a tag to add or remove it. The type field fills
-                        from the selected tab when you pick a custom type.
-                    </p>
-                    {error ? (
-                        <Alert variant="destructive" className="py-2">
-                            <AlertDescription>{error}</AlertDescription>
-                        </Alert>
-                    ) : null}
-                </SheetFooter>
+                    </div>
+
+                    <SheetFooter className="shrink-0 gap-3 border-t border-border p-4">
+                        <form
+                            className="flex w-full flex-col gap-2"
+                            onSubmit={handleCreateTag}
+                        >
+                            <div className="flex w-full items-center gap-2">
+                                <Button
+                                    type="submit"
+                                    variant="outline"
+                                    size="icon-sm"
+                                    disabled={!newTag.trim()}
+                                    aria-label="Create tag"
+                                >
+                                    <Plus />
+                                </Button>
+                                <Input
+                                    placeholder="Create new tag"
+                                    value={newTag}
+                                    className="min-w-0 flex-1"
+                                    onChange={(event) => {
+                                        setNewTag(event.target.value);
+                                    }}
+                                />
+                                <Input
+                                    placeholder="Type (optional)"
+                                    value={newType}
+                                    className="min-w-0 w-28 shrink-0"
+                                    onChange={(event) => {
+                                        setNewType(event.target.value);
+                                    }}
+                                />
+                            </div>
+                        </form>
+                        <p className="text-xs text-muted-foreground">
+                            Tap a tag to add or remove it. The type field fills
+                            from the selected tab when you pick a custom type.
+                        </p>
+                        {error ? (
+                            <Alert variant="destructive" className="py-2">
+                                <AlertDescription>{error}</AlertDescription>
+                            </Alert>
+                        ) : null}
+                    </SheetFooter>
+                </div>
             </SheetContent>
         </Sheet>
     );
