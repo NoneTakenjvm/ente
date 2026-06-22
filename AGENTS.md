@@ -4,6 +4,8 @@
 
 This repo is the [Ente](https://ente.com) monorepo. The active work here is a **custom mobile-first Photos PWA** — viewing, organizing, and curating an existing Ente library with richer tags and tools than the official app. Uploads stay in Ente's native app. Read [`new-frontend.md`](new-frontend.md) for milestones, repo map, and the agent progress report (update it at the start and end of every session).
 
+**Default scope:** Unless a prompt specifies another path or area, treat all user requests as targeting `mobileapp/` — search, edit, and verify there by default.
+
 **End-to-end encryption is load-bearing.** All decryption happens client-side. Never log, persist, or transmit keys, passwords, mnemonics, decrypted blobs, or raw metadata outside the user's device. When changing crypto or metadata writes, run the crypto test suite and preserve Ente's merge semantics on `pubMagicMetadata`.
 
 ---

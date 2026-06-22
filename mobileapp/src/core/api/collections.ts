@@ -1,5 +1,9 @@
 import { decryptBox, encryptBox, generateKey } from "ente-base/crypto/libsodium";
 import {
+    createMagicMetadata,
+    encryptMagicMetadata,
+} from "ente-media/magic-metadata";
+import {
     decryptRemoteCollection,
     RemoteCollection,
     type Collection,
@@ -102,6 +106,10 @@ export const mergeCollectionChanges = (
     return [...byId.values()];
 };
 
+export interface CreateRemoteCollectionOptions {
+    magicMetadataData?: Record<string, unknown>;
+}
+
 /**
  * Create a collection on remote and return its decrypted local representation.
  */
@@ -110,6 +118,7 @@ export const createRemoteCollection = async (
     session: CoreSession,
     name: string,
     type: string,
+    options?: CreateRemoteCollectionOptions,
 ): Promise<Collection> => {
     const { masterKey } = requireAuth(session);
     const collectionKey = await generateKey();
@@ -117,6 +126,12 @@ export const createRemoteCollection = async (
         await encryptBox(collectionKey, masterKey);
     const { encryptedData: encryptedName, nonce: nameDecryptionNonce } =
         await encryptBox(new TextEncoder().encode(name), collectionKey);
+    const magicMetadata = options?.magicMetadataData ?
+        await encryptMagicMetadata(
+            createMagicMetadata(options.magicMetadataData),
+            collectionKey,
+        ) :
+        undefined;
 
     const res = await http.authFetch("/collections", undefined, {
         method: "POST",
@@ -127,6 +142,7 @@ export const createRemoteCollection = async (
             encryptedName,
             nameDecryptionNonce,
             type,
+            ...(magicMetadata && { magicMetadata }),
         }),
     });
     const { collection: remoteCollection } = CollectionResponse.parse(

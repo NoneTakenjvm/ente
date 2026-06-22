@@ -1,6 +1,6 @@
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
-import type { PersistedTagTypeConfig } from "@/lib/tag-types";import {
+import {
     decryptCachePayload,
     encryptCachePayload,
     type EncryptedPayload,
@@ -81,25 +81,6 @@ export const saveEncryptedTagIndex = async (
     cacheKey: string,
 ): Promise<void> => {
     await putEncrypted("tagIndex", await encryptCachePayload(index, cacheKey));
-};
-
-export const loadEncryptedTagTypes = async (
-    cacheKey: string,
-): Promise<PersistedTagTypeConfig | undefined> => {
-    const payload = await getEncrypted("tagTypes");
-    if (!payload) {
-        return undefined;
-    }
-    return decryptCachePayload<PersistedTagTypeConfig>(payload, cacheKey);
-};
-
-export const saveEncryptedTagTypes = async (
-    config: PersistedTagTypeConfig,
-    cacheKey: string,
-): Promise<void> => {    await putEncrypted(
-        "tagTypes",
-        await encryptCachePayload(config, cacheKey),
-    );
 };
 
 export interface PersistedPhashIndex {

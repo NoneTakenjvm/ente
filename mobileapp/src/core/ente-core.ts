@@ -26,6 +26,13 @@ import {
     type ServerCiphertext,
 } from "./download";
 import { getPublicMetadata, updatePublicMetadata } from "./metadata";
+import {
+    bootstrapOrganizerConfig,
+    patchOrganizerConfig,
+    refreshOrganizerConfigCollection,
+    resetOrganizerConfigState,
+    type BootstrapOrganizerConfigResult,
+} from "./organizer-config";
 import { moveToTrash } from "./api/trash";
 import {
     uploadCompressedImage as uploadCompressedImageToRemote,
@@ -47,6 +54,7 @@ import type { EnteCoreConfig, LoginCredentials, Session } from "./types";
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
 import type { FilePublicMagicMetadataData } from "ente-media/file-metadata";
+import type { OrganizerAppConfig } from "@/lib/organizer-config";
 
 export interface SyncLibraryOptions {
     collectionId?: number;
@@ -82,6 +90,7 @@ export class EnteCore {
     }
 
     logout(): void {
+        resetOrganizerConfigState();
         clearSession(this.session);
     }
 
@@ -399,9 +408,36 @@ export class EnteCore {
     moveFilesToTrash(files: EnteFile[]): Promise<void> {
         return moveToTrash(this.http, files);
     }
+
+    /**
+     * Locate or create the hidden organizer config collection.
+     */
+    bootstrapOrganizerConfig(
+        collections: Collection[],
+    ): Promise<BootstrapOrganizerConfigResult> {
+        const userId = this.getUserID();
+        refreshOrganizerConfigCollection(collections, userId);
+        return bootstrapOrganizerConfig(
+            this.http,
+            this.session,
+            collections,
+            userId,
+        );
+    }
+
+    /**
+     * Merge a partial update into remote app config.
+     */
+    patchOrganizerConfig(
+        patch: Partial<OrganizerAppConfig>,
+    ): Promise<OrganizerAppConfig> {
+        return patchOrganizerConfig(this.http, patch);
+    }
 }
 
 export type { Collection } from "ente-media/collection";
 export type { EnteFile } from "ente-media/file";
 export type { FilePublicMagicMetadataData } from "ente-media/file-metadata";
 export type { LoginCredentials, Session, EnteCoreConfig } from "./types";
+export type { BootstrapOrganizerConfigResult } from "./organizer-config";
+export type { OrganizerAppConfig } from "@/lib/organizer-config";

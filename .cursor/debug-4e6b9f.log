@@ -1,0 +1,6 @@
+{"sessionId":"4e6b9f","location":"LoginForm.tsx:handleSubmit","message":"login submit","data":{},"hypothesisId":"B","timestamp":1782062554179}
+{"sessionId":"4e6b9f","location":"session-store.ts:login","message":"core login ok","data":{"userID":1580559962913304,"coreAuth":true},"hypothesisId":"B","timestamp":1782062559900}
+{"sessionId":"4e6b9f","location":"LoginForm.tsx:handleSubmit","message":"login resolved","data":{"coreOk":true,"storeStatus":"authenticated"},"hypothesisId":"F","timestamp":1782062559902}
+{"sessionId":"4e6b9f","location":"gallery.tsx:authEffect","message":"gallery auth check","data":{"coreAuth":true,"renderCount":false},"hypothesisId":"A","timestamp":1782062560125}
+{"sessionId":"4e6b9f","location":"gallery.tsx:bootstrap","message":"bootstrap start","data":{},"hypothesisId":"C","timestamp":1782062560125}
+{"sessionId":"4e6b9f","location":"gallery.tsx:bootstrap","message":"bootstrap done","data":{"hadCache":false,"fileCount":1001},"hypothesisId":"C","timestamp":1782062560563}

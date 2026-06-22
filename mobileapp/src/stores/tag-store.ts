@@ -1,8 +1,9 @@
 import { create } from "zustand";
 import type { StateCreator } from "zustand";
 import type { PersistedTagIndex } from "@/db/kv";
-import { saveEncryptedTagIndex, saveEncryptedTagTypes } from "@/db/kv";
+import { saveEncryptedTagIndex } from "@/db/kv";
 import { getSessionCacheKey } from "@/lib/cache-key";
+import { enqueueOrganizerConfigPatch } from "@/lib/organizer-config-save-queue";
 import {
     configFromPersisted,
     configToPersisted,
@@ -79,14 +80,13 @@ const persistCurrentIndex = (
     );
 };
 
-const persistCurrentTypes = (
+const persistTagTypesConfig = (
     tagTypes: string[],
     tagTypeByName: Map<string, string>,
 ): void => {
-    void saveEncryptedTagTypes(
-        configToPersisted(tagTypes, tagTypeByName),
-        getSessionCacheKey(),
-    );
+    enqueueOrganizerConfigPatch({
+        tagTypes: configToPersisted(tagTypes, tagTypeByName),
+    });
 };
 
 const removeFileFromIndex = (
@@ -227,7 +227,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         }
         const nextTypes = [...tagTypes, normalized];
         set({ tagTypes: nextTypes });
-        persistCurrentTypes(nextTypes, get().tagTypeByName);
+        persistTagTypesConfig(nextTypes, get().tagTypeByName);
     },
 
     setTagType: (tagName: string, typeName: string): void => {
@@ -240,7 +240,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         const tagTypeByName = new Map(get().tagTypeByName);
         tagTypeByName.set(normalizedTag, normalizedType);
         set({ tagTypeByName });
-        persistCurrentTypes(get().tagTypes, tagTypeByName);
+        persistTagTypesConfig(get().tagTypes, tagTypeByName);
     },
 
     applyFileTags: (fileId: number, tags: string[]): void => {
@@ -287,7 +287,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
                 tagFilter,
         });
         persistCurrentIndex(tagList, fileIdsByTag);
-        persistCurrentTypes(get().tagTypes, tagTypeByName);
+        persistTagTypesConfig(get().tagTypes, tagTypeByName);
     },
 
     applyTagDelete: (tagName: string): void => {
@@ -299,7 +299,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         tagTypeByName.delete(tagName);
         set({ tags: tagList, fileIdsByTag, tagFilter, tagTypeByName });
         persistCurrentIndex(tagList, fileIdsByTag);
-        persistCurrentTypes(get().tagTypes, tagTypeByName);
+        persistTagTypesConfig(get().tagTypes, tagTypeByName);
     },
 
     applyTagMerge: (sourceNames: string[], targetName: string): void => {
@@ -334,7 +334,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         }
         set({ tags: tagList, fileIdsByTag, tagFilter, tagTypeByName });
         persistCurrentIndex(tagList, fileIdsByTag);
-        persistCurrentTypes(get().tagTypes, tagTypeByName);
+        persistTagTypesConfig(get().tagTypes, tagTypeByName);
     },
 
     reset: (): void => {
