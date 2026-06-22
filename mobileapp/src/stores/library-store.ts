@@ -30,8 +30,13 @@ import { refetchFile } from "@/core/api/files";
 import { applyTagMutator, fileWithOrganizerTags, type TagMutator } from "@/lib/tag-writes";
 import { extractTags } from "@/lib/tags";
 import { enqueueTagSave } from "@/lib/tag-save-queue";
+import { enqueueDerivedReplace } from "@/lib/derived-replace-queue";
+import {
+    clearLocalMediaOverride,
+    setLocalMediaOverride,
+} from "@/lib/local-media-overrides";
 import { deleteThumbnailCiphertext } from "@/db/thumbnails";
-import { requestThumbnail } from "@/lib/thumbnail-cache";
+import { primeThumbnailFromBytes, requestThumbnail } from "@/lib/thumbnail-cache";
 import {
     pendingFavoriteFilesByHashAndType,
     useFavoritesStore,
@@ -112,6 +117,11 @@ interface LibraryState {
         croppedBytes: Uint8Array,
         dimensions: { width: number; height: number },
     ) => Promise<EnteFile>;
+    cropAndReplaceFileOptimistic: (
+        fileId: number,
+        croppedBytes: Uint8Array,
+        dimensions: { width: number; height: number },
+    ) => { optimisticFile: EnteFile; finalize: Promise<EnteFile> };
     uploadImageFile: (
         collectionId: number,
         jpegBytes: Uint8Array,
@@ -193,6 +203,42 @@ const replaceSourceWithCompressed = async (
     }
 
     return uploaded;
+};
+
+const uploadCroppedAndReplace = async (
+    set: (partial: Partial<LibraryState>) => void,
+    get: () => LibraryState,
+    sourceFile: EnteFile,
+    croppedBytes: Uint8Array,
+    dimensions: { width: number; height: number },
+): Promise<EnteFile> => {
+    const { collections } = get();
+    const collection = collections.find(
+        (entry) => entry.id === sourceFile.collectionID,
+    );
+    if (!collection) {
+        throw new Error(`Collection ${sourceFile.collectionID} not found`);
+    }
+
+    const wasFavorite = useFavoritesStore
+        .getState()
+        .favoriteFileIds.has(sourceFile.id);
+    const uploaded = await getEnteCore().uploadCroppedImage(
+        sourceFile,
+        croppedBytes,
+        collection,
+        dimensions,
+        croppedReplaceTitle(sourceFile),
+        buildCroppedOrganizerTags(sourceFile),
+    );
+
+    return replaceSourceWithCompressed(
+        set,
+        get,
+        sourceFile,
+        uploaded,
+        wasFavorite,
+    );
 };
 
 const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
@@ -742,38 +788,72 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         croppedBytes: Uint8Array,
         dimensions: { width: number; height: number },
     ): Promise<EnteFile> => {
-        const { allFiles, collections } = get();
+        const file = get().allFiles.find((entry) => entry.id === fileId);
+        if (!file) {
+            throw new Error(`File ${fileId} not found`);
+        }
+        return uploadCroppedAndReplace(
+            set,
+            get,
+            file,
+            croppedBytes,
+            dimensions,
+        );
+    },
+
+    cropAndReplaceFileOptimistic: (
+        fileId: number,
+        croppedBytes: Uint8Array,
+        dimensions: { width: number; height: number },
+    ): { optimisticFile: EnteFile; finalize: Promise<EnteFile> } => {
+        const { allFiles } = get();
         const file = allFiles.find((entry) => entry.id === fileId);
         if (!file) {
             throw new Error(`File ${fileId} not found`);
         }
 
-        const collection = collections.find(
-            (entry) => entry.id === file.collectionID,
-        );
-        if (!collection) {
-            throw new Error(`Collection ${file.collectionID} not found`);
-        }
+        const snapshotTags = extractTags(file);
+        const intendedTags = buildCroppedOrganizerTags(file);
+        const optimisticFile = fileWithOrganizerTags(file, intendedTags);
+        const optimisticFiles = allFiles.map((entry) => (
+            entry.id === fileId ? optimisticFile : entry
+        ));
 
-        const wasFavorite = useFavoritesStore
-            .getState()
-            .favoriteFileIds.has(fileId);
-        const uploaded = await getEnteCore().uploadCroppedImage(
-            file,
+        set({ allFiles: optimisticFiles });
+        useTagStore.getState().applyFileTags(fileId, intendedTags);
+        void saveEncryptedFiles(optimisticFiles, getSessionCacheKey());
+        setLocalMediaOverride(fileId, croppedBytes);
+        primeThumbnailFromBytes(fileId, croppedBytes);
+
+        const finalize = enqueueDerivedReplace(
+            fileId,
             croppedBytes,
-            collection,
             dimensions,
-            croppedReplaceTitle(file),
-            buildCroppedOrganizerTags(file),
-        );
+            async (bytes, dims) => uploadCroppedAndReplace(
+                set,
+                get,
+                file,
+                bytes,
+                dims,
+            ),
+        ).then((uploaded) => {
+            clearLocalMediaOverride(fileId);
+            return uploaded;
+        }).catch(async (error) => {
+            const revertedFiles = get().allFiles.map((entry) => (
+                entry.id === fileId ?
+                    fileWithOrganizerTags(file, snapshotTags) :
+                    entry
+            ));
+            set({ allFiles: revertedFiles });
+            useTagStore.getState().applyFileTags(fileId, snapshotTags);
+            void saveEncryptedFiles(revertedFiles, getSessionCacheKey());
+            clearLocalMediaOverride(fileId);
+            requestThumbnail(file);
+            throw error;
+        });
 
-        return replaceSourceWithCompressed(
-            set,
-            get,
-            file,
-            uploaded,
-            wasFavorite,
-        );
+        return { optimisticFile, finalize };
     },
 
     uploadImageFile: async (

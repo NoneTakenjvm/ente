@@ -1,5 +1,6 @@
 import { getEnteCore } from "@/core";
 import { decryptThumbnailCiphertext } from "@/core/download";
+import { generateImageThumbnail } from "@/core/upload/thumbnail";
 import {
     getThumbnailCiphertext,
     putThumbnailCiphertext,
@@ -123,6 +124,31 @@ export const requestThumbnail = (file: EnteFile): ThumbnailEntry => {
         return loadingEntry;
     }
     return entry;
+};
+
+/**
+ * Show a thumbnail immediately from full image bytes (e.g. after optimistic crop).
+ */
+export const primeThumbnailFromBytes = (
+    fileId: number,
+    imageBytes: Uint8Array,
+): void => {
+    const existing = cache.get(fileId);
+    if (existing?.url) {
+        URL.revokeObjectURL(existing.url);
+    }
+    cache.set(fileId, { status: "loading" });
+    notify(fileId);
+
+    void (async (): Promise<void> => {
+        try {
+            const thumbBytes = await generateImageThumbnail(imageBytes);
+            setReady(fileId, thumbBytes);
+        } catch {
+            cache.set(fileId, { status: "error" });
+            notify(fileId);
+        }
+    })();
 };
 
 export const clearThumbnailCache = (): void => {
