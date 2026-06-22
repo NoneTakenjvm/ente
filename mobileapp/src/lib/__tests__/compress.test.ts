@@ -7,10 +7,15 @@ import {
     canCompressMedia,
     compressManageCandidates,
     compressedReplaceTitle,
+    filterCompressCandidatesByMinSize,
+    fileByteSize,
     formatSizeDelta,
-    COMPRESSED_TAG,
     isAlreadyCompressed,
     isCompressibleMediaType,
+    isWorthReplacing,
+    resolveMarqueeDragIntent,
+    sortCompressCandidatesBySize,
+    COMPRESSED_TAG,
 } from "@/lib/compress";
 
 const fileWithTags = (
@@ -18,11 +23,13 @@ const fileWithTags = (
     fileType: number,
     tags: string[],
     title = "vacation.png",
+    fileSize?: number,
 ): EnteFile =>
     ({
         id,
         collectionID: 1,
         key: "key",
+        info: fileSize !== undefined ? { fileSize } : undefined,
         metadata: {
             fileType,
             title,
@@ -119,5 +126,43 @@ describe("compress", () => {
                 fileWithTags(1, FileType.video, [], "clip.mov"),
             ),
         ).toBe("clip.mp4");
+    });
+
+    it("sortCompressCandidatesBySize orders largest first", () => {
+        const files = [
+            fileWithTags(1, FileType.image, [], "small.jpg", 100_000),
+            fileWithTags(2, FileType.image, [], "large.jpg", 5_000_000),
+            fileWithTags(3, FileType.image, [], "medium.jpg", 1_000_000),
+        ];
+        expect(
+            sortCompressCandidatesBySize(files).map((file) => file.id),
+        ).toEqual([2, 3, 1]);
+    });
+
+    it("filterCompressCandidatesByMinSize hides small files", () => {
+        const files = [
+            fileWithTags(1, FileType.image, [], "small.jpg", 100_000),
+            fileWithTags(2, FileType.image, [], "large.jpg", 2_000_000),
+        ];
+        expect(
+            filterCompressCandidatesByMinSize(files, 1_024_000).map((file) => file.id),
+        ).toEqual([2]);
+    });
+
+    it("isWorthReplacing rejects larger outputs", () => {
+        expect(isWorthReplacing(1_000_000, 900_000)).toBe(true);
+        expect(isWorthReplacing(100_000, 120_000)).toBe(false);
+        expect(isWorthReplacing(100_000, 99_000)).toBe(false);
+    });
+
+    it("resolveMarqueeDragIntent prefers horizontal-first marquee", () => {
+        expect(resolveMarqueeDragIntent(20, 4, 12)).toBe("marquee");
+        expect(resolveMarqueeDragIntent(4, 20, 12)).toBe("scroll");
+        expect(resolveMarqueeDragIntent(4, 4, 12)).toBe("pending");
+    });
+
+    it("fileByteSize reads info.fileSize", () => {
+        expect(fileByteSize(fileWithTags(1, FileType.image, [], "a.jpg", 42))).toBe(42);
+        expect(fileByteSize(fileWithTags(1, FileType.image, [], "a.jpg"))).toBe(0);
     });
 });

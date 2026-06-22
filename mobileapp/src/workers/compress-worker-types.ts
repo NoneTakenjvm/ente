@@ -10,6 +10,8 @@ export interface CompressWorkerRequest {
     bytes: Uint8Array;
     quality: number;
     cropRect?: CropRect;
+    /** Try lower mozjpeg qualities until output is smaller than input. */
+    preferSmaller?: boolean;
 }
 
 export interface CompressWorkerResponse {
@@ -18,4 +20,7 @@ export interface CompressWorkerResponse {
     width?: number;
     height?: number;
     error?: string;
+    /** mozjpeg quality used (0–100), for diagnostics. */
+    encodeQuality?: number;
+    encoder?: string;
 }

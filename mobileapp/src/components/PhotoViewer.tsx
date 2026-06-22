@@ -141,7 +141,10 @@ export function PhotoViewer({
     const mediaUrlsRef = useRef<Map<number, string>>(new Map());
     const loadingIdsRef = useRef<Set<number>>(new Set());
     const viewerFileIdRef = useRef<number>(initialFileId);
+    const currentIndexRef = useRef<number>(currentIndex);
     const tagBaselineRef = useRef<string[]>([]);
+
+    currentIndexRef.current = currentIndex;
 
     const file = sessionFiles[currentIndex];
     const mediaKind = file ? mediaKindForFile(file) : null;
@@ -895,6 +898,8 @@ export function PhotoViewer({
 
     const handleDerivedFileFinalized = useCallback(
         (sourceId: number, uploaded: EnteFile): void => {
+            const stillViewingSource =
+                sessionFiles[currentIndexRef.current]?.id === sourceId;
             const url = mediaUrlsRef.current.get(sourceId);
             if (url) {
                 mediaUrlsRef.current.delete(sourceId);
@@ -913,9 +918,11 @@ export function PhotoViewer({
                 next.set(uploaded.id, media);
                 return next;
             });
-            onFileUpdated?.(uploaded);
+            if (stillViewingSource) {
+                onFileUpdated?.(uploaded);
+            }
         },
-        [onFileUpdated],
+        [onFileUpdated, sessionFiles],
     );
 
     const handleCropSaved = useCallback(
@@ -951,11 +958,15 @@ export function PhotoViewer({
                     const reverted = useLibraryStore.getState().allFiles.find(
                         (entry) => entry.id === sourceId,
                     );
+                    const stillViewingSource =
+                        sessionFiles[currentIndexRef.current]?.id === sourceId;
                     if (reverted) {
                         setSessionFiles((current) => current.map((entry) => (
                             entry.id === sourceId ? reverted : entry
                         )));
-                        onFileUpdated?.(reverted);
+                        if (stillViewingSource) {
+                            onFileUpdated?.(reverted);
+                        }
                     }
                     const staleUrl = mediaUrlsRef.current.get(sourceId);
                     if (staleUrl) {
@@ -977,6 +988,7 @@ export function PhotoViewer({
             handleDerivedFileFinalized,
             onFileUpdated,
             resetZoom,
+            sessionFiles,
             setSlideMedia,
         ],
     );

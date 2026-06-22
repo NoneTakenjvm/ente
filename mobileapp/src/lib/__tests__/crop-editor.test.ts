@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+    containedDisplaySize,
     cropRectForSave,
     dimensionsAfterQuarterTurn,
     dimensionsAfterRotation,
@@ -25,6 +26,20 @@ describe("crop-editor helpers", () => {
             y: 0,
             width: 320,
             height: 200,
+        });
+    });
+
+    it("containedDisplaySize fits large photos into the workspace box", () => {
+        expect(containedDisplaySize(4032, 3024, 358, 600)).toEqual({
+            width: 358,
+            height: 269,
+        });
+    });
+
+    it("containedDisplaySize does not upscale small images", () => {
+        expect(containedDisplaySize(640, 480, 800, 600)).toEqual({
+            width: 640,
+            height: 480,
         });
     });
 

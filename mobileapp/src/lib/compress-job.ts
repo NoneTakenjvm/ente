@@ -1,5 +1,8 @@
 import type { EnteFile } from "ente-media/file";
-import { compressManageCandidates } from "@/lib/compress";
+import {
+    compressManageCandidates,
+    CompressionSkippedError,
+} from "@/lib/compress";
 
 export interface CompressJobOptions {
     files: EnteFile[];
@@ -19,6 +22,7 @@ export interface CompressJobOptions {
 export interface CompressJobResult {
     completed: number;
     failed: number;
+    skipped: number;
     errors: string[];
 }
 
@@ -43,6 +47,7 @@ export const runCompressJob = async (
     const result: CompressJobResult = {
         completed: 0,
         failed: 0,
+        skipped: 0,
         errors: [],
     };
 
@@ -61,12 +66,16 @@ export const runCompressJob = async (
             });
             result.completed += 1;
         } catch (error: unknown) {
-            result.failed += 1;
-            result.errors.push(
-                error instanceof Error ?
-                    `${file.id}: ${error.message}` :
-                    `${file.id}: compress failed`,
-            );
+            if (error instanceof CompressionSkippedError) {
+                result.skipped += 1;
+            } else {
+                result.failed += 1;
+                result.errors.push(
+                    error instanceof Error ?
+                        `${file.id}: ${error.message}` :
+                        `${file.id}: compress failed`,
+                );
+            }
         }
 
         options.onProgress(index + 1, candidates.length);
