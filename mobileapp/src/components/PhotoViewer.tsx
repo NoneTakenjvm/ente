@@ -1119,8 +1119,6 @@ export function PhotoViewer({
                         file={slideFile}
                         imageUrl={slideMedia.url}
                         mimeType={mimeTypeForFile(slideFile)}
-                        viewportWidth={viewportWidth}
-                        viewportHeight={viewportHeight}
                         onCancel={() => setCropMode(false)}
                         onSaved={handleCropSaved}
                     />

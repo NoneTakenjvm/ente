@@ -24,6 +24,8 @@ import { rotateImageBytes } from "@/lib/rotate";
 import { useLibraryStore } from "@/stores/library-store";
 import type { EnteFile } from "ente-media/file";
 
+const CROP_WORKSPACE_INSET_PX = 16;
+
 const fullImageCrop = (width: number, height: number): Crop => ({
     unit: "px",
     x: 0,
@@ -42,8 +44,6 @@ interface CropEditorOverlayProps {
     file: EnteFile;
     imageUrl: string;
     mimeType: string;
-    viewportWidth: number;
-    viewportHeight: number;
     onCancel: () => void;
     onSaved: (result: CropSaveResult) => void;
 }
@@ -52,8 +52,6 @@ export function CropEditorOverlay({
     file,
     imageUrl,
     mimeType,
-    viewportWidth,
-    viewportHeight,
     onCancel,
     onSaved,
 }: CropEditorOverlayProps): JSX.Element {
@@ -212,7 +210,7 @@ export function CropEditorOverlay({
 
     return (
         <div className="absolute inset-0 z-20 flex flex-col bg-black/80">
-            <div className="flex items-center justify-between gap-2 border-b border-border/50 bg-background/95 px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/50 bg-background/95 px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
                 <Button
                     type="button"
                     variant="ghost"
@@ -239,20 +237,23 @@ export function CropEditorOverlay({
                 </Button>
             </div>
 
-            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-2 py-2">
+            <div className="flex min-h-0 flex-1 flex-col px-2 py-2">
                 {error ? (
-                    <Alert variant="destructive" className="max-w-md">
+                    <Alert variant="destructive" className="mb-2 max-w-md shrink-0">
                         <AlertDescription>{error}</AlertDescription>
                     </Alert>
                 ) : null}
 
                 {loading || !workingUrl ? (
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
                         <Spinner />
                         Loading…
                     </div>
                 ) : (
-                    <div className="flex min-h-0 w-full flex-1 items-center justify-center">
+                    <div
+                        className="flex min-h-0 w-full flex-1 items-center justify-center"
+                        style={{ padding: CROP_WORKSPACE_INSET_PX }}
+                    >
                         <ReactCrop
                             crop={crop}
                             disabled={isBusy}
@@ -279,14 +280,6 @@ export function CropEditorOverlay({
                                 src={workingUrl}
                                 alt=""
                                 className="block max-h-full max-w-full object-contain"
-                                style={
-                                    viewportWidth > 0 && viewportHeight > 0 ?
-                                        {
-                                            maxWidth: viewportWidth,
-                                            maxHeight: viewportHeight - 120,
-                                        } :
-                                        undefined
-                                }
                                 onLoad={handleImageLoad}
                                 draggable={false}
                             />
@@ -294,7 +287,7 @@ export function CropEditorOverlay({
                     </div>
                 )}
 
-                <div className="flex items-center gap-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+                <div className="flex shrink-0 items-center justify-center gap-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
                     <Button
                         type="button"
                         variant="outline"
