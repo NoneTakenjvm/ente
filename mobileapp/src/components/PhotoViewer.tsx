@@ -17,7 +17,10 @@ import {
     X,
 } from "lucide-react";
 import { ConfirmDeleteModal } from "@/components/ConfirmDeleteModal";
-import { CropPanel } from "@/components/CropPanel";
+import {
+    CropEditorOverlay,
+    type CropSaveResult,
+} from "@/components/CropEditorOverlay";
 import { TagPickerSheet } from "@/components/TagPickerSheet";
 import { VideoCropPanel } from "@/components/VideoCropPanel";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -27,6 +30,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { getEnteCore } from "@/core";
 import { usePinchZoom } from "@/hooks/use-pinch-zoom";
 import { canCrop, canCropVideo } from "@/lib/crop";
+import { getLocalMediaOverride } from "@/lib/local-media-overrides";
 import { mediaKindForFile, mimeTypeForFile } from "@/lib/media-kind";
 import { cn } from "@/lib/utils";
 import {
@@ -39,6 +43,7 @@ import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useTagStore } from "@/stores/tag-store";
 import type { EnteFile } from "ente-media/file";
+import { toast } from "sonner";
 
 type CarouselDragMode = "horizontal" | "dismiss";
 
@@ -102,7 +107,7 @@ export function PhotoViewer({
     const [showTagPicker, setShowTagPicker] = useState<boolean>(false);
     const [favoriteBusy, setFavoriteBusy] = useState<boolean>(false);
     const [favoriteError, setFavoriteError] = useState<string | undefined>();
-    const [showCrop, setShowCrop] = useState<boolean>(false);
+    const [cropMode, setCropMode] = useState<boolean>(false);
     const [showVideoCrop, setShowVideoCrop] = useState<boolean>(false);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
     const [deleteBusy, setDeleteBusy] = useState<boolean>(false);
@@ -143,7 +148,7 @@ export function PhotoViewer({
     const isVideo = file?.metadata.fileType === FileType.video;
     const zoomEnabled = mediaKind === "image" || mediaKind === "gif";
     const chromePaused =
-        showCrop ||
+        cropMode ||
         showVideoCrop ||
         showDeleteConfirm ||
         showTagPicker;
@@ -162,6 +167,7 @@ export function PhotoViewer({
         file ? s.pendingFavoriteFileIds.has(file.id) : false);
     const knownTags = useTagStore((s) => s.tags);
     const tags = displayFile ? extractUserTags(displayFile) : [];
+    const activeSlideMedia = file ? mediaByFileId.get(file.id) : undefined;
 
     useEffect(() => {
         if (initialFileId === viewerFileIdRef.current) {
@@ -278,6 +284,23 @@ export function PhotoViewer({
             }
             const slideFile = sessionFiles[index];
             visibleIds.add(slideFile.id);
+
+            const mediaOverride = getLocalMediaOverride(slideFile.id);
+            if (mediaOverride) {
+                const mimeType = mimeTypeForFile(slideFile);
+                const blob = new Blob([Uint8Array.from(mediaOverride)], {
+                    type: mimeType,
+                });
+                const url = URL.createObjectURL(blob);
+                const previousUrl = mediaUrlsRef.current.get(slideFile.id);
+                if (previousUrl) {
+                    URL.revokeObjectURL(previousUrl);
+                }
+                mediaUrlsRef.current.set(slideFile.id, url);
+                loadingIdsRef.current.delete(slideFile.id);
+                setSlideMedia(slideFile.id, { status: "ready", url });
+                continue;
+            }
 
             if (
                 mediaUrlsRef.current.has(slideFile.id) ||
@@ -553,6 +576,7 @@ export function PhotoViewer({
         event: ReactPointerEvent<HTMLDivElement>,
     ): void => {
         if (
+            cropMode ||
             carouselAnimating ||
             zoomScale > 1.01 ||
             event.pointerType === "mouse" && event.button !== 0
@@ -746,14 +770,18 @@ export function PhotoViewer({
         const onKeyDown = (event: KeyboardEvent): void => {
             resetChromeTimer();
             if (event.key === "Escape") {
+                if (cropMode) {
+                    setCropMode(false);
+                    return;
+                }
                 if (zoomScale > 1.01 && zoomEnabled) {
                     resetZoom();
                     return;
                 }
                 onClose();
-            } else if (event.key === "ArrowLeft") {
+            } else if (!cropMode && event.key === "ArrowLeft") {
                 goPrev();
-            } else if (event.key === "ArrowRight") {
+            } else if (!cropMode && event.key === "ArrowRight") {
                 goNext();
             }
         };
@@ -761,7 +789,7 @@ export function PhotoViewer({
         return (): void => {
             window.removeEventListener("keydown", onKeyDown);
         };
-    }, [goNext, goPrev, onClose, resetChromeTimer, resetZoom, zoomEnabled, zoomScale]);
+    }, [cropMode, goNext, goPrev, onClose, resetChromeTimer, resetZoom, zoomEnabled, zoomScale]);
 
     const syncSessionFile = useCallback(
         (fileId: number): void => {
@@ -863,6 +891,94 @@ export function PhotoViewer({
             applyTagChange((current) => removeTagNames(current, tag));
         },
         [applyTagChange],
+    );
+
+    const handleDerivedFileFinalized = useCallback(
+        (sourceId: number, uploaded: EnteFile): void => {
+            const url = mediaUrlsRef.current.get(sourceId);
+            if (url) {
+                mediaUrlsRef.current.delete(sourceId);
+                mediaUrlsRef.current.set(uploaded.id, url);
+            }
+            setSessionFiles((current) => current.map((entry) => (
+                entry.id === sourceId ? uploaded : entry
+            )));
+            setMediaByFileId((current) => {
+                const media = current.get(sourceId);
+                if (!media) {
+                    return current;
+                }
+                const next = new Map(current);
+                next.delete(sourceId);
+                next.set(uploaded.id, media);
+                return next;
+            });
+            onFileUpdated?.(uploaded);
+        },
+        [onFileUpdated],
+    );
+
+    const handleCropSaved = useCallback(
+        (result: CropSaveResult): void => {
+            if (!file) {
+                return;
+            }
+            const sourceId = file.id;
+            const previousUrl = mediaUrlsRef.current.get(sourceId);
+            if (previousUrl) {
+                URL.revokeObjectURL(previousUrl);
+            }
+            const url = URL.createObjectURL(
+                new Blob([Uint8Array.from(result.bytes)], {
+                    type: "image/jpeg",
+                }),
+            );
+            mediaUrlsRef.current.set(sourceId, url);
+            setSlideMedia(sourceId, { status: "ready", url });
+            setSessionFiles((current) => current.map((entry) => (
+                entry.id === sourceId ? result.optimisticFile : entry
+            )));
+            onFileUpdated?.(result.optimisticFile);
+            clearPointers();
+            resetZoom();
+            setCropMode(false);
+
+            void result.finalize
+                .then((uploaded) => {
+                    handleDerivedFileFinalized(sourceId, uploaded);
+                })
+                .catch((error: unknown) => {
+                    const reverted = useLibraryStore.getState().allFiles.find(
+                        (entry) => entry.id === sourceId,
+                    );
+                    if (reverted) {
+                        setSessionFiles((current) => current.map((entry) => (
+                            entry.id === sourceId ? reverted : entry
+                        )));
+                        onFileUpdated?.(reverted);
+                    }
+                    const staleUrl = mediaUrlsRef.current.get(sourceId);
+                    if (staleUrl) {
+                        URL.revokeObjectURL(staleUrl);
+                        mediaUrlsRef.current.delete(sourceId);
+                    }
+                    setSlideMedia(sourceId, { status: "loading" });
+                    setRetryKey((current) => current + 1);
+                    toast.error(
+                        error instanceof Error ?
+                            error.message :
+                            "Could not save crop",
+                    );
+                });
+        },
+        [
+            clearPointers,
+            file,
+            handleDerivedFileFinalized,
+            onFileUpdated,
+            resetZoom,
+            setSlideMedia,
+        ],
     );
 
     const handleDerivedFileUploaded = useCallback(
@@ -998,6 +1114,16 @@ export function PhotoViewer({
                             playsInline
                         />
                     </div>
+                ) : cropMode && isActive && slideMedia?.url ? (
+                    <CropEditorOverlay
+                        file={slideFile}
+                        imageUrl={slideMedia.url}
+                        mimeType={mimeTypeForFile(slideFile)}
+                        viewportWidth={viewportWidth}
+                        viewportHeight={viewportHeight}
+                        onCancel={() => setCropMode(false)}
+                        onSaved={handleCropSaved}
+                    />
                 ) : (
                     <div
                         className="absolute inset-0 flex items-center justify-center"
@@ -1079,7 +1205,7 @@ export function PhotoViewer({
             <div
                 className={cn(
                     "absolute inset-x-0 top-0 z-10 border-b border-border bg-background transition-transform duration-200",
-                    chromeVisible ?
+                    chromeVisible && !cropMode ?
                         "translate-y-0" :
                         "-translate-y-full pointer-events-none",
                 )}
@@ -1155,8 +1281,12 @@ export function PhotoViewer({
                                 size="icon-sm"
                                 onClick={() => {
                                     resetChromeTimer();
-                                    setShowCrop(true);
+                                    setCropMode(true);
                                 }}
+                                disabled={
+                                    cropMode ||
+                                    activeSlideMedia?.status !== "ready"
+                                }
                                 aria-label="Crop image"
                             >
                                 <Crop />
@@ -1225,35 +1355,12 @@ export function PhotoViewer({
                 className={cn(
                     "absolute inset-x-0 bottom-0 z-10 flex flex-col gap-2 border-t border-border bg-background px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] transition-transform duration-200",
                     isVideo && "rounded-t-xl shadow-lg",
-                    chromeVisible ?
+                    chromeVisible && !cropMode ?
                         "translate-y-0" :
                         "translate-y-full pointer-events-none",
                 )}
             >
-                <div className="flex h-8 shrink-0 items-center gap-1.5 overflow-x-auto overflow-y-hidden overscroll-x-contain">
-                    {tags.length === 0 ? (
-                        <span className="shrink-0 text-xs text-muted-foreground">
-                            No tags
-                        </span>
-                    ) : (
-                        tags.map((tag) => (
-                            <Badge
-                                key={tag}
-                                variant="secondary"
-                                className="max-w-[12rem] shrink-0 cursor-pointer"
-                                render={
-                                    <button
-                                        type="button"
-                                        onClick={() => handleRemoveTag(tag)}
-                                        title="Remove tag"
-                                    />
-                                }
-                            >
-                                <span className="truncate">{tag}</span>
-                                <span aria-hidden="true">×</span>
-                            </Badge>
-                        ))
-                    )}
+                <div className="flex h-8 shrink-0 items-center gap-1.5">
                     <Button
                         type="button"
                         variant="outline"
@@ -1268,8 +1375,25 @@ export function PhotoViewer({
                         }}
                     >
                         {tagSaveBusy ? <Spinner /> : <Tag />}
-                        Add tag
+                        Tags
                     </Button>
+                    <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overflow-y-hidden overscroll-x-contain">
+                        {tags.length === 0 ? (
+                            <span className="shrink-0 text-xs text-muted-foreground">
+                                No tags
+                            </span>
+                        ) : (
+                            tags.map((tag) => (
+                                <Badge
+                                    key={tag}
+                                    variant="secondary"
+                                    className="max-w-[12rem] shrink-0"
+                                >
+                                    <span className="truncate">{tag}</span>
+                                </Badge>
+                            ))
+                        )}
+                    </div>
                 </div>
                 {tagSaveBusy && !showTagPicker ? (
                     <p className="text-xs text-muted-foreground">
@@ -1311,16 +1435,6 @@ export function PhotoViewer({
                 onAddTag={handleAddTag}
                 onRemoveTag={handleRemoveTag}
             />
-            {showCrop ? (
-                <CropPanel
-                    file={file}
-                    onClose={() => setShowCrop(false)}
-                    onUploaded={(uploaded) => {
-                        setShowCrop(false);
-                        handleDerivedFileUploaded(uploaded);
-                    }}
-                />
-            ) : null}
             {showVideoCrop ? (
                 <VideoCropPanel
                     file={file}
