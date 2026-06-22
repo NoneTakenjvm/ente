@@ -80,7 +80,7 @@ export const ThumbnailCell = memo(function ThumbnailCell({
         }
         longPressTriggeredRef.current = false;
         pressStartRef.current = { x: event.clientX, y: event.clientY };
-        if (tapSelects && onOpen) {
+        if (!tapSelects && onOpen) {
             pressTimerRef.current = window.setTimeout(() => {
                 pressTimerRef.current = undefined;
                 longPressTriggeredRef.current = true;

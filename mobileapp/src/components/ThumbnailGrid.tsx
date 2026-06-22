@@ -9,6 +9,7 @@ import {
     rowCountForFiles,
     type ThumbnailGridLayout,
 } from "@/lib/thumbnail-grid-layout";
+import { resolveMarqueeDragIntent } from "@/lib/compress";
 import type { EnteFile } from "ente-media/file";
 import {
     Empty,
@@ -128,6 +129,8 @@ function SizedGrid({
     );
 }
 
+const MARQUEE_ARM_THRESHOLD_PX = 12;
+
 interface MarqueeRect {
     x: number;
     y: number;
@@ -189,6 +192,8 @@ export function ThumbnailGrid({
     const containerRef = useRef<HTMLDivElement>(null);
     const scrollTopRef = useRef<number>(0);
     const dragStartRef = useRef<{ x: number; y: number } | undefined>(undefined);
+    const dragIntentRef = useRef<"pending" | "scroll" | "marquee">("pending");
+    const [marqueeArmed, setMarqueeArmed] = useState<boolean>(false);
     const [marquee, setMarquee] = useState<MarqueeRect | undefined>();
     const [gridWidth, setGridWidth] = useState<number>(0);
 
@@ -199,9 +204,17 @@ export function ThumbnailGrid({
     const finishMarquee = useCallback(
         (endX: number, endY: number): void => {
             const start = dragStartRef.current;
+            const intent = dragIntentRef.current;
             dragStartRef.current = undefined;
+            dragIntentRef.current = "pending";
+            setMarqueeArmed(false);
             setMarquee(undefined);
-            if (!start || !selection?.onSelectMany || !containerRef.current) {
+            if (
+                !start ||
+                intent !== "marquee" ||
+                !selection?.onSelectMany ||
+                !containerRef.current
+            ) {
                 return;
             }
             const rect = normalizeRect(start, { x: endX, y: endY });
@@ -222,6 +235,13 @@ export function ThumbnailGrid({
         [files, gridWidth, selection],
     );
 
+    const cancelMarqueeTracking = useCallback((): void => {
+        dragStartRef.current = undefined;
+        dragIntentRef.current = "pending";
+        setMarqueeArmed(false);
+        setMarquee(undefined);
+    }, []);
+
     const handlePointerDown = useCallback(
         (event: React.PointerEvent<HTMLDivElement>): void => {
             if (!selection?.onSelectMany || selection.disabled) {
@@ -234,17 +254,11 @@ export function ThumbnailGrid({
             if (!bounds) {
                 return;
             }
+            dragIntentRef.current = "pending";
             dragStartRef.current = {
                 x: event.clientX - bounds.left,
                 y: event.clientY - bounds.top,
             };
-            setMarquee({
-                x: dragStartRef.current.x,
-                y: dragStartRef.current.y,
-                width: 0,
-                height: 0,
-            });
-            containerRef.current?.setPointerCapture(event.pointerId);
         },
         [selection],
     );
@@ -259,14 +273,35 @@ export function ThumbnailGrid({
             if (!bounds) {
                 return;
             }
-            setMarquee(
-                normalizeRect(start, {
-                    x: event.clientX - bounds.left,
-                    y: event.clientY - bounds.top,
-                }),
-            );
+            const x = event.clientX - bounds.left;
+            const y = event.clientY - bounds.top;
+            const dx = x - start.x;
+            const dy = y - start.y;
+
+            if (dragIntentRef.current === "pending") {
+                const intent = resolveMarqueeDragIntent(
+                    dx,
+                    dy,
+                    MARQUEE_ARM_THRESHOLD_PX,
+                );
+                if (intent === "scroll") {
+                    cancelMarqueeTracking();
+                    return;
+                }
+                if (intent === "marquee") {
+                    dragIntentRef.current = "marquee";
+                    setMarqueeArmed(true);
+                    containerRef.current?.setPointerCapture(event.pointerId);
+                    setMarquee(normalizeRect(start, { x, y }));
+                }
+                return;
+            }
+
+            if (dragIntentRef.current === "marquee") {
+                setMarquee(normalizeRect(start, { x, y }));
+            }
         },
-        [],
+        [cancelMarqueeTracking],
     );
 
     const handlePointerUp = useCallback(
@@ -275,15 +310,17 @@ export function ThumbnailGrid({
                 return;
             }
             const bounds = containerRef.current?.getBoundingClientRect();
-            if (bounds) {
+            if (bounds && dragIntentRef.current === "marquee") {
                 finishMarquee(
                     event.clientX - bounds.left,
                     event.clientY - bounds.top,
                 );
+                containerRef.current?.releasePointerCapture(event.pointerId);
+                return;
             }
-            containerRef.current?.releasePointerCapture(event.pointerId);
+            cancelMarqueeTracking();
         },
-        [finishMarquee],
+        [cancelMarqueeTracking, finishMarquee],
     );
 
     if (files.length === 0) {
@@ -307,7 +344,8 @@ export function ThumbnailGrid({
     return (
         <div
             ref={containerRef}
-            className="relative min-h-0 flex-1 touch-none select-none"
+            className="relative min-h-0 flex-1 select-none"
+            style={{ touchAction: marqueeArmed ? "none" : "pan-y" }}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}

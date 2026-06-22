@@ -107,3 +107,29 @@ export const saveEncryptedPhashIndex = async (
         await encryptCachePayload(index, cacheKey),
     );
 };
+
+export interface PersistedTagOutboxEntry {
+    fileId: number;
+    intendedTags: string[];
+    enqueuedAt: number;
+}
+
+export const loadEncryptedTagOutbox = async (
+    cacheKey: string,
+): Promise<PersistedTagOutboxEntry[] | undefined> => {
+    const payload = await getEncrypted("tagOutbox");
+    if (!payload) {
+        return undefined;
+    }
+    return decryptCachePayload<PersistedTagOutboxEntry[]>(payload, cacheKey);
+};
+
+export const saveEncryptedTagOutbox = async (
+    entries: PersistedTagOutboxEntry[],
+    cacheKey: string,
+): Promise<void> => {
+    await putEncrypted(
+        "tagOutbox",
+        await encryptCachePayload(entries, cacheKey),
+    );
+};

@@ -44,6 +44,12 @@ const resetDependentStores = (): void => {
             resetOrganizerConfigSaveQueue();
         },
     );
+    void import("@/lib/tag-outbox-runner").then(({ stopTagOutboxRunner }) => {
+        stopTagOutboxRunner();
+    });
+    void import("@/lib/tag-outbox").then(({ clearTagOutbox }) => {
+        clearTagOutbox();
+    });
     void import("./library-store").then(({ useLibraryStore }) => {
         useLibraryStore.getState().reset();
     });

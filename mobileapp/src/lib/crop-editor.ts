@@ -25,6 +25,32 @@ export const fullFramePixelCrop = (
     height: displayHeight,
 });
 
+/** Fit natural pixels into a max box (object-contain) for the crop UI. */
+export const containedDisplaySize = (
+    naturalWidth: number,
+    naturalHeight: number,
+    maxWidth: number,
+    maxHeight: number,
+): { width: number; height: number } => {
+    if (
+        naturalWidth <= 0 ||
+        naturalHeight <= 0 ||
+        maxWidth <= 0 ||
+        maxHeight <= 0
+    ) {
+        return { width: 0, height: 0 };
+    }
+    const scale = Math.min(
+        maxWidth / naturalWidth,
+        maxHeight / naturalHeight,
+        1,
+    );
+    return {
+        width: Math.max(1, Math.round(naturalWidth * scale)),
+        height: Math.max(1, Math.round(naturalHeight * scale)),
+    };
+};
+
 export const cropRectForSave = (
     completedCrop: PixelCrop,
     image: Pick<

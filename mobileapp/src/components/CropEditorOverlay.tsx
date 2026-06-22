@@ -19,9 +19,11 @@ import { Spinner } from "@/components/ui/spinner";
 import { getEnteCore } from "@/core";
 import {
     bakeRotation,
+    containedDisplaySize,
     encodeBakedCrop,
     fullImageCrop,
 } from "@/lib/crop-editor";
+import { mimeTypeForFile } from "@/lib/media-kind";
 import { useLibraryStore } from "@/stores/library-store";
 import type { EnteFile } from "ente-media/file";
 
@@ -60,10 +62,14 @@ export function CropEditorOverlay({
     const [workspaceSize, setWorkspaceSize] = useState<
         { width: number; height: number } | undefined
     >();
+    const [displayLayout, setDisplayLayout] = useState<
+        { width: number; height: number } | undefined
+    >();
 
     const imageRef = useRef<HTMLImageElement>(null);
     const workingUrlRef = useRef<string | undefined>(undefined);
     const workspaceRef = useRef<HTMLDivElement>(null);
+    const mimeType = mimeTypeForFile(file);
 
     useEffect(() => {
         let cancelled = false;
@@ -75,7 +81,7 @@ export function CropEditorOverlay({
                     return;
                 }
                 const url = URL.createObjectURL(
-                    new Blob([Uint8Array.from(bytes)], { type: "image/jpeg" }),
+                    new Blob([Uint8Array.from(bytes)], { type: mimeType }),
                 );
                 workingUrlRef.current = url;
                 setWorkingBytes(bytes);
@@ -98,7 +104,7 @@ export function CropEditorOverlay({
                 workingUrlRef.current = undefined;
             }
         };
-    }, [file]);
+    }, [file, mimeType]);
 
     useEffect(() => {
         const element = workspaceRef.current;
@@ -111,10 +117,11 @@ export function CropEditorOverlay({
                 return;
             }
             const { width, height } = entry.contentRect;
-            setWorkspaceSize({
+            const nextSize = {
                 width: Math.max(0, width - CROP_WORKSPACE_INSET_PX * 2),
                 height: Math.max(0, height - CROP_WORKSPACE_INSET_PX * 2),
-            });
+            };
+            setWorkspaceSize(nextSize);
         });
         observer.observe(element);
         return (): void => {
@@ -132,21 +139,50 @@ export function CropEditorOverlay({
         workingUrlRef.current = url;
         setWorkingBytes(bytes);
         setWorkingUrl(url);
+        setDisplayLayout(undefined);
         setCrop(undefined);
         setCompletedCrop(undefined);
         setImageReady(false);
     }, []);
 
+    const applyDisplayLayout = useCallback((image: HTMLImageElement): void => {
+        if (
+            !workspaceSize ||
+            image.naturalWidth <= 0 ||
+            image.naturalHeight <= 0
+        ) {
+            return;
+        }
+        const layout = containedDisplaySize(
+            image.naturalWidth,
+            image.naturalHeight,
+            workspaceSize.width,
+            workspaceSize.height,
+        );
+        const nextCrop = fullImageCrop(layout.width, layout.height);
+        setDisplayLayout(layout);
+        setCrop(nextCrop);
+        setCompletedCrop(convertToPixelCrop(nextCrop, layout.width, layout.height));
+        setImageReady(true);
+    }, [workspaceSize]);
+
+    useEffect(() => {
+        const image = imageRef.current;
+        if (!image?.complete || image.naturalWidth <= 0) {
+            return;
+        }
+        applyDisplayLayout(image);
+    }, [applyDisplayLayout, workspaceSize]);
+
     const handleImageLoad = useCallback(
         (event: SyntheticEvent<HTMLImageElement>): void => {
             const image = event.currentTarget;
             imageRef.current = image;
-            const nextCrop = fullImageCrop(image.width, image.height);
-            setCrop(nextCrop);
-            setCompletedCrop(convertToPixelCrop(nextCrop, image.width, image.height));
-            setImageReady(true);
+            requestAnimationFrame(() => {
+                applyDisplayLayout(image);
+            });
         },
-        [],
+        [applyDisplayLayout],
     );
 
     const handleRotate = useCallback(
@@ -229,13 +265,6 @@ export function CropEditorOverlay({
     }, [onCancel, saving]);
 
     const isBusy = loading || rotating || saving;
-    const imageStyle =
-        workspaceSize ?
-            {
-                maxWidth: workspaceSize.width,
-                maxHeight: workspaceSize.height,
-            } :
-            undefined;
 
     return (
         <div
@@ -286,46 +315,67 @@ export function CropEditorOverlay({
                 ) : (
                     <div
                         ref={workspaceRef}
-                        className="flex min-h-0 w-full flex-1 touch-none items-center justify-center"
+                        className="relative flex min-h-0 w-full flex-1 touch-none items-center justify-center"
                         style={{ padding: CROP_WORKSPACE_INSET_PX }}
                     >
-                        <ReactCrop
-                            crop={crop}
-                            disabled={isBusy || !imageReady}
-                            onChange={(nextCrop) => {
-                                setCrop(nextCrop);
-                            }}
-                            onComplete={(nextCrop) => {
-                                const image = imageRef.current;
-                                if (!image) {
-                                    return;
-                                }
-                                setCompletedCrop(
-                                    convertToPixelCrop(
-                                        nextCrop,
-                                        image.width,
-                                        image.height,
-                                    ),
-                                );
-                            }}
-                            style={imageStyle}
-                            className="max-h-full max-w-full"
-                        >
-                            <img
-                                key={workingUrl}
-                                ref={imageRef}
-                                src={workingUrl}
-                                alt=""
-                                className="block object-contain"
-                                style={imageStyle}
-                                onLoad={handleImageLoad}
-                                draggable={false}
-                            />
-                        </ReactCrop>
+                        {!workspaceSize ? (
+                            <Spinner />
+                        ) : (
+                            <>
+                                {!imageReady ? (
+                                    <div className="absolute inset-0 flex items-center justify-center">
+                                        <Spinner />
+                                    </div>
+                                ) : null}
+                                <ReactCrop
+                                    crop={crop}
+                                    disabled={isBusy || !imageReady}
+                                    onChange={(nextCrop) => {
+                                        setCrop(nextCrop);
+                                    }}
+                                    onComplete={(nextCrop) => {
+                                        const image = imageRef.current;
+                                        if (!image) {
+                                            return;
+                                        }
+                                        setCompletedCrop(
+                                            convertToPixelCrop(
+                                                nextCrop,
+                                                image.clientWidth,
+                                                image.clientHeight,
+                                            ),
+                                        );
+                                    }}
+                                    className="max-h-full max-w-full"
+                                >
+                                    <img
+                                        key={workingUrl}
+                                        ref={imageRef}
+                                        src={workingUrl}
+                                        alt=""
+                                        className="block"
+                                        style={
+                                            displayLayout ?
+                                                {
+                                                    width: displayLayout.width,
+                                                    height: displayLayout.height,
+                                                } :
+                                                {
+                                                    maxWidth: workspaceSize.width,
+                                                    maxHeight: workspaceSize.height,
+                                                    visibility: "hidden",
+                                                }
+                                        }
+                                        onLoad={handleImageLoad}
+                                        draggable={false}
+                                    />
+                                </ReactCrop>
+                            </>
+                        )}
                     </div>
                 )}
 
-                <div className="flex shrink-0 items-center justify-center gap-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+                <div className="relative z-10 flex shrink-0 items-center justify-center gap-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
                     <Button
                         type="button"
                         variant="outline"

@@ -30,10 +30,14 @@ import { Spinner } from "@/components/ui/spinner";
 import { getEnteCore } from "@/core";
 import {
     DEFAULT_JPEG_QUALITY,
+    DEFAULT_VIDEO_CRF,
     encodeJpegFromBytes,
     formatSizeDelta,
+    isWorthReplacing,
     MAX_JPEG_QUALITY,
     MIN_JPEG_QUALITY,
+    MAX_VIDEO_CRF,
+    MIN_VIDEO_CRF,
     type SizeDelta,
 } from "@/lib/compress";
 import { mediaKindForFile, mimeTypeForFile } from "@/lib/media-kind";
@@ -54,8 +58,6 @@ interface CompressionPanelProps {
     onClose: () => void;
     onUploaded?: (file: EnteFile) => void;
 }
-
-const DEFAULT_VIDEO_CRF = 28;
 
 export function CompressionPanel({
     file,
@@ -345,8 +347,15 @@ export function CompressionPanel({
 
                         {sizeDelta && phase !== "loading" ? (
                             <p className="text-sm text-muted-foreground">
-                                Saves {sizeDelta.savedLabel} ({sizeDelta.savedPercent}
-                                %)
+                                {isWorthReplacing(
+                                    sizeDelta.originalBytes,
+                                    sizeDelta.compressedBytes,
+                                ) ?
+                                    <>
+                                        Saves {sizeDelta.savedLabel} (
+                                        {sizeDelta.savedPercent}%)
+                                    </> :
+                                    "Compressed output is larger — replace is disabled."}
                             </p>
                         ) : null}
 
@@ -402,7 +411,12 @@ export function CompressionPanel({
                             onClick={handleUpload}
                             disabled={
                                 phase !== "ready" ||
-                                (!usesFfmpeg && (!compressedBytes || !dimensions))
+                                (!usesFfmpeg && (!compressedBytes || !dimensions)) ||
+                                (sizeDelta !== undefined &&
+                                    !isWorthReplacing(
+                                        sizeDelta.originalBytes,
+                                        sizeDelta.compressedBytes,
+                                    ))
                             }
                         >
                             Compress and replace
@@ -438,8 +452,8 @@ export function CompressionPanel({
                         <Field>
                             <FieldLabel>Video CRF {videoCrf}</FieldLabel>
                             <Slider
-                                min={18}
-                                max={32}
+                                min={MIN_VIDEO_CRF}
+                                max={MAX_VIDEO_CRF}
                                 value={[videoCrf]}
                                 disabled={phase === "uploading" || !originalBytes}
                                 onValueChange={(value) => {

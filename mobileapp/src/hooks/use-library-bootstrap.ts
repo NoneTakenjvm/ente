@@ -5,8 +5,14 @@ import {
     type Dispatch,
     type SetStateAction,
 } from "react";
+import type { EnteFile } from "ente-media/file";
+import type { Collection } from "@/core";
 import { isSessionAuthenticated } from "@/stores/session-store";
 import { useLibraryStore } from "@/stores/library-store";
+import {
+    startTagOutboxRunner,
+    stopTagOutboxRunner,
+} from "@/lib/tag-outbox-runner";
 
 export interface UseLibraryBootstrapOptions {
     /** Extra work after cache load and remote sync (e.g. phash hydrate). */
@@ -46,6 +52,14 @@ export const useLibraryBootstrap: (
         const bootstrap: () => Promise<void> = async (): Promise<void> => {
             try {
                 await bootstrapFromCache();
+                startTagOutboxRunner({
+                    getFiles: (): EnteFile[] =>
+                        useLibraryStore.getState().allFiles,
+                    getCollections: (): Collection[] =>
+                        useLibraryStore.getState().collections,
+                    patchFile: (file: EnteFile): Promise<void> =>
+                        useLibraryStore.getState().patchFile(file),
+                });
                 await syncRemote();
                 await afterSync?.();
             } finally {
@@ -58,6 +72,7 @@ export const useLibraryBootstrap: (
         void bootstrap();
         return (): void => {
             cancelled = true;
+            stopTagOutboxRunner();
         };
     }, [afterSync, bootstrapFromCache, syncRemote]);
     return initialLoadDone;

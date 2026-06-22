@@ -1,6 +1,7 @@
 import type { EnteFile } from "ente-media/file";
 import {
     DEFAULT_JPEG_QUALITY,
+    DEFAULT_VIDEO_CRF,
     encodeJpegFromBytes,
     type EncodeJpegResult,
 } from "@/lib/compress";
@@ -23,7 +24,7 @@ export interface CompressMediaOptions {
 
 const defaultOptions: CompressMediaOptions = {
     quality: DEFAULT_JPEG_QUALITY,
-    videoCrf: 28,
+    videoCrf: DEFAULT_VIDEO_CRF,
 };
 
 const blobFromBytes = (bytes: Uint8Array, mimeType: string): Blob =>

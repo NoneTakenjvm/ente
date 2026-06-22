@@ -1,15 +1,16 @@
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
-import { updateFileTags } from "@/core/metadata";
 import { mapBatched } from "@/lib/batched";
+import { removeTagOutboxEntries, upsertTagOutboxEntry } from "@/lib/tag-outbox";
+import { writeAndVerifyTags } from "@/lib/tag-write-pipeline";
 import {
     mergeTagNames,
     removeTagNames,
     replaceTagName,
+    tagsForFile,
     type TagMutator,
 } from "@/lib/tag-writes";
 import type { HttpClient } from "@/core/api/http";
-import { MetadataUpdateError } from "@/core/metadata";
 
 export interface BatchTagResult {
     succeeded: number;
@@ -17,79 +18,36 @@ export interface BatchTagResult {
     errors: string[];
 }
 
-const maxTagSaveAttempts = 10;
-
-const sleep = (ms: number): Promise<void> =>
-    new Promise((resolve) => setTimeout(resolve, ms));
-
-const retryDelayMs = (attempt: number, error: unknown): number => {
-    if (error instanceof MetadataUpdateError && error.retryAfterMs) {
-        return error.retryAfterMs;
-    }
-    return Math.min(30_000, 500 * 2 ** (attempt - 1));
-};
-
-const isRetryableTagSaveError = (error: unknown): boolean => {
-    if (error instanceof MetadataUpdateError) {
-        return (
-            error.status === 409 ||
-            error.status === 429 ||
-            error.status >= 500
-        );
-    }
-    if (error instanceof TypeError) {
-        return true;
-    }
-    const message = error instanceof Error ? error.message : String(error);
-    return /failed to fetch|network|load failed/i.test(message);
-};
-
 const collectionKeyFor = (
     file: EnteFile,
     collections: Collection[],
-): string => {
-    const collection = collections.find((c) => c.id === file.collectionID);
-    if (!collection) {
-        throw new Error(`Collection ${file.collectionID} not found`);
-    }
-    return collection.key;
+): string | undefined => {
+    const collection = collections.find((entry) => entry.id === file.collectionID);
+    return collection?.key;
 };
 
-/**
- * Update tags on one file with conflict refetch and transient-error retries.
- */
-export const writeFileTags = async (
+const syncFileTags = async (
     http: HttpClient,
     file: EnteFile,
     collections: Collection[],
-    mutator: TagMutator,
-): Promise<EnteFile> => {
+    intendedTags: string[],
+): Promise<EnteFile | undefined> => {
     const collectionKey = collectionKeyFor(file, collections);
-    return updateFileTags(http, file, collectionKey, mutator);
-};
-
-export const writeFileTagsWithRetry = async (
-    http: HttpClient,
-    file: EnteFile,
-    collections: Collection[],
-    mutator: TagMutator,
-): Promise<EnteFile> => {
-    let lastError: Error | undefined;
-    for (let attempt = 1; attempt <= maxTagSaveAttempts; attempt++) {
-        try {
-            return await writeFileTags(http, file, collections, mutator);
-        } catch (error) {
-            lastError = error instanceof Error ? error : new Error(String(error));
-            if (
-                !isRetryableTagSaveError(error) ||
-                attempt >= maxTagSaveAttempts
-            ) {
-                throw lastError;
-            }
-            await sleep(retryDelayMs(attempt, error));
-        }
+    if (!collectionKey) {
+        return undefined;
     }
-    throw lastError ?? new Error("Tag save failed");
+    await upsertTagOutboxEntry(file.id, intendedTags);
+    const result = await writeAndVerifyTags(
+        http,
+        file,
+        collectionKey,
+        intendedTags,
+    );
+    if (result.status === "verified") {
+        await removeTagOutboxEntries([file.id]);
+        return result.file;
+    }
+    return undefined;
 };
 
 const runBatchTagUpdate = async (
@@ -97,6 +55,7 @@ const runBatchTagUpdate = async (
     files: EnteFile[],
     collections: Collection[],
     mutator: TagMutator,
+    onFileVerified?: (file: EnteFile) => Promise<void>,
     onProgress?: (completed: number, total: number) => void,
 ): Promise<BatchTagResult> => {
     const errors: string[] = [];
@@ -106,9 +65,21 @@ const runBatchTagUpdate = async (
     await mapBatched(
         files,
         async (file) => {
+            const intendedTags = tagsForFile(file, mutator);
             try {
-                await writeFileTagsWithRetry(http, file, collections, mutator);
-                succeeded += 1;
+                const verifiedFile = await syncFileTags(
+                    http,
+                    file,
+                    collections,
+                    intendedTags,
+                );
+                if (verifiedFile) {
+                    succeeded += 1;
+                    await onFileVerified?.(verifiedFile);
+                } else {
+                    failed += 1;
+                    errors.push(`${file.id}: verification pending`);
+                }
             } catch (error) {
                 failed += 1;
                 errors.push(
@@ -130,11 +101,19 @@ export const renameTagOnFiles = async (
     collections: Collection[],
     oldName: string,
     newName: string,
+    onFileVerified?: (file: EnteFile) => Promise<void>,
     onProgress?: (completed: number, total: number) => void,
 ): Promise<BatchTagResult> => {
     const mutator: TagMutator = (tags) =>
         replaceTagName(tags, oldName, newName);
-    return runBatchTagUpdate(http, files, collections, mutator, onProgress);
+    return runBatchTagUpdate(
+        http,
+        files,
+        collections,
+        mutator,
+        onFileVerified,
+        onProgress,
+    );
 };
 
 export const deleteTagOnFiles = async (
@@ -142,10 +121,18 @@ export const deleteTagOnFiles = async (
     files: EnteFile[],
     collections: Collection[],
     tagName: string,
+    onFileVerified?: (file: EnteFile) => Promise<void>,
     onProgress?: (completed: number, total: number) => void,
 ): Promise<BatchTagResult> => {
     const mutator: TagMutator = (tags) => removeTagNames(tags, tagName);
-    return runBatchTagUpdate(http, files, collections, mutator, onProgress);
+    return runBatchTagUpdate(
+        http,
+        files,
+        collections,
+        mutator,
+        onFileVerified,
+        onProgress,
+    );
 };
 
 export const mergeTagsOnFiles = async (
@@ -154,9 +141,17 @@ export const mergeTagsOnFiles = async (
     collections: Collection[],
     sourceNames: string[],
     targetName: string,
+    onFileVerified?: (file: EnteFile) => Promise<void>,
     onProgress?: (completed: number, total: number) => void,
 ): Promise<BatchTagResult> => {
     const mutator: TagMutator = (tags) =>
         mergeTagNames(tags, sourceNames, targetName);
-    return runBatchTagUpdate(http, files, collections, mutator, onProgress);
+    return runBatchTagUpdate(
+        http,
+        files,
+        collections,
+        mutator,
+        onFileVerified,
+        onProgress,
+    );
 };

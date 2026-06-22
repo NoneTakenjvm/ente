@@ -23,6 +23,13 @@ const nextConfig: NextConfig = {
     output: "export",
     outputFileTracingRoot: path.join(__dirname, ".."),
     transpilePackages: ["ente-base", "ente-media", "ente-utils"],
+    webpack: (config) => {
+        config.experiments = {
+            ...config.experiments,
+            asyncWebAssembly: true,
+        };
+        return config;
+    },
 };
 
 export default withSerwist(nextConfig);
