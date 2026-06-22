@@ -31,8 +31,8 @@ import { isReservedTag, tagFileCount } from "@/lib/tags";
 import { cn } from "@/lib/utils";
 import { useTagStore } from "@/stores/tag-store";
 
-const SWIPE_DISMISS_THRESHOLD_MIN_PX = 80;
-const SWIPE_DISMISS_THRESHOLD_RATIO = 0.15;
+const SWIPE_DISMISS_THRESHOLD_MIN_PX = 50;
+const SWIPE_DISMISS_THRESHOLD_RATIO = 0.12;
 const SWIPE_DRAG_DEAD_ZONE_PX = 8;
 const SWIPE_SNAP_BACK_MS = 200;
 
@@ -72,6 +72,7 @@ export function TagPickerSheet({
     const [newTag, setNewTag] = useState<string>("");
     const [newType, setNewType] = useState<string>("");
     const [dragPx, setDragPx] = useState<number>(0);
+    const [isDismissDragging, setIsDismissDragging] = useState<boolean>(false);
     const [snapBackAnimating, setSnapBackAnimating] = useState<boolean>(false);
 
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -79,6 +80,8 @@ export function TagPickerSheet({
     const dragStartRef = useRef<DismissDragStart | undefined>(undefined);
     const pointerIdRef = useRef<number | undefined>(undefined);
     const dragPxRef = useRef<number>(0);
+    const onOpenChangeRef = useRef(onOpenChange);
+    onOpenChangeRef.current = onOpenChange;
 
     const libraryTags = useMemo(
         (): string[] =>
@@ -114,6 +117,7 @@ export function TagPickerSheet({
     const resetDragState = (): void => {
         setDragPx(0);
         dragPxRef.current = 0;
+        setIsDismissDragging(false);
         setSnapBackAnimating(false);
         dragStartRef.current = undefined;
         pointerIdRef.current = undefined;
@@ -126,33 +130,109 @@ export function TagPickerSheet({
             setSelectedType(DEFAULT_TAG_TYPE);
             resetDragState();
         }
-        onOpenChange(nextOpen);
+        onOpenChangeRef.current(nextOpen);
     };
 
-    const finishDismissDrag = (): void => {
-        const sheetHeight = sheetRef.current?.clientHeight ?? 0;
-        const threshold = Math.max(
-            SWIPE_DISMISS_THRESHOLD_MIN_PX,
-            sheetHeight * SWIPE_DISMISS_THRESHOLD_RATIO,
-        );
-        if (dragPxRef.current > threshold) {
-            resetDragState();
-            handleOpenChange(false);
+    useEffect(() => {
+        if (!open) {
             return;
         }
-        setSnapBackAnimating(true);
-        setDragPx(0);
-        dragPxRef.current = 0;
-        window.setTimeout(() => {
-            setSnapBackAnimating(false);
-        }, SWIPE_SNAP_BACK_MS);
-    };
+
+        const finishDismissDrag = (): void => {
+            const sheetHeight = sheetRef.current?.clientHeight ?? 0;
+            const threshold = Math.max(
+                SWIPE_DISMISS_THRESHOLD_MIN_PX,
+                sheetHeight * SWIPE_DISMISS_THRESHOLD_RATIO,
+            );
+            if (dragPxRef.current > threshold) {
+                resetDragState();
+                setNewTag("");
+                setNewType("");
+                setSelectedType(DEFAULT_TAG_TYPE);
+                onOpenChangeRef.current(false);
+                return;
+            }
+            setSnapBackAnimating(true);
+            setDragPx(0);
+            dragPxRef.current = 0;
+            window.setTimeout(() => {
+                setSnapBackAnimating(false);
+            }, SWIPE_SNAP_BACK_MS);
+        };
+
+        const onPointerMove = (event: PointerEvent): void => {
+            if (
+                pointerIdRef.current !== event.pointerId ||
+                !dragStartRef.current
+            ) {
+                return;
+            }
+            const deltaX = event.clientX - dragStartRef.current.x;
+            const deltaY = event.clientY - dragStartRef.current.y;
+            if (!dragStartRef.current.dragging) {
+                if (
+                    deltaY <= SWIPE_DRAG_DEAD_ZONE_PX ||
+                    deltaY <= Math.abs(deltaX)
+                ) {
+                    return;
+                }
+                if (
+                    !dragStartRef.current.fromHeader &&
+                    (scrollRef.current?.scrollTop ?? 0) > 0
+                ) {
+                    return;
+                }
+                dragStartRef.current.dragging = true;
+                setIsDismissDragging(true);
+                sheetRef.current?.setPointerCapture(event.pointerId);
+            }
+            if (event.cancelable) {
+                event.preventDefault();
+            }
+            const nextDrag = Math.max(0, deltaY);
+            dragPxRef.current = nextDrag;
+            setDragPx(nextDrag);
+        };
+
+        const onPointerEnd = (event: PointerEvent): void => {
+            if (pointerIdRef.current !== event.pointerId) {
+                return;
+            }
+            const start = dragStartRef.current;
+            pointerIdRef.current = undefined;
+            dragStartRef.current = undefined;
+            setIsDismissDragging(false);
+            if (start?.dragging) {
+                finishDismissDrag();
+            }
+            try {
+                sheetRef.current?.releasePointerCapture(event.pointerId);
+            } catch {
+                // Pointer may already be released.
+            }
+        };
+
+        document.addEventListener("pointermove", onPointerMove, {
+            passive: false,
+        });
+        document.addEventListener("pointerup", onPointerEnd);
+        document.addEventListener("pointercancel", onPointerEnd);
+
+        return (): void => {
+            document.removeEventListener("pointermove", onPointerMove);
+            document.removeEventListener("pointerup", onPointerEnd);
+            document.removeEventListener("pointercancel", onPointerEnd);
+        };
+    }, [open]);
 
     const handleDismissPointerDown = (
         event: ReactPointerEvent<HTMLElement>,
         fromHeader: boolean,
     ): void => {
         if (event.pointerType === "mouse" && event.button !== 0) {
+            return;
+        }
+        if (isDismissDragging || snapBackAnimating) {
             return;
         }
         pointerIdRef.current = event.pointerId;
@@ -162,57 +242,6 @@ export function TagPickerSheet({
             fromHeader,
             dragging: false,
         };
-    };
-
-    const handleDismissPointerMove = (
-        event: ReactPointerEvent<HTMLElement>,
-    ): void => {
-        if (
-            pointerIdRef.current !== event.pointerId ||
-            !dragStartRef.current
-        ) {
-            return;
-        }
-        const deltaX = event.clientX - dragStartRef.current.x;
-        const deltaY = event.clientY - dragStartRef.current.y;
-        if (!dragStartRef.current.dragging) {
-            if (
-                deltaY <= SWIPE_DRAG_DEAD_ZONE_PX ||
-                deltaY <= Math.abs(deltaX)
-            ) {
-                return;
-            }
-            if (
-                !dragStartRef.current.fromHeader &&
-                (scrollRef.current?.scrollTop ?? 0) > 0
-            ) {
-                return;
-            }
-            dragStartRef.current.dragging = true;
-            event.currentTarget.setPointerCapture(event.pointerId);
-        }
-        const nextDrag = Math.max(0, deltaY);
-        dragPxRef.current = nextDrag;
-        setDragPx(nextDrag);
-    };
-
-    const handleDismissPointerUp = (
-        event: ReactPointerEvent<HTMLElement>,
-    ): void => {
-        if (pointerIdRef.current !== event.pointerId) {
-            return;
-        }
-        const start = dragStartRef.current;
-        pointerIdRef.current = undefined;
-        dragStartRef.current = undefined;
-        if (start?.dragging) {
-            finishDismissDrag();
-        }
-        try {
-            event.currentTarget.releasePointerCapture(event.pointerId);
-        } catch {
-            // Pointer may already be released.
-        }
     };
 
     const handleCreateTag = (event: FormEvent): void => {
@@ -234,35 +263,39 @@ export function TagPickerSheet({
         <Sheet open={open} onOpenChange={handleOpenChange}>
             <SheetContent
                 side="bottom"
-                className="flex h-[75dvh] max-h-[75dvh] flex-col gap-0 overflow-hidden rounded-t-xl p-0"
-                style={{
-                    transform: dragPx > 0 ? `translateY(${dragPx}px)` : undefined,
-                    transition:
-                        snapBackAnimating ?
-                            `transform ${SWIPE_SNAP_BACK_MS}ms ease-out` :
-                            dragPx > 0 ?
-                                "none" :
-                                undefined,
-                }}
+                className={cn(
+                    "flex h-[75dvh] max-h-[75dvh] flex-col gap-0 overflow-hidden rounded-t-xl p-0",
+                    (isDismissDragging || dragPx > 0) && "transition-none",
+                )}
             >
                 <div
                     ref={sheetRef}
                     className="flex min-h-0 flex-1 flex-col overflow-hidden"
+                    style={{
+                        transform:
+                            dragPx > 0 ? `translateY(${dragPx}px)` : undefined,
+                        transition:
+                            snapBackAnimating ?
+                                `transform ${SWIPE_SNAP_BACK_MS}ms ease-out` :
+                                isDismissDragging ?
+                                    "none" :
+                                    undefined,
+                        touchAction: isDismissDragging ? "none" : undefined,
+                    }}
                 >
-                    <SheetHeader
-                        className="shrink-0 gap-2 border-b border-border px-4 pt-3 pb-3"
-                        onPointerDown={(event) => {
-                            handleDismissPointerDown(event, true);
-                        }}
-                        onPointerMove={handleDismissPointerMove}
-                        onPointerUp={handleDismissPointerUp}
-                        onPointerCancel={handleDismissPointerUp}
-                    >
+                    <SheetHeader className="shrink-0 gap-2 border-b border-border px-4 pt-3 pb-3">
                         <div
-                            className="mx-auto mb-1 h-1 w-10 shrink-0 rounded-full bg-muted-foreground/30"
-                            aria-hidden="true"
-                        />
-                        <SheetTitle>Tags</SheetTitle>
+                            className="touch-none"
+                            onPointerDown={(event) => {
+                                handleDismissPointerDown(event, true);
+                            }}
+                        >
+                            <div
+                                className="mx-auto mb-1 h-1 w-10 shrink-0 rounded-full bg-muted-foreground/30"
+                                aria-hidden="true"
+                            />
+                            <SheetTitle>Tags</SheetTitle>
+                        </div>
                         <TagTypeTabBar
                             types={tagTypes}
                             selected={selectedType}
@@ -277,9 +310,6 @@ export function TagPickerSheet({
                             onPointerDown={(event) => {
                                 handleDismissPointerDown(event, false);
                             }}
-                            onPointerMove={handleDismissPointerMove}
-                            onPointerUp={handleDismissPointerUp}
-                            onPointerCancel={handleDismissPointerUp}
                         >
                             {libraryTags.length === 0 ? (
                                 <p className="px-2 py-4 text-sm text-muted-foreground">
