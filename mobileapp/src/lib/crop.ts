@@ -75,6 +75,23 @@ export const clampCropRect = (
     return { x, y, width, height };
 };
 
+/**
+ * Map a pixel crop from displayed image dimensions to source image pixels.
+ */
+export const pixelCropToSourceRect = (
+    pixelCrop: { x: number; y: number; width: number; height: number },
+    image: Pick<HTMLImageElement, "width" | "height" | "naturalWidth" | "naturalHeight">,
+): CropRect => {
+    const scaleX = image.naturalWidth / image.width;
+    const scaleY = image.naturalHeight / image.height;
+    return {
+        x: Math.round(pixelCrop.x * scaleX),
+        y: Math.round(pixelCrop.y * scaleY),
+        width: Math.round(pixelCrop.width * scaleX),
+        height: Math.round(pixelCrop.height * scaleY),
+    };
+};
+
 const rotationRadians = (degrees: number): number => (degrees * Math.PI) / 180;
 
 const boundingBoxForRotation = (
