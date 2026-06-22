@@ -226,23 +226,27 @@ export const loginSRP = async (
 
     let authResponse = await verifySRP(http, srpAttributes, kek);
 
-    if (authResponse.passkeySessionID && !authResponse.twoFactorSessionID) {
+    // V1 is set for TOTP-only; V2 when both passkey and TOTP are enabled. The
+    // server sends the unused field as "" — use || not ?? (see Ente accounts).
+    const twoFactorSessionID =
+        authResponse.twoFactorSessionID ||
+        authResponse.twoFactorSessionIDV2;
+
+    if (authResponse.passkeySessionID && !twoFactorSessionID) {
         throw new Error(
             "Passkey-only 2FA is not supported — use TOTP or no 2FA",
         );
     }
 
-    if (
-        authResponse.twoFactorSessionID ||
-        authResponse.twoFactorSessionIDV2
-    ) {
+    if (twoFactorSessionID) {
         if (!totp) {
             throw new Error("2FA code required (pass totp in credentials)");
         }
-        const sessionID =
-            authResponse.twoFactorSessionIDV2 ??
-            authResponse.twoFactorSessionID!;
-        const twoFactorResponse = await verifyTwoFactor(http, totp, sessionID);
+        const twoFactorResponse = await verifyTwoFactor(
+            http,
+            totp,
+            twoFactorSessionID,
+        );
         authResponse = { ...twoFactorResponse, srpM2: "" };
     }
 
