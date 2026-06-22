@@ -1114,14 +1114,6 @@ export function PhotoViewer({
                             playsInline
                         />
                     </div>
-                ) : cropMode && isActive && slideMedia?.url ? (
-                    <CropEditorOverlay
-                        file={slideFile}
-                        imageUrl={slideMedia.url}
-                        mimeType={mimeTypeForFile(slideFile)}
-                        onCancel={() => setCropMode(false)}
-                        onSaved={handleCropSaved}
-                    />
                 ) : (
                     <div
                         className="absolute inset-0 flex items-center justify-center"
@@ -1441,6 +1433,13 @@ export function PhotoViewer({
                         setShowVideoCrop(false);
                         handleDerivedFileUploaded(uploaded);
                     }}
+                />
+            ) : null}
+            {cropMode && file ? (
+                <CropEditorOverlay
+                    file={file}
+                    onCancel={() => setCropMode(false)}
+                    onSaved={handleCropSaved}
                 />
             ) : null}
             <ConfirmDeleteModal

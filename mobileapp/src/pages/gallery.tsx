@@ -7,8 +7,9 @@ import {
 } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/router";
-import { ArrowDownUp, Shuffle, Upload } from "lucide-react";
+import { ArrowDownUp, ShieldOff, Shuffle, Upload } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
+import { ConfirmPanicModal } from "@/components/ConfirmPanicModal";
 import { PageLoader } from "@/components/PageLoader";
 import { SyncBanner } from "@/components/SyncBanner";
 import { TagFilterBar } from "@/components/TagFilterBar";
@@ -99,6 +100,9 @@ export default function GalleryPage(): JSX.Element {
 
     const [viewerFileId, setViewerFileId] = useState<number | undefined>();
     const [showUpload, setShowUpload] = useState<boolean>(false);
+    const [showPanicConfirm, setShowPanicConfirm] = useState<boolean>(false);
+    const [panicWorking, setPanicWorking] = useState<boolean>(false);
+    const panic = useSessionStore((s) => s.panic);
 
     useEffect(() => {
         reconcileSessionWithCore();
@@ -114,6 +118,19 @@ export default function GalleryPage(): JSX.Element {
     const handleCloseViewer = useCallback((): void => {
         setViewerFileId(undefined);
     }, []);
+
+    const handlePanicConfirm = useCallback((): void => {
+        setPanicWorking(true);
+        void panic()
+            .then(() => {
+                window.close();
+                void router.replace("/login");
+            })
+            .finally(() => {
+                setPanicWorking(false);
+                setShowPanicConfirm(false);
+            });
+    }, [panic, router]);
 
     const handleFileUpdated = useCallback((file: EnteFile): void => {
         setViewerFileId(file.id);
@@ -175,6 +192,16 @@ export default function GalleryPage(): JSX.Element {
                     >
                         <Upload />
                     </Button>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="icon-sm"
+                        className="text-destructive hover:text-destructive"
+                        aria-label="Wipe local data"
+                        onClick={() => setShowPanicConfirm(true)}
+                    >
+                        <ShieldOff />
+                    </Button>
                 </>
             }
         >
@@ -201,6 +228,12 @@ export default function GalleryPage(): JSX.Element {
                     onUploaded={() => setShowUpload(false)}
                 />
             ) : null}
+            <ConfirmPanicModal
+                open={showPanicConfirm}
+                isWorking={panicWorking}
+                onCancel={() => setShowPanicConfirm(false)}
+                onConfirm={handlePanicConfirm}
+            />
         </AppShell>
     );
 }

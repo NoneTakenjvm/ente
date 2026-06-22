@@ -17,3 +17,7 @@ export const getLocalMediaOverride = (
 export const clearLocalMediaOverride = (fileId: number): void => {
     overrides.delete(fileId);
 };
+
+export const clearAllLocalMediaOverrides = (): void => {
+    overrides.clear();
+};

@@ -16,23 +16,16 @@ import { RotateCcw, RotateCw } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { getEnteCore } from "@/core";
 import {
-    encodeCroppedJpeg,
-    pixelCropToSourceRect,
-} from "@/lib/crop";
-import { rotateImageBytes } from "@/lib/rotate";
+    bakeRotation,
+    encodeBakedCrop,
+    fullImageCrop,
+} from "@/lib/crop-editor";
 import { useLibraryStore } from "@/stores/library-store";
 import type { EnteFile } from "ente-media/file";
 
 const CROP_WORKSPACE_INSET_PX = 16;
-
-const fullImageCrop = (width: number, height: number): Crop => ({
-    unit: "px",
-    x: 0,
-    y: 0,
-    width,
-    height,
-});
 
 export interface CropSaveResult {
     optimisticFile: EnteFile;
@@ -42,16 +35,12 @@ export interface CropSaveResult {
 
 interface CropEditorOverlayProps {
     file: EnteFile;
-    imageUrl: string;
-    mimeType: string;
     onCancel: () => void;
     onSaved: (result: CropSaveResult) => void;
 }
 
 export function CropEditorOverlay({
     file,
-    imageUrl,
-    mimeType,
     onCancel,
     onSaved,
 }: CropEditorOverlayProps): JSX.Element {
@@ -66,24 +55,27 @@ export function CropEditorOverlay({
     const [loading, setLoading] = useState<boolean>(true);
     const [rotating, setRotating] = useState<boolean>(false);
     const [saving, setSaving] = useState<boolean>(false);
+    const [imageReady, setImageReady] = useState<boolean>(false);
     const [error, setError] = useState<string | undefined>();
+    const [workspaceSize, setWorkspaceSize] = useState<
+        { width: number; height: number } | undefined
+    >();
 
     const imageRef = useRef<HTMLImageElement>(null);
     const workingUrlRef = useRef<string | undefined>(undefined);
+    const workspaceRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         let cancelled = false;
 
         const loadBytes = async (): Promise<void> => {
             try {
-                const response = await fetch(imageUrl);
-                const buffer = await response.arrayBuffer();
+                const bytes = await getEnteCore().getDecryptedFile(file);
                 if (cancelled) {
                     return;
                 }
-                const bytes = new Uint8Array(buffer);
                 const url = URL.createObjectURL(
-                    new Blob([Uint8Array.from(bytes)], { type: mimeType }),
+                    new Blob([Uint8Array.from(bytes)], { type: "image/jpeg" }),
                 );
                 workingUrlRef.current = url;
                 setWorkingBytes(bytes);
@@ -106,7 +98,29 @@ export function CropEditorOverlay({
                 workingUrlRef.current = undefined;
             }
         };
-    }, [imageUrl, mimeType]);
+    }, [file]);
+
+    useEffect(() => {
+        const element = workspaceRef.current;
+        if (!element) {
+            return;
+        }
+        const observer = new ResizeObserver((entries) => {
+            const entry = entries[0];
+            if (!entry) {
+                return;
+            }
+            const { width, height } = entry.contentRect;
+            setWorkspaceSize({
+                width: Math.max(0, width - CROP_WORKSPACE_INSET_PX * 2),
+                height: Math.max(0, height - CROP_WORKSPACE_INSET_PX * 2),
+            });
+        });
+        observer.observe(element);
+        return (): void => {
+            observer.disconnect();
+        };
+    }, [loading]);
 
     const replaceWorkingImage = useCallback((bytes: Uint8Array): void => {
         const url = URL.createObjectURL(
@@ -118,6 +132,9 @@ export function CropEditorOverlay({
         workingUrlRef.current = url;
         setWorkingBytes(bytes);
         setWorkingUrl(url);
+        setCrop(undefined);
+        setCompletedCrop(undefined);
+        setImageReady(false);
     }, []);
 
     const handleImageLoad = useCallback(
@@ -127,6 +144,7 @@ export function CropEditorOverlay({
             const nextCrop = fullImageCrop(image.width, image.height);
             setCrop(nextCrop);
             setCompletedCrop(convertToPixelCrop(nextCrop, image.width, image.height));
+            setImageReady(true);
         },
         [],
     );
@@ -138,7 +156,10 @@ export function CropEditorOverlay({
             }
             setRotating(true);
             setError(undefined);
-            void rotateImageBytes(workingBytes, mimeType, degrees)
+            setImageReady(false);
+            setCrop(undefined);
+            setCompletedCrop(undefined);
+            void bakeRotation(workingBytes, "image/jpeg", degrees)
                 .then((rotated) => {
                     replaceWorkingImage(rotated.bytes);
                 })
@@ -148,23 +169,23 @@ export function CropEditorOverlay({
                             rotateError.message :
                             "Could not rotate image",
                     );
+                    setImageReady(true);
                 })
                 .finally(() => {
                     setRotating(false);
                 });
         },
-        [mimeType, replaceWorkingImage, rotating, saving, workingBytes],
+        [replaceWorkingImage, rotating, saving, workingBytes],
     );
 
     const handleSave = useCallback((): void => {
         const image = imageRef.current;
-        if (!workingBytes || !image || !completedCrop || saving) {
+        if (!workingBytes || !image || !completedCrop || saving || !imageReady) {
             return;
         }
         setSaving(true);
         setError(undefined);
-        const cropRect = pixelCropToSourceRect(completedCrop, image);
-        void encodeCroppedJpeg(workingBytes, cropRect)
+        void encodeBakedCrop(workingBytes, completedCrop, image)
             .then((encoded) => {
                 const { optimisticFile, finalize } = cropAndReplaceFileOptimistic(
                     file.id,
@@ -189,6 +210,7 @@ export function CropEditorOverlay({
         completedCrop,
         cropAndReplaceFileOptimistic,
         file.id,
+        imageReady,
         onSaved,
         saving,
         workingBytes,
@@ -207,9 +229,21 @@ export function CropEditorOverlay({
     }, [onCancel, saving]);
 
     const isBusy = loading || rotating || saving;
+    const imageStyle =
+        workspaceSize ?
+            {
+                maxWidth: workspaceSize.width,
+                maxHeight: workspaceSize.height,
+            } :
+            undefined;
 
     return (
-        <div className="absolute inset-0 z-20 flex flex-col bg-black/80">
+        <div
+            className="fixed inset-0 z-[60] flex flex-col bg-black/90"
+            onPointerDown={(event) => {
+                event.stopPropagation();
+            }}
+        >
             <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/50 bg-background/95 px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
                 <Button
                     type="button"
@@ -224,7 +258,7 @@ export function CropEditorOverlay({
                     type="button"
                     size="sm"
                     onClick={handleSave}
-                    disabled={isBusy || !completedCrop}
+                    disabled={isBusy || !completedCrop || !imageReady}
                 >
                     {saving ? (
                         <>
@@ -251,12 +285,13 @@ export function CropEditorOverlay({
                     </div>
                 ) : (
                     <div
-                        className="flex min-h-0 w-full flex-1 items-center justify-center"
+                        ref={workspaceRef}
+                        className="flex min-h-0 w-full flex-1 touch-none items-center justify-center"
                         style={{ padding: CROP_WORKSPACE_INSET_PX }}
                     >
                         <ReactCrop
                             crop={crop}
-                            disabled={isBusy}
+                            disabled={isBusy || !imageReady}
                             onChange={(nextCrop) => {
                                 setCrop(nextCrop);
                             }}
@@ -273,13 +308,16 @@ export function CropEditorOverlay({
                                     ),
                                 );
                             }}
+                            style={imageStyle}
                             className="max-h-full max-w-full"
                         >
                             <img
+                                key={workingUrl}
                                 ref={imageRef}
                                 src={workingUrl}
                                 alt=""
-                                className="block max-h-full max-w-full object-contain"
+                                className="block object-contain"
+                                style={imageStyle}
                                 onLoad={handleImageLoad}
                                 draggable={false}
                             />

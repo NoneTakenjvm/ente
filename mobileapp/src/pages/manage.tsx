@@ -252,6 +252,11 @@ export default function ManagePage(): JSX.Element {
             0;
 
     const isDedupTab = tab === "exact" || tab === "similar";
+    const isCompressTab = tab === "compress";
+    const showCompressLoader =
+        isCompressTab &&
+        !initialLoadDone &&
+        (syncStatus === "loadingFromCache" || syncStatus === "syncing");
 
     if (!isSessionAuthenticated()) {
         return <PageLoader message="Redirecting to sign in…" />;
@@ -342,7 +347,14 @@ export default function ManagePage(): JSX.Element {
                 </TabsContent>
 
                 <TabsContent value="compress" className="flex min-h-0 flex-1 flex-col">
-                    <ManageCompressPanel files={allFiles} />
+                    {showCompressLoader ? (
+                        <PageLoader message="Loading your library…" />
+                    ) : (
+                        <ManageCompressPanel
+                            files={allFiles}
+                            libraryLoaded={initialLoadDone}
+                        />
+                    )}
                 </TabsContent>
 
                 {isDedupTab ? (

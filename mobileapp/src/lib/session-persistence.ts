@@ -98,6 +98,13 @@ export const clearPersistedSession = (): void => {
     localStorage.removeItem(sessionStorageKey);
 };
 
+export const clearPersistedWrapKey = (): void => {
+    if (!isBrowser()) {
+        return;
+    }
+    localStorage.removeItem(wrapKeyStorageKey);
+};
+
 export const markSessionLocked = (email: string): void => {
     if (!isBrowser()) {
         return;

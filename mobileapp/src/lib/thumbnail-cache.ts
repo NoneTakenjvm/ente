@@ -64,6 +64,24 @@ export const subscribeThumbnail = (
 export const getThumbnailEntry = (fileId: number): ThumbnailEntry =>
     cache.get(fileId) ?? idleEntry;
 
+/**
+ * Return decrypted thumbnail bytes when the in-memory cache is ready.
+ */
+export const getCachedThumbnailBytes = async (
+    fileId: number,
+): Promise<Uint8Array | undefined> => {
+    const entry = cache.get(fileId);
+    if (entry?.status !== "ready" || !entry.url) {
+        return undefined;
+    }
+    try {
+        const response = await fetch(entry.url);
+        return new Uint8Array(await response.arrayBuffer());
+    } catch {
+        return undefined;
+    }
+};
+
 const setReady = (fileId: number, bytes: Uint8Array): void => {
     const blob: Blob = new Blob([Uint8Array.from(bytes)], {
         type: "image/jpeg",

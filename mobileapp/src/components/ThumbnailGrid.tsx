@@ -1,4 +1,4 @@
-import { memo, useMemo, type JSX } from "react";
+import { memo, useCallback, useMemo, useRef, useState, type JSX, type RefObject } from "react";
 import AutoSizer from "react-virtualized-auto-sizer";
 import {
     FixedSizeList,
@@ -23,6 +23,7 @@ import { ThumbnailCell } from "./ThumbnailCell";
 export interface ThumbnailGridSelection {
     selectedIds: Set<number>;
     onToggle: (file: EnteFile) => void;
+    onSelectMany?: (fileIds: number[], mode: "add" | "toggle") => void;
     isAlreadyCompressed?: (file: EnteFile) => boolean;
     disabled?: boolean;
 }
@@ -31,6 +32,8 @@ interface ThumbnailGridProps {
     files: EnteFile[];
     onOpenFile?: (file: EnteFile) => void;
     selection?: ThumbnailGridSelection;
+    /** Bottom padding so the last row clears a fixed footer (px). */
+    footerInsetPx?: number;
 }
 
 interface RowData {
@@ -68,6 +71,7 @@ const GridRow = memo(function GridRow({
                     onToggleSelect={selection?.onToggle}
                     isAlreadyCompressed={selection?.isAlreadyCompressed?.(file)}
                     disabled={selection?.disabled}
+                    tapSelects={selection !== undefined}
                 />
             ))}
         </div>
@@ -80,6 +84,9 @@ interface SizedGridProps {
     height: number;
     onOpenFile?: (file: EnteFile) => void;
     selection?: ThumbnailGridSelection;
+    footerInsetPx: number;
+    onScrollOffsetChange: (offset: number) => void;
+    listRef: RefObject<FixedSizeList<RowData> | null>;
 }
 
 function SizedGrid({
@@ -88,6 +95,9 @@ function SizedGrid({
     height,
     onOpenFile,
     selection,
+    footerInsetPx,
+    onScrollOffsetChange,
+    listRef,
 }: SizedGridProps): JSX.Element {
     const layout: ThumbnailGridLayout = useMemo(
         () => computeThumbnailGridLayout(width),
@@ -101,23 +111,181 @@ function SizedGrid({
 
     return (
         <FixedSizeList
+            ref={listRef}
             key={`${width}-${layout.columns}`}
             height={height}
             width={width}
             itemCount={rowCount}
             itemSize={layout.rowHeight}
             itemData={itemData}
+            onScroll={(props) => {
+                onScrollOffsetChange(props.scrollOffset);
+            }}
+            style={{ paddingBottom: footerInsetPx }}
         >
             {GridRow}
         </FixedSizeList>
     );
 }
 
+interface MarqueeRect {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
+const normalizeRect = (a: { x: number; y: number }, b: { x: number; y: number }): MarqueeRect => ({
+    x: Math.min(a.x, b.x),
+    y: Math.min(a.y, b.y),
+    width: Math.abs(a.x - b.x),
+    height: Math.abs(a.y - b.y),
+});
+
+const fileIdsInMarquee = (
+    files: EnteFile[],
+    layout: ThumbnailGridLayout,
+    scrollTop: number,
+    rect: MarqueeRect,
+): number[] => {
+    const ids: number[] = [];
+    const rowCount = rowCountForFiles(files.length, layout.columns);
+    for (let row = 0; row < rowCount; row += 1) {
+        const rowTop = row * layout.rowHeight - scrollTop;
+        const rowBottom = rowTop + layout.itemSize;
+        if (rowBottom < rect.y || rowTop > rect.y + rect.height) {
+            continue;
+        }
+        for (let col = 0; col < layout.columns; col += 1) {
+            const index = row * layout.columns + col;
+            if (index >= files.length) {
+                break;
+            }
+            const cellLeft =
+                layout.paddingInline + col * (layout.itemSize + layout.gap);
+            const cellRight = cellLeft + layout.itemSize;
+            const cellTop = rowTop;
+            const cellBottom = rowBottom;
+            const overlaps =
+                cellRight >= rect.x &&
+                cellLeft <= rect.x + rect.width &&
+                cellBottom >= rect.y &&
+                cellTop <= rect.y + rect.height;
+            if (overlaps) {
+                ids.push(files[index].id);
+            }
+        }
+    }
+    return ids;
+};
+
 export function ThumbnailGrid({
     files,
     onOpenFile,
     selection,
+    footerInsetPx = 0,
 }: ThumbnailGridProps): JSX.Element {
+    const listRef = useRef<FixedSizeList<RowData>>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
+    const scrollTopRef = useRef<number>(0);
+    const dragStartRef = useRef<{ x: number; y: number } | undefined>(undefined);
+    const [marquee, setMarquee] = useState<MarqueeRect | undefined>();
+    const [gridWidth, setGridWidth] = useState<number>(0);
+
+    const handleScrollOffsetChange = useCallback((offset: number): void => {
+        scrollTopRef.current = offset;
+    }, []);
+
+    const finishMarquee = useCallback(
+        (endX: number, endY: number): void => {
+            const start = dragStartRef.current;
+            dragStartRef.current = undefined;
+            setMarquee(undefined);
+            if (!start || !selection?.onSelectMany || !containerRef.current) {
+                return;
+            }
+            const rect = normalizeRect(start, { x: endX, y: endY });
+            if (rect.width < 8 && rect.height < 8) {
+                return;
+            }
+            const layout = computeThumbnailGridLayout(gridWidth);
+            const fileIds = fileIdsInMarquee(
+                files,
+                layout,
+                scrollTopRef.current,
+                rect,
+            );
+            if (fileIds.length > 0) {
+                selection.onSelectMany(fileIds, "add");
+            }
+        },
+        [files, gridWidth, selection],
+    );
+
+    const handlePointerDown = useCallback(
+        (event: React.PointerEvent<HTMLDivElement>): void => {
+            if (!selection?.onSelectMany || selection.disabled) {
+                return;
+            }
+            if (event.pointerType === "mouse" && event.button !== 0) {
+                return;
+            }
+            const bounds = containerRef.current?.getBoundingClientRect();
+            if (!bounds) {
+                return;
+            }
+            dragStartRef.current = {
+                x: event.clientX - bounds.left,
+                y: event.clientY - bounds.top,
+            };
+            setMarquee({
+                x: dragStartRef.current.x,
+                y: dragStartRef.current.y,
+                width: 0,
+                height: 0,
+            });
+            containerRef.current?.setPointerCapture(event.pointerId);
+        },
+        [selection],
+    );
+
+    const handlePointerMove = useCallback(
+        (event: React.PointerEvent<HTMLDivElement>): void => {
+            const start = dragStartRef.current;
+            if (!start) {
+                return;
+            }
+            const bounds = containerRef.current?.getBoundingClientRect();
+            if (!bounds) {
+                return;
+            }
+            setMarquee(
+                normalizeRect(start, {
+                    x: event.clientX - bounds.left,
+                    y: event.clientY - bounds.top,
+                }),
+            );
+        },
+        [],
+    );
+
+    const handlePointerUp = useCallback(
+        (event: React.PointerEvent<HTMLDivElement>): void => {
+            if (!dragStartRef.current) {
+                return;
+            }
+            const bounds = containerRef.current?.getBoundingClientRect();
+            if (bounds) {
+                finishMarquee(
+                    event.clientX - bounds.left,
+                    event.clientY - bounds.top,
+                );
+            }
+            containerRef.current?.releasePointerCapture(event.pointerId);
+        },
+        [finishMarquee],
+    );
+
     if (files.length === 0) {
         return (
             <Empty className="flex-1 border-0">
@@ -137,8 +305,19 @@ export function ThumbnailGrid({
     }
 
     return (
-        <div className="min-h-0 flex-1">
-            <AutoSizer>
+        <div
+            ref={containerRef}
+            className="relative min-h-0 flex-1 touch-none select-none"
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+        >
+            <AutoSizer
+                onResize={({ width }: { width: number }) => {
+                    setGridWidth(width);
+                }}
+            >
                 {({ height, width }: { height: number; width: number }) => (
                     <SizedGrid
                         files={files}
@@ -146,9 +325,23 @@ export function ThumbnailGrid({
                         height={height}
                         onOpenFile={onOpenFile}
                         selection={selection}
+                        footerInsetPx={footerInsetPx}
+                        onScrollOffsetChange={handleScrollOffsetChange}
+                        listRef={listRef}
                     />
                 )}
             </AutoSizer>
+            {marquee ? (
+                <div
+                    className="pointer-events-none absolute z-30 border border-primary bg-primary/20"
+                    style={{
+                        left: marquee.x,
+                        top: marquee.y,
+                        width: marquee.width,
+                        height: marquee.height,
+                    }}
+                />
+            ) : null}
         </div>
     );
 }

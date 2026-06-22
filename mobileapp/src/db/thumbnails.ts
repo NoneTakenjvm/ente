@@ -6,6 +6,12 @@ export interface ServerCiphertext {
     decryptionHeader: string;
 }
 
+export const hasThumbnailCiphertext = async (fileId: number): Promise<boolean> => {
+    const db = await getOrganizerDB();
+    const record: ThumbnailRecord | undefined = await db.get("thumbnails", fileId);
+    return record !== undefined;
+};
+
 export const getThumbnailCiphertext = async (
     fileId: number,
 ): Promise<ServerCiphertext | undefined> => {
