@@ -5,10 +5,12 @@ import {
     resetEnteCore,
     type LoginCredentials,
 } from "@/core";
-import { wipeOrganizerDB } from "@/db";
+import { wipeOrganizerDB, wipeOrganizerDBForUser } from "@/db";
 import { clearSessionCacheKey } from "@/lib/cache-key";
+import { clearAllLocalMediaOverrides } from "@/lib/local-media-overrides";
 import {
     clearPersistedSession,
+    clearPersistedWrapKey,
     clearSessionLock,
     getLockedSessionEmail,
     isSessionLocked,
@@ -51,8 +53,9 @@ const resetDependentStores = (): void => {
     void import("./phash-index-store").then(({ usePhashIndexStore }) => {
         usePhashIndexStore.getState().reset();
     });
-    void import("./ui-store").then(({ usePhashJobStore, useUIStore }) => {
+    void import("./ui-store").then(({ useCompressJobStore, usePhashJobStore, useUIStore }) => {
         usePhashJobStore.getState().reset();
+        useCompressJobStore.getState().reset();
         useUIStore.getState().setDedupDryRun(false);
     });
 };
@@ -61,6 +64,7 @@ const clearMemoryState = (): void => {
     getEnteCore().logout();
     clearSessionCacheKey();
     clearThumbnailCache();
+    clearAllLocalMediaOverrides();
     resetDependentStores();
 };
 
@@ -180,9 +184,15 @@ const createSessionStore: StateCreator<SessionState> = (set) => ({
     },
 
     panic: async (): Promise<void> => {
+        const userId = useSessionStore.getState().userID;
         clearPersistedSession();
+        clearPersistedWrapKey();
         clearSessionLock();
-        await wipeOrganizerDB();
+        if (userId !== undefined) {
+            await wipeOrganizerDBForUser(userId);
+        } else {
+            await wipeOrganizerDB();
+        }
         clearLocalState();
         set({
             status: "idle",

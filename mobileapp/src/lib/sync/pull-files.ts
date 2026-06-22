@@ -15,6 +15,7 @@ import {
     didFileContentChange,
     mergeFileChangesIntoLibrary,
 } from "@/lib/sync/merge-files";
+import { removePhashEntry } from "@/lib/similarity-job";
 
 const collectionSyncConcurrency = 2;
 
@@ -90,6 +91,18 @@ export const pullFiles = async (
                                 didFileContentChange(existing, change.file)
                             ) {
                                 await deleteThumbnailCiphertext(change.id);
+                                await removePhashEntry(change.id);
+                                void import("@/stores/phash-index-store").then(
+                                    ({ usePhashIndexStore }) => {
+                                        const { entries, setEntries } =
+                                            usePhashIndexStore.getState();
+                                        if (entries.has(change.id)) {
+                                            const next = new Map(entries);
+                                            next.delete(change.id);
+                                            setEntries(next);
+                                        }
+                                    },
+                                );
                             }
                         }
                     }

@@ -97,6 +97,17 @@ export const wipeOrganizerDB = async (): Promise<void> => {
 };
 
 /**
+ * Delete organizer data for a specific user regardless of active binding.
+ */
+export const wipeOrganizerDBForUser = async (userId: number): Promise<void> => {
+    if (activeUserId === userId) {
+        dbPromise = undefined;
+        activeUserId = undefined;
+    }
+    await deleteDB(dbNameForUser(userId));
+};
+
+/**
  * Return true if encrypted file metadata exists on disk for a user.
  */
 export const hasCachedLibrary = async (userId: number): Promise<boolean> => {

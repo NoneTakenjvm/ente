@@ -26,13 +26,16 @@ import { useLibraryStore } from "@/stores/library-store";
 import type { EnteFile } from "ente-media/file";
 
 const DEFAULT_VIDEO_CRF = 28;
+const COMPRESS_FOOTER_INSET_PX = 220;
 
 interface ManageCompressPanelProps {
     files: EnteFile[];
+    libraryLoaded: boolean;
 }
 
 export function ManageCompressPanel({
     files,
+    libraryLoaded,
 }: ManageCompressPanelProps): JSX.Element {
     const compressAndUploadMedia = useLibraryStore((s) => s.compressAndUploadMedia);
 
@@ -55,11 +58,7 @@ export function ManageCompressPanel({
         [candidates],
     );
 
-    const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set(
-        candidates
-            .filter((file) => !isAlreadyCompressed(file))
-            .map((file) => file.id),
-    ));
+    const [selectedIds, setSelectedIds] = useState<Set<number> | null>(null);
     const [quality, setQuality] = useState<number>(DEFAULT_JPEG_QUALITY);
     const [videoCrf, setVideoCrf] = useState<number>(DEFAULT_VIDEO_CRF);
     const [resultMessage, setResultMessage] = useState<string | undefined>();
@@ -68,19 +67,33 @@ export function ManageCompressPanel({
     const jobAbort = useRef<AbortController | undefined>(undefined);
     const jobPaused = useRef<boolean>(false);
 
+    const defaultSelectedIds = useMemo(
+        () =>
+            new Set(
+                candidates
+                    .filter((file) => !isAlreadyCompressed(file))
+                    .map((file) => file.id),
+            ),
+        [candidates],
+    );
+
+    const resolvedSelectedIds =
+        selectedIds ?? (libraryLoaded ? defaultSelectedIds : new Set<number>());
+
     const activeSelectedIds = useMemo(() => {
         const next = new Set<number>();
-        for (const fileId of selectedIds) {
+        for (const fileId of resolvedSelectedIds) {
             if (candidateIds.has(fileId)) {
                 next.add(fileId);
             }
         }
         return next;
-    }, [candidateIds, selectedIds]);
+    }, [candidateIds, resolvedSelectedIds]);
 
     const toggleFile = useCallback((file: EnteFile): void => {
         setSelectedIds((current) => {
-            const next = new Set(current);
+            const base = current ?? defaultSelectedIds;
+            const next = new Set(base);
             if (next.has(file.id)) {
                 next.delete(file.id);
             } else {
@@ -88,7 +101,27 @@ export function ManageCompressPanel({
             }
             return next;
         });
-    }, []);
+    }, [defaultSelectedIds]);
+
+    const selectMany = useCallback((fileIds: number[], mode: "add" | "toggle"): void => {
+        setSelectedIds((current) => {
+            const base = current ?? defaultSelectedIds;
+            const next = new Set(base);
+            for (const fileId of fileIds) {
+                if (!candidateIds.has(fileId)) {
+                    continue;
+                }
+                if (mode === "add") {
+                    next.add(fileId);
+                } else if (next.has(fileId)) {
+                    next.delete(fileId);
+                } else {
+                    next.add(fileId);
+                }
+            }
+            return next;
+        });
+    }, [candidateIds, defaultSelectedIds]);
 
     const allSelectableSelected =
         candidates.length > 0 &&
@@ -107,8 +140,9 @@ export function ManageCompressPanel({
             const next = !current;
             if (!next) {
                 setSelectedIds((selected) => {
+                    const base = selected ?? defaultSelectedIds;
                     const filtered = new Set<number>();
-                    for (const fileId of selected) {
+                    for (const fileId of base) {
                         const file = files.find((entry) => entry.id === fileId);
                         if (file && !isAlreadyCompressed(file)) {
                             filtered.add(fileId);
@@ -199,135 +233,139 @@ export function ManageCompressPanel({
         () => ({
             selectedIds: activeSelectedIds,
             onToggle: toggleFile,
+            onSelectMany: selectMany,
             isAlreadyCompressed,
             disabled: jobRunning,
         }),
-        [activeSelectedIds, jobRunning, toggleFile],
+        [activeSelectedIds, jobRunning, selectMany, toggleFile],
     );
 
     return (
-        <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-3 pb-24">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs text-muted-foreground">
-                    {candidates.length} compressible file
-                    {candidates.length === 1 ? "" : "s"} · {activeSelectedIds.size} selected
-                </p>
-                <div className="flex flex-wrap gap-2">
-                    <Button
-                        type="button"
-                        variant={includePreviouslyCompressed ? "default" : "outline"}
-                        size="sm"
-                        disabled={jobRunning}
-                        onClick={handleIncludeToggle}
-                    >
-                        {includePreviouslyCompressed ?
-                            "Including compressed" :
-                            "Skip compressed"}
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        disabled={jobRunning || candidates.length === 0}
-                        onClick={toggleAll}
-                    >
-                        {allSelectableSelected ? "Deselect all" : "Select all"}
-                    </Button>
+        <>
+            <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-3">
+                <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs text-muted-foreground">
+                        {candidates.length} compressible file
+                        {candidates.length === 1 ? "" : "s"} · {activeSelectedIds.size} selected
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                        <Button
+                            type="button"
+                            variant={includePreviouslyCompressed ? "default" : "outline"}
+                            size="sm"
+                            disabled={jobRunning}
+                            onClick={handleIncludeToggle}
+                        >
+                            {includePreviouslyCompressed ?
+                                "Including compressed" :
+                                "Skip compressed"}
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            disabled={jobRunning || candidates.length === 0}
+                            onClick={toggleAll}
+                        >
+                            {allSelectableSelected ? "Deselect all" : "Select all"}
+                        </Button>
+                    </div>
                 </div>
-            </div>
 
-            <div className="min-h-0 flex-1">
                 <ThumbnailGrid
                     files={candidates}
                     selection={gridSelection}
                     onOpenFile={setCompressTarget}
+                    footerInsetPx={COMPRESS_FOOTER_INSET_PX}
                 />
-            </div>
 
-            <Field>
-                <FieldLabel>JPEG quality {qualityPercent}%</FieldLabel>
-                <Slider
-                    min={MIN_JPEG_QUALITY * 100}
-                    max={MAX_JPEG_QUALITY * 100}
-                    value={[qualityPercent]}
-                    disabled={jobRunning}
-                    onValueChange={(value) => {
-                        const next = Array.isArray(value) ? value[0] : value;
-                        if (next !== undefined) {
-                            setQuality(next / 100);
-                        }
-                    }}
-                />
-            </Field>
-
-            <Field>
-                <FieldLabel>Video CRF {videoCrf}</FieldLabel>
-                <Slider
-                    min={18}
-                    max={32}
-                    value={[videoCrf]}
-                    disabled={jobRunning}
-                    onValueChange={(value) => {
-                        const next = Array.isArray(value) ? value[0] : value;
-                        if (next !== undefined) {
-                            setVideoCrf(next);
-                        }
-                    }}
-                />
-            </Field>
-
-            <div className="flex flex-wrap gap-2">
-                <Button
-                    type="button"
-                    size="sm"
-                    onClick={handleStartJob}
-                    disabled={jobRunning || activeSelectedIds.size === 0}
-                >
-                    {jobStatus === "paused" ? "Resume" : "Compress selected"}
-                </Button>
-                {jobRunning ? (
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={handlePauseJob}
-                    >
-                        Pause
-                    </Button>
+                {resultMessage ? (
+                    <Alert className="shrink-0">
+                        <AlertDescription>{resultMessage}</AlertDescription>
+                    </Alert>
                 ) : null}
-                {jobStatus === "done" || jobStatus === "error" ? (
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={resetJob}
-                    >
-                        Reset
-                    </Button>
+
+                {jobError ? (
+                    <Alert variant="destructive" className="shrink-0">
+                        <AlertDescription>{jobError}</AlertDescription>
+                    </Alert>
                 ) : null}
             </div>
 
-            {jobRunning ? (
-                <div className="flex flex-col gap-1">
-                    <Progress value={progressPercent} className="h-1" />
-                    <span className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Spinner className="size-3" />
-                        Compressing {jobProgress.current} / {jobProgress.total}
-                    </span>
+            <footer className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-30 flex flex-col gap-3 border-t border-border bg-background/95 px-4 py-3 backdrop-blur">
+                <Field>
+                    <FieldLabel>JPEG quality {qualityPercent}%</FieldLabel>
+                    <Slider
+                        min={MIN_JPEG_QUALITY * 100}
+                        max={MAX_JPEG_QUALITY * 100}
+                        value={[qualityPercent]}
+                        disabled={jobRunning}
+                        onValueChange={(value) => {
+                            const next = Array.isArray(value) ? value[0] : value;
+                            if (next !== undefined) {
+                                setQuality(next / 100);
+                            }
+                        }}
+                    />
+                </Field>
+
+                <Field>
+                    <FieldLabel>Video CRF {videoCrf}</FieldLabel>
+                    <Slider
+                        min={18}
+                        max={32}
+                        value={[videoCrf]}
+                        disabled={jobRunning}
+                        onValueChange={(value) => {
+                            const next = Array.isArray(value) ? value[0] : value;
+                            if (next !== undefined) {
+                                setVideoCrf(next);
+                            }
+                        }}
+                    />
+                </Field>
+
+                <div className="flex flex-wrap gap-2">
+                    <Button
+                        type="button"
+                        size="sm"
+                        onClick={handleStartJob}
+                        disabled={jobRunning || activeSelectedIds.size === 0}
+                    >
+                        {jobStatus === "paused" ? "Resume" : "Compress selected"}
+                    </Button>
+                    {jobRunning ? (
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={handlePauseJob}
+                        >
+                            Pause
+                        </Button>
+                    ) : null}
+                    {jobStatus === "done" || jobStatus === "error" ? (
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={resetJob}
+                        >
+                            Reset
+                        </Button>
+                    ) : null}
                 </div>
-            ) : null}
 
-            {resultMessage ? (
-                <Alert>
-                    <AlertDescription>{resultMessage}</AlertDescription>
-                </Alert>
-            ) : null}
-
-            {jobError ? (
-                <Alert variant="destructive">
-                    <AlertDescription>{jobError}</AlertDescription>
-                </Alert>
-            ) : null}
+                {jobRunning ? (
+                    <div className="flex flex-col gap-1">
+                        <Progress value={progressPercent} className="h-1" />
+                        <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <Spinner className="size-3" />
+                            Compressing {jobProgress.current} / {jobProgress.total}
+                        </span>
+                    </div>
+                ) : null}
+            </footer>
 
             {compressTarget ? (
                 <CompressionPanel
@@ -336,6 +374,6 @@ export function ManageCompressPanel({
                     onUploaded={() => setCompressTarget(undefined)}
                 />
             ) : null}
-        </div>
+        </>
     );
 }

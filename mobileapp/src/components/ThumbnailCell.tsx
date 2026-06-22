@@ -1,5 +1,11 @@
-import { memo, useEffect, useSyncExternalStore, type JSX } from "react";
-import { Checkbox } from "@/components/ui/checkbox";
+import {
+    memo,
+    useEffect,
+    useRef,
+    useSyncExternalStore,
+    type JSX,
+    type PointerEvent as ReactPointerEvent,
+} from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
@@ -11,6 +17,9 @@ import { Check, CircleCheck, Play } from "lucide-react";
 import { FileType } from "ente-media/file-type";
 import type { EnteFile } from "ente-media/file";
 
+const LONG_PRESS_MS = 450;
+const LONG_PRESS_MOVE_PX = 10;
+
 interface ThumbnailCellProps {
     file: EnteFile;
     size: number;
@@ -19,6 +28,8 @@ interface ThumbnailCellProps {
     onToggleSelect?: (file: EnteFile) => void;
     isAlreadyCompressed?: boolean;
     disabled?: boolean;
+    /** When true, tap toggles selection instead of opening. */
+    tapSelects?: boolean;
 }
 
 export const ThumbnailCell = memo(function ThumbnailCell({
@@ -29,6 +40,7 @@ export const ThumbnailCell = memo(function ThumbnailCell({
     onToggleSelect,
     isAlreadyCompressed = false,
     disabled = false,
+    tapSelects = false,
 }: ThumbnailCellProps): JSX.Element {
     const entry = useSyncExternalStore(
         (listener) => subscribeThumbnail(file.id, listener),
@@ -36,15 +48,72 @@ export const ThumbnailCell = memo(function ThumbnailCell({
         () => getThumbnailEntry(file.id),
     );
 
+    const pressTimerRef = useRef<number | undefined>(undefined);
+    const pressStartRef = useRef<{ x: number; y: number } | undefined>(undefined);
+    const longPressTriggeredRef = useRef<boolean>(false);
+
     useEffect(() => {
         if (entry.status === "idle") {
             requestThumbnail(file);
         }
     }, [entry.status, file]);
 
-    const hasSelectToggle = onToggleSelect !== undefined;
-    const handleOpen = (): void => {
+    useEffect(() => {
+        return (): void => {
+            if (pressTimerRef.current !== undefined) {
+                window.clearTimeout(pressTimerRef.current);
+            }
+        };
+    }, []);
+
+    const clearPress = (): void => {
+        if (pressTimerRef.current !== undefined) {
+            window.clearTimeout(pressTimerRef.current);
+            pressTimerRef.current = undefined;
+        }
+        pressStartRef.current = undefined;
+    };
+
+    const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>): void => {
         if (disabled) {
+            return;
+        }
+        longPressTriggeredRef.current = false;
+        pressStartRef.current = { x: event.clientX, y: event.clientY };
+        if (tapSelects && onOpen) {
+            pressTimerRef.current = window.setTimeout(() => {
+                pressTimerRef.current = undefined;
+                longPressTriggeredRef.current = true;
+                onOpen(file);
+            }, LONG_PRESS_MS);
+        }
+    };
+
+    const handlePointerMove = (event: ReactPointerEvent<HTMLButtonElement>): void => {
+        const start = pressStartRef.current;
+        if (!start || pressTimerRef.current === undefined) {
+            return;
+        }
+        if (
+            Math.hypot(event.clientX - start.x, event.clientY - start.y) >
+            LONG_PRESS_MOVE_PX
+        ) {
+            clearPress();
+        }
+    };
+
+    const handleClick = (): void => {
+        if (disabled) {
+            return;
+        }
+        if (longPressTriggeredRef.current) {
+            longPressTriggeredRef.current = false;
+            clearPress();
+            return;
+        }
+        clearPress();
+        if (tapSelects && onToggleSelect) {
+            onToggleSelect(file);
             return;
         }
         onOpen?.(file);
@@ -64,22 +133,34 @@ export const ThumbnailCell = memo(function ThumbnailCell({
                     "size-full",
                     "focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
                 )}
-                onClick={handleOpen}
-                disabled={disabled || !onOpen}
-                aria-label={`Open media ${file.id}`}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={clearPress}
+                onPointerCancel={clearPress}
+                onClick={handleClick}
+                disabled={disabled}
+                aria-label={
+                    tapSelects ?
+                        isSelected ?
+                            `Deselect media ${file.id}` :
+                            `Select media ${file.id}` :
+                        `Open media ${file.id}`
+                }
+                aria-pressed={tapSelects ? isSelected : undefined}
             >
-                {file.metadata.fileType === FileType.video && !hasSelectToggle ? (
+                {file.metadata.fileType === FileType.video && !tapSelects ? (
                     <span className="absolute bottom-1 right-1 z-10 rounded-full bg-black/60 p-1 text-white">
                         <Play className="size-3 fill-current" aria-hidden />
                     </span>
                 ) : null}
                 {entry.status === "ready" && entry.url ? (
                     <img
-                        className="size-full object-cover"
+                        className="pointer-events-none size-full object-cover"
                         src={entry.url}
                         alt=""
                         loading="lazy"
                         decoding="async"
+                        draggable={false}
                     />
                 ) : entry.status === "error" ? (
                     <span
@@ -100,28 +181,7 @@ export const ThumbnailCell = memo(function ThumbnailCell({
                     <CircleCheck className="size-3.5" strokeWidth={2.5} />
                 </span>
             ) : null}
-            {hasSelectToggle ? (
-                <label
-                    className="absolute top-1.5 right-1.5 z-20 flex size-6 cursor-pointer items-center justify-center rounded-md bg-background/80 p-0"
-                    onClick={(event) => {
-                        event.stopPropagation();
-                    }}
-                >
-                    <Checkbox
-                        checked={isSelected}
-                        disabled={disabled}
-                        onCheckedChange={() => {
-                            onToggleSelect(file);
-                        }}
-                        aria-label={
-                            isSelected ?
-                                `Deselect media ${file.id}` :
-                                `Select media ${file.id}`
-                        }
-                    />
-                </label>
-            ) : null}
-            {hasSelectToggle && isSelected ? (
+            {tapSelects && isSelected ? (
                 <>
                     <span
                         className="pointer-events-none absolute inset-0 z-[1] bg-primary/30"

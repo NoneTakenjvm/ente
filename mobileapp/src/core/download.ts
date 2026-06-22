@@ -12,14 +12,41 @@ export interface ServerCiphertext {
     decryptionHeader: string;
 }
 
+const retryAfterMs = (res: Response): number => {
+    const header = res.headers.get("Retry-After");
+    if (!header) {
+        return 1000;
+    }
+    const seconds = Number(header);
+    if (Number.isFinite(seconds) && seconds > 0) {
+        return seconds * 1000;
+    }
+    const dateMs = Date.parse(header);
+    if (Number.isFinite(dateMs)) {
+        return Math.max(0, dateMs - Date.now());
+    }
+    return 1000;
+};
+
 const fetchEncryptedBytes = async (
     http: HttpClient,
     session: CoreSession,
     url: string,
+    maxAttempts = 1,
 ): Promise<Uint8Array> => {
-    const res = await fetch(url, { headers: http.authHeaders() });
-    http.ensureOk(res);
-    return new Uint8Array(await res.arrayBuffer());
+    let attempt = 0;
+    while (attempt < maxAttempts) {
+        attempt += 1;
+        const res = await fetch(url, { headers: http.authHeaders() });
+        if (res.status === 429 && attempt < maxAttempts) {
+            http.logRateLimitHeaders(res, url);
+            await new Promise((resolve) => setTimeout(resolve, retryAfterMs(res) * attempt));
+            continue;
+        }
+        http.ensureOk(res);
+        return new Uint8Array(await res.arrayBuffer());
+    }
+    throw new Error(`HTTP 429 for ${url}`);
 };
 
 const thumbnailUrl = (
@@ -50,6 +77,7 @@ export const fetchEncryptedThumbnail = async (
         http,
         session,
         thumbnailUrl(http, session, file.id),
+        4,
     );
 
     return {
