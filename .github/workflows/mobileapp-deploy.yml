@@ -1,0 +1,49 @@
+name: "Deploy (NTPhotos)"
+
+on:
+    push:
+        branches: [main, ntphotos]
+        paths:
+            - ".github/workflows/mobileapp-deploy.yml"
+            - "mobileapp/**"
+            - "web/packages/base/**"
+            - "web/packages/media/**"
+            - "web/packages/utils/**"
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+jobs:
+    deploy:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+            - name: Setup node and enable npm caching
+              uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+              with:
+                  node-version: 24
+                  cache: "npm"
+                  cache-dependency-path: |
+                      web/package-lock.json
+                      mobileapp/package-lock.json
+
+            - name: Install Ente package dependencies
+              working-directory: web
+              run: npm ci --workspace ente-utils --workspace ente-base --workspace ente-media
+
+            - name: Build NTPhotos
+              working-directory: mobileapp
+              run: |
+                  npm ci
+                  npm run build
+
+            - name: Publish to Cloudflare Pages
+              uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+              with:
+                  accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  command: pages deploy mobileapp/out --project-name=ntphotos --commit-dirty=true --branch=main
