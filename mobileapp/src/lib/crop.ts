@@ -22,16 +22,14 @@ export type { CropRect };
 export const CROPPED_TAG = "cropped";
 
 /**
- * Return true when the file is a croppable image without the cropped tag.
+ * Return true when the file is a croppable image.
  */
 export const canCrop = (file: EnteFile): boolean =>
     file.metadata.fileType === FileType.image &&
-    !extractTags(file).includes(CROPPED_TAG) &&
     !isGifFile(file);
 
 export const canCropVideo = (file: EnteFile): boolean =>
-    file.metadata.fileType === FileType.video &&
-    !extractTags(file).includes(CROPPED_TAG);
+    file.metadata.fileType === FileType.video;
 
 /**
  * Derive the upload title for a cropped copy of the source file.

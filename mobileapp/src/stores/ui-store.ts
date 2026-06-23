@@ -97,6 +97,7 @@ interface UIState {
     setMediaDefaultOrder: () => void;
     reshuffleMedia: () => void;
     reconcileMediaShuffle: (fileIds: readonly number[]) => void;
+    substituteMediaShuffleFileId: (oldId: number, newId: number) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -143,6 +144,20 @@ export const useUIStore = create<UIState>((set) => ({
                 return state;
             }
             return { mediaShuffledFileIds: nextIds };
+        });
+    },
+    substituteMediaShuffleFileId: (oldId: number, newId: number): void => {
+        set((state) => {
+            if (state.mediaViewOrder !== "shuffled") {
+                return state;
+            }
+            const index = state.mediaShuffledFileIds.indexOf(oldId);
+            if (index === -1) {
+                return state;
+            }
+            const next = [...state.mediaShuffledFileIds];
+            next[index] = newId;
+            return { mediaShuffledFileIds: next };
         });
     },
 }));

@@ -1,4 +1,5 @@
 import type { EnteFile } from "ente-media/file";
+import { applyPendingShuffleSubstitutions } from "@/lib/shuffle-file-substitutions";
 
 /** Seeded PRNG (mulberry32). */
 const createRng = (seed: number): (() => number) => {
@@ -36,12 +37,15 @@ export const reconcileShuffledIds = (
     seed: number,
     previousOrder?: readonly number[],
 ): number[] => {
-    if (!previousOrder?.length) {
+    const resolvedPrevious = previousOrder?.length ?
+        applyPendingShuffleSubstitutions(previousOrder) :
+        undefined;
+    if (!resolvedPrevious?.length) {
         return shuffleIds([...fileIds], seed);
     }
     const idSet = new Set(fileIds);
     const ordered: number[] = [];
-    for (const id of previousOrder) {
+    for (const id of resolvedPrevious) {
         if (idSet.has(id)) {
             ordered.push(id);
         }

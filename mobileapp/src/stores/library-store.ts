@@ -35,6 +35,7 @@ import {
     upsertTagOutboxEntry,
 } from "@/lib/tag-outbox";
 import { enqueueDerivedReplace } from "@/lib/derived-replace-queue";
+import { registerShuffleFileSubstitution } from "@/lib/shuffle-file-substitutions";
 import {
     clearLocalMediaOverride,
     setLocalMediaOverride,
@@ -47,6 +48,7 @@ import {
 } from "./favorites-store";
 import { useAlbumStore } from "./album-store";
 import { useTagStore } from "./tag-store";
+import { useUIStore } from "./ui-store";
 import {
     buildCompressedOrganizerTags,
     compressedReplaceTitle,
@@ -220,6 +222,8 @@ const replaceSourceWithCompressed = async (
     await getEnteCore().moveFilesToTrash([sourceFile]);
 
     const sourceId = sourceFile.id;
+    registerShuffleFileSubstitution(sourceId, uploaded.id);
+    useUIStore.getState().substituteMediaShuffleFileId(sourceId, uploaded.id);
     const withoutSource = get().allFiles.filter((file) => file.id !== sourceId);
     const sourceIndex = get().allFiles.findIndex((file) => file.id === sourceId);
     const nextFiles =
