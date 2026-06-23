@@ -29,6 +29,7 @@ import {
 import { normalizeTagName } from "@/lib/tag-writes";
 import { isReservedTag, tagFileCount } from "@/lib/tags";
 import { cn } from "@/lib/utils";
+import { useVisualViewportSheetLayout } from "@/hooks/use-visual-viewport-sheet-layout";
 import { useTagStore } from "@/stores/tag-store";
 
 const SWIPE_DISMISS_THRESHOLD_MIN_PX = 50;
@@ -81,7 +82,15 @@ export function TagPickerSheet({
     const pointerIdRef = useRef<number | undefined>(undefined);
     const dragPxRef = useRef<number>(0);
     const onOpenChangeRef = useRef(onOpenChange);
-    onOpenChangeRef.current = onOpenChange;
+
+    useEffect(() => {
+        onOpenChangeRef.current = onOpenChange;
+    }, [onOpenChange]);
+
+    const { bottomInset, heightPx, syncLayout } = useVisualViewportSheetLayout(
+        open,
+        0.75,
+    );
 
     const libraryTags = useMemo(
         (): string[] =>
@@ -244,8 +253,7 @@ export function TagPickerSheet({
         };
     };
 
-    const handleCreateTag = (event: FormEvent): void => {
-        event.preventDefault();
+    const submitNewTag = (): void => {
         const name = normalizeTagName(newTag);
         if (!name || isReservedTag(name) || appliedTags.includes(name)) {
             return;
@@ -259,14 +267,32 @@ export function TagPickerSheet({
         clearCreateForm();
     };
 
+    const handleCreateTag = (event: FormEvent): void => {
+        event.preventDefault();
+        submitNewTag();
+    };
+
+    const handleInputBlur = (): void => {
+        requestAnimationFrame(() => {
+            syncLayout();
+        });
+    };
+
     return (
         <Sheet open={open} onOpenChange={handleOpenChange}>
             <SheetContent
                 side="bottom"
+                showCloseButton={false}
                 className={cn(
-                    "flex h-[75dvh] max-h-[75dvh] flex-col gap-0 overflow-hidden rounded-t-xl p-0",
+                    "flex flex-col gap-0 overflow-hidden rounded-t-xl p-0",
                     (isDismissDragging || dragPx > 0) && "transition-none",
                 )}
+                style={{
+                    bottom: bottomInset,
+                    top: "auto",
+                    height: heightPx,
+                    maxHeight: heightPx,
+                }}
             >
                 <div
                     ref={sheetRef}
@@ -307,9 +333,6 @@ export function TagPickerSheet({
                         <div
                             ref={scrollRef}
                             className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-2"
-                            onPointerDown={(event) => {
-                                handleDismissPointerDown(event, false);
-                            }}
                         >
                             {libraryTags.length === 0 ? (
                                 <p className="px-2 py-4 text-sm text-muted-foreground">
@@ -376,11 +399,12 @@ export function TagPickerSheet({
                         >
                             <div className="flex w-full items-center gap-2">
                                 <Button
-                                    type="submit"
+                                    type="button"
                                     variant="outline"
                                     size="icon-sm"
                                     disabled={!newTag.trim()}
                                     aria-label="Create tag"
+                                    onClick={submitNewTag}
                                 >
                                     <Plus />
                                 </Button>
@@ -391,6 +415,7 @@ export function TagPickerSheet({
                                     onChange={(event) => {
                                         setNewTag(event.target.value);
                                     }}
+                                    onBlur={handleInputBlur}
                                 />
                                 <Input
                                     placeholder="Type (optional)"
@@ -399,6 +424,7 @@ export function TagPickerSheet({
                                     onChange={(event) => {
                                         setNewType(event.target.value);
                                     }}
+                                    onBlur={handleInputBlur}
                                 />
                             </div>
                         </form>

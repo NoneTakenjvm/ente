@@ -56,6 +56,9 @@ const resetDependentStores = (): void => {
     void import("./tag-store").then(({ useTagStore }) => {
         useTagStore.getState().reset();
     });
+    void import("./album-store").then(({ useAlbumStore }) => {
+        useAlbumStore.getState().reset();
+    });
     void import("./phash-index-store").then(({ usePhashIndexStore }) => {
         usePhashIndexStore.getState().reset();
     });

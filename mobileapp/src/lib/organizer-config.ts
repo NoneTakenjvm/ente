@@ -1,5 +1,9 @@
 import type { CollectionPrivateMagicMetadataData } from "ente-media/collection";
 import {
+    emptyPersistedQueryAlbums,
+    type PersistedQueryAlbums,
+} from "@/lib/query-albums";
+import {
     emptyTagTypeConfig,
     type PersistedTagTypeConfig,
 } from "@/lib/tag-types";
@@ -20,6 +24,9 @@ export interface OrganizerAppConfig {
     version: 1;
     updatedAt: number;
     tagTypes?: PersistedTagTypeConfig;
+    /** Tag names registered before any photo uses them. */
+    registeredTags?: string[];
+    queryAlbums?: PersistedQueryAlbums;
 }
 
 export type OrganizerCollectionMagicMetadata =
@@ -32,6 +39,7 @@ export const defaultOrganizerAppConfig = (): OrganizerAppConfig => ({
     version: 1,
     updatedAt: Date.now() * 1000,
     tagTypes: emptyTagTypeConfig(),
+    queryAlbums: emptyPersistedQueryAlbums(),
 });
 
 /**

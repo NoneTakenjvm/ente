@@ -45,6 +45,7 @@ import {
     pendingFavoriteFilesByHashAndType,
     useFavoritesStore,
 } from "./favorites-store";
+import { useAlbumStore } from "./album-store";
 import { useTagStore } from "./tag-store";
 import {
     buildCompressedOrganizerTags,
@@ -355,6 +356,12 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             }
             useTagStore.getState().hydrateTagTypes(
                 organizerBootstrap.config.tagTypes,
+            );
+            useTagStore.getState().hydrateRegisteredTags(
+                organizerBootstrap.config.registeredTags,
+            );
+            useAlbumStore.getState().hydrateFromOrganizerConfig(
+                organizerBootstrap.config.queryAlbums,
             );
 
             const filesPull = await pullFiles({
