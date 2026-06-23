@@ -9,6 +9,12 @@ import {
 import { useRouter } from "next/router";
 import { AppShell } from "@/components/AppShell";
 import { ManageCompressPanel } from "@/components/manage/ManageCompressPanel";
+import {
+    ManageHub,
+    manageSectionTitle,
+    type ManageSection,
+} from "@/components/manage/ManageHub";
+import { ManageTagsPanel } from "@/components/manage/ManageTagsPanel";
 import { PageLoader } from "@/components/PageLoader";
 import { ConfirmTrashModal } from "@/components/dedup/ConfirmTrashModal";
 import { DedupGroupCard } from "@/components/dedup/DedupGroupCard";
@@ -25,7 +31,6 @@ import {
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLibraryBootstrap } from "@/hooks/use-library-bootstrap";
 import {
     exactGroupToSelection,
@@ -62,6 +67,13 @@ const formatBytes = (bytes: number): string => {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
+const parseManageSection = (value: string | string[] | undefined): ManageSection => {
+    if (value === "exact" || value === "similar" || value === "compress" || value === "tags") {
+        return value;
+    }
+    return "hub";
+};
+
 export default function ManagePage(): JSX.Element {
     const router = useRouter();
     const email = useSessionStore((s) => s.email);
@@ -88,7 +100,7 @@ export default function ManagePage(): JSX.Element {
     const dedupDryRun = useUIStore((s) => s.dedupDryRun);
     const setDedupDryRun = useUIStore((s) => s.setDedupDryRun);
 
-    const [tab, setTab] = useState<string>("exact");
+    const [section, setSection] = useState<ManageSection>("hub");
     const [selections, setSelections] = useState<DedupGroupSelection[]>([]);
     const [threshold, setThreshold] = useState<number>(
         defaultSimilarityThreshold,
@@ -107,6 +119,13 @@ export default function ManagePage(): JSX.Element {
             void router.replace("/login");
         }
     }, [router]);
+
+    useEffect(() => {
+        if (!router.isReady) {
+            return;
+        }
+        setSection(parseManageSection(router.query.section));
+    }, [router.isReady, router.query.section]);
 
     useEffect(() => {
         return (): void => {
@@ -131,15 +150,17 @@ export default function ManagePage(): JSX.Element {
         );
     }, [allFiles, collections, phashEntries, threshold, userId]);
 
+    const dedupMode = section === "exact" || section === "similar" ? section : null;
+
     useEffect(() => {
-        if (tab === "exact") {
+        if (dedupMode === "exact") {
             setSelections(exactGroups.map((group) => exactGroupToSelection(group)));
-        } else if (tab === "similar") {
+        } else if (dedupMode === "similar") {
             setSelections(
                 similarGroups.map((group) => similarityGroupToSelection(group)),
             );
         }
-    }, [tab, exactGroups, similarGroups]);
+    }, [dedupMode, exactGroups, similarGroups]);
 
     const selectedGroups = useMemo(
         () => selections.filter((group) => group.isSelected),
@@ -242,6 +263,20 @@ export default function ManagePage(): JSX.Element {
         }
     };
 
+    const handleSelectSection = (next: Exclude<ManageSection, "hub">): void => {
+        setSection(next);
+        void router.replace(
+            { pathname: "/manage", query: { section: next } },
+            undefined,
+            { shallow: true },
+        );
+    };
+
+    const handleBackToHub = (): void => {
+        setSection("hub");
+        void router.replace("/manage", undefined, { shallow: true });
+    };
+
     const showFullPageLoader =
         !initialLoadDone &&
         (syncStatus === "loadingFromCache" || syncStatus === "syncing");
@@ -251,203 +286,210 @@ export default function ManagePage(): JSX.Element {
             Math.round((phashProgress.current / phashProgress.total) * 100) :
             0;
 
-    const isDedupTab = tab === "exact" || tab === "similar";
-    const isCompressTab = tab === "compress";
     const showCompressLoader =
-        isCompressTab &&
+        section === "compress" &&
         !initialLoadDone &&
         (syncStatus === "loadingFromCache" || syncStatus === "syncing");
+
+    const shellTitle =
+        section === "hub" ? "Manage" : manageSectionTitle(section);
 
     if (!isSessionAuthenticated()) {
         return <PageLoader message="Redirecting to sign in…" />;
     }
 
     return (
-        <AppShell title="Manage" email={email}>
+        <AppShell
+            title={shellTitle}
+            email={email}
+            onBack={section === "hub" ? undefined : handleBackToHub}
+        >
             <SyncBanner />
 
-            <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
-                <TabsList className="mx-4 mt-3 w-[calc(100%-2rem)]">
-                    <TabsTrigger value="exact">Exact</TabsTrigger>
-                    <TabsTrigger value="similar">Similar</TabsTrigger>
-                    <TabsTrigger value="compress">Compress</TabsTrigger>
-                </TabsList>
+            {section === "hub" ? (
+                <ManageHub onSelect={handleSelectSection} />
+            ) : null}
 
-                <TabsContent value="exact" className="flex flex-col gap-3 px-4 pt-3">
-                    <p className="text-xs text-muted-foreground">
-                        {exactGroups.length} duplicate group
-                        {exactGroups.length === 1 ? "" : "s"} ·{" "}
-                        {exactStats.count} file
-                        {exactStats.count === 1 ? "" : "s"} selected · ~
-                        {formatBytes(exactStats.size)} reclaimable
-                    </p>
-                </TabsContent>
+            {section === "tags" ? <ManageTagsPanel /> : null}
 
-                <TabsContent value="similar" className="flex flex-col gap-3 px-4 pt-3">
-                    <div className="flex flex-wrap gap-2">
-                        <Button
-                            type="button"
-                            size="sm"
-                            onClick={handleStartPhashJob}
-                            disabled={
-                                phashJobStatus === "running" ||
-                                !phashHydrated ||
-                                phashIndexedCount >= phashCandidateCount
-                            }
-                        >
-                            {phashIndexedCount >= phashCandidateCount &&
-                            phashCandidateCount > 0 ?
-                                "Scan complete" :
-                                phashJobStatus === "paused" ?
-                                    "Resume scan" :
-                                    "Scan library"}
-                        </Button>
-                        {phashJobStatus === "running" ? (
-                            <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={handlePausePhashJob}
-                            >
-                                Pause
-                            </Button>
-                        ) : null}
-                    </div>
-                    <Field>
-                        <FieldLabel htmlFor="similarity-threshold">
-                            Threshold: {threshold}
-                        </FieldLabel>
-                        <Slider
-                            id="similarity-threshold"
-                            min={4}
-                            max={20}
-                            value={[threshold]}
-                            onValueChange={(value) => {
-                                const next = Array.isArray(value) ? value[0] : value;
-                                if (next !== undefined) {
-                                    setThreshold(next);
-                                }
-                            }}
-                        />
-                    </Field>
-                    <p className="text-xs text-muted-foreground">
-                        Indexed {phashIndexedCount} / {phashCandidateCount} images
-                        · {similarGroups.length} similar group
-                        {similarGroups.length === 1 ? "" : "s"}
-                    </p>
-                    {phashJobStatus === "running" ? (
-                        <div className="flex flex-col gap-1">
-                            <Progress value={progressPercent} className="h-1" />
-                            <span className="text-xs text-muted-foreground">
-                                Scanning {phashProgress.current} /{" "}
-                                {phashProgress.total}
-                            </span>
-                        </div>
-                    ) : null}
-                </TabsContent>
-
-                <TabsContent value="compress" className="flex min-h-0 flex-1 flex-col">
-                    {showCompressLoader ? (
-                        <PageLoader message="Loading your library…" />
-                    ) : (
-                        <ManageCompressPanel
-                            files={allFiles}
-                            libraryLoaded={initialLoadDone}
-                        />
-                    )}
-                </TabsContent>
-
-                {isDedupTab ? (
-                    <label className="mx-4 mt-2 flex items-center gap-2 text-sm">
-                        <Checkbox
-                            checked={dedupDryRun}
-                            onCheckedChange={(checked) =>
-                                setDedupDryRun(checked === true)
-                            }
-                        />
-                        Dry run (preview only, no trash)
-                    </label>
-                ) : null}
-
-                {error ? (
-                    <Alert variant="destructive" className="mx-4 mt-3">
-                        <AlertDescription>{error}</AlertDescription>
-                    </Alert>
-                ) : null}
-
-                {isDedupTab && showFullPageLoader ? (
+            {section === "compress" ? (
+                showCompressLoader ? (
                     <PageLoader message="Loading your library…" />
-                ) : null}
+                ) : (
+                    <ManageCompressPanel
+                        files={allFiles}
+                        libraryLoaded={initialLoadDone}
+                    />
+                )
+            ) : null}
 
-                {isDedupTab && !showFullPageLoader && selections.length === 0 ? (
-                    <Empty className="flex-1 border-0">
-                        <EmptyHeader>
-                            <EmptyTitle>
-                                {tab === "exact" ?
-                                    "No exact duplicates" :
-                                    phashIndexedCount < 2 ?
-                                        "Scan your library" :
-                                        "No similar groups"}
-                            </EmptyTitle>
-                            <EmptyDescription>
-                                {tab === "exact" ?
-                                    "No exact duplicates found in your library." :
-                                    phashIndexedCount < 2 ?
-                                        "Scan your library to find similar photos." :
-                                        "No similar groups at this threshold."}
-                            </EmptyDescription>
-                        </EmptyHeader>
-                    </Empty>
-                ) : null}
+            {dedupMode ? (
+                <div className="flex min-h-0 flex-1 flex-col">
+                    <div className="flex flex-col gap-3 px-4 pt-3">
+                        {dedupMode === "exact" ? (
+                            <p className="text-xs text-muted-foreground">
+                                {exactGroups.length} duplicate group
+                                {exactGroups.length === 1 ? "" : "s"} ·{" "}
+                                {exactStats.count} file
+                                {exactStats.count === 1 ? "" : "s"} selected · ~
+                                {formatBytes(exactStats.size)} reclaimable
+                            </p>
+                        ) : (
+                            <>
+                                <div className="flex flex-wrap gap-2">
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        onClick={handleStartPhashJob}
+                                        disabled={
+                                            phashJobStatus === "running" ||
+                                            !phashHydrated ||
+                                            phashIndexedCount >= phashCandidateCount
+                                        }
+                                    >
+                                        {phashIndexedCount >= phashCandidateCount &&
+                                        phashCandidateCount > 0 ?
+                                            "Scan complete" :
+                                            phashJobStatus === "paused" ?
+                                                "Resume scan" :
+                                                "Scan library"}
+                                    </Button>
+                                    {phashJobStatus === "running" ? (
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={handlePausePhashJob}
+                                        >
+                                            Pause
+                                        </Button>
+                                    ) : null}
+                                </div>
+                                <Field>
+                                    <FieldLabel htmlFor="similarity-threshold">
+                                        Threshold: {threshold}
+                                    </FieldLabel>
+                                    <Slider
+                                        id="similarity-threshold"
+                                        min={4}
+                                        max={20}
+                                        value={[threshold]}
+                                        onValueChange={(value) => {
+                                            const next = Array.isArray(value) ? value[0] : value;
+                                            if (next !== undefined) {
+                                                setThreshold(next);
+                                            }
+                                        }}
+                                    />
+                                </Field>
+                                <p className="text-xs text-muted-foreground">
+                                    Indexed {phashIndexedCount} / {phashCandidateCount} images
+                                    · {similarGroups.length} similar group
+                                    {similarGroups.length === 1 ? "" : "s"}
+                                </p>
+                                {phashJobStatus === "running" ? (
+                                    <div className="flex flex-col gap-1">
+                                        <Progress value={progressPercent} className="h-1" />
+                                        <span className="text-xs text-muted-foreground">
+                                            Scanning {phashProgress.current} /{" "}
+                                            {phashProgress.total}
+                                        </span>
+                                    </div>
+                                ) : null}
+                            </>
+                        )}
 
-                {isDedupTab && !showFullPageLoader && selections.length > 0 ? (
-                    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3 pb-24">
-                        {selections.map((group) => (
-                            <DedupGroupCard
-                                key={group.id}
-                                items={group.items.map((item) => item.file)}
-                                keeperFileId={group.keeperFileId}
-                                isSelected={group.isSelected}
-                                subtitle={
-                                    tab === "similar" ?
-                                        group.items
-                                            .map((item) => item.collectionName)
-                                            .join(", ") :
-                                        `~${formatBytes(
-                                            (group.items.length - 1) *
-                                                  (group.items[0]?.file.info
-                                                      ?.fileSize ?? 0),
-                                        )}`
-                                }
-                                onToggleSelected={() =>
-                                    updateSelection(group.id, (current) => ({
-                                        ...current,
-                                        isSelected: !current.isSelected,
-                                    }))
-                                }
-                                onSelectKeeper={(fileId) =>
-                                    updateSelection(group.id, (current) => ({
-                                        ...current,
-                                        keeperFileId: fileId,
-                                    }))
+                        <label className="flex items-center gap-2 text-sm">
+                            <Checkbox
+                                checked={dedupDryRun}
+                                onCheckedChange={(checked) =>
+                                    setDedupDryRun(checked === true)
                                 }
                             />
-                        ))}
+                            Dry run (preview only, no trash)
+                        </label>
                     </div>
-                ) : null}
-            </Tabs>
 
-            {isDedupTab && selectedGroups.length > 0 ? (
-                <footer className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] border-t border-border bg-background/95 px-4 py-3 backdrop-blur">
-                    <Button
-                        type="button"
-                        className="w-full"
-                        disabled={prunePlan.filesToTrash.length === 0}
-                        onClick={() => setConfirmOpen(true)}
-                    >
-                        Review cleanup ({prunePlan.filesToTrash.length})
-                    </Button>
-                </footer>
+                    {error ? (
+                        <Alert variant="destructive" className="mx-4 mt-3">
+                            <AlertDescription>{error}</AlertDescription>
+                        </Alert>
+                    ) : null}
+
+                    {showFullPageLoader ? (
+                        <PageLoader message="Loading your library…" />
+                    ) : null}
+
+                    {!showFullPageLoader && selections.length === 0 ? (
+                        <Empty className="flex-1 border-0">
+                            <EmptyHeader>
+                                <EmptyTitle>
+                                    {dedupMode === "exact" ?
+                                        "No exact duplicates" :
+                                        phashIndexedCount < 2 ?
+                                            "Scan your library" :
+                                            "No similar groups"}
+                                </EmptyTitle>
+                                <EmptyDescription>
+                                    {dedupMode === "exact" ?
+                                        "No exact duplicates found in your library." :
+                                        phashIndexedCount < 2 ?
+                                            "Scan your library to find similar photos." :
+                                            "No similar groups at this threshold."}
+                                </EmptyDescription>
+                            </EmptyHeader>
+                        </Empty>
+                    ) : null}
+
+                    {!showFullPageLoader && selections.length > 0 ? (
+                        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3 pb-24">
+                            {selections.map((group) => (
+                                <DedupGroupCard
+                                    key={group.id}
+                                    items={group.items.map((item) => item.file)}
+                                    keeperFileId={group.keeperFileId}
+                                    isSelected={group.isSelected}
+                                    subtitle={
+                                        dedupMode === "similar" ?
+                                            group.items
+                                                .map((item) => item.collectionName)
+                                                .join(", ") :
+                                            `~${formatBytes(
+                                                (group.items.length - 1) *
+                                                      (group.items[0]?.file.info
+                                                          ?.fileSize ?? 0),
+                                            )}`
+                                    }
+                                    onToggleSelected={() =>
+                                        updateSelection(group.id, (current) => ({
+                                            ...current,
+                                            isSelected: !current.isSelected,
+                                        }))
+                                    }
+                                    onSelectKeeper={(fileId) =>
+                                        updateSelection(group.id, (current) => ({
+                                            ...current,
+                                            keeperFileId: fileId,
+                                        }))
+                                    }
+                                />
+                            ))}
+                        </div>
+                    ) : null}
+
+                    {selectedGroups.length > 0 ? (
+                        <footer className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] border-t border-border bg-background/95 px-4 py-3 backdrop-blur">
+                            <Button
+                                type="button"
+                                className="w-full"
+                                disabled={prunePlan.filesToTrash.length === 0}
+                                onClick={() => setConfirmOpen(true)}
+                            >
+                                Review cleanup ({prunePlan.filesToTrash.length})
+                            </Button>
+                        </footer>
+                    ) : null}
+                </div>
             ) : null}
 
             <ConfirmTrashModal

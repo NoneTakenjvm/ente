@@ -13,7 +13,7 @@ export default function App({ Component, pageProps }: AppProps) {
                 <meta
                     key="viewport"
                     name="viewport"
-                    content="width=device-width, initial-scale=1, viewport-fit=cover"
+                    content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
                 />
                 <meta name="theme-color" content="#0f0f0f" />
                 <meta name="apple-mobile-web-app-capable" content="yes" />

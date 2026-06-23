@@ -16,58 +16,191 @@ export const UNTAGGED_FILTER = "untagged";
 /** Gallery filter for files that have at least one user tag. */
 export const TAGGED_FILTER = "tagged";
 
+export const FAVORITES_FILTER = "favourites";
+
+/** Gallery filter for files that are not favourited. */
+export const NOT_FAVORITES_FILTER = "not-favourites";
+
 export type TagFilterMode = "include" | "exclude";
 
 export type TagFilterJoin = "and" | "or";
 
-export interface TagFilterClause {
+export type TagScope = "all" | "tagged" | "untagged";
+
+export type FavoritesScope = "all" | "favorites" | "not-favorites";
+
+export interface TagFilterClauseNode {
+    kind: "clause";
+    id: string;
     tag: string;
     mode: TagFilterMode;
-    /** How this clause combines with the query so far. Ignored for the first clause. */
-    join: TagFilterJoin;
 }
+
+export interface TagFilterGroup {
+    kind: "group";
+    id: string;
+    op: TagFilterJoin;
+    children: TagFilterNode[];
+}
+
+export type TagFilterNode = TagFilterClauseNode | TagFilterGroup;
 
 export interface TagFilterSelection {
-    untagged: boolean;
-    tagged: boolean;
-    clauses: TagFilterClause[];
+    tagScope: TagScope;
+    favoritesScope: FavoritesScope;
+    root: TagFilterGroup;
 }
 
-export const emptyTagFilter = (): TagFilterSelection => ({
-    untagged: false,
-    tagged: false,
-    clauses: [],
+export interface TagFilterOptions {
+    favoriteFileIds?: Set<number>;
+}
+
+let tagFilterNodeCounter = 0;
+
+/** Create a stable id for a new filter tree node. */
+export const newTagFilterNodeId = (): string => {
+    tagFilterNodeCounter += 1;
+    return `tf-${tagFilterNodeCounter}`;
+};
+
+/** Create an empty root group for a new filter selection. */
+export const createEmptyTagFilterRoot = (): TagFilterGroup => ({
+    kind: "group",
+    id: newTagFilterNodeId(),
+    op: "and",
+    children: [],
 });
 
+export const emptyTagFilter = (): TagFilterSelection => ({
+    tagScope: "all",
+    favoritesScope: "all",
+    root: createEmptyTagFilterRoot(),
+});
+
+export const isTagFilterGroup = (node: TagFilterNode): node is TagFilterGroup =>
+    node.kind === "group";
+
+export const isTagFilterClause = (
+    node: TagFilterNode,
+): node is TagFilterClauseNode => node.kind === "clause";
+
+/** Count clause leaves in the filter tree. */
+export const countTagFilterClauses = (root: TagFilterGroup): number => {
+    let count = 0;
+    const walk = (node: TagFilterNode): void => {
+        if (isTagFilterClause(node)) {
+            count += 1;
+            return;
+        }
+        for (const child of node.children) {
+            walk(child);
+        }
+    };
+    for (const child of root.children) {
+        walk(child);
+    }
+    return count;
+};
+
+/** Find the include/exclude mode for a tag in the root group (shallow clause lookup). */
+export const findClauseModeForTag = (
+    root: TagFilterGroup,
+    tag: string,
+): TagFilterMode | null => {
+    for (const child of root.children) {
+        if (isTagFilterClause(child) && child.tag === tag) {
+            return child.mode;
+        }
+    }
+    return null;
+};
+
+/** True when every root child is a clause (no nested groups). */
+export const isFlatTagFilterRoot = (root: TagFilterGroup): boolean =>
+    root.children.every((child) => isTagFilterClause(child));
+
+/** Find a direct-child clause for a tag within one group. */
+export const findClauseInGroup = (
+    group: TagFilterGroup,
+    tag: string,
+): TagFilterClauseNode | null => {
+    for (const child of group.children) {
+        if (isTagFilterClause(child) && child.tag === tag) {
+            return child;
+        }
+    }
+    return null;
+};
+
+/** Find a group node anywhere in the filter tree by id. */
+export const findTagFilterGroupById = (
+    root: TagFilterGroup,
+    groupId: string,
+): TagFilterGroup | null => {
+    if (root.id === groupId) {
+        return root;
+    }
+    for (const child of root.children) {
+        if (isTagFilterGroup(child)) {
+            const found = findTagFilterGroupById(child, groupId);
+            if (found) {
+                return found;
+            }
+        }
+    }
+    return null;
+};
+
+/** Shown when the quick tag dropdown is disabled for grouped filters. */
+export const GROUPED_TAG_FILTER_DROPDOWN_HINT =
+    "Grouped filters can only be edited in the query builder.";
+
 export const isTagFilterActive = (filter: TagFilterSelection): boolean =>
-    filter.untagged || filter.tagged || filter.clauses.length > 0;
+    filter.tagScope !== "all" ||
+    filter.favoritesScope !== "all" ||
+    countTagFilterClauses(filter.root) > 0;
+
+const describeClauseNode = (clause: TagFilterClauseNode): string =>
+    clause.mode === "exclude" ? `not ${clause.tag}` : clause.tag;
+
+const describeGroupNode = (group: TagFilterGroup): string => {
+    if (group.children.length === 0) {
+        return "";
+    }
+    const parts = group.children.map((child) => {
+        if (isTagFilterClause(child)) {
+            return describeClauseNode(child);
+        }
+        const inner = describeGroupNode(child);
+        return inner ? `(${inner})` : "";
+    }).filter((part) => part.length > 0);
+    return parts.join(` ${group.op.toUpperCase()} `);
+};
 
 /**
- * Human-readable summary of the active filter (e.g. "selfie, not vietnam").
+ * Human-readable summary of the active filter (e.g. "tagged · favourites · (selfie AND not vietnam)").
  */
 export const describeTagFilter = (filter: TagFilterSelection): string => {
     const parts: string[] = [];
-    if (filter.untagged) {
+    if (filter.tagScope === "untagged") {
         parts.push(UNTAGGED_FILTER);
-    }
-    if (filter.tagged) {
+    } else if (filter.tagScope === "tagged") {
         parts.push(TAGGED_FILTER);
     }
-    for (let i = 0; i < filter.clauses.length; i++) {
-        const clause = filter.clauses[i];
-        const label =
-            clause.mode === "exclude" ? `not ${clause.tag}` : clause.tag;
-        if (i === 0) {
-            parts.push(label);
-        } else {
-            parts.push(`${clause.join.toUpperCase()} ${label}`);
-        }
+    if (filter.favoritesScope === "favorites") {
+        parts.push(FAVORITES_FILTER);
+    } else if (filter.favoritesScope === "not-favorites") {
+        parts.push(NOT_FAVORITES_FILTER);
     }
-    return parts.join(", ");
+    const expr = describeGroupNode(filter.root);
+    if (expr) {
+        parts.push(expr);
+    }
+    return parts.join(" · ");
 };
 
 /** Instruction label for one tag clause in the query builder. */
-export const describeTagFilterClause = (clause: TagFilterClause): string =>
+export const describeTagFilterClause = (clause: TagFilterClauseNode): string =>
     clause.mode === "exclude" ? `Not ${clause.tag}` : `Has ${clause.tag}`;
 
 /**
@@ -79,7 +212,11 @@ export const isSystemTag = (tag: string): boolean => SYSTEM_TAGS.has(tag);
  * Return true when the name is reserved and must not be assigned to files.
  */
 export const isReservedTag = (tag: string): boolean =>
-    isSystemTag(tag) || tag === UNTAGGED_FILTER || tag === TAGGED_FILTER;
+    isSystemTag(tag) ||
+    tag === UNTAGGED_FILTER ||
+    tag === TAGGED_FILTER ||
+    tag === FAVORITES_FILTER ||
+    tag === NOT_FAVORITES_FILTER;
 
 /**
  * Read organizer tags from public magic metadata (`_organizer_v1.tags`).
@@ -135,21 +272,6 @@ export const tagIndexToMaps = (
     return { tags: index.tags, fileIdsByTag };
 };
 
-const fileIdsForFilterTag = (
-    tag: string,
-    files: EnteFile[],
-    fileIdsByTag: Map<string, Set<number>>,
-): Set<number> => {
-    if (tag === UNTAGGED_FILTER) {
-        return new Set(
-            files
-                .filter((file) => extractUserTags(file).length === 0)
-                .map((file) => file.id),
-        );
-    }
-    return fileIdsByTag.get(tag) ?? new Set<number>();
-};
-
 const intersectIds = (
     left: Set<number>,
     right: Set<number>,
@@ -186,19 +308,6 @@ const taggedIdsInCandidates = (
     return taggedIds;
 };
 
-const fileIdsForFilterTagInCandidates = (
-    tag: string,
-    files: EnteFile[],
-    fileIdsByTag: Map<string, Set<number>>,
-): Set<number> => {
-    const candidateIds = allFileIds(files);
-    if (tag === UNTAGGED_FILTER) {
-        return untaggedIdsInCandidates(candidateIds, fileIdsByTag);
-    }
-    const idsForTag = fileIdsByTag.get(tag) ?? new Set<number>();
-    return new Set([...idsForTag].filter((id) => candidateIds.has(id)));
-};
-
 const subtractIds = (
     universe: Set<number>,
     remove: Set<number>,
@@ -215,16 +324,18 @@ const tagIdsInCandidates = (
     files: EnteFile[],
     fileIdsByTag: Map<string, Set<number>>,
 ): Set<number> => {
-    const idsForTag = fileIdsForFilterTagInCandidates(
-        tag,
-        files,
-        fileIdsByTag,
+    const idsForTag = fileIdsByTag.get(tag) ?? new Set<number>();
+    const scoped = new Set(
+        [...idsForTag].filter((id) => candidateIds.has(id)),
     );
-    return intersectIds(candidateIds, idsForTag);
+    if (tag === UNTAGGED_FILTER) {
+        return untaggedIdsInCandidates(candidateIds, fileIdsByTag);
+    }
+    return scoped;
 };
 
-const applyFirstClause = (
-    clause: TagFilterClause,
+const evaluateClauseNode = (
+    clause: TagFilterClauseNode,
     candidateIds: Set<number>,
     files: EnteFile[],
     fileIdsByTag: Map<string, Set<number>>,
@@ -241,103 +352,135 @@ const applyFirstClause = (
     return subtractIds(candidateIds, tagIds);
 };
 
-const applyJoinClause = (
-    matchingIds: Set<number>,
-    clause: TagFilterClause,
+/**
+ * Evaluate a tag filter expression tree against a candidate file id set.
+ */
+export const evaluateTagFilterNode = (
+    node: TagFilterNode,
     candidateIds: Set<number>,
     files: EnteFile[],
     fileIdsByTag: Map<string, Set<number>>,
 ): Set<number> => {
-    const tagIds = tagIdsInCandidates(
-        clause.tag,
-        candidateIds,
-        files,
-        fileIdsByTag,
-    );
-    if (clause.join === "or") {
-        if (clause.mode === "include") {
-            return unionIds(matchingIds, tagIds);
-        }
-        return unionIds(matchingIds, subtractIds(candidateIds, tagIds));
+    if (isTagFilterClause(node)) {
+        return evaluateClauseNode(node, candidateIds, files, fileIdsByTag);
     }
-    if (clause.mode === "include") {
-        return intersectIds(matchingIds, tagIds);
-    }
-    return subtractIds(matchingIds, tagIds);
-};
 
-const applyTagFilterClauses = (
-    files: EnteFile[],
-    candidateIds: Set<number>,
-    clauses: TagFilterClause[],
-    fileIdsByTag: Map<string, Set<number>>,
-): Set<number> => {
-    if (clauses.length === 0) {
+    if (node.children.length === 0) {
         return candidateIds;
     }
 
-    let matchingIds = applyFirstClause(
-        clauses[0],
+    const childSets = node.children.map((child) => evaluateTagFilterNode(
+        child,
         candidateIds,
         files,
         fileIdsByTag,
+    ));
+
+    if (node.op === "or") {
+        return childSets.reduce((acc, set) => unionIds(acc, set), new Set<number>());
+    }
+    return childSets.reduce(
+        (acc, set) => intersectIds(acc, set),
+        childSets[0],
     );
-    for (let i = 1; i < clauses.length; i++) {
-        matchingIds = applyJoinClause(
-            matchingIds,
-            clauses[i],
-            candidateIds,
-            files,
-            fileIdsByTag,
-        );
-        if (matchingIds.size === 0) {
-            return matchingIds;
+};
+
+const applyTagScope = (
+    tagScope: TagScope,
+    candidateIds: Set<number>,
+    fileIdsByTag: Map<string, Set<number>>,
+): Set<number> | undefined => {
+    if (tagScope === "untagged") {
+        return untaggedIdsInCandidates(candidateIds, fileIdsByTag);
+    }
+    if (tagScope === "tagged") {
+        return taggedIdsInCandidates(candidateIds, fileIdsByTag);
+    }
+    return undefined;
+};
+
+const applyFavoritesScope = (
+    matchingIds: Set<number>,
+    favoriteFileIds: Set<number> | undefined,
+    favoritesScope: FavoritesScope,
+): Set<number> => {
+    if (favoritesScope === "all" || !favoriteFileIds) {
+        return matchingIds;
+    }
+    if (favoritesScope === "favorites") {
+        return intersectIds(matchingIds, favoriteFileIds);
+    }
+    const notFavorites = new Set<number>();
+    for (const id of matchingIds) {
+        if (!favoriteFileIds.has(id)) {
+            notFavorites.add(id);
         }
     }
-    return matchingIds;
+    return notFavorites;
+};
+
+const resolveMatchingIds = (
+    files: EnteFile[],
+    candidateIds: Set<number>,
+    filter: TagFilterSelection,
+    fileIdsByTag: Map<string, Set<number>>,
+    favoriteFileIds: Set<number> | undefined,
+): Set<number> => {
+    let matchingIds = new Set(candidateIds);
+
+    const scopeIds = applyTagScope(
+        filter.tagScope,
+        matchingIds,
+        fileIdsByTag,
+    );
+    if (scopeIds !== undefined) {
+        matchingIds = scopeIds;
+    }
+
+    matchingIds = applyFavoritesScope(
+        matchingIds,
+        favoriteFileIds,
+        filter.favoritesScope,
+    );
+
+    if (matchingIds.size === 0) {
+        return matchingIds;
+    }
+
+    const exprIds = evaluateTagFilterNode(
+        filter.root,
+        matchingIds,
+        files,
+        fileIdsByTag,
+    );
+
+    if (countTagFilterClauses(filter.root) === 0) {
+        return matchingIds;
+    }
+
+    return intersectIds(matchingIds, exprIds);
 };
 
 /**
- * Keep files matching include clauses (AND) while applying exclude clauses (AND NOT).
+ * Keep files matching the tag filter selection.
  */
 export const filterFilesByTags = (
     files: EnteFile[],
     filter: TagFilterSelection,
     fileIdsByTag: Map<string, Set<number>>,
+    options?: TagFilterOptions,
 ): EnteFile[] => {
     if (!isTagFilterActive(filter)) {
         return files;
     }
 
-    let matchingIds: Set<number> | undefined;
-    if (filter.untagged) {
-        matchingIds = fileIdsForFilterTag(
-            UNTAGGED_FILTER,
-            files,
-            fileIdsByTag,
-        );
-        if (matchingIds.size === 0) {
-            return [];
-        }
-    } else if (filter.tagged) {
-        matchingIds = taggedIdsInCandidates(allFileIds(files), fileIdsByTag);
-        if (matchingIds.size === 0) {
-            return [];
-        }
-    }
-
-    const clauseIds = applyTagFilterClauses(
+    const matchingIds = resolveMatchingIds(
         files,
-        matchingIds ?? allFileIds(files),
-        filter.clauses,
+        allFileIds(files),
+        filter,
         fileIdsByTag,
+        options?.favoriteFileIds,
     );
-
-    if (matchingIds !== undefined) {
-        matchingIds = intersectIds(matchingIds, clauseIds);
-    } else {
-        matchingIds = clauseIds;
-    }
 
     return files.filter((file) => matchingIds.has(file.id));
 };
@@ -350,6 +493,7 @@ export const countFilesMatchingTagFilter = (
     filter: TagFilterSelection,
     fileIdsByTag: Map<string, Set<number>>,
     files?: EnteFile[],
+    options?: TagFilterOptions,
 ): number => {
     if (!isTagFilterActive(filter)) {
         return candidateFileIds.size;
@@ -357,35 +501,14 @@ export const countFilesMatchingTagFilter = (
 
     const candidateFiles =
         files?.filter((file) => candidateFileIds.has(file.id)) ?? [];
-    const scopedIds = new Set(candidateFileIds);
 
-    let matchingIds: Set<number> | undefined;
-    if (filter.untagged) {
-        matchingIds = untaggedIdsInCandidates(scopedIds, fileIdsByTag);
-        if (matchingIds.size === 0) {
-            return 0;
-        }
-    } else if (filter.tagged) {
-        matchingIds = taggedIdsInCandidates(scopedIds, fileIdsByTag);
-        if (matchingIds.size === 0) {
-            return 0;
-        }
-    }
-
-    const clauseIds = applyTagFilterClauses(
+    return resolveMatchingIds(
         candidateFiles,
-        matchingIds ?? scopedIds,
-        filter.clauses,
+        candidateFileIds,
+        filter,
         fileIdsByTag,
-    );
-
-    if (matchingIds !== undefined) {
-        matchingIds = intersectIds(matchingIds, clauseIds);
-    } else {
-        matchingIds = clauseIds;
-    }
-
-    return matchingIds.size;
+        options?.favoriteFileIds,
+    ).size;
 };
 
 /** Number of files in scope that have no user tags. */
@@ -401,6 +524,34 @@ export const countTaggedInCandidates = (
     fileIdsByTag: Map<string, Set<number>>,
 ): number =>
     taggedIdsInCandidates(candidateFileIds, fileIdsByTag).size;
+
+/** Number of favourited files within a candidate id set. */
+export const countFavoritesInCandidates = (
+    candidateFileIds: Set<number>,
+    favoriteFileIds: Set<number>,
+): number => {
+    let count = 0;
+    for (const id of candidateFileIds) {
+        if (favoriteFileIds.has(id)) {
+            count += 1;
+        }
+    }
+    return count;
+};
+
+/** Number of non-favourited files within a candidate id set. */
+export const countNotFavoritesInCandidates = (
+    candidateFileIds: Set<number>,
+    favoriteFileIds: Set<number>,
+): number => {
+    let count = 0;
+    for (const id of candidateFileIds) {
+        if (!favoriteFileIds.has(id)) {
+            count += 1;
+        }
+    }
+    return count;
+};
 
 /** Number of files tagged with a given name. */
 export const tagFileCount = (

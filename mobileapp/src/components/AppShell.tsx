@@ -3,12 +3,12 @@
 import Link from "next/link";
 import { useRouter } from "next/router";
 import {
-    Heart,
+    ChevronLeft,
     Lock,
     LogOut,
     MoreVertical,
     SlidersHorizontal,
-    Tags,
+    Images,
     Film,
 } from "lucide-react";
 import type { ReactNode, JSX } from "react";
@@ -26,22 +26,25 @@ import { cn } from "@/lib/utils";
 
 interface AppShellProps {
     title: string;
+    titleBadge?: ReactNode;
     email?: string;
     actions?: ReactNode;
+    onBack?: () => void;
     children: ReactNode;
 }
 
 const navItems = [
     { href: "/gallery", label: "Media", icon: Film },
-    { href: "/favourites", label: "Favourites", icon: Heart },
-    { href: "/tags", label: "Tags", icon: Tags },
+    { href: "/albums", label: "Albums", icon: Images },
     { href: "/manage", label: "Manage", icon: SlidersHorizontal },
 ] as const;
 
 export function AppShell({
     title,
+    titleBadge,
     email,
     actions,
+    onBack,
     children,
 }: AppShellProps): JSX.Element {
     const router = useRouter();
@@ -51,10 +54,24 @@ export function AppShell({
         <div className="flex min-h-dvh flex-col bg-background">
             <header className="sticky top-0 z-40 border-b border-border bg-background/95 pt-[env(safe-area-inset-top)] backdrop-blur supports-backdrop-filter:bg-background/80">
                 <div className="flex items-center gap-2 px-4 py-3">
+                    {onBack ? (
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label="Go back"
+                            onClick={onBack}
+                        >
+                            <ChevronLeft />
+                        </Button>
+                    ) : null}
                     <div className="min-w-0 flex-1">
-                        <h1 className="truncate text-lg font-semibold tracking-tight">
-                            {title}
-                        </h1>
+                        <div className="flex min-w-0 items-center gap-2">
+                            <h1 className="truncate text-lg font-semibold tracking-tight">
+                                {title}
+                            </h1>
+                            {titleBadge}
+                        </div>
                         {email ? (
                             <p className="truncate text-xs text-muted-foreground">
                                 {email}
@@ -78,7 +95,7 @@ export function AppShell({
                 className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur supports-backdrop-filter:bg-background/80"
                 aria-label="Main navigation"
             >
-                <div className="grid grid-cols-4 gap-1 px-2 py-1.5">
+                <div className="grid grid-cols-3 gap-1 px-2 py-1.5">
                     {navItems.map(({ href, label, icon: Icon }) => {
                         const active = pathname === href;
                         return (

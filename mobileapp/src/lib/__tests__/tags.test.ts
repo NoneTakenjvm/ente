@@ -2,13 +2,19 @@ import { describe, expect, it } from "vitest";
 import type { EnteFile } from "ente-media/file";
 import {
     buildTagIndex,
+    createEmptyTagFilterRoot,
     describeTagFilter,
+    emptyTagFilter,
     extractTags,
     extractUserTags,
     filterFilesByTags,
     countFilesMatchingTagFilter,
     isSystemTag,
+    newTagFilterNodeId,
     tagIndexToMaps,
+    type TagFilterClauseNode,
+    type TagFilterGroup,
+    type TagFilterSelection,
 } from "@/lib/tags";
 
 const fileWithTags = (id: number, tags: string[]): EnteFile =>
@@ -31,16 +37,41 @@ const fileWithTags = (id: number, tags: string[]): EnteFile =>
         },
     }) as unknown as EnteFile;
 
-const include = (tag: string) => ({
+const includeClause = (tag: string): TagFilterClauseNode => ({
+    kind: "clause",
+    id: newTagFilterNodeId(),
     tag,
-    mode: "include" as const,
-    join: "and" as const,
+    mode: "include",
 });
 
-const exclude = (tag: string, join: "and" | "or" = "and") => ({
+const excludeClause = (tag: string): TagFilterClauseNode => ({
+    kind: "clause",
+    id: newTagFilterNodeId(),
     tag,
-    mode: "exclude" as const,
-    join,
+    mode: "exclude",
+});
+
+const andRoot = (...children: TagFilterGroup["children"]): TagFilterGroup => ({
+    kind: "group",
+    id: newTagFilterNodeId(),
+    op: "and",
+    children,
+});
+
+const orRoot = (...children: TagFilterGroup["children"]): TagFilterGroup => ({
+    kind: "group",
+    id: newTagFilterNodeId(),
+    op: "or",
+    children,
+});
+
+const filterWithRoot = (
+    root: TagFilterGroup,
+    overrides: Partial<TagFilterSelection> = {},
+): TagFilterSelection => ({
+    ...emptyTagFilter(),
+    root,
+    ...overrides,
 });
 
 describe("tags", () => {
@@ -81,11 +112,9 @@ describe("tags", () => {
         const { fileIdsByTag } = tagIndexToMaps(index);
         const filtered = filterFilesByTags(
             files,
-            {
-                untagged: false,
-                tagged: false,
-                clauses: [include("selfie"), include("vietnam")],
-            },
+            filterWithRoot(
+                andRoot(includeClause("selfie"), includeClause("vietnam")),
+            ),
             fileIdsByTag,
         );
         expect(filtered.map((file) => file.id)).toEqual([2]);
@@ -101,14 +130,9 @@ describe("tags", () => {
         const { fileIdsByTag } = tagIndexToMaps(index);
         const filtered = filterFilesByTags(
             files,
-            {
-                untagged: false,
-                tagged: false,
-                clauses: [
-                    include("selfie"),
-                    { tag: "vietnam", mode: "include", join: "or" },
-                ],
-            },
+            filterWithRoot(
+                orRoot(includeClause("selfie"), includeClause("vietnam")),
+            ),
             fileIdsByTag,
         );
         expect(filtered.map((file) => file.id)).toEqual([1, 2]);
@@ -124,11 +148,9 @@ describe("tags", () => {
         const { fileIdsByTag } = tagIndexToMaps(index);
         const filtered = filterFilesByTags(
             files,
-            {
-                untagged: false,
-                tagged: false,
-                clauses: [include("selfie"), exclude("vietnam")],
-            },
+            filterWithRoot(
+                andRoot(includeClause("selfie"), excludeClause("vietnam")),
+            ),
             fileIdsByTag,
         );
         expect(filtered.map((file) => file.id)).toEqual([1, 3]);
@@ -143,11 +165,7 @@ describe("tags", () => {
         const { fileIdsByTag } = tagIndexToMaps(index);
         const filtered = filterFilesByTags(
             files,
-            {
-                untagged: false,
-                tagged: false,
-                clauses: [exclude("vietnam")],
-            },
+            filterWithRoot(andRoot(excludeClause("vietnam"))),
             fileIdsByTag,
         );
         expect(filtered.map((file) => file.id)).toEqual([1]);
@@ -163,18 +181,16 @@ describe("tags", () => {
         expect(
             countFilesMatchingTagFilter(
                 new Set([1, 2]),
-                {
-                    untagged: false,
-                    tagged: false,
-                    clauses: [include("selfie"), include("vietnam")],
-                },
+                filterWithRoot(
+                    andRoot(includeClause("selfie"), includeClause("vietnam")),
+                ),
                 fileIdsByTag,
                 files,
             ),
         ).toBe(1);
     });
 
-    it("filterFilesByTags supports untagged pseudo-tag", () => {
+    it("filterFilesByTags supports untagged scope", () => {
         const files = [
             fileWithTags(1, []),
             fileWithTags(2, ["selfie"]),
@@ -184,7 +200,11 @@ describe("tags", () => {
         const { fileIdsByTag } = tagIndexToMaps(index);
         const filtered = filterFilesByTags(
             files,
-            { untagged: true, tagged: false, clauses: [] },
+            {
+                tagScope: "untagged",
+                favoritesScope: "all",
+                root: createEmptyTagFilterRoot(),
+            },
             fileIdsByTag,
         );
         expect(filtered.map((file) => file.id)).toEqual([1, 3]);
@@ -200,14 +220,18 @@ describe("tags", () => {
         expect(
             countFilesMatchingTagFilter(
                 new Set([1, 2]),
-                { untagged: true, tagged: false, clauses: [] },
+                {
+                    tagScope: "untagged",
+                    favoritesScope: "all",
+                    root: createEmptyTagFilterRoot(),
+                },
                 fileIdsByTag,
                 files,
             ),
         ).toBe(1);
     });
 
-    it("filterFilesByTags supports tagged filter for all tagged files", () => {
+    it("filterFilesByTags supports tagged scope for all tagged files", () => {
         const files = [
             fileWithTags(1, []),
             fileWithTags(2, ["selfie"]),
@@ -217,7 +241,11 @@ describe("tags", () => {
         const { fileIdsByTag } = tagIndexToMaps(index);
         const filtered = filterFilesByTags(
             files,
-            { untagged: false, tagged: true, clauses: [] },
+            {
+                tagScope: "tagged",
+                favoritesScope: "all",
+                root: createEmptyTagFilterRoot(),
+            },
             fileIdsByTag,
         );
         expect(filtered.map((file) => file.id)).toEqual([2, 3]);
@@ -232,11 +260,9 @@ describe("tags", () => {
         const { fileIdsByTag } = tagIndexToMaps(index);
         const filtered = filterFilesByTags(
             files,
-            {
-                untagged: false,
-                tagged: true,
-                clauses: [exclude("selfie")],
-            },
+            filterWithRoot(andRoot(excludeClause("selfie")), {
+                tagScope: "tagged",
+            }),
             fileIdsByTag,
         );
         expect(filtered.map((file) => file.id)).toEqual([2]);
@@ -252,11 +278,9 @@ describe("tags", () => {
         const { fileIdsByTag } = tagIndexToMaps(index);
         const filtered = filterFilesByTags(
             files,
-            {
-                untagged: false,
-                tagged: true,
-                clauses: [include("selfie")],
-            },
+            filterWithRoot(andRoot(includeClause("selfie")), {
+                tagScope: "tagged",
+            }),
             fileIdsByTag,
         );
         expect(filtered.map((file) => file.id)).toEqual([1, 3]);
@@ -272,20 +296,138 @@ describe("tags", () => {
         expect(
             countFilesMatchingTagFilter(
                 new Set([1, 2]),
-                { untagged: false, tagged: true, clauses: [] },
+                {
+                    tagScope: "tagged",
+                    favoritesScope: "all",
+                    root: createEmptyTagFilterRoot(),
+                },
                 fileIdsByTag,
                 files,
             ),
         ).toBe(1);
     });
 
-    it("describeTagFilter formats include, exclude, and join clauses", () => {
+    it("filterFilesByTags supports favorites scope", () => {
+        const files = [
+            fileWithTags(1, ["selfie"]),
+            fileWithTags(2, ["vietnam"]),
+            fileWithTags(3, ["beach"]),
+        ];
+        const index = buildTagIndex(files);
+        const { fileIdsByTag } = tagIndexToMaps(index);
+        const filtered = filterFilesByTags(
+            files,
+            {
+                tagScope: "all",
+                favoritesScope: "favorites",
+                root: createEmptyTagFilterRoot(),
+            },
+            fileIdsByTag,
+            { favoriteFileIds: new Set([1, 3]) },
+        );
+        expect(filtered.map((file) => file.id)).toEqual([1, 3]);
+    });
+
+    it("filterFilesByTags supports not-favorites scope", () => {
+        const files = [
+            fileWithTags(1, ["selfie"]),
+            fileWithTags(2, ["vietnam"]),
+            fileWithTags(3, ["beach"]),
+        ];
+        const index = buildTagIndex(files);
+        const { fileIdsByTag } = tagIndexToMaps(index);
+        const filtered = filterFilesByTags(
+            files,
+            {
+                tagScope: "all",
+                favoritesScope: "not-favorites",
+                root: createEmptyTagFilterRoot(),
+            },
+            fileIdsByTag,
+            { favoriteFileIds: new Set([1, 3]) },
+        );
+        expect(filtered.map((file) => file.id)).toEqual([2]);
+    });
+
+    it("filterFilesByTags distinguishes grouped (A AND B) OR C from A AND (B OR C)", () => {
+        const files = [
+            fileWithTags(1, ["a"]),
+            fileWithTags(2, ["b"]),
+            fileWithTags(3, ["c"]),
+            fileWithTags(4, ["a", "b"]),
+            fileWithTags(5, ["b", "c"]),
+        ];
+        const index = buildTagIndex(files);
+        const { fileIdsByTag } = tagIndexToMaps(index);
+
+        const groupedAndOr = filterFilesByTags(
+            files,
+            filterWithRoot(
+                orRoot(
+                    andRoot(includeClause("a"), includeClause("b")),
+                    includeClause("c"),
+                ),
+            ),
+            fileIdsByTag,
+        );
+        expect(groupedAndOr.map((file) => file.id).sort()).toEqual([3, 4, 5]);
+
+        const andGroupedOr = filterFilesByTags(
+            files,
+            filterWithRoot(
+                andRoot(
+                    includeClause("a"),
+                    orRoot(includeClause("b"), includeClause("c")),
+                ),
+            ),
+            fileIdsByTag,
+        );
+        expect(andGroupedOr.map((file) => file.id).sort()).toEqual([4]);
+        expect(groupedAndOr.map((file) => file.id).sort()).not.toEqual(
+            andGroupedOr.map((file) => file.id).sort(),
+        );
+    });
+
+    it("describeTagFilter formats scope, favourites, and nested groups", () => {
         expect(
             describeTagFilter({
-                untagged: true,
-                tagged: false,
-                clauses: [include("selfie"), exclude("vietnam")],
+                tagScope: "untagged",
+                favoritesScope: "favorites",
+                root: andRoot(includeClause("selfie"), excludeClause("vietnam")),
             }),
-        ).toBe("untagged, selfie, AND not vietnam");
+        ).toBe("untagged · favourites · selfie AND not vietnam");
+
+        expect(
+            describeTagFilter(
+                filterWithRoot(
+                    orRoot(
+                        andRoot(includeClause("selfie"), includeClause("vietnam")),
+                        includeClause("beach"),
+                    ),
+                ),
+            ),
+        ).toBe("(selfie AND vietnam) OR beach");
+    });
+
+    it("filterFilesByTags supports the same tag in sibling groups with different modes", () => {
+        const files = [
+            fileWithTags(1, ["vacation"]),
+            fileWithTags(2, ["archived"]),
+            fileWithTags(3, ["vacation", "archived"]),
+        ];
+        const index = buildTagIndex(files);
+        const { fileIdsByTag } = tagIndexToMaps(index);
+
+        const filtered = filterFilesByTags(
+            files,
+            filterWithRoot(
+                orRoot(
+                    andRoot(includeClause("vacation"), excludeClause("archived")),
+                    andRoot(includeClause("archived"), excludeClause("vacation")),
+                ),
+            ),
+            fileIdsByTag,
+        );
+        expect(filtered.map((file) => file.id).sort()).toEqual([1, 2]);
     });
 });

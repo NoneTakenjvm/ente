@@ -12,6 +12,7 @@ import {
     ChevronRight,
     Crop,
     Heart,
+    Image,
     Tag,
     Trash2,
     X,
@@ -59,6 +60,8 @@ interface PhotoViewerProps {
     initialFileId: number;
     onClose: () => void;
     onFileUpdated?: (file: EnteFile) => void;
+    albumCoverFileId?: number;
+    onSetAlbumCover?: (fileId: number) => void;
 }
 
 type SlideStatus = "idle" | "loading" | "ready" | "error";
@@ -92,6 +95,8 @@ export function PhotoViewer({
     initialFileId,
     onClose,
     onFileUpdated,
+    albumCoverFileId,
+    onSetAlbumCover,
 }: PhotoViewerProps): JSX.Element {
     const [sessionFiles, setSessionFiles] = useState<EnteFile[]>(files);
     const [currentIndex, setCurrentIndex] = useState<number>(() => {
@@ -1276,6 +1281,25 @@ export function PhotoViewer({
                         >
                             <Heart className={cn(isFavorite && "fill-current")} />
                         </Button>
+                        {onSetAlbumCover ? (
+                            <Button
+                                type="button"
+                                variant={
+                                    file.id === albumCoverFileId ?
+                                        "secondary" :
+                                        "ghost"
+                                }
+                                size="icon-sm"
+                                onClick={() => {
+                                    resetChromeTimer();
+                                    onSetAlbumCover(file.id);
+                                }}
+                                aria-label="Set as album cover"
+                                aria-pressed={file.id === albumCoverFileId}
+                            >
+                                <Image />
+                            </Button>
+                        ) : null}
                         {canCrop(file) ? (
                             <Button
                                 type="button"

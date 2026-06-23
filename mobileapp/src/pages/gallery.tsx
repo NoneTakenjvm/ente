@@ -7,7 +7,7 @@ import {
 } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/router";
-import { ArrowDownUp, ShieldOff, Shuffle, Upload } from "lucide-react";
+import { ShieldOff, Upload } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { ConfirmPanicModal } from "@/components/ConfirmPanicModal";
 import { PageLoader } from "@/components/PageLoader";
@@ -29,6 +29,7 @@ import {
 } from "@/lib/tags";
 import { fileCreationTime } from "ente-media/file-metadata";
 import { useLibraryStore } from "@/stores/library-store";
+import { useFavoritesStore } from "@/stores/favorites-store";
 import { useTagStore } from "@/stores/tag-store";
 import { useUIStore } from "@/stores/ui-store";
 import type { EnteFile } from "ente-media/file";
@@ -54,13 +55,11 @@ export default function GalleryPage(): JSX.Element {
     const email = useSessionStore((s) => s.email);
 
     const allFiles = useLibraryStore((s) => s.allFiles);
+    const favoriteFileIds = useFavoritesStore((s) => s.favoriteFileIds);
     const tagFilter = useTagStore((s) => s.tagFilter);
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
     const mediaViewOrder = useUIStore((s) => s.mediaViewOrder);
     const mediaShuffleSeed = useUIStore((s) => s.mediaShuffleSeed);
-    const setMediaShuffled = useUIStore((s) => s.setMediaShuffled);
-    const reshuffleMedia = useUIStore((s) => s.reshuffleMedia);
-    const setMediaDefaultOrder = useUIStore((s) => s.setMediaDefaultOrder);
     const syncStatus = useLibraryStore((s) => s.syncStatus);
     const initialLoadDone = useLibraryBootstrap();
 
@@ -77,8 +76,9 @@ export default function GalleryPage(): JSX.Element {
                 libraryFiles,
                 tagFilter,
                 fileIdsByTag,
+                { favoriteFileIds },
             ),
-        [libraryFiles, tagFilter, fileIdsByTag],
+        [libraryFiles, tagFilter, fileIdsByTag, favoriteFileIds],
     );
 
     const files = useMemo(() => {
@@ -95,8 +95,9 @@ export default function GalleryPage(): JSX.Element {
             tagFilter,
             fileIdsByTag,
             libraryFiles,
+            { favoriteFileIds },
         );
-    }, [libraryFiles, tagFilter, fileIdsByTag]);
+    }, [libraryFiles, tagFilter, fileIdsByTag, favoriteFileIds]);
 
     const [viewerFileId, setViewerFileId] = useState<number | undefined>();
     const [showUpload, setShowUpload] = useState<boolean>(false);
@@ -151,38 +152,6 @@ export default function GalleryPage(): JSX.Element {
             email={email}
             actions={
                 <>
-                    {mediaViewOrder === "default" ? (
-                        <Button
-                            type="button"
-                            variant="outline"
-                            size="icon-sm"
-                            aria-label="Shuffle"
-                            onClick={() => setMediaShuffled(Date.now())}
-                        >
-                            <Shuffle />
-                        </Button>
-                    ) : (
-                        <>
-                            <Button
-                                type="button"
-                                variant="outline"
-                                size="icon-sm"
-                                aria-label="Re-shuffle"
-                                onClick={reshuffleMedia}
-                            >
-                                <Shuffle />
-                            </Button>
-                            <Button
-                                type="button"
-                                variant="outline"
-                                size="icon-sm"
-                                aria-label="Original order"
-                                onClick={setMediaDefaultOrder}
-                            >
-                                <ArrowDownUp />
-                            </Button>
-                        </>
-                    )}
                     <Button
                         type="button"
                         variant="outline"
