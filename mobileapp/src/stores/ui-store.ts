@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { StateCreator } from "zustand";
+import { reconcileShuffledIds } from "@/lib/shuffle-files";
 
 export type MediaViewOrder = "default" | "shuffled";
 
@@ -91,9 +92,11 @@ interface UIState {
     setDedupDryRun: (value: boolean) => void;
     mediaViewOrder: MediaViewOrder;
     mediaShuffleSeed: number;
+    mediaShuffledFileIds: number[];
     setMediaShuffled: (seed: number) => void;
     setMediaDefaultOrder: () => void;
     reshuffleMedia: () => void;
+    reconcileMediaShuffle: (fileIds: readonly number[]) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -103,16 +106,43 @@ export const useUIStore = create<UIState>((set) => ({
     },
     mediaViewOrder: "default",
     mediaShuffleSeed: 1,
+    mediaShuffledFileIds: [],
     setMediaShuffled: (seed: number): void => {
-        set({ mediaViewOrder: "shuffled", mediaShuffleSeed: seed });
+        set({
+            mediaViewOrder: "shuffled",
+            mediaShuffleSeed: seed,
+            mediaShuffledFileIds: [],
+        });
     },
     setMediaDefaultOrder: (): void => {
-        set({ mediaViewOrder: "default" });
+        set({ mediaViewOrder: "default", mediaShuffledFileIds: [] });
     },
     reshuffleMedia: (): void => {
         set({
             mediaViewOrder: "shuffled",
             mediaShuffleSeed: Date.now(),
+            mediaShuffledFileIds: [],
+        });
+    },
+    reconcileMediaShuffle: (fileIds: readonly number[]): void => {
+        set((state) => {
+            if (state.mediaViewOrder !== "shuffled") {
+                return state;
+            }
+            const nextIds = reconcileShuffledIds(
+                fileIds,
+                state.mediaShuffleSeed,
+                state.mediaShuffledFileIds.length > 0 ?
+                    state.mediaShuffledFileIds :
+                    undefined,
+            );
+            if (
+                nextIds.length === state.mediaShuffledFileIds.length &&
+                nextIds.every((id, index) => id === state.mediaShuffledFileIds[index])
+            ) {
+                return state;
+            }
+            return { mediaShuffledFileIds: nextIds };
         });
     },
 }));
