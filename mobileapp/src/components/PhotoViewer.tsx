@@ -148,8 +148,26 @@ export function PhotoViewer({
     const viewerFileIdRef = useRef<number>(initialFileId);
     const currentIndexRef = useRef<number>(currentIndex);
     const tagBaselineRef = useRef<string[]>([]);
+    const viewerActiveRef = useRef<boolean>(true);
 
     currentIndexRef.current = currentIndex;
+
+    useEffect((): (() => void) => {
+        viewerActiveRef.current = true;
+        return (): void => {
+            viewerActiveRef.current = false;
+        };
+    }, []);
+
+    const notifyFileUpdated = useCallback(
+        (updated: EnteFile): void => {
+            if (!viewerActiveRef.current) {
+                return;
+            }
+            onFileUpdated?.(updated);
+        },
+        [onFileUpdated],
+    );
 
     const file = sessionFiles[currentIndex];
     const mediaKind = file ? mediaKindForFile(file) : null;
@@ -808,10 +826,10 @@ export function PhotoViewer({
                 setSessionFiles((current) => current.map((entry) => (
                     entry.id === fileId ? updated : entry
                 )));
-                onFileUpdated?.(updated);
+                notifyFileUpdated(updated);
             }
         },
-        [onFileUpdated],
+        [notifyFileUpdated],
     );
 
     const flushTagDraft = useCallback(async (): Promise<void> => {
@@ -924,10 +942,10 @@ export function PhotoViewer({
                 return next;
             });
             if (stillViewingSource) {
-                onFileUpdated?.(uploaded);
+                notifyFileUpdated(uploaded);
             }
         },
-        [onFileUpdated, sessionFiles],
+        [notifyFileUpdated, sessionFiles],
     );
 
     const handleCropSaved = useCallback(
@@ -950,7 +968,7 @@ export function PhotoViewer({
             setSessionFiles((current) => current.map((entry) => (
                 entry.id === sourceId ? result.optimisticFile : entry
             )));
-            onFileUpdated?.(result.optimisticFile);
+            notifyFileUpdated(result.optimisticFile);
             clearPointers();
             resetZoom();
             setCropMode(false);
@@ -970,7 +988,7 @@ export function PhotoViewer({
                             entry.id === sourceId ? reverted : entry
                         )));
                         if (stillViewingSource) {
-                            onFileUpdated?.(reverted);
+                            notifyFileUpdated(reverted);
                         }
                     }
                     const staleUrl = mediaUrlsRef.current.get(sourceId);
@@ -991,7 +1009,7 @@ export function PhotoViewer({
             clearPointers,
             file,
             handleDerivedFileFinalized,
-            onFileUpdated,
+            notifyFileUpdated,
             resetZoom,
             sessionFiles,
             setSlideMedia,
@@ -1006,9 +1024,9 @@ export function PhotoViewer({
                     entry.id === sourceId ? uploaded : entry
                 )));
             }
-            onFileUpdated?.(uploaded);
+            notifyFileUpdated(uploaded);
         },
-        [file, onFileUpdated],
+        [file, notifyFileUpdated],
     );
 
     const handleToggleFavorite = (): void => {

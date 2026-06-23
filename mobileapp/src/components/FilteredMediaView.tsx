@@ -7,7 +7,7 @@ import {
 } from "react";
 import { PageLoader } from "@/components/PageLoader";
 import { ThumbnailGrid } from "@/components/ThumbnailGrid";
-import { shuffleFiles } from "@/lib/shuffle-files";
+import { reconcileShuffledIds } from "@/lib/shuffle-files";
 import type { EnteFile } from "ente-media/file";
 
 const PhotoViewer = dynamic(
@@ -43,13 +43,60 @@ export function FilteredMediaView({
     onSetAlbumCover,
 }: FilteredMediaViewProps): JSX.Element {
     const [viewerFileId, setViewerFileId] = useState<number | undefined>();
+    const [shuffledFileIds, setShuffledFileIds] = useState<number[]>([]);
+    const [shuffleSnapshot, setShuffleSnapshot] = useState<{
+        viewOrder: MediaViewOrder;
+        shuffleSeed: number;
+        fileIds: number[];
+    }>({
+        viewOrder,
+        shuffleSeed,
+        fileIds: files.map((file) => file.id),
+    });
+
+    const fileIds = useMemo(
+        () => files.map((file) => file.id),
+        [files],
+    );
+    const fileIdsKey = fileIds.join(",");
+
+    if (
+        viewOrder !== shuffleSnapshot.viewOrder ||
+        shuffleSeed !== shuffleSnapshot.shuffleSeed ||
+        fileIdsKey !== shuffleSnapshot.fileIds.join(",")
+    ) {
+        const seedChanged =
+            shuffleSeed !== shuffleSnapshot.shuffleSeed ||
+            viewOrder !== shuffleSnapshot.viewOrder;
+        const nextIds =
+            viewOrder === "shuffled" ?
+                reconcileShuffledIds(
+                    fileIds,
+                    shuffleSeed,
+                    seedChanged || shuffledFileIds.length === 0 ?
+                        undefined :
+                        shuffledFileIds,
+                ) :
+                [];
+        setShuffleSnapshot({ viewOrder, shuffleSeed, fileIds });
+        if (
+            nextIds.length !== shuffledFileIds.length ||
+            nextIds.some((id, index) => id !== shuffledFileIds[index])
+        ) {
+            setShuffledFileIds(nextIds);
+        }
+    }
 
     const displayFiles = useMemo(() => {
-        if (viewOrder === "shuffled") {
-            return shuffleFiles(files, shuffleSeed);
+        if (viewOrder !== "shuffled") {
+            return files;
         }
-        return files;
-    }, [files, shuffleSeed, viewOrder]);
+        const byId = new Map(files.map((file) => [file.id, file]));
+        return shuffledFileIds.flatMap((id) => {
+            const file = byId.get(id);
+            return file ? [file] : [];
+        });
+    }, [files, shuffledFileIds, viewOrder]);
 
     const handleOpenFile = useCallback((file: EnteFile): void => {
         setViewerFileId(file.id);
@@ -60,7 +107,8 @@ export function FilteredMediaView({
     }, []);
 
     const handleFileUpdated = useCallback((file: EnteFile): void => {
-        setViewerFileId(file.id);
+        setViewerFileId((current) =>
+            current === undefined ? undefined : file.id);
     }, []);
 
     if (loading && files.length === 0) {

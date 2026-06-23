@@ -22,7 +22,7 @@ import {
     useSessionStore,
 } from "@/stores/session-store";
 import { dedupeFilesById } from "@/lib/sync/merge-files";
-import { shuffleFiles } from "@/lib/shuffle-files";
+import { reconcileShuffledIds } from "@/lib/shuffle-files";
 import {
     countFilesMatchingTagFilter,
     filterFilesByTags,
@@ -60,6 +60,8 @@ export default function GalleryPage(): JSX.Element {
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
     const mediaViewOrder = useUIStore((s) => s.mediaViewOrder);
     const mediaShuffleSeed = useUIStore((s) => s.mediaShuffleSeed);
+    const mediaShuffledFileIds = useUIStore((s) => s.mediaShuffledFileIds);
+    const reconcileMediaShuffle = useUIStore((s) => s.reconcileMediaShuffle);
     const syncStatus = useLibraryStore((s) => s.syncStatus);
     const initialLoadDone = useLibraryBootstrap();
 
@@ -81,12 +83,36 @@ export default function GalleryPage(): JSX.Element {
         [libraryFiles, tagFilter, fileIdsByTag, favoriteFileIds],
     );
 
-    const files = useMemo(() => {
-        if (mediaViewOrder === "shuffled") {
-            return shuffleFiles(filteredFiles, mediaShuffleSeed);
+    useEffect(() => {
+        if (mediaViewOrder !== "shuffled") {
+            return;
         }
-        return filteredFiles;
-    }, [filteredFiles, mediaShuffleSeed, mediaViewOrder]);
+        reconcileMediaShuffle(filteredFiles.map((file) => file.id));
+    }, [filteredFiles, mediaViewOrder, reconcileMediaShuffle]);
+
+    const files = useMemo(() => {
+        if (mediaViewOrder !== "shuffled") {
+            return filteredFiles;
+        }
+        const fileIds = filteredFiles.map((file) => file.id);
+        const orderedIds = reconcileShuffledIds(
+            fileIds,
+            mediaShuffleSeed,
+            mediaShuffledFileIds.length > 0 ?
+                mediaShuffledFileIds :
+                undefined,
+        );
+        const byId = new Map(filteredFiles.map((file) => [file.id, file]));
+        return orderedIds.flatMap((id) => {
+            const file = byId.get(id);
+            return file ? [file] : [];
+        });
+    }, [
+        filteredFiles,
+        mediaShuffledFileIds,
+        mediaShuffleSeed,
+        mediaViewOrder,
+    ]);
 
     const matchCount = useMemo(() => {
         const candidateIds = new Set(libraryFiles.map((file) => file.id));
@@ -134,7 +160,8 @@ export default function GalleryPage(): JSX.Element {
     }, [panic, router]);
 
     const handleFileUpdated = useCallback((file: EnteFile): void => {
-        setViewerFileId(file.id);
+        setViewerFileId((current) =>
+            current === undefined ? undefined : file.id);
     }, []);
 
     const showFullPageLoader: boolean =

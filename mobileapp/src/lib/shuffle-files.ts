@@ -12,15 +12,78 @@ const createRng = (seed: number): (() => number) => {
     };
 };
 
+const shuffleInPlace = <T>(items: T[], rng: () => number): T[] => {
+    for (let i = items.length - 1; i > 0; i--) {
+        const j = Math.floor(rng() * (i + 1));
+        [items[i], items[j]] = [items[j], items[i]];
+    }
+    return items;
+};
+
+/**
+ * Return a new array of ids in a deterministic shuffled order.
+ */
+export const shuffleIds = (ids: number[], seed: number): number[] =>
+    shuffleInPlace([...ids], createRng(seed));
+
+/**
+ * Reconcile a shuffled id order when the visible file set changes.
+ * Preserves relative order for ids that remain; newly visible ids are
+ * shuffled and appended.
+ */
+export const reconcileShuffledIds = (
+    fileIds: readonly number[],
+    seed: number,
+    previousOrder?: readonly number[],
+): number[] => {
+    if (!previousOrder?.length) {
+        return shuffleIds([...fileIds], seed);
+    }
+    const idSet = new Set(fileIds);
+    const ordered: number[] = [];
+    for (const id of previousOrder) {
+        if (idSet.has(id)) {
+            ordered.push(id);
+        }
+    }
+    const inOrder = new Set(ordered);
+    const newIds = fileIds.filter((id) => !inOrder.has(id));
+    if (newIds.length > 0) {
+        ordered.push(...shuffleIds(newIds, seed));
+    }
+    return ordered;
+};
+
 /**
  * Return a new array with the same files in a deterministic shuffled order.
  */
 export const shuffleFiles = (files: EnteFile[], seed: number): EnteFile[] => {
-    const next = [...files];
-    const rng = createRng(seed);
-    for (let i = next.length - 1; i > 0; i--) {
-        const j = Math.floor(rng() * (i + 1));
-        [next[i], next[j]] = [next[j], next[i]];
-    }
-    return next;
+    const byId = new Map(files.map((file) => [file.id, file]));
+    return reconcileShuffledIds(
+        files.map((file) => file.id),
+        seed,
+    ).flatMap((id) => {
+        const file = byId.get(id);
+        return file ? [file] : [];
+    });
+};
+
+/**
+ * Apply a shuffled view order, preserving the relative order of files that
+ * remain in the set. New files are shuffled and appended.
+ */
+export const applyShuffledOrder = (
+    files: EnteFile[],
+    seed: number,
+    previousOrder?: readonly number[],
+): EnteFile[] => {
+    const byId = new Map(files.map((file) => [file.id, file]));
+    return reconcileShuffledIds(
+        files.map((file) => file.id),
+        seed,
+        previousOrder,
+    ).flatMap((id) => {
+        const file = byId.get(id);
+        return file ? [file] : [];
+    });
 };
