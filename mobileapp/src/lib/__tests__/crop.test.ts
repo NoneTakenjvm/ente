@@ -42,10 +42,10 @@ describe("crop", () => {
         expect(canCrop(fileWithTags(1, FileType.image, []))).toBe(true);
     });
 
-    it("canCrop rejects already-cropped files", () => {
+    it("canCrop allows already-cropped files", () => {
         expect(
             canCrop(fileWithTags(1, FileType.image, [CROPPED_TAG])),
-        ).toBe(false);
+        ).toBe(true);
     });
 
     it("canCrop rejects non-images", () => {
