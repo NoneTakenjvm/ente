@@ -139,6 +139,14 @@ interface LibraryState {
         title: string,
         creationTime: number,
     ) => Promise<EnteFile>;
+    uploadVideoFile: (
+        collectionId: number,
+        videoBytes: Uint8Array,
+        dimensions: { width: number; height: number },
+        duration: number,
+        title: string,
+        creationTime: number,
+    ) => Promise<EnteFile>;
     moveFilesToTrash: (fileIds: number[]) => Promise<void>;
     reset: () => void;
 }
@@ -878,6 +886,36 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 creationTime,
                 width: dimensions.width,
                 height: dimensions.height,
+            },
+        );
+
+        return appendUploadedFile(set, get, uploaded);
+    },
+
+    uploadVideoFile: async (
+        collectionId: number,
+        videoBytes: Uint8Array,
+        dimensions: { width: number; height: number },
+        duration: number,
+        title: string,
+        creationTime: number,
+    ): Promise<EnteFile> => {
+        const collection = get().collections.find(
+            (entry) => entry.id === collectionId,
+        );
+        if (!collection) {
+            throw new Error(`Collection ${collectionId} not found`);
+        }
+
+        const uploaded = await getEnteCore().uploadLocalVideo(
+            collection,
+            videoBytes,
+            {
+                title,
+                creationTime,
+                width: dimensions.width,
+                height: dimensions.height,
+                duration,
             },
         );
 

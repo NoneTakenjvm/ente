@@ -41,6 +41,10 @@ import {
     uploadRotatedImage as uploadRotatedImageToRemote,
     type UploadLocalImageOptions,
 } from "./upload/upload-image";
+import {
+    uploadLocalVideo as uploadLocalVideoToRemote,
+    type UploadLocalVideoOptions,
+} from "./upload/upload-video";
 import type { CompressMediaResult } from "@/lib/transcode/compress-media";
 import type { CroppedVideoResult } from "@/lib/video-edit";
 import {
@@ -336,6 +340,22 @@ export class EnteCore {
             this.http,
             collection,
             jpegBytes,
+            options,
+        );
+    }
+
+    /**
+     * Upload a new MP4 from the device into the given collection.
+     */
+    uploadLocalVideo(
+        collection: Collection,
+        videoBytes: Uint8Array,
+        options: UploadLocalVideoOptions,
+    ): Promise<EnteFile> {
+        return uploadLocalVideoToRemote(
+            this.http,
+            collection,
+            videoBytes,
             options,
         );
     }
