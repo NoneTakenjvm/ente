@@ -175,7 +175,7 @@ export default function GalleryPage(): JSX.Element {
                         type="button"
                         variant="outline"
                         size="icon-sm"
-                        aria-label="Upload images"
+                        aria-label="Upload photos and videos"
                         onClick={() => setUploadPanelOpen(true)}
                     >
                         <Upload />

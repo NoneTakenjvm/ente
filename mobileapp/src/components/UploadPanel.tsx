@@ -22,7 +22,15 @@ import {
 } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { DEFAULT_JPEG_QUALITY, encodeJpegFromBytes } from "@/lib/compress";
+import {
+    ACCEPT_LOCAL_MEDIA,
+    isUploadableLocalFile,
+    isVideoFile,
+    sanitizeUploadImageTitle,
+    sanitizeUploadVideoTitle,
+} from "@/lib/local-media";
 import { isOrganizerConfigCollection } from "@/lib/organizer-config";
+import { prepareLocalVideo } from "@/lib/transcode/prepare-local-video";
 import { cn } from "@/lib/utils";
 import { useLibraryStore } from "@/stores/library-store";
 import { useUploadJobStore } from "@/stores/ui-store";
@@ -38,11 +46,10 @@ interface StagedFile {
     id: string;
     file: File;
     previewUrl: string;
+    kind: "image" | "video";
 }
 
 const UPLOAD_FOOTER_INSET_PX = 120;
-const ACCEPT_IMAGES =
-    "image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif,image/*";
 
 const uploadableCollections = (collections: Collection[]): Collection[] =>
     collections.filter(
@@ -67,16 +74,6 @@ const defaultUploadCollectionId = (
     return preferred?.id ?? albums[0]?.id;
 };
 
-const sanitizeUploadTitle = (fileName: string): string => {
-    const trimmed = fileName.trim() || "upload";
-    const safe = trimmed.replace(/[^\w.\- ]+/gu, "").trim() || "upload";
-    if (/\.jpe?g$/iu.test(safe)) {
-        return safe;
-    }
-    const base = safe.replace(/\.[^.]+$/u, "") || "upload";
-    return `${base}.jpg`;
-};
-
 const localFileId = (file: File, index: number): string =>
     `${file.name}-${file.lastModified}-${file.size}-${index}`;
 
@@ -97,6 +94,7 @@ const stageFilesAsync = async (
             id: localFileId(file, index),
             file,
             previewUrl: URL.createObjectURL(file),
+            kind: isVideoFile(file) ? "video" : "image",
         });
         if (index % 16 === 15) {
             onProgress?.(index + 1, files.length);
@@ -136,7 +134,7 @@ function FilePickButton({
             <input
                 type="file"
                 multiple
-                accept={ACCEPT_IMAGES}
+                accept={ACCEPT_LOCAL_MEDIA}
                 disabled={disabled}
                 className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
                 onChange={onFilesChange}
@@ -153,6 +151,7 @@ export function UploadPanel({
     const activeCollectionId = useLibraryStore((s) => s.activeCollectionId);
     const syncStatus = useLibraryStore((s) => s.syncStatus);
     const uploadImageFile = useLibraryStore((s) => s.uploadImageFile);
+    const uploadVideoFile = useLibraryStore((s) => s.uploadVideoFile);
     const setUploadJobStatus = useUploadJobStore((s) => s.setStatus);
     const setUploadJobProgress = useUploadJobStore((s) => s.setProgress);
     const resetUploadJob = useUploadJobStore((s) => s.resetJob);
@@ -233,22 +232,37 @@ export function UploadPanel({
                     }
                     const entry = filesToUpload[index]!;
                     try {
-                        const buffer = await entry.file.arrayBuffer();
-                        const bytes = new Uint8Array(buffer);
-                        const encoded = await encodeJpegFromBytes(
-                            bytes,
-                            DEFAULT_JPEG_QUALITY,
-                        );
-                        await uploadImageFile(
-                            selectedCollectionId,
-                            encoded.bytes,
-                            {
-                                width: encoded.width,
-                                height: encoded.height,
-                            },
-                            sanitizeUploadTitle(entry.file.name),
-                            entry.file.lastModified * 1000,
-                        );
+                        if (entry.kind === "video") {
+                            const prepared = await prepareLocalVideo(entry.file);
+                            await uploadVideoFile(
+                                selectedCollectionId,
+                                prepared.bytes,
+                                {
+                                    width: prepared.width,
+                                    height: prepared.height,
+                                },
+                                prepared.duration,
+                                sanitizeUploadVideoTitle(entry.file.name),
+                                entry.file.lastModified * 1000,
+                            );
+                        } else {
+                            const buffer = await entry.file.arrayBuffer();
+                            const bytes = new Uint8Array(buffer);
+                            const encoded = await encodeJpegFromBytes(
+                                bytes,
+                                DEFAULT_JPEG_QUALITY,
+                            );
+                            await uploadImageFile(
+                                selectedCollectionId,
+                                encoded.bytes,
+                                {
+                                    width: encoded.width,
+                                    height: encoded.height,
+                                },
+                                sanitizeUploadImageTitle(entry.file.name),
+                                entry.file.lastModified * 1000,
+                            );
+                        }
                         completed += 1;
                     } catch (uploadError: unknown) {
                         failed += 1;
@@ -280,10 +294,10 @@ export function UploadPanel({
                 if (failed === 0) {
                     setPhase("done");
                     setResultMessage(
-                        `Uploaded ${completed} image${completed === 1 ? "" : "s"}.`,
+                        `Uploaded ${completed} file${completed === 1 ? "" : "s"}.`,
                     );
                     toast.success(
-                        `Uploaded ${completed} image${completed === 1 ? "" : "s"}`,
+                        `Uploaded ${completed} file${completed === 1 ? "" : "s"}`,
                     );
                     onUploaded?.();
                     return;
@@ -307,16 +321,23 @@ export function UploadPanel({
             setUploadJobProgress,
             setUploadJobStatus,
             uploadImageFile,
+            uploadVideoFile,
         ],
     );
 
     const handleFilesChange = useCallback(
         (event: ChangeEvent<HTMLInputElement>): void => {
             const picked = event.target.files;
-            const files = picked?.length ? Array.from(picked) : [];
+            const rawFiles = picked?.length ? Array.from(picked) : [];
             event.target.value = "";
 
+            const files = rawFiles.filter(isUploadableLocalFile);
+            const skipped = rawFiles.length - files.length;
+
             if (!files.length) {
+                if (skipped > 0) {
+                    toast.error("Only photos and videos can be uploaded");
+                }
                 return;
             }
             if (selectedCollectionId === undefined) {
@@ -327,8 +348,11 @@ export function UploadPanel({
             const generation = ++stagingGenerationRef.current;
 
             toast.message(
-                `Selected ${files.length} image${files.length === 1 ? "" : "s"}…`,
+                `Selected ${files.length} file${files.length === 1 ? "" : "s"}…`,
             );
+            if (skipped > 0) {
+                toast.message(`Skipped ${skipped} unsupported file${skipped === 1 ? "" : "s"}`);
+            }
 
             setError(undefined);
             setResultMessage(undefined);
@@ -372,7 +396,7 @@ export function UploadPanel({
                     const message =
                         stagingError instanceof Error ?
                             stagingError.message :
-                            "Could not prepare selected images";
+                            "Could not prepare selected files";
                     setPhase(stagedFilesRef.current.length > 0 ? "review" : "idle");
                     setError(message);
                     toast.error(message);
@@ -441,6 +465,7 @@ export function UploadPanel({
                 id: entry.id,
                 previewUrl: entry.previewUrl,
                 label: entry.file.name,
+                kind: entry.kind,
             })),
         [stagedFiles],
     );
@@ -551,19 +576,19 @@ export function UploadPanel({
                 <SheetHeader className="shrink-0 px-4 pt-4">
                     <SheetTitle>
                         {uploading ?
-                            "Uploading images" :
+                            "Uploading" :
                             phase === "done" ?
                                 "Upload complete" :
-                                "Upload images"}
+                                "Upload photos & videos"}
                     </SheetTitle>
                     <SheetDescription>
                         {phase === "idle" ?
-                            "Choose images from your device. Upload starts automatically after you confirm in the picker." :
+                            "Choose photos or videos from your device. Upload starts automatically after you confirm in the picker." :
                             staging ?
                                 "Preparing your selection…" :
                                 uploading ?
                                     "Tap Close to hide this panel, or Cancel upload to stop. Tap the progress bar at the top to reopen." :
-                                    "Tap thumbnails to exclude images before uploading again."}
+                                    "Tap thumbnails to exclude files before uploading again."}
                     </SheetDescription>
                 </SheetHeader>
 
@@ -578,9 +603,9 @@ export function UploadPanel({
                         </p>
                     ) : (
                         <p className="shrink-0 text-sm text-muted-foreground">
-                            Images are added to your Media library and appear in All
-                            photos. Tag and organise them here after upload. Videos are
-                            not supported yet.
+                            Photos and videos are added to your Media library and
+                            appear in All photos. Tag and organise them here after
+                            upload.
                         </p>
                     )}
 
@@ -588,7 +613,7 @@ export function UploadPanel({
                         <div className="flex flex-col gap-3 py-2">
                             <p className="flex items-center gap-2 text-sm text-muted-foreground">
                                 <Spinner />
-                                Preparing {stagingProgress.total} image
+                                Preparing {stagingProgress.total} file
                                 {stagingProgress.total === 1 ? "" : "s"}…
                             </p>
                             {stagingProgress.total > 0 ? (
@@ -599,37 +624,37 @@ export function UploadPanel({
 
                     {stagedFiles.length > 0 &&
                     (phase === "review" || uploading || phase === "done" || phase === "error") ? (
-                        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-                            <p className="text-xs text-muted-foreground">
-                                {stagedFiles.length} image
-                                {stagedFiles.length === 1 ? "" : "s"}
-                                {uploading ?
-                                    ` · uploading ${uploadProgress.current}/${uploadProgress.total}` :
-                                    ` · ${activeSelectedIds.size} selected`}
-                            </p>
-                            {phase === "review" ? (
-                                <div className="flex flex-wrap gap-2">
-                                    <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="sm"
-                                        disabled={staging || uploading || stagedFiles.length === 0}
-                                        onClick={toggleAll}
-                                    >
-                                        {allSelected ? "Deselect all" : "Select all"}
-                                    </Button>
-                                    <FilePickButton
-                                        variant="outline"
-                                        size="sm"
-                                        disabled={!canPick}
-                                        onFilesChange={handleFilesChange}
-                                    >
-                                        Add more
-                                    </FilePickButton>
-                                </div>
-                            ) : null}
-                        </div>
-                    ) : null}
+                            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+                                <p className="text-xs text-muted-foreground">
+                                    {stagedFiles.length} file
+                                    {stagedFiles.length === 1 ? "" : "s"}
+                                    {uploading ?
+                                        ` · uploading ${uploadProgress.current}/${uploadProgress.total}` :
+                                        ` · ${activeSelectedIds.size} selected`}
+                                </p>
+                                {phase === "review" ? (
+                                    <div className="flex flex-wrap gap-2">
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            disabled={staging || uploading || stagedFiles.length === 0}
+                                            onClick={toggleAll}
+                                        >
+                                            {allSelected ? "Deselect all" : "Select all"}
+                                        </Button>
+                                        <FilePickButton
+                                            variant="outline"
+                                            size="sm"
+                                            disabled={!canPick}
+                                            onFilesChange={handleFilesChange}
+                                        >
+                                            Add more
+                                        </FilePickButton>
+                                    </div>
+                                ) : null}
+                            </div>
+                        ) : null}
 
                     {(phase === "review" || uploading) && stagedFiles.length > 0 ? (
                         <LocalUploadGrid
@@ -687,7 +712,7 @@ export function UploadPanel({
                                 disabled={!canPick}
                                 onFilesChange={handleFilesChange}
                             >
-                                Choose images
+                                Choose files
                             </FilePickButton>
                             {stagedFiles.length > 0 ? (
                                 <Button
@@ -695,7 +720,7 @@ export function UploadPanel({
                                     onClick={handleManualUpload}
                                     disabled={!canManualUpload}
                                 >
-                                    Upload {activeSelectedIds.size} image
+                                    Upload {activeSelectedIds.size} file
                                     {activeSelectedIds.size === 1 ? "" : "s"}
                                 </Button>
                             ) : null}
@@ -706,7 +731,7 @@ export function UploadPanel({
                             onClick={handleManualUpload}
                             disabled={!canManualUpload}
                         >
-                            Upload {activeSelectedIds.size} image
+                            Upload {activeSelectedIds.size} file
                             {activeSelectedIds.size === 1 ? "" : "s"}
                         </Button>
                     ) : null}

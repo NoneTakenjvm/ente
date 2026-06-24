@@ -17,6 +17,7 @@ export interface LocalUploadItem {
     id: string;
     previewUrl: string;
     label: string;
+    kind?: "image" | "video";
 }
 
 export interface LocalUploadGridSelection {
@@ -77,14 +78,24 @@ const LocalUploadCell = memo(function LocalUploadCell({
                 }
                 aria-pressed={isSelected}
             >
-                <img
-                    className="pointer-events-none size-full object-cover"
-                    src={item.previewUrl}
-                    alt=""
-                    loading="lazy"
-                    decoding="async"
-                    draggable={false}
-                />
+                {item.kind === "video" ? (
+                    <video
+                        className="pointer-events-none size-full object-cover"
+                        src={item.previewUrl}
+                        muted
+                        playsInline
+                        preload="metadata"
+                    />
+                ) : (
+                    <img
+                        className="pointer-events-none size-full object-cover"
+                        src={item.previewUrl}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                        draggable={false}
+                    />
+                )}
             </button>
             {isSelected ? (
                 <>
