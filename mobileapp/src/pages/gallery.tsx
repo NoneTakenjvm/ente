@@ -31,21 +31,13 @@ import { fileCreationTime } from "ente-media/file-metadata";
 import { useLibraryStore } from "@/stores/library-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useTagStore } from "@/stores/tag-store";
-import { useUIStore } from "@/stores/ui-store";
+import { useUIStore, useUploadJobStore } from "@/stores/ui-store";
 import type { EnteFile } from "ente-media/file";
 
 const PhotoViewer = dynamic(
     () =>
         import("@/components/PhotoViewer").then((mod) => ({
             default: mod.PhotoViewer,
-        })),
-    { ssr: false },
-);
-
-const UploadPanel = dynamic(
-    () =>
-        import("@/components/UploadPanel").then((mod) => ({
-            default: mod.UploadPanel,
         })),
     { ssr: false },
 );
@@ -62,6 +54,7 @@ export default function GalleryPage(): JSX.Element {
     const mediaShuffleSeed = useUIStore((s) => s.mediaShuffleSeed);
     const mediaShuffledFileIds = useUIStore((s) => s.mediaShuffledFileIds);
     const reconcileMediaShuffle = useUIStore((s) => s.reconcileMediaShuffle);
+    const setUploadPanelOpen = useUploadJobStore((s) => s.setPanelOpen);
     const syncStatus = useLibraryStore((s) => s.syncStatus);
     const initialLoadDone = useLibraryBootstrap();
 
@@ -126,7 +119,6 @@ export default function GalleryPage(): JSX.Element {
     }, [libraryFiles, tagFilter, fileIdsByTag, favoriteFileIds]);
 
     const [viewerFileId, setViewerFileId] = useState<number | undefined>();
-    const [showUpload, setShowUpload] = useState<boolean>(false);
     const [showPanicConfirm, setShowPanicConfirm] = useState<boolean>(false);
     const [panicWorking, setPanicWorking] = useState<boolean>(false);
     const panic = useSessionStore((s) => s.panic);
@@ -183,8 +175,8 @@ export default function GalleryPage(): JSX.Element {
                         type="button"
                         variant="outline"
                         size="icon-sm"
-                        aria-label="Upload photo"
-                        onClick={() => setShowUpload(true)}
+                        aria-label="Upload images"
+                        onClick={() => setUploadPanelOpen(true)}
                     >
                         <Upload />
                     </Button>
@@ -216,12 +208,6 @@ export default function GalleryPage(): JSX.Element {
                     initialFileId={viewerFileId}
                     onClose={handleCloseViewer}
                     onFileUpdated={handleFileUpdated}
-                />
-            ) : null}
-            {showUpload ? (
-                <UploadPanel
-                    onClose={() => setShowUpload(false)}
-                    onUploaded={() => setShowUpload(false)}
                 />
             ) : null}
             <ConfirmPanicModal

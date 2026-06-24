@@ -56,6 +56,7 @@ import {
     isWorthReplacing,
 } from "@/lib/compress";
 import { buildCroppedOrganizerTags, croppedReplaceTitle } from "@/lib/crop";
+import { isFileFavorited } from "@/lib/favorites";
 import type { RotationDegrees } from "@/lib/rotate";
 import type { VideoCropRect } from "@/lib/video-edit";
 import { mimeTypeForFile } from "@/lib/media-kind";
@@ -217,9 +218,20 @@ const replaceSourceWithCompressed = async (
     get: () => LibraryState,
     sourceFile: EnteFile,
     uploaded: EnteFile,
-    wasFavorite: boolean,
 ): Promise<EnteFile> => {
-    await getEnteCore().moveFilesToTrash([sourceFile]);
+    const core = getEnteCore();
+    const userId = core.getUserID();
+    const { collections, allFiles } = get();
+    const favoritesStore = useFavoritesStore.getState();
+    const shouldFavorite = isFileFavorited(
+        sourceFile,
+        userId,
+        collections,
+        allFiles,
+        favoritesStore.unsyncedFavoriteUpdates,
+    );
+
+    await core.moveFilesToTrash([sourceFile]);
 
     const sourceId = sourceFile.id;
     registerShuffleFileSubstitution(sourceId, uploaded.id);
@@ -241,7 +253,7 @@ const replaceSourceWithCompressed = async (
     await deleteThumbnailCiphertext(sourceId);
     requestThumbnail(uploaded);
 
-    if (wasFavorite) {
+    if (shouldFavorite) {
         await get().setFileFavorite(uploaded, true);
     }
 
@@ -263,9 +275,6 @@ const uploadCroppedAndReplace = async (
         throw new Error(`Collection ${sourceFile.collectionID} not found`);
     }
 
-    const wasFavorite = useFavoritesStore
-        .getState()
-        .favoriteFileIds.has(sourceFile.id);
     const uploaded = await getEnteCore().uploadCroppedImage(
         sourceFile,
         croppedBytes,
@@ -280,7 +289,6 @@ const uploadCroppedAndReplace = async (
         get,
         sourceFile,
         uploaded,
-        wasFavorite,
     );
 };
 
@@ -637,9 +645,6 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             throw new Error(`Collection ${file.collectionID} not found`);
         }
 
-        const wasFavorite = useFavoritesStore
-            .getState()
-            .favoriteFileIds.has(fileId);
         const originalSize = file.info?.fileSize;
         if (
             originalSize !== undefined &&
@@ -661,7 +666,6 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             get,
             file,
             uploaded,
-            wasFavorite,
         );
     },
 
@@ -682,9 +686,6 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             throw new Error(`Collection ${file.collectionID} not found`);
         }
 
-        const wasFavorite = useFavoritesStore
-            .getState()
-            .favoriteFileIds.has(fileId);
         const bytes = await getEnteCore().getDecryptedFile(file);
         const { compressMediaBytes } = await import("@/lib/transcode/compress-media");
         const result = await compressMediaBytes(file, bytes, options);
@@ -704,7 +705,6 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             get,
             file,
             uploaded,
-            wasFavorite,
         );
     },
 
@@ -760,9 +760,6 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             throw new Error(`Collection ${file.collectionID} not found`);
         }
 
-        const wasFavorite = useFavoritesStore
-            .getState()
-            .favoriteFileIds.has(fileId);
         const bytes = await getEnteCore().getDecryptedFile(file);
         const { cropVideoBytes } = await import("@/lib/video-edit");
         const cropped = await cropVideoBytes(
@@ -783,7 +780,6 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             get,
             file,
             uploaded,
-            wasFavorite,
         );
     },
 

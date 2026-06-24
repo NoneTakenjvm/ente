@@ -23,6 +23,9 @@ import {
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { UploadPanel } from "@/components/UploadPanel";
+import { UploadProgressBar } from "@/components/UploadProgressBar";
+import { useUploadJobStore } from "@/stores/ui-store";
 
 interface AppShellProps {
     title: string;
@@ -49,10 +52,15 @@ export function AppShell({
 }: AppShellProps): JSX.Element {
     const router = useRouter();
     const pathname = router.pathname;
+    const uploadPanelOpen = useUploadJobStore((s) => s.panelOpen);
+    const uploadStatus = useUploadJobStore((s) => s.status);
+    const mountUploadPanel =
+        uploadPanelOpen || uploadStatus === "running";
 
     return (
         <div className="flex min-h-dvh flex-col bg-background">
             <header className="sticky top-0 z-40 border-b border-border bg-background/95 pt-[env(safe-area-inset-top)] backdrop-blur supports-backdrop-filter:bg-background/80">
+                <UploadProgressBar />
                 <div className="flex items-center gap-2 px-4 py-3">
                     {onBack ? (
                         <Button
@@ -90,6 +98,8 @@ export function AppShell({
             <main className="flex min-h-0 flex-1 flex-col pb-[calc(4rem+env(safe-area-inset-bottom))]">
                 {children}
             </main>
+
+            {mountUploadPanel ? <UploadPanel /> : null}
 
             <nav
                 className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur supports-backdrop-filter:bg-background/80"

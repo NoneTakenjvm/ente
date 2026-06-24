@@ -87,6 +87,56 @@ export const useCompressJobStore = create<CompressJobState>((set) => ({
     },
 }));
 
+interface UploadJobState {
+    status: BackgroundJobStatus;
+    progress: { current: number; total: number };
+    panelOpen: boolean;
+    cancelRequested: boolean;
+    setStatus: (status: BackgroundJobStatus) => void;
+    setProgress: (current: number, total: number) => void;
+    setPanelOpen: (open: boolean) => void;
+    requestCancel: () => void;
+    resetJob: () => void;
+    reset: () => void;
+}
+
+const initialUploadJob: Pick<
+    UploadJobState,
+    "status" | "progress" | "panelOpen" | "cancelRequested"
+> = {
+    status: "idle",
+    progress: { current: 0, total: 0 },
+    panelOpen: false,
+    cancelRequested: false,
+};
+
+export const useUploadJobStore = create<UploadJobState>((set) => ({
+    ...initialUploadJob,
+    setStatus: (status: BackgroundJobStatus): void => {
+        set({ status });
+    },
+    setProgress: (current: number, total: number): void => {
+        set({ progress: { current, total } });
+    },
+    setPanelOpen: (open: boolean): void => {
+        set({ panelOpen: open });
+    },
+    requestCancel: (): void => {
+        set({ cancelRequested: true });
+    },
+    resetJob: (): void => {
+        set((state) => ({
+            status: "idle",
+            progress: { current: 0, total: 0 },
+            cancelRequested: false,
+            panelOpen: state.panelOpen,
+        }));
+    },
+    reset: (): void => {
+        set(initialUploadJob);
+    },
+}));
+
 interface UIState {
     dedupDryRun: boolean;
     setDedupDryRun: (value: boolean) => void;
