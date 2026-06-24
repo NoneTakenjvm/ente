@@ -99,7 +99,7 @@ export const deriveFavoriteFileIDs = (
     );
 
     for (const file of allFiles) {
-        if (file.ownerID === userId) {
+        if (file.collectionID === favoritesCollection.id) {
             continue;
         }
         const key = hashAndTypeKey(file);
@@ -132,6 +132,26 @@ export const deriveFavoriteFileIDs = (
         favoriteFileIds,
     };
 };
+
+/**
+ * Return true when a library file is currently marked as a favourite.
+ */
+export const isFileFavorited = (
+    file: EnteFile,
+    userId: number,
+    collections: Collection[],
+    allFiles: EnteFile[],
+    unsyncedFavoriteUpdates: Map<
+        UnsyncedFavoriteUpdateKey,
+        UnsyncedFavoriteUpdate
+    > = new Map(),
+): boolean =>
+    deriveFavoriteFileIDs(
+        userId,
+        collections,
+        allFiles,
+        unsyncedFavoriteUpdates,
+    ).favoriteFileIds.has(file.id);
 
 export const createUnsyncedFavoriteUpdate = (
     file: EnteFile,

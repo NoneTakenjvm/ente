@@ -62,9 +62,10 @@ const resetDependentStores = (): void => {
     void import("./phash-index-store").then(({ usePhashIndexStore }) => {
         usePhashIndexStore.getState().reset();
     });
-    void import("./ui-store").then(({ useCompressJobStore, usePhashJobStore, useUIStore }) => {
+    void import("./ui-store").then(({ useCompressJobStore, usePhashJobStore, useUploadJobStore, useUIStore }) => {
         usePhashJobStore.getState().reset();
         useCompressJobStore.getState().reset();
+        useUploadJobStore.getState().reset();
         useUIStore.getState().setDedupDryRun(false);
     });
 };

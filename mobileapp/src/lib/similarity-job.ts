@@ -40,16 +40,24 @@ const persistIndex = async (entries: Map<number, string>): Promise<void> => {
     );
 };
 
-let worker: Worker | undefined;
+const phashWorkerCount = (): number => {
+    if (typeof navigator === "undefined") {
+        return 4;
+    }
+    return Math.min(8, Math.max(2, navigator.hardwareConcurrency ?? 4));
+};
+
+let workers: Worker[] | undefined;
+let workerRoundRobin = 0;
 let requestCounter = 0;
 
-const getPhashWorker = (): Worker => {
-    if (!worker) {
-        worker = new Worker(
-            new URL("../workers/phash.worker.ts", import.meta.url),
+const getPhashWorkers = (): Worker[] => {
+    if (!workers) {
+        workers = Array.from({ length: phashWorkerCount() }, () =>
+            new Worker(new URL("../workers/phash.worker.ts", import.meta.url)),
         );
     }
-    return worker;
+    return workers;
 };
 
 const hashBytesInWorker = (
@@ -57,7 +65,9 @@ const hashBytesInWorker = (
     bytes: Uint8Array,
 ): Promise<string> =>
     new Promise((resolve, reject) => {
-        const phashWorker = getPhashWorker();
+        const pool = getPhashWorkers();
+        const phashWorker = pool[workerRoundRobin % pool.length]!;
+        workerRoundRobin += 1;
         const requestId = ++requestCounter;
 
         const handleMessage = (event: MessageEvent<PhashWorkerResponse>): void => {
@@ -124,10 +134,11 @@ export const removePhashEntry = async (fileId: number): Promise<void> => {
     );
 };
 
-const chunkSize = 16;
-const cachedFetchConcurrency = 12;
-const networkFetchConcurrency = 4;
-const hashConcurrency = 3;
+/** Write the index every N hashes so progress survives interruption. */
+const persistEvery = 64;
+const cacheCheckConcurrency = 32;
+const cachedThumbnailConcurrency = 32;
+const networkThumbnailConcurrency = 8;
 
 const runWithConcurrency = async <T>(
     items: T[],
@@ -173,72 +184,71 @@ export const runPhashJob = async (
 
     const total = candidates.length;
     let completed = 0;
+    let hashesSincePersist = 0;
+    let persistChain = Promise.resolve();
     const entries = new Map(options.entries);
 
-    for (let offset = 0; offset < candidates.length; offset += chunkSize) {
+    if (total === 0) {
+        return entries;
+    }
+
+    const cachedFiles: EnteFile[] = [];
+    const networkFiles: EnteFile[] = [];
+    await runWithConcurrency(candidates, cacheCheckConcurrency, async (file) => {
+        const cached = await isThumbnailCachedLocally(file.id);
+        if (cached) {
+            cachedFiles.push(file);
+        } else {
+            networkFiles.push(file);
+        }
+    });
+
+    const noteHashed = async (): Promise<void> => {
+        hashesSincePersist += 1;
+        if (hashesSincePersist < persistEvery) {
+            return;
+        }
+        hashesSincePersist = 0;
+        persistChain = persistChain.then(() => persistIndex(entries));
+        await persistChain;
+    };
+
+    const processOne = async (file: EnteFile): Promise<void> => {
         if (options.signal?.aborted) {
-            break;
+            return;
         }
         if (await waitIfPaused(options.shouldPause, options.signal)) {
-            break;
+            return;
         }
 
-        const chunk = candidates.slice(offset, offset + chunkSize);
-        const bytesByFileId = new Map<number, Uint8Array>();
-
-        const cacheStatus = await Promise.all(
-            chunk.map(async (file) => ({
-                file,
-                cached: await isThumbnailCachedLocally(file.id),
-            })),
-        );
-        const cachedFiles = cacheStatus
-            .filter((entry) => entry.cached)
-            .map((entry) => entry.file);
-        const networkFiles = cacheStatus
-            .filter((entry) => !entry.cached)
-            .map((entry) => entry.file);
-
-        await runWithConcurrency(cachedFiles, cachedFetchConcurrency, async (file) => {
-            const bytes = await getDecryptedThumbnailBytes(file);
-            if (bytes) {
-                bytesByFileId.set(file.id, bytes);
-            }
-        });
-        await runWithConcurrency(networkFiles, networkFetchConcurrency, async (file) => {
-            const bytes = await getDecryptedThumbnailBytes(file);
-            if (bytes) {
-                bytesByFileId.set(file.id, bytes);
-            }
-        });
-
-        const hashTargets = chunk.filter((file) => bytesByFileId.has(file.id));
-        await runWithConcurrency(hashTargets, hashConcurrency, async (file) => {
-            if (options.signal?.aborted) {
-                return;
-            }
-            const bytes = bytesByFileId.get(file.id);
-            if (!bytes) {
-                return;
-            }
+        const bytes = await getDecryptedThumbnailBytes(file);
+        if (bytes) {
             try {
                 const hash = await hashBytesInWorker(file.id, bytes);
                 entries.set(file.id, hash);
+                await noteHashed();
             } catch {
                 // Skip files we cannot hash.
             }
-        });
+        }
 
-        completed += chunk.length;
+        completed += 1;
         options.onProgress?.(completed, total);
+    };
 
-        await persistIndex(entries);
-    }
+    await Promise.all([
+        runWithConcurrency(cachedFiles, cachedThumbnailConcurrency, processOne),
+        runWithConcurrency(networkFiles, networkThumbnailConcurrency, processOne),
+    ]);
 
+    await persistIndex(entries);
     return entries;
 };
 
 export const terminatePhashWorker = (): void => {
-    worker?.terminate();
-    worker = undefined;
+    workers?.forEach((worker) => {
+        worker.terminate();
+    });
+    workers = undefined;
+    workerRoundRobin = 0;
 };
