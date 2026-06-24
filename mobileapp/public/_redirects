@@ -1,0 +1,9 @@
+/gallery /gallery.html 200
+/albums /albums.html 200
+/login /login.html 200
+/manage /manage.html 200
+/tags /tags.html 200
+/dedup /dedup.html 200
+/favourites /favourites.html 200
+/dev-login /dev-login.html 200
+/offline /offline.html 200

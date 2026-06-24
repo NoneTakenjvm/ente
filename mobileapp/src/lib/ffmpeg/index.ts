@@ -86,14 +86,91 @@ export const runFFmpeg = async (
     }) as Promise<Uint8Array>;
 
 /**
+ * Extract a poster frame using the browser video decoder (reliable on mobile).
+ */
+const extractVideoFrameViaCanvas = async (
+    videoBytes: Uint8Array,
+    mimeType: string,
+): Promise<Uint8Array> => {
+    const url = URL.createObjectURL(
+        new Blob([Uint8Array.from(videoBytes)], { type: mimeType }),
+    );
+    try {
+        const video = document.createElement("video");
+        video.muted = true;
+        video.playsInline = true;
+        video.preload = "metadata";
+        video.src = url;
+        await new Promise<void>((resolve, reject) => {
+            video.onloadedmetadata = () => resolve();
+            video.onerror = () => reject(new Error("Video frame decode failed"));
+        });
+        if (video.videoWidth <= 0 || video.videoHeight <= 0) {
+            throw new Error("Video frame dimensions unavailable");
+        }
+        const seekTime =
+            Number.isFinite(video.duration) && video.duration > 0 ?
+                Math.min(0.1, video.duration / 2) :
+                0;
+        if (seekTime > 0) {
+            video.currentTime = seekTime;
+            await new Promise<void>((resolve, reject) => {
+                video.onseeked = () => resolve();
+                video.onerror = () => reject(new Error("Video seek failed"));
+            });
+        }
+        try {
+            await video.play();
+            video.pause();
+        } catch {
+            // Muted inline play may be blocked; seeked frame is often enough.
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const context = canvas.getContext("2d");
+        if (!context) {
+            throw new Error("Canvas unavailable");
+        }
+        context.drawImage(video, 0, 0);
+        const jpegBlob = await new Promise<Blob>((resolve, reject) => {
+            canvas.toBlob(
+                (blob) => {
+                    if (blob) {
+                        resolve(blob);
+                    } else {
+                        reject(new Error("JPEG encode failed"));
+                    }
+                },
+                "image/jpeg",
+                0.85,
+            );
+        });
+        return new Uint8Array(await jpegBlob.arrayBuffer());
+    } finally {
+        URL.revokeObjectURL(url);
+    }
+};
+
+/**
  * Extract a single JPEG frame from video bytes for thumbnails.
  */
 export const extractVideoFrameJpeg = async (
     videoBytes: Uint8Array,
     mimeType: string,
-): Promise<Uint8Array> =>
-    runFFmpeg(
-        ["-i", "INPUT", "-frames:v", "1", "-q:v", "2", "OUTPUT"],
-        new Blob([Uint8Array.from(videoBytes)], { type: mimeType }),
-        "jpg",
-    );
+): Promise<Uint8Array> => {
+    const preferCanvas =
+        typeof window !== "undefined" && "ontouchstart" in window;
+    if (preferCanvas) {
+        return extractVideoFrameViaCanvas(videoBytes, mimeType);
+    }
+    try {
+        return await runFFmpeg(
+            ["-i", "INPUT", "-frames:v", "1", "-q:v", "2", "OUTPUT"],
+            new Blob([Uint8Array.from(videoBytes)], { type: mimeType }),
+            "jpg",
+        );
+    } catch {
+        return extractVideoFrameViaCanvas(videoBytes, mimeType);
+    }
+};
