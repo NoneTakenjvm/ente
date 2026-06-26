@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { defaultAppSettings } from "@/lib/app-settings";
 import {
     defaultOrganizerAppConfig,
     isOrganizerConfigCollection,
@@ -15,6 +16,11 @@ describe("defaultOrganizerAppConfig", () => {
         const config = defaultOrganizerAppConfig();
         expect(config.version).toBe(1);
         expect(config.tagTypes?.types).toContain(DEFAULT_TAG_TYPE);
+    });
+
+    it("includes default app settings", () => {
+        const config = defaultOrganizerAppConfig();
+        expect(config.appSettings).toEqual(defaultAppSettings());
     });
 });
 
@@ -36,6 +42,25 @@ describe("mergeOrganizerAppConfig", () => {
         expect(merged.tagTypes?.types).toEqual(["default", "genre"]);
         expect(merged.tagTypes?.tagTypeByName).toEqual({ rock: "genre" });
         expect(merged.updatedAt).toBeGreaterThan(1);
+    });
+
+    it("merges app settings patches", () => {
+        const merged = mergeOrganizerAppConfig(
+            {
+                version: 1,
+                updatedAt: 1,
+                appSettings: defaultAppSettings(),
+            },
+            {
+                appSettings: {
+                    ...defaultAppSettings(),
+                    galleryColumns: 6,
+                    galleryThumbnailMode: "fit",
+                },
+            },
+        );
+        expect(merged.appSettings?.galleryColumns).toBe(6);
+        expect(merged.appSettings?.galleryThumbnailMode).toBe("fit");
     });
 });
 

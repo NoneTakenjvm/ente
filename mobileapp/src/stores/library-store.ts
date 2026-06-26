@@ -36,6 +36,10 @@ import {
     upsertTagOutboxEntry,
 } from "@/lib/tag-outbox";
 import { enqueueDerivedReplace } from "@/lib/derived-replace-queue";
+import {
+    isOrganizerConfigCollection,
+    organizerAppConfigFromCollection,
+} from "@/lib/organizer-config";
 import { registerShuffleFileSubstitution } from "@/lib/shuffle-file-substitutions";
 import {
     clearLocalMediaOverride,
@@ -48,6 +52,7 @@ import {
     useFavoritesStore,
 } from "./favorites-store";
 import { useAlbumStore } from "./album-store";
+import { useSettingsStore } from "./settings-store";
 import { useTagStore } from "./tag-store";
 import { useUIStore } from "./ui-store";
 import {
@@ -347,6 +352,14 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
 
         rebuildFavoritesFromLibrary(userId, collections ?? [], files ?? []);
 
+        const organizerCollection = (collections ?? []).find((collection) =>
+            isOrganizerConfigCollection(collection));
+        if (organizerCollection) {
+            useSettingsStore.getState().hydrateFromOrganizerConfig(
+                organizerAppConfigFromCollection(organizerCollection),
+            );
+        }
+
         return Boolean(files?.length);
     },
 
@@ -388,6 +401,9 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             );
             useAlbumStore.getState().hydrateFromOrganizerConfig(
                 organizerBootstrap.config.queryAlbums,
+            );
+            useSettingsStore.getState().hydrateFromOrganizerConfig(
+                organizerBootstrap.config,
             );
 
             const filesPull = await pullFiles({

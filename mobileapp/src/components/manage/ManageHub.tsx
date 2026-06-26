@@ -4,6 +4,7 @@ import {
     Copy,
     ImageIcon,
     Minimize2,
+    Settings,
     Tags,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,8 @@ export type ManageSection =
     "exact" |
     "similar" |
     "compress" |
-    "tags";
+    "tags" |
+    "settings";
 
 interface ManageHubProps {
     onSelect: (section: Exclude<ManageSection, "hub">) => void;
@@ -49,6 +51,12 @@ const categories: {
         description: "Rename, merge, and organize tag types.",
         icon: Tags,
     },
+    {
+        id: "settings",
+        title: "Settings",
+        description: "App-wide preferences that sync across devices.",
+        icon: Settings,
+    },
 ];
 
 const sectionTitles: Record<Exclude<ManageSection, "hub">, string> = {
@@ -56,6 +64,7 @@ const sectionTitles: Record<Exclude<ManageSection, "hub">, string> = {
     similar: "Similar photos",
     compress: "Compress",
     tags: "Tags",
+    settings: "Settings",
 };
 
 export const manageSectionTitle = (

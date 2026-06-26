@@ -1,15 +1,32 @@
-import { memo, useCallback, useMemo, useRef, useState, type JSX, type RefObject } from "react";
+import {
+    memo,
+    useCallback,
+    useMemo,
+    useRef,
+    useState,
+    type JSX,
+    type RefObject,
+    type UIEvent,
+} from "react";
 import AutoSizer from "react-virtualized-auto-sizer";
 import {
     FixedSizeList,
     type ListChildComponentProps,
 } from "react-window";
+import type { GalleryColumnCount } from "@/lib/app-settings";
+import { resolveMarqueeDragIntent } from "@/lib/compress";
+import {
+    computeMasonryLayout,
+    masonryItemsInMarquee,
+    visibleMasonryItems,
+    type MasonryLayout,
+} from "@/lib/masonry-layout";
 import {
     computeThumbnailGridLayout,
     rowCountForFiles,
     type ThumbnailGridLayout,
 } from "@/lib/thumbnail-grid-layout";
-import { resolveMarqueeDragIntent } from "@/lib/compress";
+import { useSettingsStore } from "@/stores/settings-store";
 import type { EnteFile } from "ente-media/file";
 import {
     Empty,
@@ -83,6 +100,7 @@ interface SizedGridProps {
     files: EnteFile[];
     width: number;
     height: number;
+    columns: GalleryColumnCount;
     onOpenFile?: (file: EnteFile) => void;
     selection?: ThumbnailGridSelection;
     footerInsetPx: number;
@@ -94,6 +112,7 @@ function SizedGrid({
     files,
     width,
     height,
+    columns,
     onOpenFile,
     selection,
     footerInsetPx,
@@ -101,8 +120,8 @@ function SizedGrid({
     listRef,
 }: SizedGridProps): JSX.Element {
     const layout: ThumbnailGridLayout = useMemo(
-        () => computeThumbnailGridLayout(width),
-        [width],
+        () => computeThumbnailGridLayout(width, columns),
+        [columns, width],
     );
     const rowCount: number = rowCountForFiles(files.length, layout.columns);
     const itemData: RowData = useMemo(
@@ -126,6 +145,90 @@ function SizedGrid({
         >
             {GridRow}
         </FixedSizeList>
+    );
+}
+
+interface SizedMasonryGridProps {
+    files: EnteFile[];
+    width: number;
+    height: number;
+    columns: GalleryColumnCount;
+    onOpenFile?: (file: EnteFile) => void;
+    selection?: ThumbnailGridSelection;
+    footerInsetPx: number;
+    onScrollOffsetChange: (offset: number) => void;
+}
+
+function SizedMasonryGrid({
+    files,
+    width,
+    height,
+    columns,
+    onOpenFile,
+    selection,
+    footerInsetPx,
+    onScrollOffsetChange,
+}: SizedMasonryGridProps): JSX.Element {
+    const [scrollTop, setScrollTop] = useState<number>(0);
+    const layout: MasonryLayout = useMemo(
+        () => computeMasonryLayout(files, width, columns),
+        [columns, files, width],
+    );
+    const visibleItems = useMemo(
+        () => visibleMasonryItems(layout.items, scrollTop, height),
+        [height, layout.items, scrollTop],
+    );
+
+    const handleScroll = useCallback(
+        (event: UIEvent<HTMLDivElement>): void => {
+            const nextScrollTop = event.currentTarget.scrollTop;
+            setScrollTop(nextScrollTop);
+            onScrollOffsetChange(nextScrollTop);
+        },
+        [onScrollOffsetChange],
+    );
+
+    return (
+        <div
+            className="overflow-y-auto"
+            style={{ width, height }}
+            onScroll={handleScroll}
+        >
+            <div
+                className="relative w-full"
+                style={{
+                    height: layout.totalHeight + footerInsetPx,
+                }}
+            >
+                {visibleItems.map((item) => (
+                    <div
+                        key={item.fileId}
+                        className="absolute"
+                        style={{
+                            left: item.x,
+                            top: item.y,
+                            width: item.width,
+                            height: item.height,
+                        }}
+                    >
+                        <ThumbnailCell
+                            file={item.file}
+                            width={item.width}
+                            height={item.height}
+                            objectFit="contain"
+                            onOpen={onOpenFile}
+                            isSelected={selection?.selectedIds.has(item.fileId)}
+                            onToggleSelect={selection?.onToggle}
+                            isAlreadyCompressed={selection?.isAlreadyCompressed?.(
+                                item.file,
+                            )}
+                            disabled={selection?.disabled}
+                            tapSelects={selection !== undefined}
+                        />
+                    </div>
+                ))}
+            </div>
+        </div>
     );
 }
 
@@ -188,6 +291,8 @@ export function ThumbnailGrid({
     selection,
     footerInsetPx = 0,
 }: ThumbnailGridProps): JSX.Element {
+    const galleryColumns = useSettingsStore((s) => s.galleryColumns);
+    const galleryThumbnailMode = useSettingsStore((s) => s.galleryThumbnailMode);
     const listRef = useRef<FixedSizeList<RowData>>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const scrollTopRef = useRef<number>(0);
@@ -221,18 +326,35 @@ export function ThumbnailGrid({
             if (rect.width < 8 && rect.height < 8) {
                 return;
             }
-            const layout = computeThumbnailGridLayout(gridWidth);
-            const fileIds = fileIdsInMarquee(
-                files,
-                layout,
-                scrollTopRef.current,
-                rect,
-            );
+            let fileIds: number[];
+            if (galleryThumbnailMode === "fit") {
+                const layout = computeMasonryLayout(
+                    files,
+                    gridWidth,
+                    galleryColumns,
+                );
+                fileIds = masonryItemsInMarquee(
+                    layout.items,
+                    scrollTopRef.current,
+                    rect,
+                ).map((id) => Number(id));
+            } else {
+                const layout = computeThumbnailGridLayout(
+                    gridWidth,
+                    galleryColumns,
+                );
+                fileIds = fileIdsInMarquee(
+                    files,
+                    layout,
+                    scrollTopRef.current,
+                    rect,
+                );
+            }
             if (fileIds.length > 0) {
                 selection.onSelectMany(fileIds, "add");
             }
         },
-        [files, gridWidth, selection],
+        [files, galleryColumns, galleryThumbnailMode, gridWidth, selection],
     );
 
     const cancelMarqueeTracking = useCallback((): void => {
@@ -356,18 +478,31 @@ export function ThumbnailGrid({
                     setGridWidth(width);
                 }}
             >
-                {({ height, width }: { height: number; width: number }) => (
-                    <SizedGrid
-                        files={files}
-                        width={width}
-                        height={height}
-                        onOpenFile={onOpenFile}
-                        selection={selection}
-                        footerInsetPx={footerInsetPx}
-                        onScrollOffsetChange={handleScrollOffsetChange}
-                        listRef={listRef}
-                    />
-                )}
+                {({ height, width }: { height: number; width: number }) =>
+                    galleryThumbnailMode === "fit" ? (
+                        <SizedMasonryGrid
+                            files={files}
+                            width={width}
+                            height={height}
+                            columns={galleryColumns}
+                            onOpenFile={onOpenFile}
+                            selection={selection}
+                            footerInsetPx={footerInsetPx}
+                            onScrollOffsetChange={handleScrollOffsetChange}
+                        />
+                    ) : (
+                        <SizedGrid
+                            files={files}
+                            width={width}
+                            height={height}
+                            columns={galleryColumns}
+                            onOpenFile={onOpenFile}
+                            selection={selection}
+                            footerInsetPx={footerInsetPx}
+                            onScrollOffsetChange={handleScrollOffsetChange}
+                            listRef={listRef}
+                        />
+                    )}
             </AutoSizer>
             {marquee ? (
                 <div
