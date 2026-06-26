@@ -1,5 +1,6 @@
+import type { GalleryColumnCount } from "@/lib/app-settings";
+
 export const thumbnailGap: number = 4;
-export const thumbnailMaxSize: number = 120;
 
 export interface ThumbnailGridLayout {
     columns: number;
@@ -11,18 +12,14 @@ export interface ThumbnailGridLayout {
 
 export const computeThumbnailGridLayout = (
     containerWidth: number,
+    columns: GalleryColumnCount,
 ): ThumbnailGridLayout => {
     const paddingInline: number = containerWidth > 480 ? 16 : 4;
     const gap: number = thumbnailGap;
     const available: number = containerWidth - paddingInline * 2;
-    const minColumns: number = 3;
-    const maxColumns: number = 5;
-    const itemSize: number = Math.min(
-        thumbnailMaxSize,
-        Math.floor((available - gap * (minColumns - 1)) / minColumns),
+    const itemSize: number = Math.floor(
+        (available - gap * (columns - 1)) / columns,
     );
-    let columns: number = Math.floor((available + gap) / (itemSize + gap));
-    columns = Math.max(minColumns, Math.min(maxColumns, columns));
     const rowHeight: number = itemSize + gap;
 
     return { columns, itemSize, gap, paddingInline, rowHeight };

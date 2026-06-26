@@ -3,6 +3,7 @@ import {
     useEffect,
     useRef,
     useState,
+    useSyncExternalStore,
     type JSX,
     type PointerEvent as ReactPointerEvent,
     type TouchEvent as ReactTouchEvent,
@@ -40,9 +41,15 @@ import {
     isReservedTag,
 } from "@/lib/tags";
 import { addTagNames, applyTagMutator, normalizeTagName, removeTagNames, tagsEqual } from "@/lib/tag-writes";
+import {
+    getThumbnailEntry,
+    requestThumbnail,
+    subscribeThumbnail,
+} from "@/lib/thumbnail-cache";
 import { FileType } from "ente-media/file-type";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
+import { useSettingsStore } from "@/stores/settings-store";
 import { useTagStore } from "@/stores/tag-store";
 import { useVideoPlaybackStore } from "@/stores/video-playback-store";
 import type { EnteFile } from "ente-media/file";
@@ -91,6 +98,36 @@ const DOUBLE_TAP_MAX_DISTANCE_PX = 24;
 const DISMISS_THRESHOLD_MIN_PX = 80;
 const DISMISS_THRESHOLD_RATIO = 0.15;
 const VIDEO_CHROME_TAP_DEADZONE_RATIO = 0.25;
+
+/**
+ * Decode and pause on the first frame so the preview is not black when autoplay is off.
+ */
+const primeVideoFirstFrame = (video: HTMLVideoElement): void => {
+    const seekToStart = (): void => {
+        video.pause();
+        try {
+            video.currentTime = 0;
+        } catch {
+            // Metadata may not be ready yet on some browsers.
+        }
+    };
+
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        seekToStart();
+        return;
+    }
+
+    video.addEventListener("loadeddata", seekToStart, { once: true });
+
+    void video.play()
+        .then(() => {
+            video.pause();
+            seekToStart();
+        })
+        .catch(() => {
+            seekToStart();
+        });
+};
 
 export function PhotoViewer({
     files,
@@ -199,8 +236,29 @@ export function PhotoViewer({
     const hydrateVideoPlayback = useVideoPlaybackStore((s) => s.hydrate);
     const videoVolume = useVideoPlaybackStore((s) => s.volume);
     const videoMuted = useVideoPlaybackStore((s) => s.muted);
+    const videoAutoPlay = useSettingsStore((s) => s.videoAutoPlay);
+    const videoLoop = useSettingsStore((s) => s.videoLoop);
+    const activeVideoThumb = useSyncExternalStore(
+        (listener) => {
+            if (!file || file.metadata.fileType !== FileType.video) {
+                return (): void => {};
+            }
+            return subscribeThumbnail(file.id, listener);
+        },
+        () =>
+            file && file.metadata.fileType === FileType.video ?
+                getThumbnailEntry(file.id) :
+                getThumbnailEntry(0),
+        () => getThumbnailEntry(0),
+    );
     const tags = displayFile ? extractUserTags(displayFile) : [];
     const activeSlideMedia = file ? mediaByFileId.get(file.id) : undefined;
+
+    useEffect((): void => {
+        if (file?.metadata.fileType === FileType.video) {
+            requestThumbnail(file);
+        }
+    }, [file]);
 
     useEffect((): void => {
         setVideoScrubbing(false);
@@ -556,8 +614,25 @@ export function PhotoViewer({
         if (slideMedia?.status !== "ready") {
             return;
         }
-        void activeVideoRef.current?.play().catch(() => undefined);
-    }, [currentIndex, file?.id, file?.metadata.fileType, mediaByFileId]);
+        const video = activeVideoRef.current;
+        if (!video) {
+            return;
+        }
+
+        if (!videoAutoPlay) {
+            video.muted = videoMuted;
+            primeVideoFirstFrame(video);
+            return;
+        }
+        void video.play().catch(() => undefined);
+    }, [
+        currentIndex,
+        file?.id,
+        file?.metadata.fileType,
+        mediaByFileId,
+        videoAutoPlay,
+        videoMuted,
+    ]);
 
     const handleRetry = useCallback((): void => {
         if (!file) {
@@ -1168,9 +1243,16 @@ export function PhotoViewer({
                             ref={isActive ? activeVideoRef : undefined}
                             className="pointer-events-none size-full object-contain select-none [-webkit-touch-callout:none]"
                             src={slideMedia.url}
-                            loop
+                            loop={videoLoop}
                             playsInline
-                            preload="metadata"
+                            preload={videoAutoPlay ? "metadata" : "auto"}
+                            poster={
+                                isActive &&
+                                !videoAutoPlay &&
+                                activeVideoThumb.url ?
+                                    activeVideoThumb.url :
+                                    undefined
+                            }
                         />
                     </div>
                 ) : (

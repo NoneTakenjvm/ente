@@ -22,7 +22,10 @@ const LONG_PRESS_MOVE_PX = 10;
 
 interface ThumbnailCellProps {
     file: EnteFile;
-    size: number;
+    size?: number;
+    width?: number;
+    height?: number;
+    objectFit?: "cover" | "contain";
     onOpen?: (file: EnteFile) => void;
     isSelected?: boolean;
     onToggleSelect?: (file: EnteFile) => void;
@@ -35,6 +38,9 @@ interface ThumbnailCellProps {
 export const ThumbnailCell = memo(function ThumbnailCell({
     file,
     size,
+    width,
+    height,
+    objectFit = "cover",
     onOpen,
     isSelected = false,
     onToggleSelect,
@@ -42,6 +48,11 @@ export const ThumbnailCell = memo(function ThumbnailCell({
     disabled = false,
     tapSelects = false,
 }: ThumbnailCellProps): JSX.Element {
+    const cellWidth = width ?? size ?? 0;
+    const cellHeight = height ?? size ?? 0;
+    const imageFitClass =
+        objectFit === "contain" ? "object-contain" : "object-cover";
+
     const entry = useSyncExternalStore(
         (listener) => subscribeThumbnail(file.id, listener),
         () => getThumbnailEntry(file.id),
@@ -125,7 +136,7 @@ export const ThumbnailCell = memo(function ThumbnailCell({
                 "relative shrink-0 overflow-hidden rounded-md bg-muted",
                 disabled && "pointer-events-none opacity-50",
             )}
-            style={{ width: size, height: size }}
+            style={{ width: cellWidth, height: cellHeight }}
         >
             <button
                 type="button"
@@ -155,7 +166,10 @@ export const ThumbnailCell = memo(function ThumbnailCell({
                 ) : null}
                 {entry.status === "ready" && entry.url ? (
                     <img
-                        className="pointer-events-none size-full object-cover"
+                        className={cn(
+                            "pointer-events-none size-full",
+                            imageFitClass,
+                        )}
                         src={entry.url}
                         alt=""
                         loading="lazy"

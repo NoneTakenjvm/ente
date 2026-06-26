@@ -14,6 +14,7 @@ import {
     manageSectionTitle,
     type ManageSection,
 } from "@/components/manage/ManageHub";
+import { ManageSettingsPanel } from "@/components/manage/ManageSettingsPanel";
 import { ManageTagsPanel } from "@/components/manage/ManageTagsPanel";
 import { PageLoader } from "@/components/PageLoader";
 import { ConfirmTrashModal } from "@/components/dedup/ConfirmTrashModal";
@@ -68,7 +69,13 @@ const formatBytes = (bytes: number): string => {
 };
 
 const parseManageSection = (value: string | string[] | undefined): ManageSection => {
-    if (value === "exact" || value === "similar" || value === "compress" || value === "tags") {
+    if (
+        value === "exact" ||
+        value === "similar" ||
+        value === "compress" ||
+        value === "tags" ||
+        value === "settings"
+    ) {
         return value;
     }
     return "hub";
@@ -311,6 +318,8 @@ export default function ManagePage(): JSX.Element {
             ) : null}
 
             {section === "tags" ? <ManageTagsPanel /> : null}
+
+            {section === "settings" ? <ManageSettingsPanel /> : null}
 
             {section === "compress" ? (
                 showCompressLoader ? (
