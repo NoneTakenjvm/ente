@@ -46,7 +46,7 @@ import {
     setLocalMediaOverride,
 } from "@/lib/local-media-overrides";
 import { deleteThumbnailCiphertext } from "@/db/thumbnails";
-import { primeThumbnailFromBytes, requestThumbnail } from "@/lib/thumbnail-cache";
+import { primeThumbnailFromBytes, primeVideoThumbnailFromBytes, requestThumbnail } from "@/lib/thumbnail-cache";
 import {
     pendingFavoriteFilesByHashAndType,
     useFavoritesStore,
@@ -64,7 +64,7 @@ import {
 import { buildCroppedOrganizerTags, croppedReplaceTitle } from "@/lib/crop";
 import { isFileFavorited } from "@/lib/favorites";
 import type { RotationDegrees } from "@/lib/rotate";
-import type { VideoCropRect } from "@/lib/video-edit";
+import type { CroppedVideoResult, VideoCropRect } from "@/lib/video-edit";
 import { mimeTypeForFile } from "@/lib/media-kind";
 import { fileFileName } from "ente-media/file-metadata";
 
@@ -137,6 +137,10 @@ interface LibraryState {
         fileId: number,
         croppedBytes: Uint8Array,
         dimensions: { width: number; height: number },
+    ) => { optimisticFile: EnteFile; finalize: Promise<EnteFile> };
+    editVideoAndReplaceFileOptimistic: (
+        fileId: number,
+        result: CroppedVideoResult,
     ) => { optimisticFile: EnteFile; finalize: Promise<EnteFile> };
     uploadImageFile: (
         collectionId: number,
@@ -300,6 +304,43 @@ const uploadCroppedAndReplace = async (
         collection,
         dimensions,
         croppedReplaceTitle(sourceFile),
+        buildCroppedOrganizerTags(sourceFile),
+    );
+
+    return replaceSourceWithCompressed(
+        set,
+        get,
+        sourceFile,
+        uploaded,
+    );
+};
+
+const videoDimensionsFromFile = (
+    file: EnteFile,
+): { width: number; height: number } => ({
+    width: Number(file.pubMagicMetadata?.data?.w) || 0,
+    height: Number(file.pubMagicMetadata?.data?.h) || 0,
+});
+
+const uploadEditedVideoAndReplace = async (
+    set: (partial: Partial<LibraryState>) => void,
+    get: () => LibraryState,
+    sourceFile: EnteFile,
+    result: CroppedVideoResult,
+): Promise<EnteFile> => {
+    const { collections } = get();
+    const collection = collections.find(
+        (entry) => entry.id === sourceFile.collectionID,
+    );
+    if (!collection) {
+        throw new Error(`Collection ${sourceFile.collectionID} not found`);
+    }
+
+    const uploaded = await getEnteCore().uploadCroppedVideo(
+        sourceFile,
+        result,
+        collection,
+        compressedReplaceTitle(sourceFile),
         buildCroppedOrganizerTags(sourceFile),
     );
 
@@ -796,6 +837,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             bytes,
             mimeTypeForFile(file),
             crop,
+            videoDimensionsFromFile(file),
         );
         const uploaded = await getEnteCore().uploadCroppedVideo(
             file,
@@ -866,6 +908,63 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 bytes,
                 dims,
             ),
+        ).then((uploaded) => {
+            clearLocalMediaOverride(fileId);
+            return uploaded;
+        }).catch(async (error) => {
+            const revertedFiles = get().allFiles.map((entry) => (
+                entry.id === fileId ?
+                    fileWithOrganizerTags(file, snapshotTags) :
+                    entry
+            ));
+            set({ allFiles: revertedFiles });
+            useTagStore.getState().applyFileTags(fileId, snapshotTags);
+            void saveEncryptedFiles(revertedFiles, getSessionCacheKey());
+            clearLocalMediaOverride(fileId);
+            requestThumbnail(file);
+            throw error;
+        });
+
+        return { optimisticFile, finalize };
+    },
+
+    editVideoAndReplaceFileOptimistic: (
+        fileId: number,
+        result: CroppedVideoResult,
+    ): { optimisticFile: EnteFile; finalize: Promise<EnteFile> } => {
+        const { allFiles } = get();
+        const file = allFiles.find((entry) => entry.id === fileId);
+        if (!file) {
+            throw new Error(`File ${fileId} not found`);
+        }
+
+        const snapshotTags = extractTags(file);
+        const intendedTags = buildCroppedOrganizerTags(file);
+        const optimisticFile = fileWithOrganizerTags(file, intendedTags);
+        const optimisticFiles = allFiles.map((entry) => (
+            entry.id === fileId ? optimisticFile : entry
+        ));
+
+        set({ allFiles: optimisticFiles });
+        useTagStore.getState().applyFileTags(fileId, intendedTags);
+        void saveEncryptedFiles(optimisticFiles, getSessionCacheKey());
+        setLocalMediaOverride(fileId, result.bytes);
+        primeVideoThumbnailFromBytes(fileId, result.bytes);
+
+        const finalize = enqueueDerivedReplace(
+            fileId,
+            result.bytes,
+            { width: result.width, height: result.height },
+            async (bytes, dimensions) => {
+                const { probeVideoDurationSec } = await import("@/lib/video-edit");
+                const duration = await probeVideoDurationSec(bytes, "video/mp4");
+                return uploadEditedVideoAndReplace(set, get, file, {
+                    bytes,
+                    width: dimensions.width,
+                    height: dimensions.height,
+                    duration,
+                });
+            },
         ).then((uploaded) => {
             clearLocalMediaOverride(fileId);
             return uploaded;

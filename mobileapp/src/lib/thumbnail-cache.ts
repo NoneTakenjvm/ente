@@ -169,6 +169,33 @@ export const primeThumbnailFromBytes = (
     })();
 };
 
+/**
+ * Show a thumbnail immediately from edited video bytes (e.g. after optimistic crop).
+ */
+export const primeVideoThumbnailFromBytes = (
+    fileId: number,
+    videoBytes: Uint8Array,
+): void => {
+    const existing = cache.get(fileId);
+    if (existing?.url) {
+        URL.revokeObjectURL(existing.url);
+    }
+    cache.set(fileId, { status: "loading" });
+    notify(fileId);
+
+    void (async (): Promise<void> => {
+        try {
+            const { extractVideoFrameJpeg } = await import("@/lib/ffmpeg");
+            const frameBytes = await extractVideoFrameJpeg(videoBytes, "video/mp4");
+            const thumbBytes = await generateImageThumbnail(frameBytes);
+            setReady(fileId, thumbBytes);
+        } catch {
+            cache.set(fileId, { status: "error" });
+            notify(fileId);
+        }
+    })();
+};
+
 export const clearThumbnailCache = (): void => {
     for (const entry of cache.values()) {
         if (entry.url) {

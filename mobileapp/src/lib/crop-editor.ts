@@ -263,6 +263,71 @@ export const cropRectForSave = (
     >,
 ): CropRect => pixelCropToSourceRect(completedCrop, image);
 
+export const cropRectForVideoSave = (
+    completedCrop: PixelCrop,
+    video: Pick<
+        HTMLVideoElement,
+        "width" | "height" | "videoWidth" | "videoHeight"
+    >,
+): CropRect =>
+    pixelCropToSourceRect(completedCrop, {
+        width: video.width,
+        height: video.height,
+        naturalWidth: video.videoWidth,
+        naturalHeight: video.videoHeight,
+    });
+
+/**
+ * Detect non-black content bounds from the current video frame.
+ */
+export const detectContentBoundsFromVideo = async (
+    video: HTMLVideoElement,
+    threshold = DEFAULT_CONTENT_THRESHOLD,
+): Promise<PixelRect | undefined> => {
+    const naturalWidth = video.videoWidth;
+    const naturalHeight = video.videoHeight;
+    if (naturalWidth <= 0 || naturalHeight <= 0) {
+        return undefined;
+    }
+
+    const scale = Math.min(
+        1,
+        CONTENT_DETECT_MAX_EDGE / Math.max(naturalWidth, naturalHeight),
+    );
+    const detectWidth = Math.max(1, Math.round(naturalWidth * scale));
+    const detectHeight = Math.max(1, Math.round(naturalHeight * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = detectWidth;
+    canvas.height = detectHeight;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+        return undefined;
+    }
+    context.drawImage(video, 0, 0, detectWidth, detectHeight);
+    const imageData = context.getImageData(0, 0, detectWidth, detectHeight);
+    const detected = detectContentBoundsFromImageData(imageData, threshold);
+    if (!detected) {
+        return undefined;
+    }
+
+    const bounds = mapDetectedBoundsToNatural(
+        detected,
+        naturalWidth,
+        naturalHeight,
+        scale,
+    );
+    if (
+        bounds.x === 0 &&
+        bounds.y === 0 &&
+        bounds.width === naturalWidth &&
+        bounds.height === naturalHeight
+    ) {
+        return undefined;
+    }
+    return bounds;
+};
+
 /** Canvas size after a 90° or 270° baked rotation. */
 export const dimensionsAfterQuarterTurn = (
     width: number,
@@ -307,3 +372,20 @@ export const encodeBakedCrop = (
     const cropRect = cropRectForSave(completedCrop, image);
     return encodeCroppedJpeg(workingBytes, cropRect);
 };
+
+export const videoCropChanged = (
+    completedCrop: PixelCrop,
+    displayWidth: number,
+    displayHeight: number,
+): boolean =>
+    completedCrop.x > 0 ||
+    completedCrop.y > 0 ||
+    completedCrop.width < displayWidth ||
+    completedCrop.height < displayHeight;
+
+export const trimRangeChanged = (
+    trim: { startSec: number; endSec: number },
+    durationSec: number,
+): boolean =>
+    durationSec > 0 &&
+    (trim.startSec > 0.05 || trim.endSec < durationSec - 0.05);
