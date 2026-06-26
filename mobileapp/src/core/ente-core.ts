@@ -412,7 +412,7 @@ export class EnteCore {
                 bytes: result.bytes,
                 width: result.width,
                 height: result.height,
-                duration: sourceFile.metadata.duration,
+                duration: result.duration ?? sourceFile.metadata.duration,
                 mimeType: "video/mp4",
                 extension: "mp4",
             },

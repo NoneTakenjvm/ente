@@ -24,7 +24,10 @@ import {
     type CropSaveResult,
 } from "@/components/CropEditorOverlay";
 import { TagPickerSheet } from "@/components/TagPickerSheet";
-import { VideoCropPanel } from "@/components/VideoCropPanel";
+import {
+    VideoEditorOverlay,
+    type VideoSaveResult,
+} from "@/components/VideoEditorOverlay";
 import { VideoPlaybackControls } from "@/components/VideoPlaybackControls";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -152,7 +155,6 @@ export function PhotoViewer({
     const [favoriteBusy, setFavoriteBusy] = useState<boolean>(false);
     const [favoriteError, setFavoriteError] = useState<string | undefined>();
     const [cropMode, setCropMode] = useState<boolean>(false);
-    const [showVideoCrop, setShowVideoCrop] = useState<boolean>(false);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
     const [deleteBusy, setDeleteBusy] = useState<boolean>(false);
     const [deleteError, setDeleteError] = useState<string | undefined>();
@@ -215,7 +217,6 @@ export function PhotoViewer({
     const zoomEnabled = mediaKind === "image" || mediaKind === "gif";
     const chromePaused =
         cropMode ||
-        showVideoCrop ||
         showDeleteConfirm ||
         showTagPicker ||
         videoScrubbing;
@@ -1047,8 +1048,8 @@ export function PhotoViewer({
         [notifyFileUpdated, sessionFiles],
     );
 
-    const handleCropSaved = useCallback(
-        (result: CropSaveResult): void => {
+    const handleEditSaved = useCallback(
+        (result: CropSaveResult | VideoSaveResult): void => {
             if (!file) {
                 return;
             }
@@ -1059,7 +1060,7 @@ export function PhotoViewer({
             }
             const url = URL.createObjectURL(
                 new Blob([Uint8Array.from(result.bytes)], {
-                    type: "image/jpeg",
+                    type: mimeTypeForFile(file),
                 }),
             );
             mediaUrlsRef.current.set(sourceId, url);
@@ -1100,7 +1101,7 @@ export function PhotoViewer({
                     toast.error(
                         error instanceof Error ?
                             error.message :
-                            "Could not save crop",
+                            "Could not save edits",
                     );
                 });
         },
@@ -1113,19 +1114,6 @@ export function PhotoViewer({
             sessionFiles,
             setSlideMedia,
         ],
-    );
-
-    const handleDerivedFileUploaded = useCallback(
-        (uploaded: EnteFile): void => {
-            if (file) {
-                const sourceId = file.id;
-                setSessionFiles((current) => current.map((entry) => (
-                    entry.id === sourceId ? uploaded : entry
-                )));
-            }
-            notifyFileUpdated(uploaded);
-        },
-        [file, notifyFileUpdated],
     );
 
     const handleToggleFavorite = (): void => {
@@ -1416,7 +1404,7 @@ export function PhotoViewer({
                                 <Image />
                             </Button>
                         ) : null}
-                        {canCrop(file) ? (
+                        {(canCrop(file) || canCropVideo(file)) ? (
                             <Button
                                 type="button"
                                 variant="ghost"
@@ -1429,21 +1417,7 @@ export function PhotoViewer({
                                     cropMode ||
                                     activeSlideMedia?.status !== "ready"
                                 }
-                                aria-label="Crop image"
-                            >
-                                <Crop />
-                            </Button>
-                        ) : null}
-                        {canCropVideo(file) ? (
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon-sm"
-                                onClick={() => {
-                                    resetChromeTimer();
-                                    setShowVideoCrop(true);
-                                }}
-                                aria-label="Crop video"
+                                aria-label={isVideo ? "Edit video" : "Crop image"}
                             >
                                 <Crop />
                             </Button>
@@ -1594,21 +1568,18 @@ export function PhotoViewer({
                 onAddTag={handleAddTag}
                 onRemoveTag={handleRemoveTag}
             />
-            {showVideoCrop ? (
-                <VideoCropPanel
+            {cropMode && file && isVideo ? (
+                <VideoEditorOverlay
                     file={file}
-                    onClose={() => setShowVideoCrop(false)}
-                    onUploaded={(uploaded) => {
-                        setShowVideoCrop(false);
-                        handleDerivedFileUploaded(uploaded);
-                    }}
+                    onCancel={() => setCropMode(false)}
+                    onSaved={handleEditSaved}
                 />
             ) : null}
-            {cropMode && file ? (
+            {cropMode && file && !isVideo ? (
                 <CropEditorOverlay
                     file={file}
                     onCancel={() => setCropMode(false)}
-                    onSaved={handleCropSaved}
+                    onSaved={handleEditSaved}
                 />
             ) : null}
             <ConfirmDeleteModal

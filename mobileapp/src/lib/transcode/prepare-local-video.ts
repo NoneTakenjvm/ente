@@ -28,16 +28,38 @@ const probeVideoBlob = async (
     const url = URL.createObjectURL(blob);
     try {
         const video = document.createElement("video");
-        video.preload = "metadata";
+        video.preload = "auto";
+        video.muted = true;
+        video.playsInline = true;
         await new Promise<void>((resolve, reject) => {
-            video.onloadedmetadata = () => resolve();
-            video.onerror = () => reject(new Error("Could not read video metadata"));
+            let settled = false;
+            const finish = (): void => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                resolve();
+            };
+            const fail = (): void => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                reject(new Error("Could not read video metadata"));
+            };
+            video.onloadedmetadata = finish;
+            video.onloadeddata = finish;
+            video.onerror = fail;
             video.src = url;
+            if (typeof video.load === "function") {
+                video.load();
+            }
         });
-        const duration = Math.round(video.duration);
-        if (!Number.isFinite(duration) || duration <= 0) {
+        const rawDuration = video.duration;
+        if (!Number.isFinite(rawDuration) || rawDuration <= 0) {
             throw new Error("Could not determine video duration");
         }
+        const duration = Math.max(1, Math.round(rawDuration));
         const { videoWidth: width, videoHeight: height } = video;
         if (width <= 0 || height <= 0) {
             throw new Error("Could not determine video dimensions");
@@ -48,12 +70,30 @@ const probeVideoBlob = async (
     }
 };
 
+const isBrowserCompatibleMp4 = (mimeType: string, fileName: string): boolean => {
+    if (mimeType === "video/mp4") {
+        return true;
+    }
+    return fileName.toLowerCase().endsWith(".mp4");
+};
+
 /**
  * Normalize a device video to MP4 and read dimensions plus duration.
  */
 export const prepareLocalVideo = async (file: File): Promise<PreparedLocalVideo> => {
     const inputMime = mimeTypeForVideoFile(file);
     const inputBytes = new Uint8Array(await file.arrayBuffer());
+    const inputBlob = new Blob([inputBytes], { type: inputMime });
+
+    if (isBrowserCompatibleMp4(inputMime, file.name)) {
+        try {
+            const meta = await probeVideoBlob(inputBlob);
+            return { bytes: inputBytes, ...meta };
+        } catch {
+            // Fall through to transcode when probe fails.
+        }
+    }
+
     const output = await runFFmpeg(
         [
             "-i", "INPUT",
@@ -64,7 +104,7 @@ export const prepareLocalVideo = async (file: File): Promise<PreparedLocalVideo>
             "-movflags", "+faststart",
             "OUTPUT",
         ],
-        new Blob([inputBytes], { type: inputMime }),
+        inputBlob,
         "mp4",
     );
     const meta = await probeVideoBlob(
