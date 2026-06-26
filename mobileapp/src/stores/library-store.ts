@@ -156,6 +156,7 @@ interface LibraryState {
         duration: number,
         title: string,
         creationTime: number,
+        mimeType: string,
     ) => Promise<EnteFile>;
     moveFilesToTrash: (fileIds: number[]) => Promise<void>;
     batchUpdateTagsOnFiles: (
@@ -1020,6 +1021,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         duration: number,
         title: string,
         creationTime: number,
+        mimeType: string,
     ): Promise<EnteFile> => {
         const collection = get().collections.find(
             (entry) => entry.id === collectionId,
@@ -1037,6 +1039,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 width: dimensions.width,
                 height: dimensions.height,
                 duration,
+                mimeType,
             },
         );
 

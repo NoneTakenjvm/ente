@@ -1,14 +1,12 @@
-import { DEFAULT_VIDEO_CRF } from "@/lib/compress";
-import { runFFmpeg } from "@/lib/ffmpeg";
-
 export interface PreparedLocalVideo {
     bytes: Uint8Array;
     width: number;
     height: number;
     duration: number;
+    mimeType: string;
 }
 
-const mimeTypeForVideoFile = (file: File): string => {
+export const mimeTypeForVideoFile = (file: File): string => {
     if (file.type.startsWith("video/")) {
         return file.type;
     }
@@ -22,10 +20,10 @@ const mimeTypeForVideoFile = (file: File): string => {
     return "video/mp4";
 };
 
-const probeVideoBlob = async (
-    blob: Blob,
+const probeVideoFile = async (
+    file: File,
 ): Promise<{ width: number; height: number; duration: number }> => {
-    const url = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(file);
     try {
         const video = document.createElement("video");
         video.preload = "auto";
@@ -70,45 +68,12 @@ const probeVideoBlob = async (
     }
 };
 
-const isBrowserCompatibleMp4 = (mimeType: string, fileName: string): boolean => {
-    if (mimeType === "video/mp4") {
-        return true;
-    }
-    return fileName.toLowerCase().endsWith(".mp4");
-};
-
 /**
- * Normalize a device video to MP4 and read dimensions plus duration.
+ * Read original video bytes and probe dimensions plus duration for upload.
  */
 export const prepareLocalVideo = async (file: File): Promise<PreparedLocalVideo> => {
-    const inputMime = mimeTypeForVideoFile(file);
-    const inputBytes = new Uint8Array(await file.arrayBuffer());
-    const inputBlob = new Blob([inputBytes], { type: inputMime });
-
-    if (isBrowserCompatibleMp4(inputMime, file.name)) {
-        try {
-            const meta = await probeVideoBlob(inputBlob);
-            return { bytes: inputBytes, ...meta };
-        } catch {
-            // Fall through to transcode when probe fails.
-        }
-    }
-
-    const output = await runFFmpeg(
-        [
-            "-i", "INPUT",
-            "-c:v", "libx264",
-            "-crf", String(DEFAULT_VIDEO_CRF),
-            "-preset", "fast",
-            "-c:a", "aac",
-            "-movflags", "+faststart",
-            "OUTPUT",
-        ],
-        inputBlob,
-        "mp4",
-    );
-    const meta = await probeVideoBlob(
-        new Blob([Uint8Array.from(output)], { type: "video/mp4" }),
-    );
-    return { bytes: output, ...meta };
+    const mimeType = mimeTypeForVideoFile(file);
+    const meta = await probeVideoFile(file);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    return { bytes, mimeType, ...meta };
 };

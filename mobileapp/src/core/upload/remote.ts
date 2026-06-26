@@ -35,17 +35,29 @@ export interface PostEnteFileRequest {
 }
 
 /**
+ * Fetch pre-signed URLs for uploading multiple objects.
+ */
+export const fetchUploadURLs = async (
+    http: HttpClient,
+    countHint: number,
+): Promise<ObjectUploadURL[]> => {
+    const count = Math.min(50, countHint * 2);
+    const response = await http.authFetchJSON<{ urls: ObjectUploadURL[] }>(
+        "/files/upload-urls",
+        { count, ts: Date.now() },
+    );
+    const parsed = ObjectUploadURLResponse.parse(response);
+    return parsed.urls;
+};
+
+/**
  * Fetch a pre-signed URL for uploading one object.
  */
 export const fetchUploadURL = async (
     http: HttpClient,
 ): Promise<ObjectUploadURL> => {
-    const response = await http.authFetchJSON<{ urls: ObjectUploadURL[] }>(
-        "/files/upload-urls",
-        { count: 1, ts: Date.now() },
-    );
-    const parsed = ObjectUploadURLResponse.parse(response);
-    const url = parsed.urls[0];
+    const urls = await fetchUploadURLs(http, 1);
+    const url = urls[0];
     if (!url) {
         throw new Error("Failed to obtain upload URL");
     }
@@ -63,7 +75,7 @@ export const putFile = async (
     const res = await fetch(uploadURL, {
         method: "PUT",
         headers: http.publicHeaders(),
-        body: Uint8Array.from(fileData),
+        body: fileData,
     });
     http.ensureOk(res);
 };

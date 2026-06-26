@@ -11,23 +11,20 @@ import { uploadLocalVideo } from "@/core/upload/upload-video";
 import { prepareLocalVideo } from "@/lib/transcode/prepare-local-video";
 
 const {
-    mockRunFFmpeg,
     mockExtractVideoFrameJpeg,
     mockGenerateImageThumbnail,
-    mockFetchUploadURL,
+    mockTakeUploadURL,
     mockPutFile,
     mockPostEnteFile,
 } = vi.hoisted(() => ({
-    mockRunFFmpeg: vi.fn(),
     mockExtractVideoFrameJpeg: vi.fn(),
     mockGenerateImageThumbnail: vi.fn(),
-    mockFetchUploadURL: vi.fn(),
+    mockTakeUploadURL: vi.fn(),
     mockPutFile: vi.fn(),
     mockPostEnteFile: vi.fn(),
 }));
 
 vi.mock("@/lib/ffmpeg", () => ({
-    runFFmpeg: mockRunFFmpeg,
     extractVideoFrameJpeg: mockExtractVideoFrameJpeg,
 }));
 
@@ -35,8 +32,12 @@ vi.mock("@/core/upload/thumbnail", () => ({
     generateImageThumbnail: mockGenerateImageThumbnail,
 }));
 
+vi.mock("@/core/upload/upload-url-pool", () => ({
+    takeUploadURL: mockTakeUploadURL,
+    markBatchUploadFileComplete: vi.fn(),
+}));
+
 vi.mock("@/core/upload/remote", () => ({
-    fetchUploadURL: mockFetchUploadURL,
     putFile: mockPutFile,
     postEnteFile: mockPostEnteFile,
 }));
@@ -65,10 +66,9 @@ const stubVideoProbe = (width: number, height: number, duration: number): void =
 
 afterEach(() => {
     vi.restoreAllMocks();
-    mockRunFFmpeg.mockReset();
     mockExtractVideoFrameJpeg.mockReset();
     mockGenerateImageThumbnail.mockReset();
-    mockFetchUploadURL.mockReset();
+    mockTakeUploadURL.mockReset();
     mockPutFile.mockReset();
     mockPostEnteFile.mockReset();
 });
@@ -81,16 +81,15 @@ describe("local video upload pipeline", () => {
             key: collectionKey,
         } as Collection;
 
-        const transcoded = new Uint8Array([10, 11, 12, 13]);
+        const sourceBytes = new Uint8Array([5, 6, 7]);
         const frameJpeg = new Uint8Array([0xff, 0xd8, 0xff, 0x00]);
         const thumbnail = new Uint8Array([1, 2, 3]);
 
-        mockRunFFmpeg.mockResolvedValue(transcoded);
         mockExtractVideoFrameJpeg.mockResolvedValue(frameJpeg);
         mockGenerateImageThumbnail.mockResolvedValue(thumbnail);
         stubVideoProbe(1920, 1080, 8.2);
 
-        mockFetchUploadURL
+        mockTakeUploadURL
             .mockResolvedValueOnce({ objectKey: "file-object", url: "https://upload/file" })
             .mockResolvedValueOnce({ objectKey: "thumb-object", url: "https://upload/thumb" });
         mockPutFile.mockResolvedValue(undefined);
@@ -116,29 +115,29 @@ describe("local video upload pipeline", () => {
             isDeleted: false,
         }));
 
-        const source = new File([new Uint8Array([5, 6, 7])], "holiday.mov", {
+        const source = new File(sourceBytes, "holiday.mov", {
             type: "video/quicktime",
         });
         const prepared = await prepareLocalVideo(source);
 
         const uploaded = await uploadLocalVideo(http, collection, prepared.bytes, {
-            title: "holiday.mp4",
+            title: "holiday.mov",
             creationTime: 1_700_000_000_000,
             width: prepared.width,
             height: prepared.height,
             duration: prepared.duration,
+            mimeType: prepared.mimeType,
         });
 
-        expect(mockRunFFmpeg).toHaveBeenCalledOnce();
         expect(mockExtractVideoFrameJpeg).toHaveBeenCalledWith(
-            transcoded,
-            "video/mp4",
+            prepared.bytes,
+            "video/quicktime",
         );
         expect(mockPutFile).toHaveBeenCalledTimes(2);
         expect(mockPostEnteFile).toHaveBeenCalledOnce();
 
         expect(uploaded.metadata.fileType).toBe(FileType.video);
-        expect(uploaded.metadata.title).toBe("holiday.mp4");
+        expect(uploaded.metadata.title).toBe("holiday.mov");
         expect(uploaded.metadata.duration).toBe(8);
         expect(uploaded.pubMagicMetadata?.data).toMatchObject({
             w: 1920,
@@ -152,7 +151,7 @@ describe("local video upload pipeline", () => {
         );
         expect(decryptedMetadata).toMatchObject({
             fileType: FileType.video,
-            title: "holiday.mp4",
+            title: "holiday.mov",
             duration: 8,
         });
 

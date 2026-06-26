@@ -36,7 +36,7 @@ export const sanitizeUploadImageTitle = (fileName: string): string => {
 export const sanitizeUploadVideoTitle = (fileName: string): string => {
     const trimmed = fileName.trim() || "upload";
     const safe = trimmed.replace(/[^\w.\- ]+/gu, "").trim() || "upload";
-    if (/\.mp4$/iu.test(safe)) {
+    if (VIDEO_EXTENSIONS.test(safe)) {
         return safe;
     }
     const base = safe.replace(/\.[^.]+$/u, "") || "upload";
