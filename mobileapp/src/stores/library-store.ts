@@ -14,6 +14,7 @@ import { initSessionCacheKey, getSessionCacheKey } from "@/lib/cache-key";
 import { pullCollections } from "@/lib/sync/pull-collections";
 import { pullFiles } from "@/lib/sync/pull-files";
 import {
+    applyTagMutatorOnFiles,
     deleteTagOnFiles,
     mergeTagsOnFiles,
     renameTagOnFiles,
@@ -148,6 +149,11 @@ interface LibraryState {
         creationTime: number,
     ) => Promise<EnteFile>;
     moveFilesToTrash: (fileIds: number[]) => Promise<void>;
+    batchUpdateTagsOnFiles: (
+        fileIds: number[],
+        mutator: TagMutator,
+    ) => Promise<BatchTagResult>;
+    batchSetFavorite: (fileIds: number[], isFavorite: boolean) => Promise<void>;
     reset: () => void;
 }
 
@@ -945,6 +951,107 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         await Promise.all(
             [...trashedIds].map((fileId) => deleteThumbnailCiphertext(fileId)),
         );
+    },
+
+    batchUpdateTagsOnFiles: async (
+        fileIds: number[],
+        mutator: TagMutator,
+    ): Promise<BatchTagResult> => {
+        const uniqueIds = [...new Set(fileIds)];
+        if (!uniqueIds.length) {
+            return { succeeded: 0, failed: 0, errors: [] };
+        }
+
+        const { allFiles, collections } = get();
+        const idSet = new Set(uniqueIds);
+        const files = allFiles.filter((file) => idSet.has(file.id));
+        if (!files.length) {
+            return { succeeded: 0, failed: 0, errors: [] };
+        }
+
+        applyOptimisticBatchTags(set, get, idSet, mutator);
+        for (const file of get().allFiles) {
+            if (idSet.has(file.id)) {
+                useTagStore.getState().applyFileTags(file.id, extractTags(file));
+            }
+        }
+
+        return applyTagMutatorOnFiles(
+            getEnteCore().getHttpClient(),
+            files,
+            collections,
+            mutator,
+            (verified) => get().patchFile(verified),
+        );
+    },
+
+    batchSetFavorite: async (
+        fileIds: number[],
+        isFavorite: boolean,
+    ): Promise<void> => {
+        const uniqueIds = [...new Set(fileIds)];
+        if (!uniqueIds.length) {
+            return;
+        }
+
+        const core = getEnteCore();
+        const userId = core.getUserID();
+        const { collections, allFiles } = get();
+        const favoritesStore = useFavoritesStore.getState();
+        const favoriteFileIds = favoritesStore.favoriteFileIds;
+
+        const files = allFiles.filter(
+            (file) =>
+                uniqueIds.includes(file.id) &&
+                favoriteFileIds.has(file.id) !== isFavorite,
+        );
+        if (!files.length) {
+            return;
+        }
+
+        const priorStates = new Map(
+            files.map((file) => [file.id, favoriteFileIds.has(file.id)]),
+        );
+
+        for (const file of files) {
+            favoritesStore.addPending(file.id);
+            favoritesStore.applyOptimisticFavorite(
+                file,
+                userId,
+                isFavorite,
+                collections,
+                allFiles,
+            );
+        }
+
+        try {
+            const ctx = {
+                collections,
+                allFiles,
+                pendingByHashAndType: pendingFavoriteFilesByHashAndType,
+            };
+            if (isFavorite) {
+                await core.addToFavorites(files, ctx);
+            } else {
+                await core.removeFromFavorites(files, ctx);
+            }
+            await get().syncRemote();
+        } catch (error) {
+            for (const file of files) {
+                favoritesStore.revertOptimisticFavorite(
+                    file,
+                    userId,
+                    priorStates.get(file.id) ?? false,
+                    collections,
+                    allFiles,
+                );
+            }
+            throw error;
+        } finally {
+            for (const file of files) {
+                favoritesStore.removePending(file.id);
+            }
+        }
     },
 
     reset: (): void => {

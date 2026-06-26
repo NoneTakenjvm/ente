@@ -24,6 +24,7 @@ import {
 } from "@/components/CropEditorOverlay";
 import { TagPickerSheet } from "@/components/TagPickerSheet";
 import { VideoCropPanel } from "@/components/VideoCropPanel";
+import { VideoPlaybackControls } from "@/components/VideoPlaybackControls";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -43,6 +44,7 @@ import { FileType } from "ente-media/file-type";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useTagStore } from "@/stores/tag-store";
+import { useVideoPlaybackStore } from "@/stores/video-playback-store";
 import type { EnteFile } from "ente-media/file";
 import { toast } from "sonner";
 
@@ -123,6 +125,7 @@ export function PhotoViewer({
     const [viewportWidth, setViewportWidth] = useState<number>(0);
     const [viewportHeight, setViewportHeight] = useState<number>(0);
     const [chromeVisible, setChromeVisible] = useState<boolean>(true);
+    const [videoScrubbing, setVideoScrubbing] = useState<boolean>(false);
 
     const viewportRef = useRef<HTMLDivElement>(null);
     const trackRef = useRef<HTMLDivElement>(null);
@@ -177,7 +180,8 @@ export function PhotoViewer({
         cropMode ||
         showVideoCrop ||
         showDeleteConfirm ||
-        showTagPicker;
+        showTagPicker ||
+        videoScrubbing;
 
     const updateTagsOnFile = useLibraryStore((s) => s.updateTagsOnFile);
     const applyLocalTagsOnFile = useLibraryStore((s) => s.applyLocalTagsOnFile);
@@ -192,8 +196,28 @@ export function PhotoViewer({
     const favoritePending = useFavoritesStore((s) =>
         file ? s.pendingFavoriteFileIds.has(file.id) : false);
     const knownTags = useTagStore((s) => s.tags);
+    const hydrateVideoPlayback = useVideoPlaybackStore((s) => s.hydrate);
+    const videoVolume = useVideoPlaybackStore((s) => s.volume);
+    const videoMuted = useVideoPlaybackStore((s) => s.muted);
     const tags = displayFile ? extractUserTags(displayFile) : [];
     const activeSlideMedia = file ? mediaByFileId.get(file.id) : undefined;
+
+    useEffect((): void => {
+        setVideoScrubbing(false);
+    }, [file?.id]);
+
+    useEffect((): void => {
+        hydrateVideoPlayback();
+    }, [hydrateVideoPlayback]);
+
+    useEffect((): void => {
+        const video = activeVideoRef.current;
+        if (!video || !isVideo) {
+            return;
+        }
+        video.volume = videoVolume;
+        video.muted = videoMuted;
+    }, [isVideo, videoMuted, videoVolume, file?.id, activeSlideMedia?.status]);
 
     useEffect(() => {
         if (initialFileId === viewerFileIdRef.current) {
@@ -1142,11 +1166,11 @@ export function PhotoViewer({
                     <div className="absolute inset-0">
                         <video
                             ref={isActive ? activeVideoRef : undefined}
-                            className="size-full object-contain"
+                            className="pointer-events-none size-full object-contain select-none [-webkit-touch-callout:none]"
                             src={slideMedia.url}
-                            controls={isActive}
-                            muted
+                            loop
                             playsInline
+                            preload="metadata"
                         />
                     </div>
                 ) : (
@@ -1185,15 +1209,7 @@ export function PhotoViewer({
                     >
                         <img
                             ref={isActive ? activeImageRef : undefined}
-                            className="block max-h-full max-w-full object-contain"
-                            style={
-                                viewportWidth > 0 && viewportHeight > 0 ?
-                                    {
-                                        maxWidth: viewportWidth,
-                                        maxHeight: viewportHeight,
-                                    } :
-                                    undefined
-                            }
+                            className="block size-full object-contain select-none [-webkit-touch-callout:none]"
                             src={slideMedia.url}
                             alt=""
                             draggable={false}
@@ -1222,7 +1238,7 @@ export function PhotoViewer({
 
     return (
         <div
-            className="fixed inset-0 z-50 flex flex-col bg-background"
+            className="fixed inset-0 z-50 flex select-none flex-col bg-background [-webkit-touch-callout:none]"
             role="dialog"
             aria-modal="true"
             aria-label="Media viewer"
@@ -1404,6 +1420,23 @@ export function PhotoViewer({
                         "translate-y-full pointer-events-none",
                 )}
             >
+                {isVideo ? (
+                    <VideoPlaybackControls
+                        key={
+                            file && activeSlideMedia?.url ?
+                                `${file.id}:${activeSlideMedia.url}` :
+                                "idle"
+                        }
+                        videoRef={activeVideoRef}
+                        attachKey={
+                            file && activeSlideMedia?.status === "ready" ?
+                                `${file.id}:${activeSlideMedia.url}` :
+                                undefined
+                        }
+                        visible={chromeVisible && !cropMode}
+                        onScrubbingChange={setVideoScrubbing}
+                    />
+                ) : null}
                 <div className="flex h-8 shrink-0 items-center gap-1.5">
                     <Button
                         type="button"

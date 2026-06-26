@@ -7,7 +7,7 @@ import {
     type JSX,
 } from "react";
 import { useRouter } from "next/router";
-import { ArrowDownUp, Check, GripVertical, Pencil, Plus, Shuffle } from "lucide-react";
+import { Check, GripVertical, Pencil, Plus, Shuffle } from "lucide-react";
 import { AlbumEditorPanel } from "@/components/albums/AlbumEditorPanel";
 import { AlbumListCard } from "@/components/albums/AlbumListCard";
 import { AppShell } from "@/components/AppShell";
@@ -16,6 +16,8 @@ import {
     type MediaViewOrder,
 } from "@/components/FilteredMediaView";
 import { PageLoader } from "@/components/PageLoader";
+import { SelectionActionFooter } from "@/components/SelectionActionFooter";
+import { SelectionModeToggle } from "@/components/SelectionModeToggle";
 import { SyncBanner } from "@/components/SyncBanner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -43,6 +45,7 @@ import {
 import { useAlbumStore } from "@/stores/album-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
+import { useSelectionStore } from "@/stores/selection-store";
 import { useTagStore } from "@/stores/tag-store";
 import { toast } from "sonner";
 
@@ -151,7 +154,14 @@ export default function AlbumsPage(): JSX.Element {
         }
     }, [router]);
 
+    useEffect(() => {
+        return (): void => {
+            useSelectionStore.getState().reset();
+        };
+    }, []);
+
     const handleBack = useCallback((): void => {
+        useSelectionStore.getState().reset();
         setMode("list");
         setListSubMode("browse");
         setActiveAlbumId(undefined);
@@ -314,41 +324,29 @@ export default function AlbumsPage(): JSX.Element {
                     </>
                 ) : mode === "view" && activeAlbum ? (
                     <>
-                        {viewOrder === "default" ? (
-                            <Button
-                                type="button"
-                                variant="outline"
-                                size="icon-sm"
-                                aria-label="Shuffle"
-                                onClick={() => {
+                        <SelectionModeToggle />
+                        <Button
+                            type="button"
+                            variant={viewOrder === "shuffled" ? "secondary" : "outline"}
+                            size="icon-sm"
+                            aria-label={
+                                viewOrder === "shuffled" ?
+                                    "Disable shuffle" :
+                                    "Shuffle"
+                            }
+                            aria-pressed={viewOrder === "shuffled"}
+                            onClick={() => {
+                                if (viewOrder === "shuffled") {
+                                    setViewOrder("default");
+                                    setShuffleSeed(0);
+                                } else {
                                     setShuffleSeed(Date.now());
                                     setViewOrder("shuffled");
-                                }}
-                            >
-                                <Shuffle />
-                            </Button>
-                        ) : (
-                            <>
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="icon-sm"
-                                    aria-label="Re-shuffle"
-                                    onClick={() => setShuffleSeed(Date.now())}
-                                >
-                                    <Shuffle />
-                                </Button>
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="icon-sm"
-                                    aria-label="Original order"
-                                    onClick={() => setViewOrder("default")}
-                                >
-                                    <ArrowDownUp />
-                                </Button>
-                            </>
-                        )}
+                                }
+                            }}
+                        >
+                            <Shuffle />
+                        </Button>
                         <Button
                             type="button"
                             variant="outline"
@@ -433,6 +431,8 @@ export default function AlbumsPage(): JSX.Element {
                     }
                 />
             ) : null}
+
+            <SelectionActionFooter />
         </AppShell>
     );
 }

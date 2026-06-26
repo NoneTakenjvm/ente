@@ -22,6 +22,9 @@ html {
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
     touch-action: manipulation;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
 }
 
 body {
@@ -33,6 +36,9 @@ body {
     overscroll-behavior-x: none;
     -webkit-font-smoothing: antialiased;
     @apply bg-background text-foreground;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
 }
 
 #__next {
@@ -47,6 +53,14 @@ input,
 select,
 textarea {
     font-family: inherit;
+}
+
+input,
+textarea,
+select,
+[contenteditable="true"] {
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 @theme inline {
@@ -131,4 +145,15 @@ textarea {
     * {
         @apply border-border outline-ring/50;
     }
+}
+
+/* react-image-crop selection handles are focusable text in some WebKit builds */
+.ReactCrop,
+.ReactCrop *,
+.ReactCrop__crop-selection,
+.ReactCrop__drag-handle,
+.ReactCrop__drag-bar {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    -webkit-touch-callout: none !important;
 }

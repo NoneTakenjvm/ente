@@ -49,6 +49,7 @@ interface TagPickerSheetProps {
     appliedTags: string[];
     knownTags: string[];
     error?: string;
+    batchSelectionHint?: string;
     onOpenChange: (open: boolean) => void;
     onAddTag: (name: string) => void;
     onRemoveTag: (name: string) => void;
@@ -59,6 +60,7 @@ export function TagPickerSheet({
     appliedTags,
     knownTags,
     error,
+    batchSelectionHint,
     onOpenChange,
     onAddTag,
     onRemoveTag,
@@ -321,6 +323,11 @@ export function TagPickerSheet({
                                 aria-hidden="true"
                             />
                             <SheetTitle>Tags</SheetTitle>
+                            {batchSelectionHint ? (
+                                <p className="text-left text-xs text-muted-foreground">
+                                    {batchSelectionHint}
+                                </p>
+                            ) : null}
                         </div>
                         <TagTypeTabBar
                             types={tagTypes}

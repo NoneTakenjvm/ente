@@ -1,0 +1,1 @@
+export const SELECTION_FOOTER_INSET_PX = 96;

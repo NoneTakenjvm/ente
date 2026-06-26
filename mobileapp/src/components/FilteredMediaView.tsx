@@ -1,13 +1,19 @@
 import dynamic from "next/dynamic";
 import {
     useCallback,
+    useEffect,
     useMemo,
     useState,
     type JSX,
 } from "react";
 import { PageLoader } from "@/components/PageLoader";
-import { ThumbnailGrid } from "@/components/ThumbnailGrid";
+import {
+    ThumbnailGrid,
+    type ThumbnailGridSelection,
+} from "@/components/ThumbnailGrid";
+import { SELECTION_FOOTER_INSET_PX } from "@/lib/selection";
 import { reconcileShuffledIds } from "@/lib/shuffle-files";
+import { useSelectionStore } from "@/stores/selection-store";
 import type { EnteFile } from "ente-media/file";
 
 const PhotoViewer = dynamic(
@@ -54,6 +60,12 @@ export function FilteredMediaView({
         fileIds: files.map((file) => file.id),
     });
 
+    const selectionEnabled = useSelectionStore((s) => s.enabled);
+    const selectedIds = useSelectionStore((s) => s.selectedIds);
+    const toggleSelection = useSelectionStore((s) => s.toggle);
+    const selectMany = useSelectionStore((s) => s.selectMany);
+    const pruneToVisible = useSelectionStore((s) => s.pruneToVisible);
+
     const fileIds = useMemo(
         () => files.map((file) => file.id),
         [files],
@@ -98,7 +110,35 @@ export function FilteredMediaView({
         });
     }, [files, shuffledFileIds, viewOrder]);
 
+    const visibleFileIds = useMemo(
+        () => new Set(displayFiles.map((file) => file.id)),
+        [displayFiles],
+    );
+
+    useEffect(() => {
+        pruneToVisible(visibleFileIds);
+    }, [pruneToVisible, visibleFileIds]);
+
+    const gridSelection = useMemo((): ThumbnailGridSelection | undefined => {
+        if (!selectionEnabled) {
+            return undefined;
+        }
+        return {
+            selectedIds: new Set(selectedIds),
+            onToggle: (file) => toggleSelection(file.id),
+            onSelectMany: selectMany,
+        };
+    }, [selectionEnabled, selectedIds, selectMany, toggleSelection]);
+
+    const footerInsetPx =
+        selectionEnabled && selectedIds.length > 0 ?
+            SELECTION_FOOTER_INSET_PX :
+            0;
+
     const handleOpenFile = useCallback((file: EnteFile): void => {
+        if (useSelectionStore.getState().enabled) {
+            return;
+        }
         setViewerFileId(file.id);
     }, []);
 
@@ -117,7 +157,12 @@ export function FilteredMediaView({
 
     return (
         <>
-            <ThumbnailGrid files={displayFiles} onOpenFile={handleOpenFile} />
+            <ThumbnailGrid
+                files={displayFiles}
+                onOpenFile={selectionEnabled ? undefined : handleOpenFile}
+                selection={gridSelection}
+                footerInsetPx={footerInsetPx}
+            />
             {viewerFileId !== undefined ? (
                 <PhotoViewer
                     files={displayFiles}
