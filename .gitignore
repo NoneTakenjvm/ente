@@ -8,5 +8,9 @@
 # Local assistant files
 CLAUDE.local.md
 
+# Cursor debug logs
+.cursor/debug-*.log
+debug-*.log
+
 # Node
 node_modules/
