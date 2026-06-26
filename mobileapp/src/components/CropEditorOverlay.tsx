@@ -283,7 +283,7 @@ export function CropEditorOverlay({
 
     return (
         <div
-            className="fixed inset-0 z-[60] flex flex-col bg-black/90"
+            className="fixed inset-0 z-[60] flex select-none flex-col bg-black/90 [-webkit-touch-callout:none]"
             onPointerDown={(event) => {
                 event.stopPropagation();
             }}
@@ -330,7 +330,7 @@ export function CropEditorOverlay({
                 ) : (
                     <div
                         ref={workspaceRef}
-                        className="relative flex min-h-0 w-full flex-1 touch-none items-center justify-center"
+                        className="relative flex min-h-0 w-full flex-1 touch-none select-none items-center justify-center [-webkit-touch-callout:none]"
                         style={{ padding: CROP_WORKSPACE_INSET_PX }}
                     >
                         {!workspaceSize ? (
@@ -361,14 +361,14 @@ export function CropEditorOverlay({
                                             ),
                                         );
                                     }}
-                                    className="max-h-full max-w-full"
+                                    className="max-h-full max-w-full select-none [-webkit-touch-callout:none]"
                                 >
                                     <img
                                         key={workingUrl}
                                         ref={imageRef}
                                         src={workingUrl}
                                         alt=""
-                                        className="block"
+                                        className="block select-none [-webkit-touch-callout:none]"
                                         style={
                                             displayLayout ?
                                                 {

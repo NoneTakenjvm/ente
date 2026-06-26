@@ -13,7 +13,8 @@ import {
     isFlatTagFilterRoot,
     isTagFilterActive,
 } from "@/lib/tags";
-import { ArrowDownUp, Shuffle } from "lucide-react";
+import { Shuffle } from "lucide-react";
+import { SelectionModeToggle } from "@/components/SelectionModeToggle";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useTagStore } from "@/stores/tag-store";
@@ -35,7 +36,6 @@ export function TagFilterBar({
 
     const mediaViewOrder = useUIStore((s) => s.mediaViewOrder);
     const setMediaShuffled = useUIStore((s) => s.setMediaShuffled);
-    const reshuffleMedia = useUIStore((s) => s.reshuffleMedia);
     const setMediaDefaultOrder = useUIStore((s) => s.setMediaDefaultOrder);
 
     const isShuffled = mediaViewOrder === "shuffled";
@@ -105,10 +105,11 @@ export function TagFilterBar({
                     variant={isShuffled ? "secondary" : "outline"}
                     size="sm"
                     className="gap-1.5"
-                    aria-label={isShuffled ? "Re-randomise" : "Randomise"}
+                    aria-label={isShuffled ? "Disable random order" : "Randomise"}
+                    aria-pressed={isShuffled}
                     onClick={() => {
                         if (isShuffled) {
-                            reshuffleMedia();
+                            setMediaDefaultOrder();
                         } else {
                             setMediaShuffled(Date.now());
                         }
@@ -117,17 +118,6 @@ export function TagFilterBar({
                     <Shuffle className="size-3.5 shrink-0" />
                     <span>Randomise</span>
                 </Button>
-                {isShuffled ? (
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="icon-sm"
-                        aria-label="Original order"
-                        onClick={setMediaDefaultOrder}
-                    >
-                        <ArrowDownUp />
-                    </Button>
-                ) : null}
                 <TagQueryBuilderPanel
                     hasQueryContent={hasQueryContent}
                     clauseCount={clauseCount}
@@ -136,6 +126,7 @@ export function TagFilterBar({
                     taggedCount={taggedCount}
                     untaggedCount={untaggedCount}
                 />
+                <SelectionModeToggle />
             </div>
             {isTagFilterActive(tagFilter) ? (
                 <div className="flex items-center justify-between gap-2 text-xs">

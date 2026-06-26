@@ -11,11 +11,16 @@ import { ShieldOff, Upload } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { ConfirmPanicModal } from "@/components/ConfirmPanicModal";
 import { PageLoader } from "@/components/PageLoader";
+import { SelectionActionFooter } from "@/components/SelectionActionFooter";
 import { SyncBanner } from "@/components/SyncBanner";
 import { TagFilterBar } from "@/components/TagFilterBar";
-import { ThumbnailGrid } from "@/components/ThumbnailGrid";
+import {
+    ThumbnailGrid,
+    type ThumbnailGridSelection,
+} from "@/components/ThumbnailGrid";
 import { Button } from "@/components/ui/button";
 import { useLibraryBootstrap } from "@/hooks/use-library-bootstrap";
+import { SELECTION_FOOTER_INSET_PX } from "@/lib/selection";
 import {
     isSessionAuthenticated,
     reconcileSessionWithCore,
@@ -30,6 +35,7 @@ import {
 import { fileCreationTime } from "ente-media/file-metadata";
 import { useLibraryStore } from "@/stores/library-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
+import { useSelectionStore } from "@/stores/selection-store";
 import { useTagStore } from "@/stores/tag-store";
 import { useUIStore, useUploadJobStore } from "@/stores/ui-store";
 import type { EnteFile } from "ente-media/file";
@@ -123,6 +129,44 @@ export default function GalleryPage(): JSX.Element {
     const [panicWorking, setPanicWorking] = useState<boolean>(false);
     const panic = useSessionStore((s) => s.panic);
 
+    const selectionEnabled = useSelectionStore((s) => s.enabled);
+    const selectedIds = useSelectionStore((s) => s.selectedIds);
+    const toggleSelection = useSelectionStore((s) => s.toggle);
+    const selectMany = useSelectionStore((s) => s.selectMany);
+    const pruneToVisible = useSelectionStore((s) => s.pruneToVisible);
+    const resetSelection = useSelectionStore((s) => s.reset);
+
+    const visibleFileIds = useMemo(
+        () => new Set(files.map((file) => file.id)),
+        [files],
+    );
+
+    useEffect(() => {
+        pruneToVisible(visibleFileIds);
+    }, [pruneToVisible, visibleFileIds]);
+
+    useEffect(() => {
+        return (): void => {
+            resetSelection();
+        };
+    }, [resetSelection]);
+
+    const gridSelection = useMemo((): ThumbnailGridSelection | undefined => {
+        if (!selectionEnabled) {
+            return undefined;
+        }
+        return {
+            selectedIds: new Set(selectedIds),
+            onToggle: (file) => toggleSelection(file.id),
+            onSelectMany: selectMany,
+        };
+    }, [selectionEnabled, selectedIds, selectMany, toggleSelection]);
+
+    const footerInsetPx =
+        selectionEnabled && selectedIds.length > 0 ?
+            SELECTION_FOOTER_INSET_PX :
+            0;
+
     useEffect(() => {
         reconcileSessionWithCore();
         if (!isSessionAuthenticated()) {
@@ -131,6 +175,9 @@ export default function GalleryPage(): JSX.Element {
     }, [router]);
 
     const handleOpenFile = useCallback((file: EnteFile): void => {
+        if (useSelectionStore.getState().enabled) {
+            return;
+        }
         setViewerFileId(file.id);
     }, []);
 
@@ -199,8 +246,15 @@ export default function GalleryPage(): JSX.Element {
             {showFullPageLoader ? (
                 <PageLoader message="Loading your library…" />
             ) : (
-                <ThumbnailGrid files={files} onOpenFile={handleOpenFile} />
+                <ThumbnailGrid
+                    files={files}
+                    onOpenFile={selectionEnabled ? undefined : handleOpenFile}
+                    selection={gridSelection}
+                    footerInsetPx={footerInsetPx}
+                />
             )}
+
+            <SelectionActionFooter />
 
             {viewerFileId !== undefined ? (
                 <PhotoViewer

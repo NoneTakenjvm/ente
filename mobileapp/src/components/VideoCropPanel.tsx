@@ -134,7 +134,7 @@ export function VideoCropPanel({
                     ) : null}
 
                     {videoUrl && phase !== "loading" ? (
-                        <div className="relative aspect-video w-full overflow-hidden rounded-md bg-black">
+                        <div className="relative aspect-video w-full touch-none select-none overflow-hidden rounded-md bg-black [-webkit-touch-callout:none]">
                             <Cropper
                                 video={videoUrl}
                                 crop={crop}

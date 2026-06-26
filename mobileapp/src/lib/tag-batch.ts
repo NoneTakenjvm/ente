@@ -155,3 +155,24 @@ export const mergeTagsOnFiles = async (
         onProgress,
     );
 };
+
+/**
+ * Apply a tag mutator to each file and sync tags to remote.
+ */
+export const applyTagMutatorOnFiles = async (
+    http: HttpClient,
+    files: EnteFile[],
+    collections: Collection[],
+    mutator: TagMutator,
+    onFileVerified?: (file: EnteFile) => Promise<void>,
+    onProgress?: (completed: number, total: number) => void,
+): Promise<BatchTagResult> => {
+    return runBatchTagUpdate(
+        http,
+        files,
+        collections,
+        mutator,
+        onFileVerified,
+        onProgress,
+    );
+};
