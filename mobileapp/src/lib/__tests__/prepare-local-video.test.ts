@@ -2,16 +2,7 @@
  * @vitest-environment happy-dom
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_VIDEO_CRF } from "@/lib/compress";
 import { prepareLocalVideo } from "@/lib/transcode/prepare-local-video";
-
-const { mockRunFFmpeg } = vi.hoisted(() => ({
-    mockRunFFmpeg: vi.fn(),
-}));
-
-vi.mock("@/lib/ffmpeg", () => ({
-    runFFmpeg: mockRunFFmpeg,
-}));
 
 const stubVideoProbe = (width: number, height: number, duration: number): void => {
     const originalCreateElement = document.createElement.bind(document);
@@ -35,36 +26,22 @@ const stubVideoProbe = (width: number, height: number, duration: number): void =
 
 afterEach(() => {
     vi.restoreAllMocks();
-    mockRunFFmpeg.mockReset();
 });
 
 describe("prepareLocalVideo", () => {
-    it("transcodes device video to mp4 and reads metadata", async () => {
-        const transcoded = new Uint8Array([0, 1, 2, 3]);
-        mockRunFFmpeg.mockResolvedValue(transcoded);
+    it("reads original bytes and metadata without transcoding", async () => {
         stubVideoProbe(1280, 720, 14.6);
 
-        const file = new File([new Uint8Array([9, 8, 7])], "clip.mov", {
+        const sourceBytes = new Uint8Array([9, 8, 7]);
+        const file = new File([sourceBytes], "clip.mov", {
             type: "video/quicktime",
         });
 
         const prepared = await prepareLocalVideo(file);
 
-        expect(mockRunFFmpeg).toHaveBeenCalledWith(
-            [
-                "-i", "INPUT",
-                "-c:v", "libx264",
-                "-crf", String(DEFAULT_VIDEO_CRF),
-                "-preset", "fast",
-                "-c:a", "aac",
-                "-movflags", "+faststart",
-                "OUTPUT",
-            ],
-            expect.any(Blob),
-            "mp4",
-        );
         expect(prepared).toEqual({
-            bytes: transcoded,
+            bytes: sourceBytes,
+            mimeType: "video/quicktime",
             width: 1280,
             height: 720,
             duration: 15,
@@ -72,12 +49,12 @@ describe("prepareLocalVideo", () => {
     });
 
     it("infers mime type from extension when the picker omits it", async () => {
-        mockRunFFmpeg.mockResolvedValue(new Uint8Array([1]));
         stubVideoProbe(640, 480, 3);
 
-        await prepareLocalVideo(new File([new Uint8Array([1])], "clip.webm", { type: "" }));
+        const prepared = await prepareLocalVideo(
+            new File([new Uint8Array([1])], "clip.webm", { type: "" }),
+        );
 
-        const inputBlob = mockRunFFmpeg.mock.calls[0]![1] as Blob;
-        expect(inputBlob.type).toBe("video/webm");
+        expect(prepared.mimeType).toBe("video/webm");
     });
 });

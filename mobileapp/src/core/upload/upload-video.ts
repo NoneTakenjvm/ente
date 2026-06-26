@@ -25,7 +25,10 @@ import type { HttpClient } from "../api/http";
 import { extractVideoFrameJpeg } from "@/lib/ffmpeg";
 import { generateImageThumbnail } from "./thumbnail";
 import {
-    fetchUploadURL,
+    markBatchUploadFileComplete,
+    takeUploadURL,
+} from "./upload-url-pool";
+import {
     postEnteFile,
     putFile,
     type PostEnteFileRequest,
@@ -37,6 +40,7 @@ export interface UploadLocalVideoOptions {
     width: number;
     height: number;
     duration: number;
+    mimeType: string;
 }
 
 const computeContentHash = async (data: Uint8Array): Promise<string> => {
@@ -65,7 +69,7 @@ const buildPublicMagicData = (
 });
 
 /**
- * Encrypt, upload, and finalize a new MP4 video in the given collection.
+ * Encrypt, upload, and finalize a new video in the given collection.
  */
 export const uploadLocalVideo = async (
     http: HttpClient,
@@ -74,7 +78,7 @@ export const uploadLocalVideo = async (
     options: UploadLocalVideoOptions,
 ): Promise<EnteFile> => {
     const metadata = await buildMetadata(videoBytes, options);
-    const frame = await extractVideoFrameJpeg(videoBytes, "video/mp4");
+    const frame = await extractVideoFrameJpeg(videoBytes, options.mimeType);
     const thumbnail = await generateImageThumbnail(frame);
     const fileKey = await generateBlobOrStreamKey();
 
@@ -90,10 +94,10 @@ export const uploadLocalVideo = async (
 
     const encryptedFileKey = await encryptBox(fileKey, collection.key);
 
-    const fileUploadURL = await fetchUploadURL(http);
+    const fileUploadURL = await takeUploadURL(http);
     await putFile(http, fileUploadURL.url, encryptedFile.encryptedData);
 
-    const thumbnailUploadURL = await fetchUploadURL(http);
+    const thumbnailUploadURL = await takeUploadURL(http);
     await putFile(
         http,
         thumbnailUploadURL.url,
@@ -119,5 +123,6 @@ export const uploadLocalVideo = async (
     };
 
     const remoteFile = await postEnteFile(http, newFileRequest);
+    markBatchUploadFileComplete();
     return decryptRemoteFile(remoteFile, collection.key);
 };

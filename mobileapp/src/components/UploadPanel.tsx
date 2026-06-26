@@ -21,7 +21,12 @@ import {
     SheetTitle,
 } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
-import { DEFAULT_JPEG_QUALITY, encodeJpegFromBytes } from "@/lib/compress";
+import { getEnteCore } from "@/core/instance";
+import {
+    beginUploadBatch,
+    endUploadBatch,
+} from "@/core/upload/upload-url-pool";
+import { prepareLocalImage } from "@/lib/prepare-local-image";
 import {
     ACCEPT_LOCAL_MEDIA,
     isUploadableLocalFile,
@@ -50,6 +55,7 @@ interface StagedFile {
 }
 
 const UPLOAD_FOOTER_INSET_PX = 120;
+const maxConcurrentUploads = 3;
 
 const uploadableCollections = (collections: Collection[]): Collection[] =>
     collections.filter(
@@ -224,45 +230,58 @@ export function UploadPanel({
             let completed = 0;
             let failed = 0;
             const errors: string[] = [];
+            let nextIndex = 0;
 
-            try {
-                for (let index = 0; index < filesToUpload.length; index += 1) {
+            const uploadStagedFile = async (entry: StagedFile): Promise<void> => {
+                if (entry.kind === "video") {
+                    const prepared = await prepareLocalVideo(entry.file);
+                    await uploadVideoFile(
+                        selectedCollectionId,
+                        prepared.bytes,
+                        {
+                            width: prepared.width,
+                            height: prepared.height,
+                        },
+                        prepared.duration,
+                        sanitizeUploadVideoTitle(entry.file.name),
+                        entry.file.lastModified * 1000,
+                        prepared.mimeType,
+                    );
+                    return;
+                }
+
+                const prepared = await prepareLocalImage(entry.file);
+                await uploadImageFile(
+                    selectedCollectionId,
+                    prepared.bytes,
+                    {
+                        width: prepared.width,
+                        height: prepared.height,
+                    },
+                    sanitizeUploadImageTitle(entry.file.name),
+                    entry.file.lastModified * 1000,
+                );
+            };
+
+            const reportFileFinished = (): void => {
+                const finished = completed + failed;
+                setUploadProgress({ current: finished, total: filesToUpload.length });
+                setUploadJobProgress(finished, filesToUpload.length);
+            };
+
+            const worker = async (): Promise<void> => {
+                while (true) {
                     if (useUploadJobStore.getState().cancelRequested) {
-                        break;
+                        return;
+                    }
+                    const index = nextIndex;
+                    nextIndex += 1;
+                    if (index >= filesToUpload.length) {
+                        return;
                     }
                     const entry = filesToUpload[index]!;
                     try {
-                        if (entry.kind === "video") {
-                            const prepared = await prepareLocalVideo(entry.file);
-                            await uploadVideoFile(
-                                selectedCollectionId,
-                                prepared.bytes,
-                                {
-                                    width: prepared.width,
-                                    height: prepared.height,
-                                },
-                                prepared.duration,
-                                sanitizeUploadVideoTitle(entry.file.name),
-                                entry.file.lastModified * 1000,
-                            );
-                        } else {
-                            const buffer = await entry.file.arrayBuffer();
-                            const bytes = new Uint8Array(buffer);
-                            const encoded = await encodeJpegFromBytes(
-                                bytes,
-                                DEFAULT_JPEG_QUALITY,
-                            );
-                            await uploadImageFile(
-                                selectedCollectionId,
-                                encoded.bytes,
-                                {
-                                    width: encoded.width,
-                                    height: encoded.height,
-                                },
-                                sanitizeUploadImageTitle(entry.file.name),
-                                entry.file.lastModified * 1000,
-                            );
-                        }
+                        await uploadStagedFile(entry);
                         completed += 1;
                     } catch (uploadError: unknown) {
                         failed += 1;
@@ -272,10 +291,23 @@ export function UploadPanel({
                                 `${entry.file.name}: upload failed`,
                         );
                     }
-                    const nextCurrent = index + 1;
-                    setUploadProgress({ current: nextCurrent, total: filesToUpload.length });
-                    setUploadJobProgress(nextCurrent, filesToUpload.length);
+                    reportFileFinished();
                 }
+            };
+
+            try {
+                await beginUploadBatch(
+                    getEnteCore().getHttpClient(),
+                    filesToUpload.length,
+                );
+
+                const workerCount = Math.min(
+                    maxConcurrentUploads,
+                    filesToUpload.length,
+                );
+                await Promise.all(
+                    Array.from({ length: workerCount }, () => worker()),
+                );
 
                 const cancelled = useUploadJobStore.getState().cancelRequested;
                 const skipped = filesToUpload.length - completed - failed;
@@ -310,6 +342,7 @@ export function UploadPanel({
                 );
                 toast.error(errors[0] ?? "Some uploads failed");
             } finally {
+                endUploadBatch();
                 resetUploadJob();
                 uploadStartedRef.current = false;
             }

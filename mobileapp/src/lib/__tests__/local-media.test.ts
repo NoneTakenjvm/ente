@@ -34,9 +34,11 @@ describe("local-media", () => {
         );
     });
 
-    it("normalizes upload titles to jpg or mp4", () => {
+    it("preserves known video extensions in upload titles", () => {
         expect(sanitizeUploadImageTitle("vacation.PNG")).toBe("vacation.jpg");
-        expect(sanitizeUploadVideoTitle("vacation.mov")).toBe("vacation.mp4");
+        expect(sanitizeUploadVideoTitle("vacation.mov")).toBe("vacation.mov");
+        expect(sanitizeUploadVideoTitle("vacation.webm")).toBe("vacation.webm");
         expect(sanitizeUploadVideoTitle("already.mp4")).toBe("already.mp4");
+        expect(sanitizeUploadVideoTitle("noext")).toBe("noext.mp4");
     });
 });

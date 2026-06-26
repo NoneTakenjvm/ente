@@ -24,7 +24,10 @@ import { ensureInteger } from "ente-utils/ensure";
 import type { HttpClient } from "../api/http";
 import { generateImageThumbnail } from "./thumbnail";
 import {
-    fetchUploadURL,
+    markBatchUploadFileComplete,
+    takeUploadURL,
+} from "./upload-url-pool";
+import {
     postEnteFile,
     putFile,
     type PostEnteFileRequest,
@@ -97,10 +100,10 @@ export const uploadJpegImage = async (
 
     const encryptedFileKey = await encryptBox(fileKey, collection.key);
 
-    const fileUploadURL = await fetchUploadURL(http);
+    const fileUploadURL = await takeUploadURL(http);
     await putFile(http, fileUploadURL.url, encryptedFile.encryptedData);
 
-    const thumbnailUploadURL = await fetchUploadURL(http);
+    const thumbnailUploadURL = await takeUploadURL(http);
     await putFile(
         http,
         thumbnailUploadURL.url,
@@ -130,6 +133,7 @@ export const uploadJpegImage = async (
     };
 
     const remoteFile = await postEnteFile(http, newFileRequest);
+    markBatchUploadFileComplete();
     return decryptRemoteFile(remoteFile, collection.key);
 };
 
