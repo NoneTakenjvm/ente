@@ -70,7 +70,7 @@ export const fetchUploadURL = async (
 export const putFile = async (
     http: HttpClient,
     uploadURL: string,
-    fileData: Uint8Array,
+    fileData: Uint8Array<ArrayBuffer>,
 ): Promise<void> => {
     const res = await fetch(uploadURL, {
         method: "PUT",
