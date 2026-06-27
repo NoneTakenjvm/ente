@@ -43,7 +43,7 @@ import {
     extractUserTags,
     isReservedTag,
 } from "@/lib/tags";
-import { addTagNames, applyTagMutator, normalizeTagName, removeTagNames, tagsEqual } from "@/lib/tag-writes";
+import { addTagNames, normalizeTagName, removeTagNames, tagsEqual } from "@/lib/tag-writes";
 import {
     getThumbnailEntry,
     requestThumbnail,
@@ -222,7 +222,6 @@ export function PhotoViewer({
         videoScrubbing;
 
     const updateTagsOnFile = useLibraryStore((s) => s.updateTagsOnFile);
-    const applyLocalTagsOnFile = useLibraryStore((s) => s.applyLocalTagsOnFile);
     const storeFile = useLibraryStore((s) => file ?
         s.allFiles.find((entry) => entry.id === file.id) :
         undefined);
@@ -969,15 +968,6 @@ export function PhotoViewer({
                 return;
             }
             const fileId = displayFile.id;
-            if (showTagPicker) {
-                const intended = applyTagMutator(
-                    mutator,
-                    extractUserTags(displayFile),
-                );
-                applyLocalTagsOnFile(fileId, intended);
-                syncSessionFile(fileId);
-                return;
-            }
             setTagError(undefined);
             void updateTagsOnFile(fileId, mutator)
                 .then(() => {
@@ -993,9 +983,7 @@ export function PhotoViewer({
                 });
         },
         [
-            applyLocalTagsOnFile,
             displayFile,
-            showTagPicker,
             syncSessionFile,
             updateTagsOnFile,
         ],

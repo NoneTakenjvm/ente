@@ -1,7 +1,7 @@
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
 import { mapBatched } from "@/lib/batched";
-import { removeTagOutboxEntries, upsertTagOutboxEntry } from "@/lib/tag-outbox";
+import { upsertTagOutboxEntry } from "@/lib/tag-outbox";
 import { writeAndVerifyTags } from "@/lib/tag-write-pipeline";
 import {
     mergeTagNames,
@@ -44,7 +44,6 @@ const syncFileTags = async (
         intendedTags,
     );
     if (result.status === "verified") {
-        await removeTagOutboxEntries([file.id]);
         return result.file;
     }
     return undefined;

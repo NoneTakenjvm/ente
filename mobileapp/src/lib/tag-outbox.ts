@@ -5,7 +5,8 @@ import {
     type PersistedTagOutboxEntry,
 } from "@/db/kv";
 import { getSessionCacheKey } from "@/lib/cache-key";
-import { fileWithOrganizerTags } from "@/lib/tag-writes";
+import { extractTags } from "@/lib/tags";
+import { fileWithOrganizerTags, tagsEqual } from "@/lib/tag-writes";
 
 export interface TagOutboxEntry {
     fileId: number;
@@ -14,8 +15,8 @@ export interface TagOutboxEntry {
 }
 
 const outboxByFileId = new Map<number, TagOutboxEntry>();
-let persistScheduled = false;
 let hydrated = false;
+let persistChain: Promise<void> = Promise.resolve();
 
 const toPersisted = (entry: TagOutboxEntry): PersistedTagOutboxEntry => ({
     fileId: entry.fileId,
@@ -23,20 +24,14 @@ const toPersisted = (entry: TagOutboxEntry): PersistedTagOutboxEntry => ({
     enqueuedAt: entry.enqueuedAt,
 });
 
-const schedulePersist = (): void => {
-    if (persistScheduled) {
-        return;
-    }
-    persistScheduled = true;
-    setTimeout(() => {
-        persistScheduled = false;
-        void flushTagOutboxToDisk();
-    }, 0);
-};
-
 const flushTagOutboxToDisk = async (): Promise<void> => {
     const entries = [...outboxByFileId.values()].map(toPersisted);
     await saveEncryptedTagOutbox(entries, getSessionCacheKey());
+};
+
+const persistTagOutbox = (): Promise<void> => {
+    persistChain = persistChain.then(() => flushTagOutboxToDisk());
+    return persistChain;
 };
 
 /**
@@ -49,6 +44,16 @@ export const hydrateTagOutbox = async (): Promise<void> => {
         outboxByFileId.set(entry.fileId, entry);
     }
     hydrated = true;
+};
+
+/**
+ * Load the outbox from disk once per session without clearing in-memory entries.
+ */
+export const ensureTagOutboxHydrated = async (): Promise<void> => {
+    if (hydrated) {
+        return;
+    }
+    await hydrateTagOutbox();
 };
 
 export const isTagOutboxHydrated = (): boolean => hydrated;
@@ -68,11 +73,11 @@ export const upsertTagOutboxEntry = async (
         intendedTags,
         enqueuedAt: Date.now(),
     });
-    schedulePersist();
+    await persistTagOutbox();
 };
 
 /**
- * Remove one or more files from the outbox after verified remote sync.
+ * Remove one or more files from the outbox after pull confirms server tags.
  */
 export const removeTagOutboxEntries = async (
     fileIds: number[],
@@ -83,7 +88,7 @@ export const removeTagOutboxEntries = async (
     for (const fileId of fileIds) {
         outboxByFileId.delete(fileId);
     }
-    await flushTagOutboxToDisk();
+    await persistTagOutbox();
 };
 
 export const getTagOutboxEntries = (): TagOutboxEntry[] =>
@@ -92,6 +97,31 @@ export const getTagOutboxEntries = (): TagOutboxEntry[] =>
 export const getTagOutboxEntry = (
     fileId: number,
 ): TagOutboxEntry | undefined => outboxByFileId.get(fileId);
+
+/**
+ * Drop outbox entries whose pulled server metadata already matches intent.
+ */
+export const reconcileTagOutboxWithFiles = async (
+    files: EnteFile[],
+): Promise<void> => {
+    if (outboxByFileId.size === 0) {
+        return;
+    }
+    const filesById = new Map(files.map((file) => [file.id, file]));
+    const verifiedIds: number[] = [];
+    for (const entry of outboxByFileId.values()) {
+        const file = filesById.get(entry.fileId);
+        if (
+            file &&
+            tagsEqual(extractTags(file), entry.intendedTags)
+        ) {
+            verifiedIds.push(entry.fileId);
+        }
+    }
+    if (verifiedIds.length > 0) {
+        await removeTagOutboxEntries(verifiedIds);
+    }
+};
 
 /**
  * Apply pending outbox tag intents onto a file list for display and indexing.
@@ -119,5 +149,5 @@ export const applyOutboxTagsToFiles = (
 export const clearTagOutbox = (): void => {
     outboxByFileId.clear();
     hydrated = false;
-    persistScheduled = false;
+    persistChain = Promise.resolve();
 };

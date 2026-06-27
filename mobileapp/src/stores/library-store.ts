@@ -31,8 +31,10 @@ import { extractTags } from "@/lib/tags";
 import { scheduleTagBackgroundSync } from "@/lib/tag-background-sync";
 import {
     applyOutboxTagsToFiles,
+    ensureTagOutboxHydrated,
     getTagOutboxEntries,
     hydrateTagOutbox,
+    reconcileTagOutboxWithFiles,
     upsertTagOutboxEntry,
 } from "@/lib/tag-outbox";
 import { enqueueDerivedReplace } from "@/lib/derived-replace-queue";
@@ -457,7 +459,8 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             });
 
             allFiles = filesPull.files;
-            await hydrateTagOutbox();
+            await ensureTagOutboxHydrated();
+            await reconcileTagOutboxWithFiles(allFiles);
             allFiles = applyOutboxTagsToFiles(allFiles);
             useTagStore.getState().rebuildFromFiles(allFiles);
             rebuildFavoritesFromLibrary(
@@ -472,6 +475,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 syncStatus: "success",
                 syncProgress: { current: 0, total: 0 },
             });
+            await saveEncryptedFiles(allFiles, getSessionCacheKey());
         } catch (error) {
             const offline =
                 typeof navigator !== "undefined" && !navigator.onLine;
