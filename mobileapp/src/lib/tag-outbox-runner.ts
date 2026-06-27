@@ -5,7 +5,6 @@ import { mapBatched } from "@/lib/batched";
 import {
     getTagOutboxEntries,
     isTagOutboxHydrated,
-    removeTagOutboxEntries,
 } from "@/lib/tag-outbox";
 import { writeAndVerifyTags } from "@/lib/tag-write-pipeline";
 
@@ -48,8 +47,6 @@ export const drainTagOutbox = async (): Promise<void> => {
         const filesById = new Map(getFiles().map((file) => [file.id, file]));
         const collections = getCollections();
         const http = getEnteCore().getHttpClient();
-        const verifiedIds: number[] = [];
-
         await mapBatched(
             entries,
             async (entry) => {
@@ -68,16 +65,11 @@ export const drainTagOutbox = async (): Promise<void> => {
                     entry.intendedTags,
                 );
                 if (result.status === "verified") {
-                    verifiedIds.push(entry.fileId);
                     await patchFile(result.file);
                 }
             },
             { concurrency: 2 },
         );
-
-        if (verifiedIds.length > 0) {
-            await removeTagOutboxEntries(verifiedIds);
-        }
     } finally {
         draining = false;
     }

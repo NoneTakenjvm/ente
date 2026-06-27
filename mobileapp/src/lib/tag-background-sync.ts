@@ -2,7 +2,6 @@ import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
 import type { HttpClient } from "@/core/api/http";
 import { enqueueTagSave } from "@/lib/tag-save-queue";
-import { removeTagOutboxEntries } from "@/lib/tag-outbox";
 import { writeAndVerifyTags } from "@/lib/tag-write-pipeline";
 
 const collectionKeyFor = (
@@ -46,7 +45,6 @@ export const scheduleTagBackgroundSync = (
                 tags,
             );
             if (result.status === "verified") {
-                await removeTagOutboxEntries([fileId]);
                 await context.patchFile(result.file);
             }
             return result.file;
