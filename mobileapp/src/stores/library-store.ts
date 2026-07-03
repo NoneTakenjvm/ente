@@ -33,6 +33,7 @@ import {
     applyOutboxTagsToFiles,
     ensureTagOutboxHydrated,
     getTagOutboxEntries,
+    getTagOutboxEntry,
     hydrateTagOutbox,
     reconcileTagOutboxWithFiles,
     upsertTagOutboxEntry,
@@ -495,7 +496,11 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
     },
 
     patchFile: async (updated: EnteFile): Promise<void> => {
-        const allFiles = get().allFiles.map((file) => (file.id === updated.id ? updated : file));
+        const outboxEntry = getTagOutboxEntry(updated.id);
+        const fileToPatch = outboxEntry
+            ? fileWithOrganizerTags(updated, outboxEntry.intendedTags)
+            : updated;
+        const allFiles = get().allFiles.map((file) => (file.id === fileToPatch.id ? fileToPatch : file));
         set({ allFiles });
         await saveEncryptedFiles(allFiles, getSessionCacheKey());
     },

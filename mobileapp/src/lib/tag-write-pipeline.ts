@@ -97,7 +97,8 @@ const attemptWriteAndVerify = async (
 ): Promise<EnteFile | undefined> => {
     await putTagsWithTransportRetry(http, file, collectionKey, intendedTags);
     const fresh = await refetchFile(http, file, collectionKey);
-    if (tagsEqual(extractTags(fresh), intendedTags)) {
+    const freshTags = extractTags(fresh);
+    if (tagsEqual(freshTags, intendedTags)) {
         return fresh;
     }
     return undefined;
