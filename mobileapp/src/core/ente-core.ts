@@ -25,7 +25,12 @@ import {
     getDecryptedThumbnail,
     type ServerCiphertext,
 } from "./download";
-import { getPublicMetadata, updatePublicMetadata } from "./metadata";
+import {
+    getPublicMetadata,
+    updateFileVisibility,
+    updatePublicMetadata,
+} from "./metadata";
+import type { ItemVisibility } from "ente-media/file-metadata";
 import {
     bootstrapOrganizerConfig,
     patchOrganizerConfig,
@@ -214,6 +219,22 @@ export class EnteCore {
         updates: Partial<FilePublicMagicMetadataData>,
     ): Promise<void> {
         return updatePublicMetadata(this.http, file, updates);
+    }
+
+    /**
+     * Set file visibility (archive / visible) via private magic metadata.
+     */
+    updateFileVisibility(
+        file: EnteFile,
+        collectionKey: string,
+        visibility: ItemVisibility,
+    ): Promise<EnteFile> {
+        return updateFileVisibility(
+            this.http,
+            file,
+            collectionKey,
+            visibility,
+        );
     }
 
     getHttpClient(): HttpClient {

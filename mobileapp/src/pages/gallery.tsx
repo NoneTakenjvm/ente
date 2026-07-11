@@ -32,6 +32,7 @@ import {
     countFilesMatchingTagFilter,
     filterFilesByTags,
 } from "@/lib/tags";
+import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 import { fileCreationTime } from "ente-media/file-metadata";
 import { useLibraryStore } from "@/stores/library-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
@@ -65,7 +66,9 @@ export default function GalleryPage(): JSX.Element {
     const initialLoadDone = useLibraryBootstrap();
 
     const libraryFiles = useMemo(() => {
-        const deduped = dedupeFilesById(allFiles);
+        const deduped = dedupeFilesById(allFiles).filter(
+            (file) => !isFileArchivedLocally(file),
+        );
         return [...deduped].sort(
             (a, b) => fileCreationTime(b) - fileCreationTime(a),
         );

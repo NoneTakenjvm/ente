@@ -1,7 +1,9 @@
 import type { JSX } from "react";
 import {
+    Archive,
     ChevronRight,
     Copy,
+    Crop,
     ImageIcon,
     Minimize2,
     Settings,
@@ -14,6 +16,8 @@ export type ManageSection =
     "exact" |
     "similar" |
     "compress" |
+    "archived" |
+    "auto-crop" |
     "tags" |
     "settings";
 
@@ -46,6 +50,18 @@ const categories: {
         icon: Minimize2,
     },
     {
+        id: "archived",
+        title: "Archived images",
+        description: "Browse and restore archived photos.",
+        icon: Archive,
+    },
+    {
+        id: "auto-crop",
+        title: "Auto-crop",
+        description: "Find black borders and crop them away.",
+        icon: Crop,
+    },
+    {
         id: "tags",
         title: "Tags",
         description: "Rename, merge, and organize tag types.",
@@ -63,6 +79,8 @@ const sectionTitles: Record<Exclude<ManageSection, "hub">, string> = {
     exact: "Exact duplicates",
     similar: "Similar photos",
     compress: "Compress",
+    archived: "Archived images",
+    "auto-crop": "Auto-crop",
     tags: "Tags",
     settings: "Settings",
 };

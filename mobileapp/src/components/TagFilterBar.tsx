@@ -32,6 +32,7 @@ export function TagFilterBar({
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
     const tagFilter = useTagStore((s) => s.tagFilter);
     const setTagFilterMode = useTagStore((s) => s.setTagFilterMode);
+    const setGroupOp = useTagStore((s) => s.setGroupOp);
     const clearFilters = useTagStore((s) => s.clearFilters);
 
     const mediaViewOrder = useUIStore((s) => s.mediaViewOrder);
@@ -96,6 +97,9 @@ export function TagFilterBar({
                 <TagClausePicker
                     filter={tagFilter}
                     onSetTagFilterMode={setTagFilterMode}
+                    onSetRootOp={(op) => {
+                        setGroupOp(tagFilter.root.id, op);
+                    }}
                     triggerLabel={tagsButtonLabel}
                     triggerVariant={clauseCount > 0 ? "secondary" : "outline"}
                     disabled={!isFlat}

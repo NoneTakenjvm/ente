@@ -99,6 +99,25 @@ export const getTagOutboxEntry = (
 ): TagOutboxEntry | undefined => outboxByFileId.get(fileId);
 
 /**
+ * Remap a pending tag entry when a derived replace changes the file id.
+ */
+export const remapTagOutboxFileId = async (
+    fromFileId: number,
+    toFileId: number,
+): Promise<void> => {
+    if (!hydrated) {
+        await hydrateTagOutbox();
+    }
+    const existing = outboxByFileId.get(fromFileId);
+    if (!existing) {
+        return;
+    }
+    outboxByFileId.delete(fromFileId);
+    outboxByFileId.set(toFileId, { ...existing, fileId: toFileId });
+    await persistTagOutbox();
+};
+
+/**
  * Drop outbox entries whose pulled server metadata already matches intent.
  */
 export const reconcileTagOutboxWithFiles = async (

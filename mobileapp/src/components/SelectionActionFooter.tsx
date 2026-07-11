@@ -5,6 +5,7 @@ import {
     type JSX,
 } from "react";
 import {
+    Archive,
     Heart,
     HeartOff,
     Tag,
@@ -29,6 +30,7 @@ export function SelectionActionFooter(): JSX.Element | null {
     const allFiles = useLibraryStore((s) => s.allFiles);
     const batchUpdateTagsOnFiles = useLibraryStore((s) => s.batchUpdateTagsOnFiles);
     const batchSetFavorite = useLibraryStore((s) => s.batchSetFavorite);
+    const batchSetArchived = useLibraryStore((s) => s.batchSetArchived);
     const moveFilesToTrash = useLibraryStore((s) => s.moveFilesToTrash);
     const knownTags = useTagStore((s) => s.tags);
 
@@ -36,6 +38,7 @@ export function SelectionActionFooter(): JSX.Element | null {
     const [tagBusy, setTagBusy] = useState<boolean>(false);
     const [tagError, setTagError] = useState<string | undefined>();
     const [favoriteBusy, setFavoriteBusy] = useState<boolean>(false);
+    const [archiveBusy, setArchiveBusy] = useState<boolean>(false);
     const [trashOpen, setTrashOpen] = useState<boolean>(false);
     const [trashBusy, setTrashBusy] = useState<boolean>(false);
 
@@ -139,6 +142,31 @@ export function SelectionActionFooter(): JSX.Element | null {
         [batchSetFavorite, favoriteBusy, selectedIds],
     );
 
+    const handleArchive = useCallback(async (): Promise<void> => {
+        if (!selectedIds.length || archiveBusy) {
+            return;
+        }
+        const ids = [...selectedIds];
+        setArchiveBusy(true);
+        try {
+            await batchSetArchived(ids, true);
+            clear();
+            toast.success(
+                ids.length === 1 ?
+                    "Archived 1 photo" :
+                    `Archived ${ids.length} photos`,
+            );
+        } catch (error) {
+            toast.error(
+                error instanceof Error ?
+                    error.message :
+                    "Could not archive",
+            );
+        } finally {
+            setArchiveBusy(false);
+        }
+    }, [archiveBusy, batchSetArchived, clear, selectedIds]);
+
     const handleTrash = useCallback(async (): Promise<void> => {
         if (!selectedIds.length) {
             return;
@@ -164,7 +192,7 @@ export function SelectionActionFooter(): JSX.Element | null {
     }
 
     const count = selectedIds.length;
-    const actionsBusy = tagBusy || favoriteBusy || trashBusy;
+    const actionsBusy = tagBusy || favoriteBusy || archiveBusy || trashBusy;
 
     return (
         <>
@@ -220,6 +248,23 @@ export function SelectionActionFooter(): JSX.Element | null {
                             <HeartOff className="size-3.5 shrink-0" />
                         )}
                         Unfavourite
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        disabled={actionsBusy}
+                        onClick={() => {
+                            void handleArchive();
+                        }}
+                    >
+                        {archiveBusy ? (
+                            <Spinner />
+                        ) : (
+                            <Archive className="size-3.5 shrink-0" />
+                        )}
+                        Archive
                     </Button>
                     <Button
                         type="button"

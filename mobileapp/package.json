@@ -13,7 +13,9 @@
         "lint:fix": "eslint . --fix --config config/eslint/eslint.config.mjs",
         "spike": "tsx --tsconfig scripts/tsconfig.json scripts/m0-spike.ts",
         "cli": "tsx --tsconfig scripts/tsconfig.json scripts/ente-cli.ts",
-        "test": "vitest run"
+        "test": "vitest run",
+        "test:e2e:local": "tsx --tsconfig scripts/tsconfig.json scripts/e2e-local-helpers.ts",
+        "test:e2e": "tsx --tsconfig scripts/tsconfig.json scripts/e2e-post-m8-ux.ts"
     },
     "dependencies": {
         "@base-ui/react": "^1.6.0",
