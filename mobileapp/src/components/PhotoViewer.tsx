@@ -38,6 +38,7 @@ import { usePinchZoom } from "@/hooks/use-pinch-zoom";
 import { canCrop, canCropVideo } from "@/lib/crop";
 import { getLocalMediaOverride } from "@/lib/local-media-overrides";
 import { mediaKindForFile, mimeTypeForFile } from "@/lib/media-kind";
+import { toRenderableImageBlob } from "@/lib/renderable-image";
 import { cn } from "@/lib/utils";
 import {
     extractUserTags,
@@ -94,7 +95,8 @@ const SWIPE_THRESHOLD_RATIO = 0.22;
 const SWIPE_THRESHOLD_MIN_PX = 40;
 const CAROUSEL_DRAG_DEAD_ZONE_PX = 8;
 const CHROME_HIDE_MS = 2000;
-const MEDIA_LOAD_TIMEOUT_MS = 5000;
+/** Full-res download + HEIC convert can exceed a few seconds on desktop. */
+const MEDIA_LOAD_TIMEOUT_MS = 60_000;
 const TAP_MAX_MOVEMENT_PX = 10;
 const DOUBLE_TAP_MS = 300;
 const DOUBLE_TAP_MAX_DISTANCE_PX = 24;
@@ -395,18 +397,45 @@ export function PhotoViewer({
 
             const mediaOverride = getLocalMediaOverride(slideFile.id);
             if (mediaOverride) {
-                const mimeType = mimeTypeForFile(slideFile);
-                const blob = new Blob([Uint8Array.from(mediaOverride)], {
-                    type: mimeType,
-                });
-                const url = URL.createObjectURL(blob);
-                const previousUrl = mediaUrlsRef.current.get(slideFile.id);
-                if (previousUrl) {
-                    URL.revokeObjectURL(previousUrl);
-                }
-                mediaUrlsRef.current.set(slideFile.id, url);
-                loadingIdsRef.current.delete(slideFile.id);
-                setSlideMedia(slideFile.id, { status: "ready", url });
+                loadingIdsRef.current.add(slideFile.id);
+                setSlideMedia(slideFile.id, { status: "loading" });
+                const overrideLoader: SlideLoader = {
+                    cancelled: false,
+                    timedOut: false,
+                    timeoutId: 0,
+                };
+                loaders.push(overrideLoader);
+                void (async (): Promise<void> => {
+                    try {
+                        const blob =
+                            slideFile.metadata.fileType === FileType.video ?
+                                new Blob([Uint8Array.from(mediaOverride)], {
+                                    type: mimeTypeForFile(slideFile),
+                                }) :
+                                await toRenderableImageBlob(
+                                    slideFile,
+                                    mediaOverride,
+                                );
+                        if (overrideLoader.cancelled) {
+                            return;
+                        }
+                        const url = URL.createObjectURL(blob);
+                        const previousUrl = mediaUrlsRef.current.get(
+                            slideFile.id,
+                        );
+                        if (previousUrl) {
+                            URL.revokeObjectURL(previousUrl);
+                        }
+                        mediaUrlsRef.current.set(slideFile.id, url);
+                        loadingIdsRef.current.delete(slideFile.id);
+                        setSlideMedia(slideFile.id, { status: "ready", url });
+                    } catch {
+                        loadingIdsRef.current.delete(slideFile.id);
+                        if (!overrideLoader.cancelled) {
+                            setSlideMedia(slideFile.id, { status: "error" });
+                        }
+                    }
+                })();
                 continue;
             }
 
@@ -435,15 +464,20 @@ export function PhotoViewer({
 
             void getEnteCore()
                 .getDecryptedFile(slideFile)
-                .then((bytes) => {
+                .then(async (bytes) => {
                     window.clearTimeout(loader.timeoutId);
-                    if (loader.cancelled || loader.timedOut) {
+                    if (loader.cancelled) {
                         return;
                     }
-                    const mimeType = mimeTypeForFile(slideFile);
-                    const blob = new Blob([Uint8Array.from(bytes)], {
-                        type: mimeType,
-                    });
+                    const blob =
+                        slideFile.metadata.fileType === FileType.video ?
+                            new Blob([Uint8Array.from(bytes)], {
+                                type: mimeTypeForFile(slideFile),
+                            }) :
+                            await toRenderableImageBlob(slideFile, bytes);
+                    if (loader.cancelled) {
+                        return;
+                    }
                     const url = URL.createObjectURL(blob);
                     mediaUrlsRef.current.set(slideFile.id, url);
                     loadingIdsRef.current.delete(slideFile.id);
@@ -452,7 +486,7 @@ export function PhotoViewer({
                 .catch(() => {
                     window.clearTimeout(loader.timeoutId);
                     loadingIdsRef.current.delete(slideFile.id);
-                    if (!loader.cancelled && !loader.timedOut) {
+                    if (!loader.cancelled) {
                         setSlideMedia(slideFile.id, { status: "error" });
                     }
                 });
@@ -1271,6 +1305,12 @@ export function PhotoViewer({
                             src={slideMedia.url}
                             alt=""
                             draggable={false}
+                            onError={() => {
+                                if (!slideFile) {
+                                    return;
+                                }
+                                setSlideMedia(slideFile.id, { status: "error" });
+                            }}
                             onLoad={() => {
                                 if (
                                     isActive &&
