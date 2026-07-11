@@ -9,6 +9,8 @@ import {
     type TouchEvent as ReactTouchEvent,
 } from "react";
 import {
+    Archive,
+    ArchiveRestore,
     ChevronLeft,
     ChevronRight,
     Crop,
@@ -16,9 +18,11 @@ import {
     Image,
     Tag,
     Trash2,
+    Undo2,
     X,
 } from "lucide-react";
 import { ConfirmDeleteModal } from "@/components/ConfirmDeleteModal";
+import { ConfirmRevertEditModal } from "@/components/ConfirmRevertEditModal";
 import {
     CropEditorOverlay,
     type CropSaveResult,
@@ -36,6 +40,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { getEnteCore } from "@/core";
 import { usePinchZoom } from "@/hooks/use-pinch-zoom";
 import { canCrop, canCropVideo } from "@/lib/crop";
+import { hasEditHistory } from "@/lib/edit-history";
 import { getLocalMediaOverride } from "@/lib/local-media-overrides";
 import { mediaKindForFile, mimeTypeForFile } from "@/lib/media-kind";
 import { toRenderableImageBlob } from "@/lib/renderable-image";
@@ -50,6 +55,7 @@ import {
     requestThumbnail,
     subscribeThumbnail,
 } from "@/lib/thumbnail-cache";
+import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 import { FileType } from "ente-media/file-type";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
@@ -156,6 +162,9 @@ export function PhotoViewer({
     const [showTagPicker, setShowTagPicker] = useState<boolean>(false);
     const [favoriteBusy, setFavoriteBusy] = useState<boolean>(false);
     const [favoriteError, setFavoriteError] = useState<string | undefined>();
+    const [archiveBusy, setArchiveBusy] = useState<boolean>(false);
+    const [revertBusy, setRevertBusy] = useState<boolean>(false);
+    const [showRevertConfirm, setShowRevertConfirm] = useState<boolean>(false);
     const [cropMode, setCropMode] = useState<boolean>(false);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
     const [deleteBusy, setDeleteBusy] = useState<boolean>(false);
@@ -229,11 +238,15 @@ export function PhotoViewer({
         undefined);
     const displayFile = storeFile ?? file;
     const setFileFavorite = useLibraryStore((s) => s.setFileFavorite);
+    const setFileArchived = useLibraryStore((s) => s.setFileArchived);
+    const revertLastEdit = useLibraryStore((s) => s.revertLastEdit);
     const moveFilesToTrash = useLibraryStore((s) => s.moveFilesToTrash);
     const isFavorite = useFavoritesStore((s) =>
         file ? s.favoriteFileIds.has(file.id) : false);
     const favoritePending = useFavoritesStore((s) =>
         file ? s.pendingFavoriteFileIds.has(file.id) : false);
+    const isArchived = file ? isFileArchivedLocally(displayFile ?? file) : false;
+    const canRevertEdit = file ? hasEditHistory(file.id) : false;
     const knownTags = useTagStore((s) => s.tags);
     const hydrateVideoPlayback = useVideoPlaybackStore((s) => s.hydrate);
     const videoVolume = useVideoPlaybackStore((s) => s.volume);
@@ -242,13 +255,13 @@ export function PhotoViewer({
     const videoLoop = useSettingsStore((s) => s.videoLoop);
     const activeVideoThumb = useSyncExternalStore(
         (listener) => {
-            if (!file || file.metadata.fileType !== FileType.video) {
+            if (file?.metadata.fileType !== FileType.video) {
                 return (): void => {};
             }
             return subscribeThumbnail(file.id, listener);
         },
         () =>
-            file && file.metadata.fileType === FileType.video ?
+            file?.metadata.fileType === FileType.video ?
                 getThumbnailEntry(file.id) :
                 getThumbnailEntry(0),
         () => getThumbnailEntry(0),
@@ -1158,6 +1171,89 @@ export function PhotoViewer({
             });
     };
 
+    const handleToggleArchive = (): void => {
+        if (!file) {
+            return;
+        }
+        clearPointers();
+        setArchiveBusy(true);
+        void setFileArchived(file, !isArchived)
+            .catch((error: unknown) => {
+                toast.error(
+                    error instanceof Error ?
+                        error.message :
+                        "Could not update archive",
+                );
+            })
+            .finally(() => {
+                setArchiveBusy(false);
+            });
+    };
+
+    const handleRevertLastEdit = (): void => {
+        if (!file) {
+            return;
+        }
+        const sourceId = file.id;
+        const result = revertLastEdit(sourceId);
+        if (!result) {
+            setShowRevertConfirm(false);
+            return;
+        }
+
+        clearPointers();
+        resetZoom();
+        setRevertBusy(true);
+
+        const previousUrl = mediaUrlsRef.current.get(sourceId);
+        if (previousUrl) {
+            URL.revokeObjectURL(previousUrl);
+        }
+        const url = URL.createObjectURL(
+            new Blob([Uint8Array.from(result.bytes)], {
+                type: mimeTypeForFile(file),
+            }),
+        );
+        mediaUrlsRef.current.set(sourceId, url);
+        setSlideMedia(sourceId, { status: "ready", url });
+        setSessionFiles((current) => current.map((entry) => (
+            entry.id === sourceId ? result.optimisticFile : entry
+        )));
+        notifyFileUpdated(result.optimisticFile);
+        setShowRevertConfirm(false);
+
+        void result.finalize
+            .then((uploaded) => {
+                handleDerivedFileFinalized(sourceId, uploaded);
+            })
+            .catch((error: unknown) => {
+                const reverted = useLibraryStore.getState().allFiles.find(
+                    (entry) => entry.id === sourceId,
+                );
+                if (reverted) {
+                    setSessionFiles((current) => current.map((entry) => (
+                        entry.id === sourceId ? reverted : entry
+                    )));
+                    notifyFileUpdated(reverted);
+                }
+                const staleUrl = mediaUrlsRef.current.get(sourceId);
+                if (staleUrl) {
+                    URL.revokeObjectURL(staleUrl);
+                    mediaUrlsRef.current.delete(sourceId);
+                }
+                setSlideMedia(sourceId, { status: "loading" });
+                setRetryKey((current) => current + 1);
+                toast.error(
+                    error instanceof Error ?
+                        error.message :
+                        "Could not revert edit",
+                );
+            })
+            .finally(() => {
+                setRevertBusy(false);
+            });
+    };
+
     const handleConfirmDelete = (): void => {
         if (!file) {
             return;
@@ -1413,6 +1509,37 @@ export function PhotoViewer({
                         >
                             <Heart className={cn(isFavorite && "fill-current")} />
                         </Button>
+                        <Button
+                            type="button"
+                            variant={isArchived ? "secondary" : "ghost"}
+                            size="icon-sm"
+                            onClick={() => {
+                                resetChromeTimer();
+                                handleToggleArchive();
+                            }}
+                            disabled={archiveBusy}
+                            aria-label={
+                                isArchived ? "Unarchive" : "Archive"
+                            }
+                            aria-pressed={isArchived}
+                        >
+                            {isArchived ? <ArchiveRestore /> : <Archive />}
+                        </Button>
+                        {canRevertEdit ? (
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-sm"
+                                onClick={() => {
+                                    resetChromeTimer();
+                                    setShowRevertConfirm(true);
+                                }}
+                                disabled={revertBusy}
+                                aria-label="Revert last edit"
+                            >
+                                <Undo2 />
+                            </Button>
+                        ) : null}
                         {onSetAlbumCover ? (
                             <Button
                                 type="button"
@@ -1619,6 +1746,16 @@ export function PhotoViewer({
                     }
                 }}
                 onConfirm={handleConfirmDelete}
+            />
+            <ConfirmRevertEditModal
+                open={showRevertConfirm}
+                isWorking={revertBusy}
+                onCancel={() => {
+                    if (!revertBusy) {
+                        setShowRevertConfirm(false);
+                    }
+                }}
+                onConfirm={handleRevertLastEdit}
             />
         </div>
     );

@@ -36,9 +36,33 @@ import {
     getTagOutboxEntry,
     hydrateTagOutbox,
     reconcileTagOutboxWithFiles,
+    remapTagOutboxFileId,
     upsertTagOutboxEntry,
 } from "@/lib/tag-outbox";
+import { drainTagOutbox } from "@/lib/tag-outbox-runner";
 import { enqueueDerivedReplace } from "@/lib/derived-replace-queue";
+import {
+    removeDerivedReplaceOutboxEntries,
+    upsertDerivedReplaceOutboxEntry,
+} from "@/lib/derived-replace-outbox";
+import {
+    clearEditHistory,
+    getEditHistory,
+    recordEditHistory,
+    remapEditHistoryFileId,
+} from "@/lib/edit-history";
+import {
+    upsertFavoriteOutboxEntry,
+    remapFavoriteOutboxFileId,
+} from "@/lib/favorite-outbox";
+import {
+    upsertVisibilityOutboxEntry,
+    remapVisibilityOutboxFileId,
+    applyOutboxVisibilityToFiles,
+    ensureVisibilityOutboxHydrated,
+    reconcileVisibilityOutboxWithFiles,
+    isFileArchivedLocally,
+} from "@/lib/visibility-outbox";
 import {
     isOrganizerConfigCollection,
     organizerAppConfigFromCollection,
@@ -46,12 +70,12 @@ import {
 import { registerShuffleFileSubstitution } from "@/lib/shuffle-file-substitutions";
 import {
     clearLocalMediaOverride,
+    getLocalMediaOverride,
     setLocalMediaOverride,
 } from "@/lib/local-media-overrides";
 import { deleteThumbnailCiphertext } from "@/db/thumbnails";
 import { primeThumbnailFromBytes, primeVideoThumbnailFromBytes, requestThumbnail } from "@/lib/thumbnail-cache";
 import {
-    pendingFavoriteFilesByHashAndType,
     useFavoritesStore,
 } from "./favorites-store";
 import { useAlbumStore } from "./album-store";
@@ -69,7 +93,7 @@ import { isFileFavorited } from "@/lib/favorites";
 import type { RotationDegrees } from "@/lib/rotate";
 import type { CroppedVideoResult, VideoCropRect } from "@/lib/video-edit";
 import { mimeTypeForFile } from "@/lib/media-kind";
-import { fileFileName } from "ente-media/file-metadata";
+import { fileFileName, ItemVisibility } from "ente-media/file-metadata";
 
 export type SyncStatus =
     | "idle" |
@@ -107,6 +131,16 @@ interface LibraryState {
         onProgress?: (completed: number, total: number) => void,
     ) => Promise<BatchTagResult>;
     setFileFavorite: (file: EnteFile, isFavorite: boolean) => Promise<void>;
+    setFileArchived: (file: EnteFile, archived: boolean) => Promise<void>;
+    revertLastEdit: (
+        fileId: number,
+    ) =>
+        | {
+            optimisticFile: EnteFile;
+            bytes: Uint8Array;
+            finalize: Promise<EnteFile>;
+        }
+        | undefined;
     pruneDuplicateGroups: (
         groups: DedupGroupSelection[],
         options?: {
@@ -167,6 +201,7 @@ interface LibraryState {
         mutator: TagMutator,
     ) => Promise<BatchTagResult>;
     batchSetFavorite: (fileIds: number[], isFavorite: boolean) => Promise<void>;
+    batchSetArchived: (fileIds: number[], archived: boolean) => Promise<void>;
     reset: () => void;
 }
 
@@ -356,6 +391,34 @@ const uploadEditedVideoAndReplace = async (
     );
 };
 
+const applyOptimisticVisibility = (
+    file: EnteFile,
+    visibility: typeof ItemVisibility.visible | typeof ItemVisibility.archived,
+): EnteFile => ({
+    ...file,
+    magicMetadata: {
+        version: file.magicMetadata?.version ?? 1,
+        count: file.magicMetadata?.count ?? 0,
+        data: {
+            ...file.magicMetadata?.data,
+            visibility,
+        },
+    },
+});
+
+const remapOutboxesAfterReplace = async (
+    fromFileId: number,
+    toFileId: number,
+): Promise<void> => {
+    remapEditHistoryFileId(fromFileId, toFileId);
+    await Promise.all([
+        remapFavoriteOutboxFileId(fromFileId, toFileId),
+        remapVisibilityOutboxFileId(fromFileId, toFileId),
+        remapTagOutboxFileId(fromFileId, toFileId),
+        removeDerivedReplaceOutboxEntries([fromFileId]),
+    ]);
+};
+
 const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
     ...initialState,
 
@@ -381,7 +444,10 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         }
 
         await hydrateTagOutbox();
-        const filesWithOutbox = applyOutboxTagsToFiles(files ?? []);
+        await ensureVisibilityOutboxHydrated();
+        const filesWithOutbox = applyOutboxVisibilityToFiles(
+            applyOutboxTagsToFiles(files ?? []),
+        );
 
         set({
             collections: collections ?? [],
@@ -461,8 +527,11 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
 
             allFiles = filesPull.files;
             await ensureTagOutboxHydrated();
+            await ensureVisibilityOutboxHydrated();
             await reconcileTagOutboxWithFiles(allFiles);
+            await reconcileVisibilityOutboxWithFiles(allFiles);
             allFiles = applyOutboxTagsToFiles(allFiles);
+            allFiles = applyOutboxVisibilityToFiles(allFiles);
             useTagStore.getState().rebuildFromFiles(allFiles);
             rebuildFavoritesFromLibrary(
                 getEnteCore().getUserID(),
@@ -497,9 +566,9 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
 
     patchFile: async (updated: EnteFile): Promise<void> => {
         const outboxEntry = getTagOutboxEntry(updated.id);
-        const fileToPatch = outboxEntry
-            ? fileWithOrganizerTags(updated, outboxEntry.intendedTags)
-            : updated;
+        const fileToPatch = outboxEntry ?
+            fileWithOrganizerTags(updated, outboxEntry.intendedTags) :
+            updated;
         const allFiles = get().allFiles.map((file) => (file.id === fileToPatch.id ? fileToPatch : file));
         set({ allFiles });
         await saveEncryptedFiles(allFiles, getSessionCacheKey());
@@ -638,7 +707,6 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         const userId = core.getUserID();
         const { collections, allFiles } = get();
         const favoritesStore = useFavoritesStore.getState();
-        const wasFavorite = favoritesStore.favoriteFileIds.has(file.id);
 
         favoritesStore.addPending(file.id);
         favoritesStore.applyOptimisticFavorite(
@@ -649,30 +717,62 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             allFiles,
         );
 
-        try {
-            const ctx = {
-                collections,
-                allFiles,
-                pendingByHashAndType: pendingFavoriteFilesByHashAndType,
-            };
-            if (isFavorite) {
-                await core.addToFavorites([file], ctx);
-            } else {
-                await core.removeFromFavorites([file], ctx);
-            }
-            await get().syncRemote();
-        } catch (error) {
-            favoritesStore.revertOptimisticFavorite(
-                file,
-                userId,
-                wasFavorite,
-                collections,
-                allFiles,
-            );
-            throw error;
-        } finally {
-            favoritesStore.removePending(file.id);
+        void upsertFavoriteOutboxEntry(file, userId, isFavorite)
+            .then(() => {
+                favoritesStore.removePending(file.id);
+                return drainTagOutbox();
+            })
+            .catch(() => {
+                favoritesStore.removePending(file.id);
+            });
+    },
+
+    setFileArchived: async (
+        file: EnteFile,
+        archived: boolean,
+    ): Promise<void> => {
+        const visibility = archived ?
+            ItemVisibility.archived :
+            ItemVisibility.visible;
+        const optimisticFile = applyOptimisticVisibility(file, visibility);
+        const allFiles = get().allFiles.map((entry) => (
+            entry.id === file.id ? optimisticFile : entry
+        ));
+        set({ allFiles });
+        void saveEncryptedFiles(allFiles, getSessionCacheKey());
+
+        void upsertVisibilityOutboxEntry(file.id, visibility)
+            .then(() => drainTagOutbox())
+            .catch(() => {
+                // Outbox persist failed; optimistic local state remains.
+            });
+    },
+
+    revertLastEdit: (
+        fileId: number,
+    ):
+        | {
+            optimisticFile: EnteFile;
+            bytes: Uint8Array;
+            finalize: Promise<EnteFile>;
         }
+        | undefined => {
+        const history = getEditHistory(fileId);
+        if (!history) {
+            return undefined;
+        }
+        // Consume this undo slot; the replace path may record a new one for redo.
+        clearEditHistory(fileId);
+        const { optimisticFile, finalize } = get().cropAndReplaceFileOptimistic(
+            fileId,
+            history.previousBytes,
+            { width: history.width, height: history.height },
+        );
+        return {
+            optimisticFile,
+            bytes: history.previousBytes,
+            finalize,
+        };
     },
 
     pruneDuplicateGroups: async (
@@ -894,7 +994,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             throw new Error(`File ${fileId} not found`);
         }
 
-        const snapshotTags = extractTags(file);
+        const previousOverride = getLocalMediaOverride(fileId)?.slice();
         const intendedTags = buildCroppedOrganizerTags(file);
         const optimisticFile = fileWithOrganizerTags(file, intendedTags);
         const optimisticFiles = allFiles.map((entry) => (
@@ -907,33 +1007,53 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         setLocalMediaOverride(fileId, croppedBytes);
         primeThumbnailFromBytes(fileId, croppedBytes);
 
-        const finalize = enqueueDerivedReplace(
-            fileId,
-            croppedBytes,
-            dimensions,
-            async (bytes, dims) => uploadCroppedAndReplace(
-                set,
-                get,
-                file,
-                bytes,
-                dims,
-            ),
-        ).then((uploaded) => {
+        const finalize = (async (): Promise<EnteFile> => {
+            let previousBytes: Uint8Array | undefined = previousOverride;
+            if (!previousBytes) {
+                try {
+                    previousBytes = new Uint8Array(
+                        await getEnteCore().getDecryptedFile(file),
+                    );
+                } catch {
+                    previousBytes = undefined;
+                }
+            }
+            if (previousBytes) {
+                const priorDims = videoDimensionsFromFile(file);
+                recordEditHistory({
+                    fileId,
+                    previousBytes,
+                    width: priorDims.width || dimensions.width,
+                    height: priorDims.height || dimensions.height,
+                    createdAt: Date.now(),
+                    kind: "crop",
+                });
+            }
+
+            await upsertDerivedReplaceOutboxEntry(
+                fileId,
+                croppedBytes,
+                dimensions.width,
+                dimensions.height,
+                "crop",
+            );
+
+            const uploaded = await enqueueDerivedReplace(
+                fileId,
+                croppedBytes,
+                dimensions,
+                async (bytes, dims) => uploadCroppedAndReplace(
+                    set,
+                    get,
+                    file,
+                    bytes,
+                    dims,
+                ),
+            );
             clearLocalMediaOverride(fileId);
+            await remapOutboxesAfterReplace(fileId, uploaded.id);
             return uploaded;
-        }).catch(async (error) => {
-            const revertedFiles = get().allFiles.map((entry) => (
-                entry.id === fileId ?
-                    fileWithOrganizerTags(file, snapshotTags) :
-                    entry
-            ));
-            set({ allFiles: revertedFiles });
-            useTagStore.getState().applyFileTags(fileId, snapshotTags);
-            void saveEncryptedFiles(revertedFiles, getSessionCacheKey());
-            clearLocalMediaOverride(fileId);
-            requestThumbnail(file);
-            throw error;
-        });
+        })();
 
         return { optimisticFile, finalize };
     },
@@ -948,7 +1068,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             throw new Error(`File ${fileId} not found`);
         }
 
-        const snapshotTags = extractTags(file);
+        const previousOverride = getLocalMediaOverride(fileId)?.slice();
         const intendedTags = buildCroppedOrganizerTags(file);
         const optimisticFile = fileWithOrganizerTags(file, intendedTags);
         const optimisticFiles = allFiles.map((entry) => (
@@ -961,36 +1081,56 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         setLocalMediaOverride(fileId, result.bytes);
         primeVideoThumbnailFromBytes(fileId, result.bytes);
 
-        const finalize = enqueueDerivedReplace(
-            fileId,
-            result.bytes,
-            { width: result.width, height: result.height },
-            async (bytes, dimensions) => {
-                const { probeVideoDurationSec } = await import("@/lib/video-edit");
-                const duration = await probeVideoDurationSec(bytes, "video/mp4");
-                return uploadEditedVideoAndReplace(set, get, file, {
-                    bytes,
-                    width: dimensions.width,
-                    height: dimensions.height,
-                    duration,
+        const finalize = (async (): Promise<EnteFile> => {
+            let previousBytes: Uint8Array | undefined = previousOverride;
+            if (!previousBytes) {
+                try {
+                    previousBytes = new Uint8Array(
+                        await getEnteCore().getDecryptedFile(file),
+                    );
+                } catch {
+                    previousBytes = undefined;
+                }
+            }
+            if (previousBytes) {
+                const priorDims = videoDimensionsFromFile(file);
+                recordEditHistory({
+                    fileId,
+                    previousBytes,
+                    width: priorDims.width || result.width,
+                    height: priorDims.height || result.height,
+                    createdAt: Date.now(),
+                    kind: "video-edit",
                 });
-            },
-        ).then((uploaded) => {
+            }
+
+            await upsertDerivedReplaceOutboxEntry(
+                fileId,
+                result.bytes,
+                result.width,
+                result.height,
+                "video-edit",
+            );
+
+            const uploaded = await enqueueDerivedReplace(
+                fileId,
+                result.bytes,
+                { width: result.width, height: result.height },
+                async (bytes, dimensions) => {
+                    const { probeVideoDurationSec } = await import("@/lib/video-edit");
+                    const duration = await probeVideoDurationSec(bytes, "video/mp4");
+                    return uploadEditedVideoAndReplace(set, get, file, {
+                        bytes,
+                        width: dimensions.width,
+                        height: dimensions.height,
+                        duration,
+                    });
+                },
+            );
             clearLocalMediaOverride(fileId);
+            await remapOutboxesAfterReplace(fileId, uploaded.id);
             return uploaded;
-        }).catch(async (error) => {
-            const revertedFiles = get().allFiles.map((entry) => (
-                entry.id === fileId ?
-                    fileWithOrganizerTags(file, snapshotTags) :
-                    entry
-            ));
-            set({ allFiles: revertedFiles });
-            useTagStore.getState().applyFileTags(fileId, snapshotTags);
-            void saveEncryptedFiles(revertedFiles, getSessionCacheKey());
-            clearLocalMediaOverride(fileId);
-            requestThumbnail(file);
-            throw error;
-        });
+        })();
 
         return { optimisticFile, finalize };
     },
@@ -1136,10 +1276,6 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             return;
         }
 
-        const priorStates = new Map(
-            files.map((file) => [file.id, favoriteFileIds.has(file.id)]),
-        );
-
         for (const file of files) {
             favoritesStore.addPending(file.id);
             favoritesStore.applyOptimisticFavorite(
@@ -1151,34 +1287,33 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             );
         }
 
-        try {
-            const ctx = {
-                collections,
-                allFiles,
-                pendingByHashAndType: pendingFavoriteFilesByHashAndType,
-            };
-            if (isFavorite) {
-                await core.addToFavorites(files, ctx);
-            } else {
-                await core.removeFromFavorites(files, ctx);
-            }
-            await get().syncRemote();
-        } catch (error) {
-            for (const file of files) {
-                favoritesStore.revertOptimisticFavorite(
-                    file,
-                    userId,
-                    priorStates.get(file.id) ?? false,
-                    collections,
-                    allFiles,
-                );
-            }
-            throw error;
-        } finally {
-            for (const file of files) {
-                favoritesStore.removePending(file.id);
-            }
+        void Promise.all(
+            files.map((file) =>
+                upsertFavoriteOutboxEntry(file, userId, isFavorite).finally(() => {
+                    favoritesStore.removePending(file.id);
+                })),
+        ).then(() => drainTagOutbox());
+    },
+
+    batchSetArchived: async (
+        fileIds: number[],
+        archived: boolean,
+    ): Promise<void> => {
+        const uniqueIds = [...new Set(fileIds)];
+        if (!uniqueIds.length) {
+            return;
         }
+        const files = get().allFiles.filter(
+            (file) =>
+                uniqueIds.includes(file.id) &&
+                isFileArchivedLocally(file) !== archived,
+        );
+        if (!files.length) {
+            return;
+        }
+        await Promise.all(
+            files.map((file) => get().setFileArchived(file, archived)),
+        );
     },
 
     reset: (): void => {

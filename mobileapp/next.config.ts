@@ -20,7 +20,9 @@ const withSerwist: (config: NextConfig) => NextConfig = withSerwistInit({
 });
 
 const nextConfig: NextConfig = {
-    output: "export",
+    // Static export for PWA preview/build; keep a Node server in `next dev`
+    // so same-origin debug/API routes work from phones on LAN.
+    ...(process.env.NODE_ENV === "production" ? { output: "export" as const } : {}),
     outputFileTracingRoot: path.join(__dirname, ".."),
     transpilePackages: ["ente-base", "ente-media", "ente-utils"],
     webpack: (config) => {

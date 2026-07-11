@@ -3,7 +3,11 @@ import {
     encryptMagicMetadata,
 } from "ente-media/magic-metadata";
 import type { EnteFile } from "ente-media/file";
-import type { FilePublicMagicMetadataData } from "ente-media/file-metadata";
+import type {
+    FilePrivateMagicMetadataData,
+    FilePublicMagicMetadataData,
+    ItemVisibility,
+} from "ente-media/file-metadata";
 import { refetchFile } from "./api/files";
 import type { HttpClient } from "./api/http";
 import { extractTags } from "@/lib/tags";
@@ -77,6 +81,41 @@ const putPublicMetadata = async (
     };
 };
 
+const putPrivateMetadata = async (
+    http: HttpClient,
+    file: EnteFile,
+    data: FilePrivateMagicMetadataData,
+): Promise<void> => {
+    const merged = createMagicMetadata(data, file.magicMetadata?.version);
+    const magicMetadata = await encryptMagicMetadata(merged, file.key);
+
+    const res = await http.authFetchResponse(
+        "/files/magic-metadata",
+        undefined,
+        {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                metadataList: [{ id: file.id, magicMetadata }],
+            }),
+        },
+    );
+
+    if (!res.ok) {
+        throw new MetadataUpdateError(
+            `Failed to update private metadata for file ${file.id}`,
+            res.status,
+            parseRetryAfterMs(res.headers.get("Retry-After")),
+        );
+    }
+
+    file.magicMetadata = {
+        version: magicMetadata.version,
+        count: magicMetadata.count,
+        data: merged.data as FilePrivateMagicMetadataData,
+    };
+};
+
 /**
  * Merge updates into public magic metadata and PUT to remote.
  */
@@ -92,6 +131,40 @@ export const updatePublicMetadata = async (
     await putPublicMetadata(http, file, mergedData);
 };
 
+const maxConflictAttempts = 4;
+
+/**
+ * Set file visibility (archive / visible) via private magic metadata.
+ */
+export const updateFileVisibility = async (
+    http: HttpClient,
+    file: EnteFile,
+    collectionKey: string,
+    visibility: ItemVisibility,
+): Promise<EnteFile> => {
+    for (let attempt = 0; attempt < maxConflictAttempts; attempt++) {
+        try {
+            const mergedData = {
+                ...file.magicMetadata?.data,
+                visibility,
+            } as FilePrivateMagicMetadataData;
+            await putPrivateMetadata(http, file, mergedData);
+            return file;
+        } catch (error) {
+            if (
+                !(error instanceof MetadataUpdateError) ||
+                error.status !== 409 ||
+                attempt === maxConflictAttempts - 1
+            ) {
+                throw error;
+            }
+            const fresh = await refetchFile(http, file, collectionKey);
+            Object.assign(file, fresh);
+        }
+    }
+    throw new Error(`Failed to update visibility for file ${file.id}`);
+};
+
 const applyOrganizerTags = async (
     http: HttpClient,
     file: EnteFile,
@@ -105,8 +178,6 @@ const applyOrganizerTags = async (
     } as OrganizerPublicMetadata;
     await putPublicMetadata(http, file, mergedData);
 };
-
-const maxConflictAttempts = 4;
 
 /**
  * Apply a tag mutator and PUT organizer tags, refetching on version conflict.

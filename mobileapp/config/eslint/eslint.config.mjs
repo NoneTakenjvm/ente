@@ -73,7 +73,7 @@ export default defineConfig(
         },
     },
     {
-        files: ["src/core/**/*.ts", "src/stores/**/*.ts", "src/lib/**/*.ts", "src/db/**/*.ts"],
+        files: ["src/core/**/*.ts", "src/stores/**/*.ts", "src/lib/**/*.ts", "src/db/**/*.ts", "src/workers/**/*.ts"],
         rules: {
             "@typescript-eslint/explicit-function-return-type": "off",
             "@typescript-eslint/typedef": "off",

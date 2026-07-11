@@ -7,10 +7,10 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-07-11 |
-| **Last agent / session** | Fix desktop full-res viewer for HEIC/live photos |
-| **Current milestone** | M8 complete |
+| **Last agent / session** | Auto-crop scan crash fixed (cached thumbs + no mass full-decrypt); debug logs removed |
+| **Current milestone** | Post-M8 UX batch shipped in tree |
 | **Blockers** | none |
-| **Next recommended action** | Deploy/verify HEIC + live photo full-res on desktop Chrome; commit when ready |)
+| **Next recommended action** | Optional: try Apply on a few of the 332; commit when ready |)
 
 **Key storage (M3):** Master key and `cacheKey = HKDF(masterKey)` live in memory only. Metadata, collections, and tag index persist as blobs encrypted with `cacheKey` in IndexedDB (`ente-organizer-{userId}`). Thumbnails persist as server ciphertext (CDN bytes + decryption header) — readable only with `file.key` from decrypted metadata after login. Sync cursors store timestamps only. Sign out clears memory; **Lock** wipes IDB + memory. Full-res images are never persisted.
 

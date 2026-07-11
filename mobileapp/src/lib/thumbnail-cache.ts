@@ -145,6 +145,36 @@ export const requestThumbnail = (file: EnteFile): ThumbnailEntry => {
 };
 
 /**
+ * Decrypt thumbnail bytes when already present in IDB. Does not network-fetch
+ * (mass scans must avoid fetch+decode spikes on mobile Chrome).
+ */
+export const loadCachedDecryptedThumbnailBytes = async (
+    file: EnteFile,
+): Promise<Uint8Array | undefined> => {
+    const cached = await getThumbnailCiphertext(file.id);
+    if (!cached) {
+        return undefined;
+    }
+    return decryptThumbnailCiphertext(cached, file.key);
+};
+
+/**
+ * Decrypt thumbnail bytes for background jobs (IDB cache, else fetch + cache).
+ */
+export const loadDecryptedThumbnailBytes = async (
+    file: EnteFile,
+): Promise<Uint8Array> => {
+    const cached = await getThumbnailCiphertext(file.id);
+    if (cached) {
+        return decryptThumbnailCiphertext(cached, file.key);
+    }
+    const core = getEnteCore();
+    const ciphertext = await core.fetchEncryptedThumbnail(file);
+    await putThumbnailCiphertext(file.id, ciphertext);
+    return decryptThumbnailCiphertext(ciphertext, file.key);
+};
+
+/**
  * Show a thumbnail immediately from full image bytes (e.g. after optimistic crop).
  */
 export const primeThumbnailFromBytes = (

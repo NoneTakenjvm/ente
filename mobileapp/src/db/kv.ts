@@ -133,3 +133,94 @@ export const saveEncryptedTagOutbox = async (
         await encryptCachePayload(entries, cacheKey),
     );
 };
+
+export interface PersistedFavoriteOutboxEntry {
+    fileId: number;
+    isFavorite: boolean;
+    fileHashAndTypeKey?: string;
+    enqueuedAt: number;
+}
+
+export const loadEncryptedFavoriteOutbox = async (
+    cacheKey: string,
+): Promise<PersistedFavoriteOutboxEntry[] | undefined> => {
+    const payload = await getEncrypted("favoriteOutbox");
+    if (!payload) {
+        return undefined;
+    }
+    return decryptCachePayload<PersistedFavoriteOutboxEntry[]>(
+        payload,
+        cacheKey,
+    );
+};
+
+export const saveEncryptedFavoriteOutbox = async (
+    entries: PersistedFavoriteOutboxEntry[],
+    cacheKey: string,
+): Promise<void> => {
+    await putEncrypted(
+        "favoriteOutbox",
+        await encryptCachePayload(entries, cacheKey),
+    );
+};
+
+export interface PersistedVisibilityOutboxEntry {
+    fileId: number;
+    visibility: number;
+    enqueuedAt: number;
+}
+
+export const loadEncryptedVisibilityOutbox = async (
+    cacheKey: string,
+): Promise<PersistedVisibilityOutboxEntry[] | undefined> => {
+    const payload = await getEncrypted("visibilityOutbox");
+    if (!payload) {
+        return undefined;
+    }
+    return decryptCachePayload<PersistedVisibilityOutboxEntry[]>(
+        payload,
+        cacheKey,
+    );
+};
+
+export const saveEncryptedVisibilityOutbox = async (
+    entries: PersistedVisibilityOutboxEntry[],
+    cacheKey: string,
+): Promise<void> => {
+    await putEncrypted(
+        "visibilityOutbox",
+        await encryptCachePayload(entries, cacheKey),
+    );
+};
+
+export interface PersistedDerivedReplaceOutboxEntry {
+    fileId: number;
+    bytesBase64: string;
+    width: number;
+    height: number;
+    kind: "crop" | "rotate" | "auto-crop" | "video-edit";
+    enqueuedAt: number;
+}
+
+export const loadEncryptedDerivedReplaceOutbox = async (
+    cacheKey: string,
+): Promise<PersistedDerivedReplaceOutboxEntry[] | undefined> => {
+    const payload = await getEncrypted("derivedReplaceOutbox");
+    if (!payload) {
+        return undefined;
+    }
+    return decryptCachePayload<PersistedDerivedReplaceOutboxEntry[]>(
+        payload,
+        cacheKey,
+    );
+};
+
+export const saveEncryptedDerivedReplaceOutbox = async (
+    entries: PersistedDerivedReplaceOutboxEntry[],
+    cacheKey: string,
+): Promise<void> => {
+    await putEncrypted(
+        "derivedReplaceOutbox",
+        await encryptCachePayload(entries, cacheKey),
+    );
+};

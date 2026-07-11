@@ -10,6 +10,7 @@ import {
     DropdownMenuLabel,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
     ALL_TAG_TYPES_TAB,
     tagsForTypeView,
@@ -22,6 +23,7 @@ import {
     isFlatTagFilterRoot,
     isReservedTag,
     tagFileCount,
+    type TagFilterJoin,
     type TagFilterMode,
     type TagFilterSelection,
 } from "@/lib/tags";
@@ -36,6 +38,8 @@ interface TagClausePickerProps {
         tag: string,
         mode: TagFilterMode | null,
     ) => void;
+    /** When set, show an AND/OR control for the root flat filter. */
+    onSetRootOp?: (op: TagFilterJoin) => void;
     targetGroupId?: string;
     disabled?: boolean;
     disabledReason?: string;
@@ -51,6 +55,7 @@ export function TagClausePicker({
     filter,
     onSetTagFilterMode,
     onSetClauseInGroup,
+    onSetRootOp,
     targetGroupId,
     disabled = false,
     disabledReason,
@@ -85,13 +90,17 @@ export function TagClausePicker({
     );
 
     const isRootPicker = targetGroupId === undefined;
-    const groupedFilterBlocksRoot =
-        isRootPicker && !isFlatTagFilterRoot(filter.root);
+    const isFlatRoot = isFlatTagFilterRoot(filter.root);
+    const groupedFilterBlocksRoot = isRootPicker && !isFlatRoot;
     const isDisabled =
-        disabled || groupedFilterBlocksRoot || (targetGroupId !== undefined && !scopedGroup);
+        disabled ||
+        groupedFilterBlocksRoot ||
+        (targetGroupId !== undefined && !scopedGroup);
     const hint =
         disabledReason ??
         (groupedFilterBlocksRoot ? GROUPED_TAG_FILTER_DROPDOWN_HINT : undefined);
+    const showRootJoinToggle =
+        isRootPicker && isFlatRoot && onSetRootOp !== undefined;
 
     const resolveMode = (tag: string): TagFilterMode | null => {
         if (scopedGroup) {
@@ -137,6 +146,41 @@ export function TagClausePicker({
                     <DropdownMenuLabel className="shrink-0 px-0">
                         Has / not has
                     </DropdownMenuLabel>
+                    {showRootJoinToggle ? (
+                        <div className="flex shrink-0 items-center justify-between gap-2 px-0">
+                            <span className="text-xs text-muted-foreground">
+                                Match
+                            </span>
+                            <ToggleGroup
+                                value={[filter.root.op]}
+                                spacing={0}
+                                size="sm"
+                                onValueChange={(next) => {
+                                    const value = Array.isArray(next) ?
+                                        next[0] :
+                                        next;
+                                    if (value === "and" || value === "or") {
+                                        onSetRootOp(value);
+                                    }
+                                }}
+                            >
+                                <ToggleGroupItem
+                                    value="and"
+                                    size="sm"
+                                    className="h-7 px-2.5 text-xs"
+                                >
+                                    AND
+                                </ToggleGroupItem>
+                                <ToggleGroupItem
+                                    value="or"
+                                    size="sm"
+                                    className="h-7 px-2.5 text-xs"
+                                >
+                                    OR
+                                </ToggleGroupItem>
+                            </ToggleGroup>
+                        </div>
+                    ) : null}
                     <TagTypeTabBar
                         className="shrink-0"
                         types={tagTypes}

@@ -500,6 +500,7 @@ export function VideoEditorOverlay({
                                 ) : null}
                                 <ReactCrop
                                     crop={crop}
+                                    keepSelection
                                     disabled={isBusy || !videoReady}
                                     onChange={(nextCrop) => {
                                         setCrop(nextCrop);

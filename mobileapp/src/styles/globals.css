@@ -157,3 +157,22 @@ select,
     -webkit-user-select: none !important;
     -webkit-touch-callout: none !important;
 }
+
+/* Enlarge corner/edge hitboxes for touch without changing the visible handle size much */
+.ReactCrop__drag-handle {
+    width: 18px !important;
+    height: 18px !important;
+    margin-top: -9px !important;
+    margin-left: -9px !important;
+}
+
+.ReactCrop__drag-handle::after {
+    width: 44px !important;
+    height: 44px !important;
+    margin-top: -22px !important;
+    margin-left: -22px !important;
+    content: "" !important;
+    position: absolute !important;
+    top: 50% !important;
+    left: 50% !important;
+}

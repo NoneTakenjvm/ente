@@ -344,6 +344,7 @@ export function CropEditorOverlay({
                                 ) : null}
                                 <ReactCrop
                                     crop={crop}
+                                    keepSelection
                                     disabled={isBusy || !imageReady}
                                     onChange={(nextCrop) => {
                                         setCrop(nextCrop);

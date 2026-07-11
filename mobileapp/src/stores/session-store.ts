@@ -18,6 +18,7 @@ import {
     markSessionLocked,
     savePersistedSession,
 } from "@/lib/session-persistence";
+import { wipeSiteStorage } from "@/lib/site-wipe";
 import { clearThumbnailCache } from "@/lib/thumbnail-cache";
 
 export type SessionStatus = "idle" | "loading" | "authenticated" | "error";
@@ -49,6 +50,20 @@ const resetDependentStores = (): void => {
     });
     void import("@/lib/tag-outbox").then(({ clearTagOutbox }) => {
         clearTagOutbox();
+    });
+    void import("@/lib/favorite-outbox").then(({ clearFavoriteOutbox }) => {
+        clearFavoriteOutbox();
+    });
+    void import("@/lib/visibility-outbox").then(({ clearVisibilityOutbox }) => {
+        clearVisibilityOutbox();
+    });
+    void import("@/lib/derived-replace-outbox").then(
+        ({ clearDerivedReplaceOutbox }) => {
+            clearDerivedReplaceOutbox();
+        },
+    );
+    void import("@/lib/edit-history").then(({ clearAllEditHistory }) => {
+        clearAllEditHistory();
     });
     void import("./library-store").then(({ useLibraryStore }) => {
         useLibraryStore.getState().reset();
@@ -201,6 +216,7 @@ const createSessionStore: StateCreator<SessionState> = (set) => ({
         clearPersistedSession();
         clearPersistedWrapKey();
         clearSessionLock();
+        await wipeSiteStorage();
         if (userId !== undefined) {
             await wipeOrganizerDBForUser(userId);
         } else {

@@ -6,13 +6,29 @@ import {
     type SetStateAction,
 } from "react";
 import type { EnteFile } from "ente-media/file";
-import type { Collection } from "@/core";
+import { getEnteCore, type Collection, type EnteCore } from "@/core";
+import { pendingFavoriteFilesByHashAndType } from "@/stores/favorites-store";
 import { isSessionAuthenticated } from "@/stores/session-store";
 import { useLibraryStore } from "@/stores/library-store";
+import {
+    base64ToBytes,
+    hydrateDerivedReplaceOutbox,
+    type DerivedReplaceOutboxEntry,
+} from "@/lib/derived-replace-outbox";
+import {
+    hydrateFavoriteOutbox,
+    type FavoriteOutboxEntry,
+} from "@/lib/favorite-outbox";
+import { hydrateTagOutbox } from "@/lib/tag-outbox";
 import {
     startTagOutboxRunner,
     stopTagOutboxRunner,
 } from "@/lib/tag-outbox-runner";
+import {
+    hydrateVisibilityOutbox,
+    type VisibilityOutboxEntry,
+} from "@/lib/visibility-outbox";
+import { probeVideoDurationSec } from "@/lib/video-edit";
 
 export interface UseLibraryBootstrapOptions {
     /** Extra work after cache load and remote sync (e.g. phash hydrate). */
@@ -52,6 +68,12 @@ export const useLibraryBootstrap: (
         const bootstrap: () => Promise<void> = async (): Promise<void> => {
             try {
                 await bootstrapFromCache();
+                await Promise.all([
+                    hydrateTagOutbox(),
+                    hydrateFavoriteOutbox(),
+                    hydrateVisibilityOutbox(),
+                    hydrateDerivedReplaceOutbox(),
+                ]);
                 startTagOutboxRunner({
                     getFiles: (): EnteFile[] =>
                         useLibraryStore.getState().allFiles,
@@ -59,6 +81,106 @@ export const useLibraryBootstrap: (
                         useLibraryStore.getState().collections,
                     patchFile: (file: EnteFile): Promise<void> =>
                         useLibraryStore.getState().patchFile(file),
+                    applyFavoriteMutation: async (
+                        entry: FavoriteOutboxEntry,
+                    ): Promise<void> => {
+                        const library: ReturnType<
+                            typeof useLibraryStore.getState
+                        > = useLibraryStore.getState();
+                        const file: EnteFile | undefined =
+                            library.allFiles.find(
+                                (candidate: EnteFile): boolean =>
+                                    candidate.id === entry.fileId,
+                            );
+                        if (!file) {
+                            return;
+                        }
+                        const core: EnteCore = getEnteCore();
+                        const ctx: {
+                            collections: Collection[];
+                            allFiles: EnteFile[];
+                            pendingByHashAndType: typeof pendingFavoriteFilesByHashAndType;
+                        } = {
+                            collections: library.collections,
+                            allFiles: library.allFiles,
+                            pendingByHashAndType:
+                                pendingFavoriteFilesByHashAndType,
+                        };
+                        if (entry.isFavorite) {
+                            await core.addToFavorites([file], ctx);
+                        } else {
+                            await core.removeFromFavorites([file], ctx);
+                        }
+                    },
+                    syncFavorites: (): Promise<void> =>
+                        useLibraryStore.getState().syncRemote(),
+                    applyVisibilityMutation: async (
+                        entry: VisibilityOutboxEntry,
+                    ): Promise<void> => {
+                        const library: ReturnType<
+                            typeof useLibraryStore.getState
+                        > = useLibraryStore.getState();
+                        const file: EnteFile | undefined =
+                            library.allFiles.find(
+                                (candidate: EnteFile): boolean =>
+                                    candidate.id === entry.fileId,
+                            );
+                        if (!file) {
+                            return;
+                        }
+                        const collection: Collection | undefined =
+                            library.collections.find(
+                                (candidate: Collection): boolean =>
+                                    candidate.id === file.collectionID,
+                            );
+                        if (!collection?.key) {
+                            return;
+                        }
+                        const updated: EnteFile =
+                            await getEnteCore().updateFileVisibility(
+                                file,
+                                collection.key,
+                                entry.visibility,
+                            );
+                        await library.patchFile(updated);
+                    },
+                    retryDerivedReplace: async (
+                        entry: DerivedReplaceOutboxEntry,
+                    ): Promise<void> => {
+                        const bytes: Uint8Array = base64ToBytes(
+                            entry.bytesBase64,
+                        );
+                        const library: ReturnType<
+                            typeof useLibraryStore.getState
+                        > = useLibraryStore.getState();
+                        if (entry.kind === "video-edit") {
+                            const duration: number =
+                                await probeVideoDurationSec(bytes, "video/mp4");
+                            const { finalize }: {
+                                finalize: Promise<EnteFile>;
+                            } = library.editVideoAndReplaceFileOptimistic(
+                                entry.fileId,
+                                {
+                                    bytes,
+                                    width: entry.width,
+                                    height: entry.height,
+                                    duration,
+                                },
+                            );
+                            await finalize;
+                            return;
+                        }
+                        const { finalize }: { finalize: Promise<EnteFile> } =
+                            library.cropAndReplaceFileOptimistic(
+                                entry.fileId,
+                                bytes,
+                                {
+                                    width: entry.width,
+                                    height: entry.height,
+                                },
+                            );
+                        await finalize;
+                    },
                 });
                 await syncRemote();
                 await afterSync?.();
