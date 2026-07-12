@@ -576,7 +576,7 @@ export const detectContentBoundsFromBytes = async (
     { bounds: PixelRect; width: number; height: number } | undefined
 > => {
     const bitmap = await createImageBitmap(
-        new Blob([bytes], { type: mimeType }),
+        new Blob([Uint8Array.from(bytes)], { type: mimeType }),
     );
     try {
         const bounds = detectContentBoundsFromSource(

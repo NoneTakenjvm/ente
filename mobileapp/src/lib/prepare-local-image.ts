@@ -14,7 +14,7 @@ export const prepareLocalImage = async (file: File): Promise<PreparedLocalImage>
     const bytes = new Uint8Array(await file.arrayBuffer());
     if (detectImageFormatFromBytes(bytes) === "jpeg") {
         const bitmap = await createImageBitmap(
-            new Blob([bytes], { type: "image/jpeg" }),
+            new Blob([Uint8Array.from(bytes)], { type: "image/jpeg" }),
         );
         try {
             return {

@@ -121,7 +121,9 @@ self.onmessage = async (
     let bitmap: ImageBitmap | undefined;
     let canvas: OffscreenCanvas | undefined;
     try {
-        const blob: Blob = new Blob([bytes], { type: "image/jpeg" });
+        const blob: Blob = new Blob([Uint8Array.from(bytes)], {
+            type: "image/jpeg",
+        });
         bitmap = await createImageBitmap(blob, {
             resizeWidth: SCAN_MAX_EDGE,
             resizeQuality: "low",
