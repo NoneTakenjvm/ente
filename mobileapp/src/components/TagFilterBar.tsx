@@ -6,9 +6,11 @@ import { Button } from "@/components/ui/button";
 import {
     countFavoritesInCandidates,
     countNotFavoritesInCandidates,
+    countPhotosInCandidates,
     countTaggedInCandidates,
     countTagFilterClauses,
     countUntaggedInCandidates,
+    countVideosInCandidates,
     describeTagFilter,
     isFlatTagFilterRoot,
     isTagFilterActive,
@@ -70,6 +72,16 @@ export function TagFilterBar({
         [libraryFileIds, favoriteFileIds],
     );
 
+    const photoCount = useMemo(
+        (): number => countPhotosInCandidates(libraryFileIds, allFiles),
+        [libraryFileIds, allFiles],
+    );
+
+    const videoCount = useMemo(
+        (): number => countVideosInCandidates(libraryFileIds, allFiles),
+        [libraryFileIds, allFiles],
+    );
+
     const clauseCount = countTagFilterClauses(tagFilter.root);
     const isFlat = isFlatTagFilterRoot(tagFilter.root);
 
@@ -83,7 +95,8 @@ export function TagFilterBar({
     const hasQueryContent =
         clauseCount > 0 ||
         tagFilter.tagScope !== "all" ||
-        tagFilter.favoritesScope !== "all";
+        tagFilter.favoritesScope !== "all" ||
+        tagFilter.mediaScope !== "all";
 
     return (
         <div className="flex flex-col gap-2 border-b border-border/60 px-4 py-3">
@@ -93,6 +106,8 @@ export function TagFilterBar({
                     untaggedCount={untaggedCount}
                     favoritesCount={favoritesCount}
                     notFavoritesCount={notFavoritesCount}
+                    photoCount={photoCount}
+                    videoCount={videoCount}
                 />
                 <TagClausePicker
                     filter={tagFilter}
@@ -129,6 +144,8 @@ export function TagFilterBar({
                     notFavoritesCount={notFavoritesCount}
                     taggedCount={taggedCount}
                     untaggedCount={untaggedCount}
+                    photoCount={photoCount}
+                    videoCount={videoCount}
                 />
                 <SelectionModeToggle />
             </div>

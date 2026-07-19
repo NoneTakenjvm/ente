@@ -10,6 +10,7 @@ import {
     type TagFilterSelection,
     type TagScope,
     type FavoritesScope,
+    type MediaScope,
 } from "@/lib/tags";
 
 /** A saved smart album backed by a tag query. */
@@ -44,6 +45,7 @@ export type PersistedTagFilterNode =
 export interface PersistedTagFilterSelection {
     tagScope: TagScope;
     favoritesScope: FavoritesScope;
+    mediaScope: MediaScope;
     root: PersistedTagFilterGroup;
 }
 
@@ -66,6 +68,7 @@ export const serializeTagFilter = (
 ): PersistedTagFilterSelection => ({
     tagScope: filter.tagScope,
     favoritesScope: filter.favoritesScope,
+    mediaScope: filter.mediaScope,
     root: serializeNode(filter.root) as PersistedTagFilterGroup,
 });
 
@@ -98,6 +101,7 @@ export const hydrateTagFilter = (
 ): TagFilterSelection => ({
     tagScope: persisted.tagScope,
     favoritesScope: persisted.favoritesScope,
+    mediaScope: persisted.mediaScope ?? "all",
     root: hydrateNode(persisted.root) as TagFilterGroup,
 });
 

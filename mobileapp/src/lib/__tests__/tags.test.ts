@@ -85,10 +85,17 @@ describe("tags", () => {
     it("extractUserTags hides system tags", () => {
         expect(
             extractUserTags(
-                fileWithTags(1, ["vacation", "compressed", "rotated", "cropped"]),
+                fileWithTags(1, [
+                    "vacation",
+                    "compressed",
+                    "rotated",
+                    "cropped",
+                    "auto-cropped",
+                ]),
             ),
         ).toEqual(["vacation"]);
         expect(isSystemTag("compressed")).toBe(true);
+        expect(isSystemTag("auto-cropped")).toBe(true);
         expect(isSystemTag("vacation")).toBe(false);
     });
 
@@ -203,6 +210,7 @@ describe("tags", () => {
             {
                 tagScope: "untagged",
                 favoritesScope: "all",
+                mediaScope: "all",
                 root: createEmptyTagFilterRoot(),
             },
             fileIdsByTag,
@@ -223,6 +231,7 @@ describe("tags", () => {
                 {
                     tagScope: "untagged",
                     favoritesScope: "all",
+                    mediaScope: "all",
                     root: createEmptyTagFilterRoot(),
                 },
                 fileIdsByTag,
@@ -244,6 +253,7 @@ describe("tags", () => {
             {
                 tagScope: "tagged",
                 favoritesScope: "all",
+                mediaScope: "all",
                 root: createEmptyTagFilterRoot(),
             },
             fileIdsByTag,
@@ -299,6 +309,7 @@ describe("tags", () => {
                 {
                     tagScope: "tagged",
                     favoritesScope: "all",
+                    mediaScope: "all",
                     root: createEmptyTagFilterRoot(),
                 },
                 fileIdsByTag,
@@ -320,6 +331,7 @@ describe("tags", () => {
             {
                 tagScope: "all",
                 favoritesScope: "favorites",
+                mediaScope: "all",
                 root: createEmptyTagFilterRoot(),
             },
             fileIdsByTag,
@@ -341,6 +353,7 @@ describe("tags", () => {
             {
                 tagScope: "all",
                 favoritesScope: "not-favorites",
+                mediaScope: "all",
                 root: createEmptyTagFilterRoot(),
             },
             fileIdsByTag,
@@ -393,6 +406,7 @@ describe("tags", () => {
             describeTagFilter({
                 tagScope: "untagged",
                 favoritesScope: "favorites",
+                mediaScope: "all",
                 root: andRoot(includeClause("selfie"), excludeClause("vietnam")),
             }),
         ).toBe("untagged · favourites · selfie AND not vietnam");

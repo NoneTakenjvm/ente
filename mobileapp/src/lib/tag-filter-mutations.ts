@@ -11,6 +11,7 @@ import {
     type TagFilterNode,
     type TagFilterSelection,
     type TagScope,
+    type MediaScope,
 } from "@/lib/tags";
 
 const removeClauseByTagFromRoot = (
@@ -173,6 +174,14 @@ export const setTagFilterFavoritesScope = (
     favoritesScope,
 });
 
+export const setTagFilterMediaScope = (
+    filter: TagFilterSelection,
+    mediaScope: MediaScope,
+): TagFilterSelection => ({
+    ...filter,
+    mediaScope,
+});
+
 export const setTagFilterModeOnFilter = (
     filter: TagFilterSelection,
     tag: string,
@@ -195,6 +204,7 @@ export const setTagFilterModeOnFilter = (
     return {
         tagScope: filter.tagScope === "untagged" ? "all" : filter.tagScope,
         favoritesScope: filter.favoritesScope,
+        mediaScope: filter.mediaScope,
         root: {
             ...withoutTag,
             children: [...withoutTag.children, clause],

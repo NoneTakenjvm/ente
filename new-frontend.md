@@ -6,11 +6,11 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-07-12 |
-| **Last agent / session** | Fix CI typecheck: Uint8Array→BlobPart in crop-editor |
-| **Current milestone** | Post-M8 UX batch shipped in tree |
-| **Blockers** | none |
-| **Next recommended action** | Re-run deploy after push |)
+| **Last updated** | 2026-07-19 |
+| **Last agent / session** | Memory hardening for video crop + auto-crop; added `memory-probe` + unit tests; phone OOM still needs device QA |
+| **Current milestone** | Post-M8 UX / stability batch |
+| **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
+| **Next recommended action** | Retest video crop / auto-crop on phone; watch `[memory]` console.warn lines in remote debug |)
 
 **Key storage (M3):** Master key and `cacheKey = HKDF(masterKey)` live in memory only. Metadata, collections, and tag index persist as blobs encrypted with `cacheKey` in IndexedDB (`ente-organizer-{userId}`). Thumbnails persist as server ciphertext (CDN bytes + decryption header) — readable only with `file.key` from decrypted metadata after login. Sync cursors store timestamps only. Sign out clears memory; **Lock** wipes IDB + memory. Full-res images are never persisted.
 

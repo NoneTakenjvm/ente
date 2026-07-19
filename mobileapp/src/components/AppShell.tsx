@@ -7,13 +7,15 @@ import {
     Lock,
     LogOut,
     MoreVertical,
+    ShieldOff,
     SlidersHorizontal,
     Images,
     Film,
 } from "lucide-react";
-import type { ReactNode, JSX } from "react";
+import { useState, type ReactNode, type JSX } from "react";
 import { useSessionStore } from "@/stores/session-store";
 import { Button } from "@/components/ui/button";
+import { ConfirmPanicModal } from "@/components/ConfirmPanicModal";
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -135,6 +137,9 @@ function AccountMenu(): JSX.Element {
     const router = useRouter();
     const lock = useSessionStore((s) => s.lock);
     const logout = useSessionStore((s) => s.logout);
+    const panic = useSessionStore((s) => s.panic);
+    const [showPanicConfirm, setShowPanicConfirm] = useState<boolean>(false);
+    const [panicWorking, setPanicWorking] = useState<boolean>(false);
 
     const handleLock = (): void => {
         lock();
@@ -146,35 +151,63 @@ function AccountMenu(): JSX.Element {
         void router.replace("/login");
     };
 
+    const handlePanicConfirm = (): void => {
+        setPanicWorking(true);
+        void panic()
+            .then(() => {
+                window.close();
+                void router.replace("/login");
+            })
+            .finally(() => {
+                setPanicWorking(false);
+                setShowPanicConfirm(false);
+            });
+    };
+
     return (
-        <DropdownMenu>
-            <DropdownMenuTrigger
-                render={
-                    <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label="Account menu"
-                    />
-                }
-            >
-                <MoreVertical data-icon="inline-start" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-44">
-                <DropdownMenuGroup>
-                    <DropdownMenuItem onClick={handleLock}>
-                        <Lock data-icon="inline-start" />
-                        Lock
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                        variant="destructive"
-                        onClick={handleLogout}
-                    >
-                        <LogOut data-icon="inline-start" />
-                        Sign out
-                    </DropdownMenuItem>
-                </DropdownMenuGroup>
-            </DropdownMenuContent>
-        </DropdownMenu>
+        <>
+            <DropdownMenu>
+                <DropdownMenuTrigger
+                    render={
+                        <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label="Account menu"
+                        />
+                    }
+                >
+                    <MoreVertical data-icon="inline-start" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                    <DropdownMenuGroup>
+                        <DropdownMenuItem onClick={handleLock}>
+                            <Lock data-icon="inline-start" />
+                            Lock
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                            variant="destructive"
+                            onClick={() => setShowPanicConfirm(true)}
+                        >
+                            <ShieldOff data-icon="inline-start" />
+                            Wipe local data
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                            variant="destructive"
+                            onClick={handleLogout}
+                        >
+                            <LogOut data-icon="inline-start" />
+                            Sign out
+                        </DropdownMenuItem>
+                    </DropdownMenuGroup>
+                </DropdownMenuContent>
+            </DropdownMenu>
+            <ConfirmPanicModal
+                open={showPanicConfirm}
+                isWorking={panicWorking}
+                onCancel={() => setShowPanicConfirm(false)}
+                onConfirm={handlePanicConfirm}
+            />
+        </>
     );
 }

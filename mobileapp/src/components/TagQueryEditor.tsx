@@ -9,6 +9,7 @@ import {
     describeTagFilterClause,
     isTagFilterClause,
     type FavoritesScope,
+    type MediaScope,
     type TagFilterGroup,
     type TagFilterJoin,
     type TagFilterMode,
@@ -21,6 +22,7 @@ import { cn } from "@/lib/utils";
 export interface TagQueryEditorActions {
     setTagScope: (scope: TagScope) => void;
     setFavoritesScope: (scope: FavoritesScope) => void;
+    setMediaScope: (scope: MediaScope) => void;
     setGroupOp: (groupId: string, op: TagFilterJoin) => void;
     wrapInGroup: (nodeIds: string[], op: TagFilterJoin) => void;
     ungroup: (groupId: string) => void;
@@ -40,6 +42,8 @@ interface TagQueryEditorProps {
     untaggedCount: number;
     favoritesCount: number;
     notFavoritesCount: number;
+    photoCount: number;
+    videoCount: number;
     emptyHint?: string;
 }
 
@@ -335,6 +339,8 @@ export function TagQueryEditor({
     untaggedCount,
     favoritesCount,
     notFavoritesCount,
+    photoCount,
+    videoCount,
     emptyHint = "No tag steps yet. Add tags below, then group steps with AND or OR.",
 }: TagQueryEditorProps): JSX.Element {
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -370,10 +376,14 @@ export function TagQueryEditor({
                     untaggedCount={untaggedCount}
                     favoritesCount={favoritesCount}
                     notFavoritesCount={notFavoritesCount}
+                    photoCount={photoCount}
+                    videoCount={videoCount}
                     tagScope={filter.tagScope}
                     onTagScopeChange={actions.setTagScope}
                     favoritesScope={filter.favoritesScope}
                     onFavoritesScopeChange={actions.setFavoritesScope}
+                    mediaScope={filter.mediaScope}
+                    onMediaScopeChange={actions.setMediaScope}
                 />
             </div>
 

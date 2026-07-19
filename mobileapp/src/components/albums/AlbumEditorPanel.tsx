@@ -27,8 +27,10 @@ import {
     countFavoritesInCandidates,
     countFilesMatchingTagFilter,
     countNotFavoritesInCandidates,
+    countPhotosInCandidates,
     countTaggedInCandidates,
     countUntaggedInCandidates,
+    countVideosInCandidates,
     describeTagFilter,
     emptyTagFilter,
     filterFilesByTags,
@@ -138,6 +140,16 @@ export function AlbumEditorPanel({
         [favoriteFileIds, libraryFileIds],
     );
 
+    const photoCount = useMemo(
+        () => countPhotosInCandidates(libraryFileIds, libraryFiles),
+        [libraryFileIds, libraryFiles],
+    );
+
+    const videoCount = useMemo(
+        () => countVideosInCandidates(libraryFileIds, libraryFiles),
+        [libraryFileIds, libraryFiles],
+    );
+
     const handleSubmit = (event: FormEvent): void => {
         event.preventDefault();
         const trimmed = name.trim();
@@ -227,6 +239,8 @@ export function AlbumEditorPanel({
                     untaggedCount={untaggedCount}
                     favoritesCount={favoritesCount}
                     notFavoritesCount={notFavoritesCount}
+                    photoCount={photoCount}
+                    videoCount={videoCount}
                 />
             </div>
 

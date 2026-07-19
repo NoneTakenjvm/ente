@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { FileType } from "ente-media/file-type";
 import type { EnteFile } from "ente-media/file";
 import {
+    AUTO_CROPPED_TAG,
     buildCroppedOrganizerTags,
+    canAutoCrop,
     canCrop,
     clampCropRect,
     croppedReplaceTitle,
@@ -48,6 +50,13 @@ describe("crop", () => {
         ).toBe(true);
     });
 
+    it("canAutoCrop skips files already marked auto-cropped", () => {
+        expect(canAutoCrop(fileWithTags(1, FileType.image, []))).toBe(true);
+        expect(
+            canAutoCrop(fileWithTags(1, FileType.image, [AUTO_CROPPED_TAG])),
+        ).toBe(false);
+    });
+
     it("canCrop rejects non-images", () => {
         expect(canCrop(fileWithTags(1, FileType.video, []))).toBe(false);
     });
@@ -64,6 +73,15 @@ describe("crop", () => {
                 fileWithTags(1, FileType.image, ["vacation", CROPPED_TAG]),
             ),
         ).toEqual(["vacation", CROPPED_TAG]);
+    });
+
+    it("buildCroppedOrganizerTags can add auto-cropped marker", () => {
+        expect(
+            buildCroppedOrganizerTags(
+                fileWithTags(1, FileType.image, ["vacation"]),
+                { autoCropped: true },
+            ),
+        ).toEqual(["vacation", CROPPED_TAG, AUTO_CROPPED_TAG]);
     });
 
     it("croppedReplaceTitle swaps extension for images", () => {

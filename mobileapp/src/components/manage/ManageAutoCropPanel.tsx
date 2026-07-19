@@ -15,7 +15,11 @@ import {
     EmptyTitle,
 } from "@/components/ui/empty";
 import { getEnteCore } from "@/core";
-import { canCrop, encodeCroppedJpeg } from "@/lib/crop";
+import {
+    canAutoCrop,
+    encodeCroppedJpeg,
+    AUTO_CROPPED_TAG,
+} from "@/lib/crop";
 import {
     detectContentBoundsFromBytes,
     hasMeaningfulBorder,
@@ -27,8 +31,13 @@ import {
 import { getLocalMediaOverride } from "@/lib/local-media-overrides";
 import { mimeTypeForFile } from "@/lib/media-kind";
 import { mapBatched } from "@/lib/batched";
-import { loadCachedDecryptedThumbnailBytes } from "@/lib/thumbnail-cache";
+import { addTagNames } from "@/lib/tag-writes";
+import { loadDecryptedThumbnailBytes } from "@/lib/thumbnail-cache";
 import { isFileArchivedLocally } from "@/lib/visibility-outbox";
+import {
+    isJsHeapUnderPressure,
+    logJsHeap,
+} from "@/lib/memory-probe";
 import { useLibraryStore } from "@/stores/library-store";
 import type { EnteFile } from "ente-media/file";
 
@@ -47,13 +56,19 @@ const yieldToMain = (): Promise<void> =>
 
 const THUMB_CONCURRENCY = 1;
 const APPLY_CONCURRENCY = 1;
+/**
+ * Cap each auto-crop run. Lower than the UI "up to 100" aspiration when the
+ * heap is under pressure — phone Chrome dies long before 100 full decrypts.
+ */
+const AUTO_CROP_BATCH_SIZE = 100;
+const AUTO_CROP_BATCH_SIZE_UNDER_PRESSURE = 20;
 
 /**
  * Scan for images with black borders and batch-crop them.
  *
- * Uses locally cached thumbnails only (mass thumbnail downloads OOM mobile
- * Chrome). Exact crop bounds are computed one-at-a-time during Apply — a
- * bulk full-file decrypt pass also kills the tab on large candidate sets.
+ * Acts on up to {@link AUTO_CROP_BATCH_SIZE} eligible images per run. Fetches
+ * missing thumbnails on demand. Files with no border (or after a successful
+ * crop) get a hidden `auto-cropped` tag so later runs skip them.
  */
 export function ManageAutoCropPanel({
     files,
@@ -61,6 +76,7 @@ export function ManageAutoCropPanel({
     const cropAndReplaceFileOptimistic = useLibraryStore(
         (s) => s.cropAndReplaceFileOptimistic,
     );
+    const updateTagsOnFile = useLibraryStore((s) => s.updateTagsOnFile);
     const [scanning, setScanning] = useState<boolean>(false);
     const [applying, setApplying] = useState<boolean>(false);
     const [progress, setProgress] = useState<{ current: number; total: number }>(
@@ -79,26 +95,49 @@ export function ManageAutoCropPanel({
         };
     }, []);
 
+    const markAutoCropped = useCallback(
+        async (file: EnteFile): Promise<void> => {
+            await updateTagsOnFile(file.id, (tags) => addTagNames(tags, AUTO_CROPPED_TAG));
+        },
+        [updateTagsOnFile],
+    );
+
     const handleScan = useCallback(async (): Promise<void> => {
         const generation = ++scanGenerationRef.current;
         setScanning(true);
         setError(undefined);
         setResultMessage(undefined);
         setCandidates([]);
-        const croppable = files.filter(
-            (file) => canCrop(file) && !isFileArchivedLocally(file),
+        const eligible = files.filter(
+            (file) => canAutoCrop(file) && !isFileArchivedLocally(file),
+        );
+        const underPressure = isJsHeapUnderPressure();
+        const batchSize = underPressure ?
+            AUTO_CROP_BATCH_SIZE_UNDER_PRESSURE :
+            AUTO_CROP_BATCH_SIZE;
+        const remaining = Math.max(0, eligible.length - batchSize);
+        const croppable = eligible.slice(0, batchSize);
+        logJsHeap(
+            underPressure ?
+                "auto-crop:scan-start(pressure)" :
+                "auto-crop:scan-start",
         );
 
         const isCancelled = (): boolean =>
             generation !== scanGenerationRef.current;
 
         try {
-            setStatusLine("Scanning cached thumbnails…");
+            setStatusLine(
+                remaining > 0 ?
+                    `Scanning batch of ${croppable.length} (${remaining} more later)…` :
+                    "Loading thumbnails and scanning…",
+            );
             setProgress({ current: 0, total: croppable.length });
             const likelyIds: number[] = [];
             let thumbDone = 0;
-            let idbHits = 0;
-            let skippedUncached = 0;
+            let fetchedThumbs = 0;
+            let markedClean = 0;
+            let failedThumbs = 0;
             let lastProgressAt = 0;
 
             await mapBatched(
@@ -108,13 +147,8 @@ export function ManageAutoCropPanel({
                         return;
                     }
                     try {
-                        const thumbBytes =
-                            await loadCachedDecryptedThumbnailBytes(file);
-                        if (!thumbBytes) {
-                            skippedUncached += 1;
-                            return;
-                        }
-                        idbHits += 1;
+                        const thumbBytes = await loadDecryptedThumbnailBytes(file);
+                        fetchedThumbs += 1;
                         if (isCancelled()) {
                             return;
                         }
@@ -124,9 +158,12 @@ export function ManageAutoCropPanel({
                         );
                         if (hasBorder) {
                             likelyIds.push(file.id);
+                        } else {
+                            await markAutoCropped(file);
+                            markedClean += 1;
                         }
                     } catch {
-                        // Skip undecryptable / undecodable thumbs.
+                        failedThumbs += 1;
                     } finally {
                         thumbDone += 1;
                         const now = Date.now();
@@ -140,7 +177,7 @@ export function ManageAutoCropPanel({
                                 total: croppable.length,
                             });
                         }
-                        if (thumbDone % 8 === 0) {
+                        if (thumbDone % 4 === 0) {
                             await yieldToMain();
                         }
                     }
@@ -164,19 +201,29 @@ export function ManageAutoCropPanel({
             terminateBorderScanWorker();
             setCandidates(found);
             setStatusLine("");
+            logJsHeap("auto-crop:scan-done");
+            const batchNote =
+                remaining > 0 ?
+                    ` ${remaining} eligible left for later runs.` :
+                    "";
+            const pressureNote = underPressure ?
+                " (smaller batch - memory pressure)." :
+                "";
+            const cleanNote =
+                markedClean > 0 ?
+                    ` Marked ${markedClean} without borders as done.` :
+                    "";
+            const failNote =
+                failedThumbs > 0 ?
+                    ` ${failedThumbs} thumbs failed (will retry next run).` :
+                    "";
             if (!found.length) {
                 setResultMessage(
-                    skippedUncached > 0 ?
-                        `No borders in ${idbHits} cached thumbs (${skippedUncached} not cached yet — browse the gallery to cache more, then re-scan).` :
-                        "No black borders found.",
-                );
-            } else if (skippedUncached > 0) {
-                setResultMessage(
-                    `Found ${found.length} likely letterboxed (thumb scan). Skipped ${skippedUncached} without local thumbs. Crop verifies each at full res.`,
+                    `No letterboxed images in this batch of ${fetchedThumbs}.${cleanNote}${failNote}${batchNote}${pressureNote}`,
                 );
             } else {
                 setResultMessage(
-                    `Found ${found.length} likely letterboxed images. Crop verifies each at full resolution.`,
+                    `Found ${found.length} likely letterboxed. Crop verifies each at full resolution.${cleanNote}${failNote}${batchNote}${pressureNote}`,
                 );
             }
         } catch (scanError: unknown) {
@@ -194,7 +241,7 @@ export function ManageAutoCropPanel({
                 setStatusLine("");
             }
         }
-    }, [files]);
+    }, [files, markAutoCropped]);
 
     const handleApply = useCallback(async (): Promise<void> => {
         if (!candidates.length) {
@@ -204,7 +251,9 @@ export function ManageAutoCropPanel({
         setApplying(true);
         setError(undefined);
         setProgress({ current: 0, total: candidates.length });
-        let succeeded = 0;
+        logJsHeap("auto-crop:apply-start");
+        let cropped = 0;
+        let marked = 0;
         let completed = 0;
         try {
             await mapBatched(
@@ -231,6 +280,8 @@ export function ManageAutoCropPanel({
                                 detected.height,
                             )
                         ) {
+                            await markAutoCropped(candidate.file);
+                            marked += 1;
                             return;
                         }
                         const encoded = await encodeCroppedJpeg(
@@ -244,11 +295,12 @@ export function ManageAutoCropPanel({
                                 width: encoded.width,
                                 height: encoded.height,
                             },
+                            { autoCropped: true },
                         );
                         void finalize.catch(() => {
                             // Store path handles revert/toast.
                         });
-                        succeeded += 1;
+                        cropped += 1;
                     } catch {
                         // Continue batch.
                     } finally {
@@ -266,17 +318,17 @@ export function ManageAutoCropPanel({
                 return;
             }
             setResultMessage(
-                `Queued ${succeeded} of ${candidates.length} image${
-                    candidates.length === 1 ? "" : "s"
-                } for crop.`,
+                `Cropped ${cropped}, marked ${marked} without borders (${candidates.length} in this batch).`,
             );
             setCandidates([]);
+            logJsHeap("auto-crop:apply-done");
+            terminateBorderScanWorker();
         } finally {
             if (generation === scanGenerationRef.current) {
                 setApplying(false);
             }
         }
-    }, [candidates, cropAndReplaceFileOptimistic]);
+    }, [candidates, cropAndReplaceFileOptimistic, markAutoCropped]);
 
     const handleCancel = useCallback((): void => {
         scanGenerationRef.current += 1;
@@ -291,13 +343,21 @@ export function ManageAutoCropPanel({
             Math.round((progress.current / progress.total) * 100) :
             0;
 
+    const eligibleRemaining = files.filter(
+        (file) => canAutoCrop(file) && !isFileArchivedLocally(file),
+    ).length;
+
     return (
         <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 py-3">
             <p className="text-sm text-muted-foreground">
-                Scans locally cached thumbnails only, then lists likely
-                letterboxed images. Full-resolution verify + crop happens when
-                you tap Crop (one at a time). Browse the gallery first to cache
-                more thumbs.
+                Processes up to {AUTO_CROP_BATCH_SIZE} images per run
+                ({AUTO_CROP_BATCH_SIZE_UNDER_PRESSURE} when memory is tight).
+                Missing thumbnails are downloaded during the scan. Images
+                without borders are marked internally so they are not scanned
+                again
+                {eligibleRemaining > 0 ?
+                    ` (${eligibleRemaining} still eligible).` :
+                    "."}
             </p>
             <div className="flex flex-wrap gap-2">
                 <Button
