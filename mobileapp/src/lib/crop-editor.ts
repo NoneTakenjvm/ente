@@ -658,16 +658,16 @@ export const cropRectForSave = (
 
 export const cropRectForVideoSave = (
     completedCrop: PixelCrop,
-    video: Pick<
-        HTMLVideoElement,
-        "width" | "height" | "videoWidth" | "videoHeight"
-    >,
+    displayWidth: number,
+    displayHeight: number,
+    sourceWidth: number,
+    sourceHeight: number,
 ): CropRect =>
     pixelCropToSourceRect(completedCrop, {
-        width: video.width,
-        height: video.height,
-        naturalWidth: video.videoWidth,
-        naturalHeight: video.videoHeight,
+        width: displayWidth,
+        height: displayHeight,
+        naturalWidth: sourceWidth,
+        naturalHeight: sourceHeight,
     });
 
 /**

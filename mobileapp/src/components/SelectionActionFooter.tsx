@@ -25,7 +25,7 @@ import { toast } from "sonner";
 export function SelectionActionFooter(): JSX.Element | null {
     const enabled = useSelectionStore((s) => s.enabled);
     const selectedIds = useSelectionStore((s) => s.selectedIds);
-    const clear = useSelectionStore((s) => s.clear);
+    const setEnabled = useSelectionStore((s) => s.setEnabled);
 
     const allFiles = useLibraryStore((s) => s.allFiles);
     const batchUpdateTagsOnFiles = useLibraryStore((s) => s.batchUpdateTagsOnFiles);
@@ -61,6 +61,10 @@ export function SelectionActionFooter(): JSX.Element | null {
         return result;
     }, [selectedFiles]);
 
+    const exitSelection = useCallback((): void => {
+        setEnabled(false);
+    }, [setEnabled]);
+
     const handleBatchAddTag = useCallback(
         async (tagName: string): Promise<void> => {
             if (!selectedIds.length) {
@@ -77,6 +81,9 @@ export function SelectionActionFooter(): JSX.Element | null {
                     toast.error(
                         `Tagged ${result.succeeded}, ${result.failed} failed`,
                     );
+                } else {
+                    setTagsOpen(false);
+                    exitSelection();
                 }
             } catch (error) {
                 setTagError(
@@ -88,7 +95,7 @@ export function SelectionActionFooter(): JSX.Element | null {
                 setTagBusy(false);
             }
         },
-        [batchUpdateTagsOnFiles, selectedIds],
+        [batchUpdateTagsOnFiles, exitSelection, selectedIds],
     );
 
     const handleBatchRemoveTag = useCallback(
@@ -107,6 +114,9 @@ export function SelectionActionFooter(): JSX.Element | null {
                     toast.error(
                         `Updated ${result.succeeded}, ${result.failed} failed`,
                     );
+                } else {
+                    setTagsOpen(false);
+                    exitSelection();
                 }
             } catch (error) {
                 setTagError(
@@ -118,7 +128,7 @@ export function SelectionActionFooter(): JSX.Element | null {
                 setTagBusy(false);
             }
         },
-        [batchUpdateTagsOnFiles, selectedIds],
+        [batchUpdateTagsOnFiles, exitSelection, selectedIds],
     );
 
     const handleFavorite = useCallback(
@@ -129,6 +139,7 @@ export function SelectionActionFooter(): JSX.Element | null {
             setFavoriteBusy(true);
             try {
                 await batchSetFavorite(selectedIds, isFavorite);
+                exitSelection();
             } catch (error) {
                 toast.error(
                     error instanceof Error ?
@@ -139,7 +150,7 @@ export function SelectionActionFooter(): JSX.Element | null {
                 setFavoriteBusy(false);
             }
         },
-        [batchSetFavorite, favoriteBusy, selectedIds],
+        [batchSetFavorite, exitSelection, favoriteBusy, selectedIds],
     );
 
     const handleArchive = useCallback(async (): Promise<void> => {
@@ -150,7 +161,7 @@ export function SelectionActionFooter(): JSX.Element | null {
         setArchiveBusy(true);
         try {
             await batchSetArchived(ids, true);
-            clear();
+            exitSelection();
             toast.success(
                 ids.length === 1 ?
                     "Archived 1 photo" :
@@ -165,7 +176,7 @@ export function SelectionActionFooter(): JSX.Element | null {
         } finally {
             setArchiveBusy(false);
         }
-    }, [archiveBusy, batchSetArchived, clear, selectedIds]);
+    }, [archiveBusy, batchSetArchived, exitSelection, selectedIds]);
 
     const handleTrash = useCallback(async (): Promise<void> => {
         if (!selectedIds.length) {
@@ -174,8 +185,8 @@ export function SelectionActionFooter(): JSX.Element | null {
         setTrashBusy(true);
         try {
             await moveFilesToTrash(selectedIds);
-            clear();
             setTrashOpen(false);
+            exitSelection();
         } catch (error) {
             toast.error(
                 error instanceof Error ?
@@ -185,7 +196,7 @@ export function SelectionActionFooter(): JSX.Element | null {
         } finally {
             setTrashBusy(false);
         }
-    }, [clear, moveFilesToTrash, selectedIds]);
+    }, [exitSelection, moveFilesToTrash, selectedIds]);
 
     if (!enabled || selectedIds.length === 0) {
         return null;

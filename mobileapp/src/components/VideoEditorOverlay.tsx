@@ -27,12 +27,14 @@ import {
     videoCropChanged,
 } from "@/lib/crop-editor";
 import { mimeTypeForFile } from "@/lib/media-kind";
+import { logJsHeap } from "@/lib/memory-probe";
 import {
     applyVideoEdits,
     probeVideoDurationSec,
     rotateVideoBytes,
     type VideoTrimRange,
 } from "@/lib/video-edit";
+import { blobFromUint8Array } from "@/lib/bytes-blob";
 import { useLibraryStore } from "@/stores/library-store";
 import type { EnteFile } from "ente-media/file";
 
@@ -109,7 +111,7 @@ export function VideoEditorOverlay({
                     return;
                 }
                 const url = URL.createObjectURL(
-                    new Blob([Uint8Array.from(bytes)], { type: mimeType }),
+                    blobFromUint8Array(bytes, mimeType),
                 );
                 workingUrlRef.current = url;
                 setWorkingBytes(bytes);
@@ -163,7 +165,7 @@ export function VideoEditorOverlay({
         duration: number,
     ): void => {
         const url = URL.createObjectURL(
-            new Blob([Uint8Array.from(bytes)], { type: "video/mp4" }),
+            blobFromUint8Array(bytes, "video/mp4"),
         );
         if (workingUrlRef.current) {
             URL.revokeObjectURL(workingUrlRef.current);
@@ -325,7 +327,13 @@ export function VideoEditorOverlay({
         setSaving(true);
         setError(undefined);
 
-        const cropRect = cropRectForVideoSave(completedCrop, video);
+        const cropRect = cropRectForVideoSave(
+            completedCrop,
+            displayLayout.width,
+            displayLayout.height,
+            sourceDimensions.width,
+            sourceDimensions.height,
+        );
         const trim: VideoTrimRange | undefined =
             trimRangeChanged(
                 { startSec: trimStartSec, endSec: trimEndSec },
@@ -342,17 +350,27 @@ export function VideoEditorOverlay({
             undefined;
 
         const saveEdits = async () => {
+            const sourceBytes = workingBytes;
+            // Drop the playing preview before encode so Chromium can reclaim it
+            // while ffmpeg WASM is allocated.
+            if (workingUrlRef.current) {
+                URL.revokeObjectURL(workingUrlRef.current);
+                workingUrlRef.current = undefined;
+            }
+            setWorkingUrl(undefined);
+            logJsHeap("video-editor:before-encode");
+
             if (!crop && !trim) {
-                const duration = await probeVideoDurationSec(workingBytes, mimeType);
+                const duration = await probeVideoDurationSec(sourceBytes, mimeType);
                 return {
-                    bytes: workingBytes,
+                    bytes: sourceBytes,
                     width: sourceDimensions.width,
                     height: sourceDimensions.height,
                     duration,
                 };
             }
             return applyVideoEdits(
-                workingBytes,
+                sourceBytes,
                 mimeType,
                 { crop, trim },
                 sourceDimensions,
@@ -361,6 +379,8 @@ export function VideoEditorOverlay({
 
         void saveEdits()
             .then((edited) => {
+                setWorkingBytes(undefined);
+                logJsHeap("video-editor:after-encode");
                 const { optimisticFile, finalize } =
                     editVideoAndReplaceFileOptimistic(file.id, edited);
                 onSaved({
@@ -370,6 +390,14 @@ export function VideoEditorOverlay({
                 });
             })
             .catch((saveError: unknown) => {
+                // Restore preview URL if encode failed and we still have bytes.
+                if (workingBytes && !workingUrlRef.current) {
+                    const url = URL.createObjectURL(
+                        blobFromUint8Array(workingBytes, mimeType),
+                    );
+                    workingUrlRef.current = url;
+                    setWorkingUrl(url);
+                }
                 setSaving(false);
                 setError(
                     saveError instanceof Error ?

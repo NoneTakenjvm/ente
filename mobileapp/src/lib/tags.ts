@@ -1,5 +1,6 @@
 import type { FilePublicMagicMetadataData } from "ente-media/file-metadata";
 import type { EnteFile } from "ente-media/file";
+import { FileType } from "ente-media/file-type";
 import { getPublicMetadata } from "@/core/metadata";
 import type { PersistedTagIndex } from "@/db/kv";
 
@@ -8,7 +9,12 @@ export interface OrganizerTagMetadata {
     updatedAt?: number;
 }
 
-export const SYSTEM_TAGS = new Set(["compressed", "rotated", "cropped"]);
+export const SYSTEM_TAGS = new Set([
+    "compressed",
+    "rotated",
+    "cropped",
+    "auto-cropped",
+]);
 
 /** Gallery filter pseudo-tag for files with no user tags. */
 export const UNTAGGED_FILTER = "untagged";
@@ -21,6 +27,12 @@ export const FAVORITES_FILTER = "favourites";
 /** Gallery filter for files that are not favourited. */
 export const NOT_FAVORITES_FILTER = "not-favourites";
 
+/** Gallery filter for photos (images, GIFs, live photos). */
+export const PHOTO_FILTER = "photo";
+
+/** Gallery filter for videos. */
+export const VIDEO_FILTER = "video";
+
 export type TagFilterMode = "include" | "exclude";
 
 export type TagFilterJoin = "and" | "or";
@@ -28,6 +40,8 @@ export type TagFilterJoin = "and" | "or";
 export type TagScope = "all" | "tagged" | "untagged";
 
 export type FavoritesScope = "all" | "favorites" | "not-favorites";
+
+export type MediaScope = "all" | "photo" | "video";
 
 export interface TagFilterClauseNode {
     kind: "clause";
@@ -48,6 +62,7 @@ export type TagFilterNode = TagFilterClauseNode | TagFilterGroup;
 export interface TagFilterSelection {
     tagScope: TagScope;
     favoritesScope: FavoritesScope;
+    mediaScope: MediaScope;
     root: TagFilterGroup;
 }
 
@@ -74,6 +89,7 @@ export const createEmptyTagFilterRoot = (): TagFilterGroup => ({
 export const emptyTagFilter = (): TagFilterSelection => ({
     tagScope: "all",
     favoritesScope: "all",
+    mediaScope: "all",
     root: createEmptyTagFilterRoot(),
 });
 
@@ -158,6 +174,7 @@ export const GROUPED_TAG_FILTER_DROPDOWN_HINT =
 export const isTagFilterActive = (filter: TagFilterSelection): boolean =>
     filter.tagScope !== "all" ||
     filter.favoritesScope !== "all" ||
+    filter.mediaScope !== "all" ||
     countTagFilterClauses(filter.root) > 0;
 
 const describeClauseNode = (clause: TagFilterClauseNode): string =>
@@ -192,6 +209,11 @@ export const describeTagFilter = (filter: TagFilterSelection): string => {
     } else if (filter.favoritesScope === "not-favorites") {
         parts.push(NOT_FAVORITES_FILTER);
     }
+    if (filter.mediaScope === "photo") {
+        parts.push(PHOTO_FILTER);
+    } else if (filter.mediaScope === "video") {
+        parts.push(VIDEO_FILTER);
+    }
     const expr = describeGroupNode(filter.root);
     if (expr) {
         parts.push(expr);
@@ -216,7 +238,9 @@ export const isReservedTag = (tag: string): boolean =>
     tag === UNTAGGED_FILTER ||
     tag === TAGGED_FILTER ||
     tag === FAVORITES_FILTER ||
-    tag === NOT_FAVORITES_FILTER;
+    tag === NOT_FAVORITES_FILTER ||
+    tag === PHOTO_FILTER ||
+    tag === VIDEO_FILTER;
 
 /**
  * Read organizer tags from public magic metadata (`_organizer_v1.tags`).
@@ -419,6 +443,29 @@ const applyFavoritesScope = (
     return notFavorites;
 };
 
+const applyMediaScope = (
+    matchingIds: Set<number>,
+    files: EnteFile[],
+    mediaScope: MediaScope,
+): Set<number> => {
+    if (mediaScope === "all") {
+        return matchingIds;
+    }
+    const fileById = new Map(files.map((file) => [file.id, file] as const));
+    const next = new Set<number>();
+    for (const id of matchingIds) {
+        const file = fileById.get(id);
+        if (!file) {
+            continue;
+        }
+        const isVideo = file.metadata.fileType === FileType.video;
+        if (mediaScope === "video" ? isVideo : !isVideo) {
+            next.add(id);
+        }
+    }
+    return next;
+};
+
 const resolveMatchingIds = (
     files: EnteFile[],
     candidateIds: Set<number>,
@@ -442,6 +489,8 @@ const resolveMatchingIds = (
         favoriteFileIds,
         filter.favoritesScope,
     );
+
+    matchingIds = applyMediaScope(matchingIds, files, filter.mediaScope);
 
     if (matchingIds.size === 0) {
         return matchingIds;
@@ -547,6 +596,40 @@ export const countNotFavoritesInCandidates = (
     let count = 0;
     for (const id of candidateFileIds) {
         if (!favoriteFileIds.has(id)) {
+            count += 1;
+        }
+    }
+    return count;
+};
+
+/** Number of photos (non-video) within a candidate id set. */
+export const countPhotosInCandidates = (
+    candidateFileIds: Set<number>,
+    files: EnteFile[],
+): number => {
+    let count = 0;
+    for (const file of files) {
+        if (
+            candidateFileIds.has(file.id) &&
+            file.metadata.fileType !== FileType.video
+        ) {
+            count += 1;
+        }
+    }
+    return count;
+};
+
+/** Number of videos within a candidate id set. */
+export const countVideosInCandidates = (
+    candidateFileIds: Set<number>,
+    files: EnteFile[],
+): number => {
+    let count = 0;
+    for (const file of files) {
+        if (
+            candidateFileIds.has(file.id) &&
+            file.metadata.fileType === FileType.video
+        ) {
             count += 1;
         }
     }

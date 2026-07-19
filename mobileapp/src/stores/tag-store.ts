@@ -28,6 +28,7 @@ import {
     type TagFilterSelection,
     type TagScope,
     type FavoritesScope,
+    type MediaScope,
 } from "@/lib/tags";
 import { normalizeTagName } from "@/lib/tag-writes";
 import {
@@ -50,6 +51,7 @@ interface TagState {
     rebuildFromFiles: (files: EnteFile[]) => void;
     setTagScope: (scope: TagScope) => void;
     setFavoritesScope: (favoritesScope: FavoritesScope) => void;
+    setMediaScope: (mediaScope: MediaScope) => void;
     setTagFilterMode: (tag: string, mode: TagFilterMode | null) => void;
     setClauseMode: (clauseId: string, mode: TagFilterMode) => void;
     setClauseInGroup: (
@@ -437,6 +439,16 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         });
     },
 
+    setMediaScope: (mediaScope: MediaScope): void => {
+        const { tagFilter } = get();
+        set({
+            tagFilter: {
+                ...tagFilter,
+                mediaScope,
+            },
+        });
+    },
+
     setTagFilterMode: (tag: string, mode: TagFilterMode | null): void => {
         const { tagFilter } = get();
         const withoutTag = removeClauseByTagFromRoot(tagFilter.root, tag);
@@ -464,6 +476,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
                     "all" :
                     tagFilter.tagScope,
                 favoritesScope: tagFilter.favoritesScope,
+                mediaScope: tagFilter.mediaScope,
                 root: {
                     ...withoutTag,
                     children: [...withoutTag.children, clause],

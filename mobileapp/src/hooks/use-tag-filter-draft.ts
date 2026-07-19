@@ -4,6 +4,7 @@ import {
     setClauseInGroupOnFilter,
     setClauseModeOnFilter,
     setTagFilterFavoritesScope,
+    setTagFilterMediaScope,
     setTagFilterGroupOp,
     setTagFilterModeOnFilter,
     setTagFilterScope,
@@ -13,6 +14,7 @@ import {
 import {
     emptyTagFilter,
     type FavoritesScope,
+    type MediaScope,
     type TagFilterJoin,
     type TagFilterMode,
     type TagFilterSelection,
@@ -55,6 +57,14 @@ export const useTagFilterDraft: (
         (favoritesScope: FavoritesScope): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
                 setTagFilterFavoritesScope(current, favoritesScope));
+        },
+        [],
+    );
+
+    const setMediaScope: (mediaScope: MediaScope) => void = useCallback(
+        (mediaScope: MediaScope): void => {
+            setFilter((current: TagFilterSelection): TagFilterSelection =>
+                setTagFilterMediaScope(current, mediaScope));
         },
         [],
     );
@@ -127,6 +137,7 @@ export const useTagFilterDraft: (
         (): TagFilterDraftActions => ({
             setTagScope,
             setFavoritesScope,
+            setMediaScope,
             setGroupOp,
             wrapInGroup,
             ungroup,
@@ -138,6 +149,7 @@ export const useTagFilterDraft: (
         [
             setTagScope,
             setFavoritesScope,
+            setMediaScope,
             setGroupOp,
             wrapInGroup,
             ungroup,

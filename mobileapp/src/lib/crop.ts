@@ -21,6 +21,9 @@ export type { CropRect };
 
 export const CROPPED_TAG = "cropped";
 
+/** Internal marker: auto-crop job has already considered this file. */
+export const AUTO_CROPPED_TAG = "auto-cropped";
+
 /**
  * Return true when the file is a croppable image.
  */
@@ -30,6 +33,12 @@ export const canCrop = (file: EnteFile): boolean =>
 
 export const canCropVideo = (file: EnteFile): boolean =>
     file.metadata.fileType === FileType.video;
+
+/**
+ * Return true when auto-crop may still act on this file.
+ */
+export const canAutoCrop = (file: EnteFile): boolean =>
+    canCrop(file) && !extractTags(file).includes(AUTO_CROPPED_TAG);
 
 /**
  * Derive the upload title for a cropped copy of the source file.
@@ -42,8 +51,23 @@ export const croppedUploadTitle = (sourceFile: EnteFile): string => {
 /**
  * Merge source organizer tags and ensure the cropped tag is present.
  */
-export const buildCroppedOrganizerTags = (sourceFile: EnteFile): string[] =>
-    addTagNames(extractTags(sourceFile), CROPPED_TAG);
+export const buildCroppedOrganizerTags = (
+    sourceFile: EnteFile,
+    options?: { autoCropped?: boolean },
+): string[] => {
+    let tags = addTagNames(extractTags(sourceFile), CROPPED_TAG);
+    if (options?.autoCropped) {
+        tags = addTagNames(tags, AUTO_CROPPED_TAG);
+    }
+    return tags;
+};
+
+/**
+ * Tags to mark a file as considered by auto-crop without changing pixels.
+ */
+export const buildAutoCropSkippedOrganizerTags = (
+    sourceFile: EnteFile,
+): string[] => addTagNames(extractTags(sourceFile), AUTO_CROPPED_TAG);
 
 /**
  * Derive the replacement title for a cropped image (basename, .jpg).

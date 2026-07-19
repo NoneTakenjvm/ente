@@ -86,6 +86,7 @@ interface PhotoViewerProps {
 type SlideStatus = "idle" | "loading" | "ready" | "error";
 
 interface SlideLoader {
+    fileId: number;
     cancelled: boolean;
     timedOut: boolean;
     timeoutId: number;
@@ -108,7 +109,6 @@ const DOUBLE_TAP_MS = 300;
 const DOUBLE_TAP_MAX_DISTANCE_PX = 24;
 const DISMISS_THRESHOLD_MIN_PX = 80;
 const DISMISS_THRESHOLD_RATIO = 0.15;
-const VIDEO_CHROME_TAP_DEADZONE_RATIO = 0.25;
 
 /**
  * Decode and pause on the first frame so the preview is not black when autoplay is off.
@@ -393,6 +393,7 @@ export function PhotoViewer({
     }, [updatePanBounds, zoomScale, file?.id, viewportWidth]);
 
     useEffect(() => {
+        const loadingIds = loadingIdsRef.current;
         const visibleIndices = [
             currentIndex - 1,
             currentIndex,
@@ -410,9 +411,15 @@ export function PhotoViewer({
 
             const mediaOverride = getLocalMediaOverride(slideFile.id);
             if (mediaOverride) {
-                loadingIdsRef.current.add(slideFile.id);
+                // Keep an existing in-viewer URL (e.g. after revert/edit) —
+                // reloading would flash "loading" and can race-cancel.
+                if (mediaUrlsRef.current.has(slideFile.id)) {
+                    continue;
+                }
+                loadingIds.add(slideFile.id);
                 setSlideMedia(slideFile.id, { status: "loading" });
                 const overrideLoader: SlideLoader = {
+                    fileId: slideFile.id,
                     cancelled: false,
                     timedOut: false,
                     timeoutId: 0,
@@ -430,6 +437,7 @@ export function PhotoViewer({
                                     mediaOverride,
                                 );
                         if (overrideLoader.cancelled) {
+                            loadingIds.delete(slideFile.id);
                             return;
                         }
                         const url = URL.createObjectURL(blob);
@@ -440,10 +448,10 @@ export function PhotoViewer({
                             URL.revokeObjectURL(previousUrl);
                         }
                         mediaUrlsRef.current.set(slideFile.id, url);
-                        loadingIdsRef.current.delete(slideFile.id);
+                        loadingIds.delete(slideFile.id);
                         setSlideMedia(slideFile.id, { status: "ready", url });
                     } catch {
-                        loadingIdsRef.current.delete(slideFile.id);
+                        loadingIds.delete(slideFile.id);
                         if (!overrideLoader.cancelled) {
                             setSlideMedia(slideFile.id, { status: "error" });
                         }
@@ -454,14 +462,15 @@ export function PhotoViewer({
 
             if (
                 mediaUrlsRef.current.has(slideFile.id) ||
-                loadingIdsRef.current.has(slideFile.id)
+                loadingIds.has(slideFile.id)
             ) {
                 continue;
             }
 
-            loadingIdsRef.current.add(slideFile.id);
+            loadingIds.add(slideFile.id);
             setSlideMedia(slideFile.id, { status: "loading" });
             const loader: SlideLoader = {
+                fileId: slideFile.id,
                 cancelled: false,
                 timedOut: false,
                 timeoutId: window.setTimeout(() => {
@@ -469,7 +478,7 @@ export function PhotoViewer({
                         return;
                     }
                     loader.timedOut = true;
-                    loadingIdsRef.current.delete(slideFile.id);
+                    loadingIds.delete(slideFile.id);
                     setSlideMedia(slideFile.id, { status: "error" });
                 }, MEDIA_LOAD_TIMEOUT_MS),
             };
@@ -480,6 +489,7 @@ export function PhotoViewer({
                 .then(async (bytes) => {
                     window.clearTimeout(loader.timeoutId);
                     if (loader.cancelled) {
+                        loadingIds.delete(slideFile.id);
                         return;
                     }
                     const blob =
@@ -489,16 +499,17 @@ export function PhotoViewer({
                             }) :
                             await toRenderableImageBlob(slideFile, bytes);
                     if (loader.cancelled) {
+                        loadingIds.delete(slideFile.id);
                         return;
                     }
                     const url = URL.createObjectURL(blob);
                     mediaUrlsRef.current.set(slideFile.id, url);
-                    loadingIdsRef.current.delete(slideFile.id);
+                    loadingIds.delete(slideFile.id);
                     setSlideMedia(slideFile.id, { status: "ready", url });
                 })
                 .catch(() => {
                     window.clearTimeout(loader.timeoutId);
-                    loadingIdsRef.current.delete(slideFile.id);
+                    loadingIds.delete(slideFile.id);
                     if (!loader.cancelled) {
                         setSlideMedia(slideFile.id, { status: "error" });
                     }
@@ -509,7 +520,7 @@ export function PhotoViewer({
             if (!visibleIds.has(fileId)) {
                 URL.revokeObjectURL(url);
                 mediaUrlsRef.current.delete(fileId);
-                loadingIdsRef.current.delete(fileId);
+                loadingIds.delete(fileId);
                 setMediaByFileId((current) => {
                     if (!current.has(fileId)) {
                         return current;
@@ -525,6 +536,7 @@ export function PhotoViewer({
             for (const loader of loaders) {
                 loader.cancelled = true;
                 window.clearTimeout(loader.timeoutId);
+                loadingIds.delete(loader.fileId);
             }
         };
     }, [currentIndex, retryKey, sessionFiles, setSlideMedia]);
@@ -591,18 +603,7 @@ export function PhotoViewer({
         }
     }, []);
 
-    const handleMediaTap = useCallback((clientY?: number): void => {
-        if (isVideo && clientY !== undefined) {
-            const viewport = viewportRef.current;
-            if (viewport) {
-                const { top, height } = viewport.getBoundingClientRect();
-                const relativeY = clientY - top;
-                const deadzone = height * VIDEO_CHROME_TAP_DEADZONE_RATIO;
-                if (relativeY < deadzone || relativeY > height - deadzone) {
-                    return;
-                }
-            }
-        }
+    const handleMediaTap = useCallback((): void => {
         window.clearTimeout(chromeTimerRef.current);
         mediaTapCountRef.current += 1;
         window.clearTimeout(mediaTapCountResetRef.current);
@@ -620,7 +621,7 @@ export function PhotoViewer({
         chromeTimerRef.current = window.setTimeout((): void => {
             setChromeVisible(false);
         }, CHROME_HIDE_MS);
-    }, [chromePaused, chromeVisible, isVideo]);
+    }, [chromePaused, chromeVisible]);
 
     const resetChromeTimer = useCallback((): void => {
         window.clearTimeout(chromeTimerRef.current);
@@ -836,7 +837,7 @@ export function PhotoViewer({
                 !skipChromeTapRef.current &&
                 Math.hypot(deltaX, deltaY) < TAP_MAX_MOVEMENT_PX
             ) {
-                handleMediaTap(event.clientY);
+                handleMediaTap();
             }
             skipChromeTapRef.current = false;
             return;
@@ -1195,6 +1196,7 @@ export function PhotoViewer({
             return;
         }
         const sourceId = file.id;
+        const sourceFile = file;
         const result = revertLastEdit(sourceId);
         if (!result) {
             setShowRevertConfirm(false);
@@ -1204,29 +1206,32 @@ export function PhotoViewer({
         clearPointers();
         resetZoom();
         setRevertBusy(true);
-
-        const previousUrl = mediaUrlsRef.current.get(sourceId);
-        if (previousUrl) {
-            URL.revokeObjectURL(previousUrl);
-        }
-        const url = URL.createObjectURL(
-            new Blob([Uint8Array.from(result.bytes)], {
-                type: mimeTypeForFile(file),
-            }),
-        );
-        mediaUrlsRef.current.set(sourceId, url);
-        setSlideMedia(sourceId, { status: "ready", url });
-        setSessionFiles((current) => current.map((entry) => (
-            entry.id === sourceId ? result.optimisticFile : entry
-        )));
-        notifyFileUpdated(result.optimisticFile);
         setShowRevertConfirm(false);
 
-        void result.finalize
-            .then((uploaded) => {
-                handleDerivedFileFinalized(sourceId, uploaded);
-            })
-            .catch((error: unknown) => {
+        void (async (): Promise<void> => {
+            try {
+                const previousUrl = mediaUrlsRef.current.get(sourceId);
+                if (previousUrl) {
+                    URL.revokeObjectURL(previousUrl);
+                }
+                const blob =
+                    sourceFile.metadata.fileType === FileType.video ?
+                        new Blob([Uint8Array.from(result.bytes)], {
+                            type: mimeTypeForFile(sourceFile),
+                        }) :
+                        await toRenderableImageBlob(sourceFile, result.bytes);
+                const url = URL.createObjectURL(blob);
+                mediaUrlsRef.current.set(sourceId, url);
+                setSlideMedia(sourceId, { status: "ready", url });
+                setSessionFiles((current) => current.map((entry) => (
+                    entry.id === sourceId ? result.optimisticFile : entry
+                )));
+                notifyFileUpdated(result.optimisticFile);
+
+                await result.finalize.then((uploaded) => {
+                    handleDerivedFileFinalized(sourceId, uploaded);
+                });
+            } catch (error: unknown) {
                 const reverted = useLibraryStore.getState().allFiles.find(
                     (entry) => entry.id === sourceId,
                 );
@@ -1248,10 +1253,10 @@ export function PhotoViewer({
                         error.message :
                         "Could not revert edit",
                 );
-            })
-            .finally(() => {
+            } finally {
                 setRevertBusy(false);
-            });
+            }
+        })();
     };
 
     const handleConfirmDelete = (): void => {

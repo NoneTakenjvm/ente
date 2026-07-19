@@ -1,15 +1,54 @@
 import { FFFSType, FFmpeg } from "@ffmpeg/ffmpeg";
 import { PromiseQueue } from "ente-utils/promise";
+import { blobFromUint8Array } from "@/lib/bytes-blob";
+import { logJsHeap } from "@/lib/memory-probe";
 
 const CORE_BASE = "https://assets.ente.com/ffmpeg-core-0.12.10/";
+/** Reclaim the WASM heap shortly after the last job (mobile Chrome). */
+const FFMPEG_IDLE_TERMINATE_MS = 2_500;
+const THUMB_FRAME_MAX_EDGE = 512;
 
 let ffmpegPromise: Promise<FFmpeg> | undefined;
 const taskQueue = new PromiseQueue<Uint8Array>();
+let idleTerminateTimer: ReturnType<typeof setTimeout> | undefined;
 
 const randomId = (prefix: string): string =>
     `${prefix}${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
+const clearIdleTerminate = (): void => {
+    if (idleTerminateTimer !== undefined) {
+        clearTimeout(idleTerminateTimer);
+        idleTerminateTimer = undefined;
+    }
+};
+
+/**
+ * Tear down the ffmpeg WASM instance to free its large linear memory.
+ */
+export const terminateFFmpeg = async (): Promise<void> => {
+    clearIdleTerminate();
+    const pending = ffmpegPromise;
+    ffmpegPromise = undefined;
+    if (!pending) {
+        return;
+    }
+    try {
+        const ffmpeg = await pending;
+        ffmpeg.terminate();
+    } catch {
+        // Ignore terminate races.
+    }
+};
+
+const scheduleIdleTerminate = (): void => {
+    clearIdleTerminate();
+    idleTerminateTimer = setTimeout(() => {
+        void terminateFFmpeg();
+    }, FFMPEG_IDLE_TERMINATE_MS);
+};
+
 const getFFmpeg = (): Promise<FFmpeg> => {
+    clearIdleTerminate();
     if (!ffmpegPromise) {
         ffmpegPromise = (async (): Promise<FFmpeg> => {
             const ffmpeg = new FFmpeg();
@@ -32,13 +71,21 @@ export const runFFmpeg = async (
     outputExtension: string,
 ): Promise<Uint8Array> =>
     taskQueue.add(async (): Promise<Uint8Array> => {
+        logJsHeap("ffmpeg:before");
         const ffmpeg = await getFFmpeg();
         const mountDir = "/mount";
         const inputName = randomId("in_");
         const inputPath = `${mountDir}/${inputName}`;
         const outputPath = randomId("out_") + (outputExtension ? `.${outputExtension}` : "");
+        const logs: string[] = [];
+        const onLog = ({ message }: { message: string }): void => {
+            if (message) {
+                logs.push(message);
+            }
+        };
 
         try {
+            ffmpeg.on("log", onLog);
             await ffmpeg.createDir(mountDir);
             await ffmpeg.mount(
                 FFFSType.WORKERFS,
@@ -58,15 +105,24 @@ export const runFFmpeg = async (
 
             const status = await ffmpeg.exec(resolvedArgs);
             if (status !== 0) {
-                throw new Error(`ffmpeg exited with code ${status}`);
+                const detail = logs.slice(-8).join(" · ");
+                throw new Error(
+                    detail ?
+                        `ffmpeg exited with code ${status}: ${detail}` :
+                        `ffmpeg exited with code ${status}`,
+                );
             }
 
             const result = await ffmpeg.readFile(outputPath);
             if (typeof result === "string") {
                 throw new Error("Expected binary ffmpeg output");
             }
-            return new Uint8Array(result);
+            // Copy out of MEMFS before teardown so terminate cannot invalidate it.
+            const output = new Uint8Array(result);
+            logJsHeap("ffmpeg:after");
+            return output;
         } finally {
+            ffmpeg.off("log", onLog);
             try {
                 await ffmpeg.deleteFile(outputPath);
             } catch {
@@ -82,19 +138,20 @@ export const runFFmpeg = async (
             } catch {
                 // ignore
             }
+            scheduleIdleTerminate();
         }
     }) as Promise<Uint8Array>;
 
 /**
  * Extract a poster frame using the browser video decoder (reliable on mobile).
+ * Draws at most {@link THUMB_FRAME_MAX_EDGE} on the long side to avoid full-res
+ * RGBA canvases (4K frames are tens of MB).
  */
 const extractVideoFrameViaCanvas = async (
     videoBytes: Uint8Array,
     mimeType: string,
 ): Promise<Uint8Array> => {
-    const url = URL.createObjectURL(
-        new Blob([Uint8Array.from(videoBytes)], { type: mimeType }),
-    );
+    const url = URL.createObjectURL(blobFromUint8Array(videoBytes, mimeType));
     try {
         const video = document.createElement("video");
         video.muted = true;
@@ -125,14 +182,18 @@ const extractVideoFrameViaCanvas = async (
         } catch {
             // Muted inline play may be blocked; seeked frame is often enough.
         }
+        const scale = Math.min(
+            1,
+            THUMB_FRAME_MAX_EDGE / Math.max(video.videoWidth, video.videoHeight),
+        );
         const canvas = document.createElement("canvas");
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+        canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+        canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
         const context = canvas.getContext("2d");
         if (!context) {
             throw new Error("Canvas unavailable");
         }
-        context.drawImage(video, 0, 0);
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
         const jpegBlob = await new Promise<Blob>((resolve, reject) => {
             canvas.toBlob(
                 (blob) => {
@@ -159,18 +220,20 @@ export const extractVideoFrameJpeg = async (
     videoBytes: Uint8Array,
     mimeType: string,
 ): Promise<Uint8Array> => {
-    const preferCanvas =
-        typeof window !== "undefined" && "ontouchstart" in window;
-    if (preferCanvas) {
-        return extractVideoFrameViaCanvas(videoBytes, mimeType);
-    }
+    // Canvas path avoids loading ffmpeg WASM just for a poster frame.
     try {
+        return await extractVideoFrameViaCanvas(videoBytes, mimeType);
+    } catch {
         return await runFFmpeg(
-            ["-i", "INPUT", "-frames:v", "1", "-q:v", "2", "OUTPUT"],
-            new Blob([Uint8Array.from(videoBytes)], { type: mimeType }),
+            [
+                "-i", "INPUT",
+                "-frames:v", "1",
+                "-vf", `scale='min(${THUMB_FRAME_MAX_EDGE},iw)':-2`,
+                "-q:v", "4",
+                "OUTPUT",
+            ],
+            blobFromUint8Array(videoBytes, mimeType),
             "jpg",
         );
-    } catch {
-        return extractVideoFrameViaCanvas(videoBytes, mimeType);
     }
 };

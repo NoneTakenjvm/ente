@@ -50,6 +50,7 @@ import {
     getEditHistory,
     recordEditHistory,
     remapEditHistoryFileId,
+    MAX_IN_MEMORY_EDIT_HISTORY_BYTES,
 } from "@/lib/edit-history";
 import {
     upsertFavoriteOutboxEntry,
@@ -174,6 +175,7 @@ interface LibraryState {
         fileId: number,
         croppedBytes: Uint8Array,
         dimensions: { width: number; height: number },
+        options?: { autoCropped?: boolean },
     ) => { optimisticFile: EnteFile; finalize: Promise<EnteFile> };
     editVideoAndReplaceFileOptimistic: (
         fileId: number,
@@ -987,6 +989,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         fileId: number,
         croppedBytes: Uint8Array,
         dimensions: { width: number; height: number },
+        options?: { autoCropped?: boolean },
     ): { optimisticFile: EnteFile; finalize: Promise<EnteFile> } => {
         const { allFiles } = get();
         const file = allFiles.find((entry) => entry.id === fileId);
@@ -995,7 +998,9 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         }
 
         const previousOverride = getLocalMediaOverride(fileId)?.slice();
-        const intendedTags = buildCroppedOrganizerTags(file);
+        const intendedTags = buildCroppedOrganizerTags(file, {
+            autoCropped: options?.autoCropped,
+        });
         const optimisticFile = fileWithOrganizerTags(file, intendedTags);
         const optimisticFiles = allFiles.map((entry) => (
             entry.id === fileId ? optimisticFile : entry
@@ -1068,7 +1073,8 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             throw new Error(`File ${fileId} not found`);
         }
 
-        const previousOverride = getLocalMediaOverride(fileId)?.slice();
+        // Prefer an existing override reference — do not .slice() (doubles RAM).
+        const previousOverride = getLocalMediaOverride(fileId);
         const intendedTags = buildCroppedOrganizerTags(file);
         const optimisticFile = fileWithOrganizerTags(file, intendedTags);
         const optimisticFiles = allFiles.map((entry) => (
@@ -1079,24 +1085,22 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         useTagStore.getState().applyFileTags(fileId, intendedTags);
         void saveEncryptedFiles(optimisticFiles, getSessionCacheKey());
         setLocalMediaOverride(fileId, result.bytes);
-        primeVideoThumbnailFromBytes(fileId, result.bytes);
+        // Defer poster extract so it does not overlap ffmpeg WASM + source video.
+        queueMicrotask(() => {
+            primeVideoThumbnailFromBytes(fileId, result.bytes);
+        });
 
         const finalize = (async (): Promise<EnteFile> => {
-            let previousBytes: Uint8Array | undefined = previousOverride;
-            if (!previousBytes) {
-                try {
-                    previousBytes = new Uint8Array(
-                        await getEnteCore().getDecryptedFile(file),
-                    );
-                } catch {
-                    previousBytes = undefined;
-                }
-            }
-            if (previousBytes) {
+            // Only keep undo when we already have small override bytes in RAM —
+            // never re-decrypt a full video just for history.
+            if (
+                previousOverride &&
+                previousOverride.byteLength <= MAX_IN_MEMORY_EDIT_HISTORY_BYTES
+            ) {
                 const priorDims = videoDimensionsFromFile(file);
                 recordEditHistory({
                     fileId,
-                    previousBytes,
+                    previousBytes: previousOverride,
                     width: priorDims.width || result.width,
                     height: priorDims.height || result.height,
                     createdAt: Date.now(),

@@ -7,9 +7,8 @@ import {
 } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/router";
-import { ShieldOff, Upload } from "lucide-react";
+import { Upload } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
-import { ConfirmPanicModal } from "@/components/ConfirmPanicModal";
 import { PageLoader } from "@/components/PageLoader";
 import { SelectionActionFooter } from "@/components/SelectionActionFooter";
 import { SyncBanner } from "@/components/SyncBanner";
@@ -128,9 +127,6 @@ export default function GalleryPage(): JSX.Element {
     }, [libraryFiles, tagFilter, fileIdsByTag, favoriteFileIds]);
 
     const [viewerFileId, setViewerFileId] = useState<number | undefined>();
-    const [showPanicConfirm, setShowPanicConfirm] = useState<boolean>(false);
-    const [panicWorking, setPanicWorking] = useState<boolean>(false);
-    const panic = useSessionStore((s) => s.panic);
 
     const selectionEnabled = useSelectionStore((s) => s.enabled);
     const selectedIds = useSelectionStore((s) => s.selectedIds);
@@ -188,19 +184,6 @@ export default function GalleryPage(): JSX.Element {
         setViewerFileId(undefined);
     }, []);
 
-    const handlePanicConfirm = useCallback((): void => {
-        setPanicWorking(true);
-        void panic()
-            .then(() => {
-                window.close();
-                void router.replace("/login");
-            })
-            .finally(() => {
-                setPanicWorking(false);
-                setShowPanicConfirm(false);
-            });
-    }, [panic, router]);
-
     const handleFileUpdated = useCallback((file: EnteFile): void => {
         setViewerFileId((current) =>
             current === undefined ? undefined : file.id);
@@ -220,27 +203,15 @@ export default function GalleryPage(): JSX.Element {
             title="Media"
             email={email}
             actions={
-                <>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="icon-sm"
-                        aria-label="Upload photos and videos"
-                        onClick={() => setUploadPanelOpen(true)}
-                    >
-                        <Upload />
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="icon-sm"
-                        className="text-destructive hover:text-destructive"
-                        aria-label="Wipe local data"
-                        onClick={() => setShowPanicConfirm(true)}
-                    >
-                        <ShieldOff />
-                    </Button>
-                </>
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="icon-sm"
+                    aria-label="Upload photos and videos"
+                    onClick={() => setUploadPanelOpen(true)}
+                >
+                    <Upload />
+                </Button>
             }
         >
             <SyncBanner />
@@ -267,12 +238,6 @@ export default function GalleryPage(): JSX.Element {
                     onFileUpdated={handleFileUpdated}
                 />
             ) : null}
-            <ConfirmPanicModal
-                open={showPanicConfirm}
-                isWorking={panicWorking}
-                onCancel={() => setShowPanicConfirm(false)}
-                onConfirm={handlePanicConfirm}
-            />
         </AppShell>
     );
 }

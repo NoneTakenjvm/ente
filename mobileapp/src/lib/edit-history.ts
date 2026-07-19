@@ -1,6 +1,9 @@
 /**
  * Local-only edit history: the previous bytes for the most recent crop/rotate
  * (or mass auto-crop) replace on this client, so the user can revert once.
+ *
+ * Large payloads (typical phone videos) are skipped — keeping them in a Map
+ * alongside ffmpeg WASM OOMs mobile Chrome.
  */
 
 export interface EditHistoryEntry {
@@ -14,12 +17,20 @@ export interface EditHistoryEntry {
     kind: "crop" | "rotate" | "auto-crop" | "video-edit";
 }
 
+/** Above this size, undo bytes are not retained in RAM. */
+export const MAX_IN_MEMORY_EDIT_HISTORY_BYTES = 12 * 1024 * 1024;
+
 const historyByFileId = new Map<number, EditHistoryEntry>();
 
 /**
  * Remember the pre-edit bytes for a file so the latest edit can be reverted.
+ * No-ops when {@link EditHistoryEntry.previousBytes} exceeds the RAM cap.
  */
 export const recordEditHistory = (entry: EditHistoryEntry): void => {
+    if (entry.previousBytes.byteLength > MAX_IN_MEMORY_EDIT_HISTORY_BYTES) {
+        historyByFileId.delete(entry.fileId);
+        return;
+    }
     historyByFileId.set(entry.fileId, entry);
 };
 
