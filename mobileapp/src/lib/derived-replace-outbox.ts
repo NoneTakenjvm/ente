@@ -30,6 +30,15 @@ const outboxByFileId = new Map<number, DerivedReplaceOutboxEntry>();
 let hydrated = false;
 let persistChain: Promise<void> = Promise.resolve();
 
+const base64ToBytes = (base64: string): Uint8Array => {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+};
+
 const flushToDisk = async (): Promise<void> => {
     const entries: PersistedDerivedReplaceOutboxEntry[] = [
         ...outboxByFileId.values(),
@@ -47,10 +56,22 @@ export const hydrateDerivedReplaceOutbox = async (): Promise<void> => {
         getSessionCacheKey(),
     );
     outboxByFileId.clear();
+    let migratedLegacy = false;
     for (const entry of persisted ?? []) {
-        // Drop legacy base64-in-kv entries — payloads now live in IDB.
-        if ("bytesBase64" in entry && entry.bytesBase64) {
-            continue;
+        const legacyBase64 =
+            "bytesBase64" in entry && typeof entry.bytesBase64 === "string" ?
+                entry.bytesBase64 :
+                undefined;
+        if (legacyBase64) {
+            try {
+                await putDerivedReplacePayload(
+                    entry.fileId,
+                    base64ToBytes(legacyBase64),
+                );
+                migratedLegacy = true;
+            } catch {
+                continue;
+            }
         }
         outboxByFileId.set(entry.fileId, {
             fileId: entry.fileId,
@@ -61,6 +82,9 @@ export const hydrateDerivedReplaceOutbox = async (): Promise<void> => {
         });
     }
     hydrated = true;
+    if (migratedLegacy) {
+        await persist();
+    }
 };
 
 export const ensureDerivedReplaceOutboxHydrated = async (): Promise<void> => {

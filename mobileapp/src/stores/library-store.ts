@@ -321,8 +321,12 @@ const replaceSourceWithCompressed = async (
     useTagStore.getState().rebuildFromFiles(nextFiles);
     useFavoritesStore.getState().removeTrashedFileIds([sourceId]);
     await deleteThumbnailCiphertext(sourceId);
-    const { invalidateVideoCache } = await import("@/lib/video-media-cache");
-    invalidateVideoCache(sourceId);
+    const {
+        clearVideoDiskCache,
+        transferSessionVideoUrl,
+    } = await import("@/lib/video-media-cache");
+    transferSessionVideoUrl(sourceId, uploaded.id);
+    clearVideoDiskCache(sourceId);
     requestThumbnail(uploaded);
 
     if (shouldFavorite) {
