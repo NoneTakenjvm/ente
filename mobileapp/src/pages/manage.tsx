@@ -11,11 +11,14 @@ import { AppShell } from "@/components/AppShell";
 import { ManageCompressPanel } from "@/components/manage/ManageCompressPanel";
 import {
     ManageHub,
+    ManageToolsHub,
+    isManageToolSection,
     manageSectionTitle,
     type ManageSection,
 } from "@/components/manage/ManageHub";
 import { ManageArchivedPanel } from "@/components/manage/ManageArchivedPanel";
 import { ManageTrashPanel } from "@/components/manage/ManageTrashPanel";
+import { ManageUsagePanel } from "@/components/manage/ManageUsagePanel";
 import { ManageAutoCropPanel } from "@/components/manage/ManageAutoCropPanel";
 import { ManageSettingsPanel } from "@/components/manage/ManageSettingsPanel";
 import { ManageTagsPanel } from "@/components/manage/ManageTagsPanel";
@@ -73,6 +76,7 @@ const formatBytes = (bytes: number): string => {
 
 const parseManageSection = (value: string | string[] | undefined): ManageSection => {
     if (
+        value === "tools" ||
         value === "exact" ||
         value === "similar" ||
         value === "compress" ||
@@ -80,6 +84,7 @@ const parseManageSection = (value: string | string[] | undefined): ManageSection
         value === "trash" ||
         value === "auto-crop" ||
         value === "tags" ||
+        value === "usage" ||
         value === "settings"
     ) {
         return value;
@@ -285,7 +290,16 @@ export default function ManagePage(): JSX.Element {
         );
     };
 
-    const handleBackToHub = (): void => {
+    const handleBack = (): void => {
+        if (isManageToolSection(section)) {
+            setSection("tools");
+            void router.replace(
+                { pathname: "/manage", query: { section: "tools" } },
+                undefined,
+                { shallow: true },
+            );
+            return;
+        }
         setSection("hub");
         void router.replace("/manage", undefined, { shallow: true });
     };
@@ -315,7 +329,7 @@ export default function ManagePage(): JSX.Element {
         <AppShell
             title={shellTitle}
             email={email}
-            onBack={section === "hub" ? undefined : handleBackToHub}
+            onBack={section === "hub" ? undefined : handleBack}
         >
             <SyncBanner />
 
@@ -323,9 +337,15 @@ export default function ManagePage(): JSX.Element {
                 <ManageHub onSelect={handleSelectSection} />
             ) : null}
 
+            {section === "tools" ? (
+                <ManageToolsHub onSelect={handleSelectSection} />
+            ) : null}
+
             {section === "tags" ? <ManageTagsPanel /> : null}
 
             {section === "settings" ? <ManageSettingsPanel /> : null}
+
+            {section === "usage" ? <ManageUsagePanel /> : null}
 
             {section === "archived" ? (
                 <ManageArchivedPanel files={allFiles} />
