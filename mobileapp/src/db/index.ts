@@ -1,6 +1,6 @@
 import { deleteDB, openDB, type IDBPDatabase } from "idb";
 
-const dbVersion = 1;
+const dbVersion = 2;
 
 export type KvKey =
     | "collections"
@@ -12,7 +12,6 @@ export type KvKey =
     | "visibilityOutbox"
     | "derivedReplaceOutbox";
 
-
 export interface KvRecord {
     key: KvKey;
     encryptedData: string;
@@ -23,6 +22,18 @@ export interface ThumbnailRecord {
     fileId: number;
     encryptedData: string;
     decryptionHeader: string;
+}
+
+/**
+ * Server ciphertext for a full file (videos). Stored as ArrayBuffer to avoid
+ * base64 expansion of multi‑MB payloads.
+ */
+export interface FileCiphertextRecord {
+    fileId: number;
+    encryptedData: ArrayBuffer;
+    decryptionHeader: string;
+    byteSize: number;
+    lastAccess: number;
 }
 
 export interface SyncCursorRecord {
@@ -38,6 +49,10 @@ export interface OrganizerDB {
     thumbnails: {
         key: number;
         value: ThumbnailRecord;
+    };
+    fileCiphertexts: {
+        key: number;
+        value: FileCiphertextRecord;
     };
     syncCursors: {
         key: number;
@@ -63,6 +78,9 @@ const openOrganizerDB = (userId: number): Promise<IDBPDatabase<OrganizerDB>> =>
             }
             if (!db.objectStoreNames.contains("thumbnails")) {
                 db.createObjectStore("thumbnails", { keyPath: "fileId" });
+            }
+            if (!db.objectStoreNames.contains("fileCiphertexts")) {
+                db.createObjectStore("fileCiphertexts", { keyPath: "fileId" });
             }
             if (!db.objectStoreNames.contains("syncCursors")) {
                 db.createObjectStore("syncCursors", { keyPath: "collectionId" });

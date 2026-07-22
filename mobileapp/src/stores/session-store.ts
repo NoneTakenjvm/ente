@@ -20,6 +20,7 @@ import {
 } from "@/lib/session-persistence";
 import { wipeSiteStorage } from "@/lib/site-wipe";
 import { clearThumbnailCache } from "@/lib/thumbnail-cache";
+import { clearVideoSessionCache } from "@/lib/video-media-cache";
 
 export type SessionStatus = "idle" | "loading" | "authenticated" | "error";
 
@@ -92,6 +93,7 @@ const clearMemoryState = (): void => {
     getEnteCore().logout();
     clearSessionCacheKey();
     clearThumbnailCache();
+    clearVideoSessionCache();
     clearAllLocalMediaOverrides();
     resetDependentStores();
 };

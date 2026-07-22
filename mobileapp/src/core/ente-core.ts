@@ -20,6 +20,8 @@ import {
 } from "./api/files";
 import { HttpClient, resolveApiOrigin } from "./api/http";
 import {
+    decryptFileCiphertext,
+    fetchEncryptedFile,
     fetchEncryptedThumbnail,
     getDecryptedFile,
     getDecryptedThumbnail,
@@ -189,6 +191,20 @@ export class EnteCore {
 
     fetchEncryptedThumbnail(file: EnteFile): Promise<ServerCiphertext> {
         return fetchEncryptedThumbnail(this.http, this.session, file);
+    }
+
+    fetchEncryptedFile(
+        file: EnteFile,
+        onProgress?: BytesProgressCallback,
+    ): Promise<ServerCiphertext> {
+        return fetchEncryptedFile(this.http, this.session, file, onProgress);
+    }
+
+    decryptFileCiphertext(
+        ciphertext: ServerCiphertext,
+        fileKey: string,
+    ): Promise<Uint8Array> {
+        return decryptFileCiphertext(ciphertext, fileKey);
     }
 
     getDecryptedThumbnail(file: EnteFile): Promise<Uint8Array> {

@@ -197,7 +197,62 @@ export const getDecryptedThumbnail = async (
 };
 
 /**
- * Download and decrypt full file bytes (images and live photos).
+ * Download encrypted full-file bytes from remote (before decryption).
+ */
+export const fetchEncryptedFile = async (
+    http: HttpClient,
+    session: CoreSession,
+    file: EnteFile,
+    onProgress?: BytesProgressCallback,
+): Promise<ServerCiphertext> => {
+    if (!file.file?.decryptionHeader) {
+        throw new Error(`File ${file.id} has no file metadata`);
+    }
+
+    const origin = http.apiOrigin();
+    const knownTotal = file.info?.fileSize;
+    const encryptedData =
+        isProductionEnteOrigin(origin) ?
+            await fetchEncryptedBytes(
+                http,
+                session,
+                `https://files.ente.com/?fileID=${file.id}`,
+                1,
+                onProgress,
+                knownTotal,
+            ) :
+            await fetchEncryptedBytes(
+                http,
+                session,
+                `${origin}/files/download/${file.id}?token=${encodeURIComponent(requireAuth(session).authToken)}`,
+                1,
+                onProgress,
+                knownTotal,
+            );
+
+    return {
+        encryptedData,
+        decryptionHeader: file.file.decryptionHeader,
+    };
+};
+
+/**
+ * Decrypt server ciphertext into full-file bytes.
+ */
+export const decryptFileCiphertext = async (
+    ciphertext: ServerCiphertext,
+    fileKey: string,
+): Promise<Uint8Array> =>
+    decryptStreamBytes(
+        {
+            encryptedData: Uint8Array.from(ciphertext.encryptedData),
+            decryptionHeader: ciphertext.decryptionHeader,
+        },
+        fileKey,
+    );
+
+/**
+ * Download and decrypt full file bytes (images, videos, and live photos).
  *
  * When {@link onProgress} is provided, it reports encrypted-byte download
  * progress (not decrypt/convert). Prefer Content-Length; fall back to
@@ -209,38 +264,11 @@ export const getDecryptedFile = async (
     file: EnteFile,
     onProgress?: BytesProgressCallback,
 ): Promise<Uint8Array> => {
-    if (!file.file?.decryptionHeader) {
-        throw new Error(`File ${file.id} has no file metadata`);
-    }
-
-    const origin = http.apiOrigin();
-    const knownTotal = file.info?.fileSize;
-    let encryptedData: Uint8Array;
-    if (isProductionEnteOrigin(origin)) {
-        encryptedData = await fetchEncryptedBytes(
-            http,
-            session,
-            `https://files.ente.com/?fileID=${file.id}`,
-            1,
-            onProgress,
-            knownTotal,
-        );
-    } else {
-        encryptedData = await fetchEncryptedBytes(
-            http,
-            session,
-            `${origin}/files/download/${file.id}?token=${encodeURIComponent(requireAuth(session).authToken)}`,
-            1,
-            onProgress,
-            knownTotal,
-        );
-    }
-
-    return decryptStreamBytes(
-        {
-            encryptedData: Uint8Array.from(encryptedData),
-            decryptionHeader: file.file.decryptionHeader,
-        },
-        file.key,
+    const ciphertext = await fetchEncryptedFile(
+        http,
+        session,
+        file,
+        onProgress,
     );
+    return decryptFileCiphertext(ciphertext, file.key);
 };
