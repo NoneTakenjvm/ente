@@ -12,6 +12,8 @@ let ffmpegPromise: Promise<FFmpeg> | undefined;
 const taskQueue = new PromiseQueue<Uint8Array>();
 let idleTerminateTimer: ReturnType<typeof setTimeout> | undefined;
 
+export type FFmpegProgressCallback = (ratio: number) => void;
+
 const randomId = (prefix: string): string =>
     `${prefix}${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
@@ -64,11 +66,14 @@ const getFFmpeg = (): Promise<FFmpeg> => {
 
 /**
  * Run an ffmpeg command on a blob and return the output file bytes.
+ *
+ * {@link onProgress} receives a 0–1 ratio when ffmpeg reports progress.
  */
 export const runFFmpeg = async (
     args: string[],
     input: Blob,
     outputExtension: string,
+    onProgress?: FFmpegProgressCallback,
 ): Promise<Uint8Array> =>
     taskQueue.add(async (): Promise<Uint8Array> => {
         logJsHeap("ffmpeg:before");
@@ -83,9 +88,18 @@ export const runFFmpeg = async (
                 logs.push(message);
             }
         };
+        const handleProgress = ({ progress }: { progress: number }): void => {
+            if (!onProgress || !Number.isFinite(progress)) {
+                return;
+            }
+            onProgress(Math.min(1, Math.max(0, progress)));
+        };
 
         try {
             ffmpeg.on("log", onLog);
+            if (onProgress) {
+                ffmpeg.on("progress", handleProgress);
+            }
             await ffmpeg.createDir(mountDir);
             await ffmpeg.mount(
                 FFFSType.WORKERFS,
@@ -117,12 +131,16 @@ export const runFFmpeg = async (
             if (typeof result === "string") {
                 throw new Error("Expected binary ffmpeg output");
             }
+            onProgress?.(1);
             // Copy out of MEMFS before teardown so terminate cannot invalidate it.
             const output = new Uint8Array(result);
             logJsHeap("ffmpeg:after");
             return output;
         } finally {
             ffmpeg.off("log", onLog);
+            if (onProgress) {
+                ffmpeg.off("progress", handleProgress);
+            }
             try {
                 await ffmpeg.deleteFile(outputPath);
             } catch {

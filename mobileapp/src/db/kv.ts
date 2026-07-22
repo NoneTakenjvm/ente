@@ -195,11 +195,12 @@ export const saveEncryptedVisibilityOutbox = async (
 
 export interface PersistedDerivedReplaceOutboxEntry {
     fileId: number;
-    bytesBase64: string;
     width: number;
     height: number;
-    kind: "crop" | "rotate" | "auto-crop" | "video-edit";
+    kind: "crop" | "rotate" | "auto-crop" | "video-edit" | "compress";
     enqueuedAt: number;
+    /** @deprecated Legacy field; ignored on hydrate. */
+    bytesBase64?: string;
 }
 
 export const loadEncryptedDerivedReplaceOutbox = async (

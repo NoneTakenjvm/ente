@@ -11,6 +11,22 @@ vi.mock("@/db/kv", () => ({
     saveEncryptedDerivedReplaceOutbox: vi.fn(async () => undefined),
 }));
 
+const payloadStore = new Map<number, Uint8Array>();
+
+vi.mock("@/db/derived-replace-payloads", () => ({
+    putDerivedReplacePayload: vi.fn(async (fileId: number, bytes: Uint8Array) => {
+        payloadStore.set(fileId, bytes.slice());
+    }),
+    getDerivedReplacePayload: vi.fn(async (fileId: number) =>
+        payloadStore.get(fileId)?.slice()),
+    deleteDerivedReplacePayload: vi.fn(async (fileId: number) => {
+        payloadStore.delete(fileId);
+    }),
+    clearDerivedReplacePayloads: vi.fn(async () => {
+        payloadStore.clear();
+    }),
+}));
+
 vi.mock("@/lib/cache-key", () => ({
     getSessionCacheKey: () => "test-cache-key",
 }));
@@ -106,18 +122,19 @@ describe("edit history", () => {
 
 describe("derived replace outbox", () => {
     beforeEach(async () => {
+        payloadStore.clear();
         const { clearDerivedReplaceOutbox } = await import(
             "@/lib/derived-replace-outbox"
         );
         clearDerivedReplaceOutbox();
     });
 
-    it("round-trips bytes through base64 persistence shape", async () => {
+    it("stores payload bytes separately from outbox metadata", async () => {
         const {
             hydrateDerivedReplaceOutbox,
             upsertDerivedReplaceOutboxEntry,
             getDerivedReplaceOutboxEntries,
-            base64ToBytes,
+            loadDerivedReplaceOutboxBytes,
         } = await import("@/lib/derived-replace-outbox");
 
         await hydrateDerivedReplaceOutbox();
@@ -125,6 +142,9 @@ describe("derived replace outbox", () => {
         await upsertDerivedReplaceOutboxEntry(3, bytes, 100, 80, "auto-crop");
         const entry = getDerivedReplaceOutboxEntries()[0]!;
         expect(entry.width).toBe(100);
-        expect([...base64ToBytes(entry.bytesBase64)]).toEqual([9, 8, 7, 6]);
+        expect(entry.kind).toBe("auto-crop");
+        expect([...(await loadDerivedReplaceOutboxBytes(3))!]).toEqual([
+            9, 8, 7, 6,
+        ]);
     });
 });

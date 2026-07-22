@@ -157,7 +157,13 @@ interface LibraryState {
     compressAndUploadMedia: (
         fileId: number,
         options?: { quality?: number; videoCrf?: number },
+        precomputed?: import("@/lib/transcode/compress-media").CompressMediaResult,
     ) => Promise<EnteFile>;
+    compressAndReplaceMediaOptimistic: (
+        fileId: number,
+        result: import("@/lib/transcode/compress-media").CompressMediaResult,
+        originalByteLength: number,
+    ) => { optimisticFile: EnteFile; finalize: Promise<EnteFile> };
     rotateAndUploadFile: (
         fileId: number,
         degrees: RotationDegrees,
@@ -315,6 +321,8 @@ const replaceSourceWithCompressed = async (
     useTagStore.getState().rebuildFromFiles(nextFiles);
     useFavoritesStore.getState().removeTrashedFileIds([sourceId]);
     await deleteThumbnailCiphertext(sourceId);
+    const { invalidateVideoCache } = await import("@/lib/video-media-cache");
+    invalidateVideoCache(sourceId);
     requestThumbnail(uploaded);
 
     if (shouldFavorite) {
@@ -855,40 +863,121 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
     compressAndUploadMedia: async (
         fileId: number,
         options?: { quality?: number; videoCrf?: number },
+        precomputed?: import("@/lib/transcode/compress-media").CompressMediaResult,
     ): Promise<EnteFile> => {
-        const { allFiles, collections } = get();
+        const { allFiles } = get();
         const file = allFiles.find((entry) => entry.id === fileId);
         if (!file) {
             throw new Error(`File ${fileId} not found`);
         }
 
+        let result = precomputed;
+        let originalByteLength: number;
+        if (result) {
+            originalByteLength =
+                file.info?.fileSize && file.info.fileSize > 0 ?
+                    file.info.fileSize :
+                    result.bytes.length;
+        } else {
+            const { loadMediaBytesForEdit } = await import(
+                "@/lib/load-media-bytes"
+            );
+            const { compressMediaBytes } = await import(
+                "@/lib/transcode/compress-media"
+            );
+            const bytes = await loadMediaBytesForEdit(file);
+            originalByteLength = bytes.length;
+            result = await compressMediaBytes(file, bytes, options);
+        }
+        if (!isWorthReplacing(originalByteLength, result.bytes.length)) {
+            throw new CompressionSkippedError();
+        }
+        const { finalize } = get().compressAndReplaceMediaOptimistic(
+            fileId,
+            result,
+            originalByteLength,
+        );
+        return finalize;
+    },
+
+    compressAndReplaceMediaOptimistic: (
+        fileId: number,
+        result: import("@/lib/transcode/compress-media").CompressMediaResult,
+        originalByteLength: number,
+    ): { optimisticFile: EnteFile; finalize: Promise<EnteFile> } => {
+        const { allFiles, collections } = get();
+        const file = allFiles.find((entry) => entry.id === fileId);
+        if (!file) {
+            throw new Error(`File ${fileId} not found`);
+        }
         const collection = collections.find(
             (entry) => entry.id === file.collectionID,
         );
         if (!collection) {
             throw new Error(`Collection ${file.collectionID} not found`);
         }
-
-        const bytes = await getEnteCore().getDecryptedFile(file);
-        const { compressMediaBytes } = await import("@/lib/transcode/compress-media");
-        const result = await compressMediaBytes(file, bytes, options);
-        if (!isWorthReplacing(bytes.length, result.bytes.length)) {
+        if (!isWorthReplacing(originalByteLength, result.bytes.length)) {
             throw new CompressionSkippedError();
         }
-        const uploaded = await getEnteCore().uploadCompressedMedia(
-            file,
-            result,
-            collection,
-            compressedReplaceTitle(file),
-            buildCompressedOrganizerTags(file),
-        );
 
-        return replaceSourceWithCompressed(
-            set,
-            get,
-            file,
-            uploaded,
-        );
+        const intendedTags = buildCompressedOrganizerTags(file);
+        const optimisticFile = fileWithOrganizerTags(file, intendedTags);
+        const optimisticFiles = allFiles.map((entry) => (
+            entry.id === fileId ? optimisticFile : entry
+        ));
+
+        set({ allFiles: optimisticFiles });
+        useTagStore.getState().applyFileTags(fileId, intendedTags);
+        void saveEncryptedFiles(optimisticFiles, getSessionCacheKey());
+        setLocalMediaOverride(fileId, result.bytes);
+        if (result.mimeType.startsWith("video/")) {
+            queueMicrotask(() => {
+                primeVideoThumbnailFromBytes(fileId, result.bytes);
+            });
+        } else {
+            primeThumbnailFromBytes(fileId, result.bytes);
+        }
+
+        const finalize = (async (): Promise<EnteFile> => {
+            await upsertDerivedReplaceOutboxEntry(
+                fileId,
+                result.bytes,
+                result.width,
+                result.height,
+                "compress",
+            );
+
+            const uploaded = await enqueueDerivedReplace(
+                fileId,
+                result.bytes,
+                { width: result.width, height: result.height },
+                async (bytes, dimensions) => {
+                    const uploadedMedia = await getEnteCore().uploadCompressedMedia(
+                        file,
+                        {
+                            ...result,
+                            bytes,
+                            width: dimensions.width,
+                            height: dimensions.height,
+                        },
+                        collection,
+                        compressedReplaceTitle(file),
+                        buildCompressedOrganizerTags(file),
+                    );
+                    return replaceSourceWithCompressed(
+                        set,
+                        get,
+                        file,
+                        uploadedMedia,
+                    );
+                },
+            );
+            clearLocalMediaOverride(fileId);
+            await remapOutboxesAfterReplace(fileId, uploaded.id);
+            return uploaded;
+        })();
+
+        return { optimisticFile, finalize };
     },
 
     rotateAndUploadFile: async (
