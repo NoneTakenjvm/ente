@@ -47,10 +47,12 @@ import { mediaKindForFile, mimeTypeForFile } from "@/lib/media-kind";
 import { toRenderableImageBlob } from "@/lib/renderable-image";
 import { cn } from "@/lib/utils";
 import {
+    forgetSessionVideoUrl,
     invalidateVideoCache,
     loadCachedVideoBytes,
     peekSessionVideo,
     retainSessionVideoUrl,
+    transferSessionVideoUrl,
 } from "@/lib/video-media-cache";
 import {
     extractUserTags,
@@ -792,9 +794,9 @@ export function PhotoViewer({
         }
         const url = mediaUrlsRef.current.get(file.id);
         mediaUrlsRef.current.delete(file.id);
-        if (file.metadata.fileType === FileType.video) {
-            invalidateVideoCache(file.id);
-        } else if (url) {
+        mediaByteSizesRef.current.delete(file.id);
+        invalidateVideoCache(file.id);
+        if (url) {
             URL.revokeObjectURL(url);
         }
         loadingIdsRef.current.delete(file.id);
@@ -1166,10 +1168,16 @@ export function PhotoViewer({
             const stillViewingSource =
                 sessionFiles[currentIndexRef.current]?.id === sourceId;
             const url = mediaUrlsRef.current.get(sourceId);
+            const byteSize = mediaByteSizesRef.current.get(sourceId);
             if (url) {
                 mediaUrlsRef.current.delete(sourceId);
                 mediaUrlsRef.current.set(uploaded.id, url);
             }
+            if (byteSize !== undefined) {
+                mediaByteSizesRef.current.delete(sourceId);
+                mediaByteSizesRef.current.set(uploaded.id, byteSize);
+            }
+            transferSessionVideoUrl(sourceId, uploaded.id);
             setSessionFiles((current) => current.map((entry) => (
                 entry.id === sourceId ? uploaded : entry
             )));
@@ -1197,6 +1205,7 @@ export function PhotoViewer({
             }
             const sourceId = file.id;
             const previousUrl = mediaUrlsRef.current.get(sourceId);
+            forgetSessionVideoUrl(sourceId);
             if (previousUrl) {
                 URL.revokeObjectURL(previousUrl);
             }
@@ -1206,6 +1215,9 @@ export function PhotoViewer({
                 }),
             );
             mediaUrlsRef.current.set(sourceId, url);
+            if (file.metadata.fileType === FileType.video) {
+                mediaByteSizesRef.current.set(sourceId, result.bytes.byteLength);
+            }
             setSlideMedia(sourceId, { status: "ready", url });
             setSessionFiles((current) => current.map((entry) => (
                 entry.id === sourceId ? result.optimisticFile : entry
@@ -1234,9 +1246,11 @@ export function PhotoViewer({
                         }
                     }
                     const staleUrl = mediaUrlsRef.current.get(sourceId);
+                    mediaUrlsRef.current.delete(sourceId);
+                    mediaByteSizesRef.current.delete(sourceId);
+                    forgetSessionVideoUrl(sourceId);
                     if (staleUrl) {
                         URL.revokeObjectURL(staleUrl);
-                        mediaUrlsRef.current.delete(sourceId);
                     }
                     setSlideMedia(sourceId, { status: "loading" });
                     setRetryKey((current) => current + 1);
@@ -1381,13 +1395,10 @@ export function PhotoViewer({
                 setShowDeleteConfirm(false);
 
                 const staleUrl = mediaUrlsRef.current.get(deletedId);
-                const deletedFile = sessionFilesRef.current.find(
-                    (entry) => entry.id === deletedId,
-                );
                 mediaUrlsRef.current.delete(deletedId);
-                if (deletedFile?.metadata.fileType === FileType.video) {
-                    invalidateVideoCache(deletedId);
-                } else if (staleUrl) {
+                mediaByteSizesRef.current.delete(deletedId);
+                invalidateVideoCache(deletedId);
+                if (staleUrl) {
                     URL.revokeObjectURL(staleUrl);
                 }
                 setMediaByFileId((current) => {

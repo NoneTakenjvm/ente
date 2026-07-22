@@ -151,6 +151,12 @@ export const useLibraryBootstrap: (
                             entry.fileId,
                         );
                         if (!bytes) {
+                            const {
+                                removeDerivedReplaceOutboxEntries,
+                            } = await import("@/lib/derived-replace-outbox");
+                            await removeDerivedReplaceOutboxEntries([
+                                entry.fileId,
+                            ]);
                             return;
                         }
                         const library: ReturnType<

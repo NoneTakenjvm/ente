@@ -134,28 +134,22 @@ const runH264Encode = async (
     input: Blob,
     onProgress?: (ratio: number) => void,
 ): Promise<Uint8Array> => {
-    try {
-        return await runFFmpeg(
-            [...argsBeforeOutput, ...h264Tail("copy")],
+    const run = async (audioMode: "copy" | "aac" | "none"): Promise<Uint8Array> => {
+        onProgress?.(0);
+        return runFFmpeg(
+            [...argsBeforeOutput, ...h264Tail(audioMode)],
             input,
             "mp4",
             onProgress,
         );
+    };
+    try {
+        return await run("copy");
     } catch {
         try {
-            return await runFFmpeg(
-                [...argsBeforeOutput, ...h264Tail("aac")],
-                input,
-                "mp4",
-                onProgress,
-            );
+            return await run("aac");
         } catch {
-            return await runFFmpeg(
-                [...argsBeforeOutput, ...h264Tail("none")],
-                input,
-                "mp4",
-                onProgress,
-            );
+            return await run("none");
         }
     }
 };

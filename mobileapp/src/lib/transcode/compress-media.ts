@@ -40,7 +40,7 @@ const blobFromBytes = (bytes: Uint8Array, mimeType: string): Blob =>
     new Blob([Uint8Array.from(bytes)], { type: mimeType });
 
 const evenScaleFilter = (maxLongEdge: number): string =>
-    `scale='min(${maxLongEdge},iw)':-2`;
+    `scale='trunc(min(${maxLongEdge}\\,iw)/2)*2':-2`;
 
 /**
  * Compress library media bytes for a derived upload copy.

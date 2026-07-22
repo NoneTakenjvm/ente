@@ -94,6 +94,40 @@ export const peekSessionVideo = (
     return { url: entry.url, byteSize: entry.byteSize };
 };
 
+/**
+ * Remove a session entry without revoking the URL (caller takes ownership).
+ */
+export const forgetSessionVideoUrl = (fileId: number): string | undefined => {
+    const entry = sessionCache.get(fileId);
+    if (!entry) {
+        return undefined;
+    }
+    sessionCache.delete(fileId);
+    return entry.url;
+};
+
+/**
+ * Move a session blob URL from one file id to another without revoking it.
+ */
+export const transferSessionVideoUrl = (
+    fromFileId: number,
+    toFileId: number,
+): void => {
+    const entry = sessionCache.get(fromFileId);
+    if (!entry) {
+        return;
+    }
+    sessionCache.delete(fromFileId);
+    const existing = sessionCache.get(toFileId);
+    if (existing && existing.url !== entry.url) {
+        URL.revokeObjectURL(existing.url);
+    }
+    sessionCache.set(toFileId, {
+        ...entry,
+        lastAccess: Date.now(),
+    });
+};
+
 export const clearVideoSessionCache = (): void => {
     for (const entry of sessionCache.values()) {
         URL.revokeObjectURL(entry.url);
@@ -102,7 +136,8 @@ export const clearVideoSessionCache = (): void => {
 };
 
 /**
- * Drop session + disk cache entries for a file (e.g. after trash or replace).
+ * Drop session + disk cache entries for a file (e.g. after trash).
+ * Revokes any session blob URL for {@link fileId}.
  */
 export const invalidateVideoCache = (fileId: number): void => {
     const entry = sessionCache.get(fileId);
@@ -110,6 +145,14 @@ export const invalidateVideoCache = (fileId: number): void => {
         URL.revokeObjectURL(entry.url);
         sessionCache.delete(fileId);
     }
+    void deleteFileCiphertext(fileId);
+};
+
+/**
+ * Clear disk ciphertext only — keep any session blob URL (e.g. during replace
+ * while the viewer still displays it under a remapped id).
+ */
+export const clearVideoDiskCache = (fileId: number): void => {
     void deleteFileCiphertext(fileId);
 };
 
