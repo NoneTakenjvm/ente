@@ -8,6 +8,7 @@ import {
     Minimize2,
     Settings,
     Tags,
+    Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -17,6 +18,7 @@ export type ManageSection =
     "similar" |
     "compress" |
     "archived" |
+    "trash" |
     "auto-crop" |
     "tags" |
     "settings";
@@ -56,6 +58,12 @@ const categories: {
         icon: Archive,
     },
     {
+        id: "trash",
+        title: "Trash",
+        description: "Restore or permanently delete trashed items.",
+        icon: Trash2,
+    },
+    {
         id: "auto-crop",
         title: "Auto-crop",
         description: "Find black borders and crop them away.",
@@ -80,6 +88,7 @@ const sectionTitles: Record<Exclude<ManageSection, "hub">, string> = {
     similar: "Similar photos",
     compress: "Compress",
     archived: "Archived images",
+    trash: "Trash",
     "auto-crop": "Auto-crop",
     tags: "Tags",
     settings: "Settings",

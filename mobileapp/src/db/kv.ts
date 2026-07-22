@@ -225,3 +225,52 @@ export const saveEncryptedDerivedReplaceOutbox = async (
         await encryptCachePayload(entries, cacheKey),
     );
 };
+
+/** Decrypted trash item persisted for offline / Manage → Trash. */
+export interface PersistedTrashItem {
+    file: EnteFile;
+    updatedAt: number;
+    deleteBy: number;
+}
+
+export interface PersistedTrashCollectionKey {
+    id: number;
+    key: string;
+}
+
+export const loadEncryptedTrashItems = async (
+    cacheKey: string,
+): Promise<PersistedTrashItem[] | undefined> => {
+    const payload = await getEncrypted("trashItems");
+    if (!payload) {
+        return undefined;
+    }
+    return decryptCachePayload<PersistedTrashItem[]>(payload, cacheKey);
+};
+
+export const saveEncryptedTrashItems = async (
+    items: PersistedTrashItem[],
+    cacheKey: string,
+): Promise<void> => {
+    await putEncrypted("trashItems", await encryptCachePayload(items, cacheKey));
+};
+
+export const loadEncryptedTrashCollectionKeys = async (
+    cacheKey: string,
+): Promise<PersistedTrashCollectionKey[] | undefined> => {
+    const payload = await getEncrypted("trashCollectionKeys");
+    if (!payload) {
+        return undefined;
+    }
+    return decryptCachePayload<PersistedTrashCollectionKey[]>(payload, cacheKey);
+};
+
+export const saveEncryptedTrashCollectionKeys = async (
+    keys: PersistedTrashCollectionKey[],
+    cacheKey: string,
+): Promise<void> => {
+    await putEncrypted(
+        "trashCollectionKeys",
+        await encryptCachePayload(keys, cacheKey),
+    );
+};

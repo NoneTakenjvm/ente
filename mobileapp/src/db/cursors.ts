@@ -1,6 +1,7 @@
 import { getOrganizerDB } from "./index";
 
 const collectionsUpdationTimeKey = "collections-updation-time";
+const trashLastUpdatedAtKey = "trash-last-updated-at";
 
 export const getCollectionSyncTime = async (
     collectionId: number,
@@ -33,4 +34,14 @@ export const getCollectionsUpdationTime = async (): Promise<number | undefined> 
 export const saveCollectionsUpdationTime = async (time: number): Promise<void> => {
     const db = await getOrganizerDB();
     await db.put("meta", time, collectionsUpdationTimeKey);
+};
+
+export const getTrashLastUpdatedAt = async (): Promise<number | undefined> => {
+    const db = await getOrganizerDB();
+    return db.get("meta", trashLastUpdatedAtKey);
+};
+
+export const saveTrashLastUpdatedAt = async (time: number): Promise<void> => {
+    const db = await getOrganizerDB();
+    await db.put("meta", time, trashLastUpdatedAtKey);
 };

@@ -7,12 +7,12 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-07-22 |
-| **Last agent / session** | Fix stuck carousel media: take session video URL ownership; loader identity on cancel; max 2 concurrent full-file loads with pump. Not committed. |
+| **Last agent / session** | Trash hardened (seed/sync race, empty cursor, keep thumbs, confirm purge) + Manage → Trash. Committing. |
 | **Current milestone** | Post-M8 UX / stability batch |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Device QA: fast-scroll carousel for stuck loads; then commit/push |)
+| **Next recommended action** | Device QA Manage → Trash restore/empty |)
 
-**Key storage (M3):** Master key and `cacheKey = HKDF(masterKey)` live in memory only. Metadata, collections, and tag index persist as blobs encrypted with `cacheKey` in IndexedDB (`ente-organizer-{userId}`). Thumbnails persist as server ciphertext (CDN bytes + decryption header) — readable only with `file.key` from decrypted metadata after login. **Videos** persist in IDB (`fileCiphertexts`) as server ciphertext **additionally wrapped with `cacheKey`** (size-capped LRU), plus an in-memory blob-URL session LRU; without login there is no `cacheKey`/`file.key`, so disk blobs are opaque. Sync cursors store timestamps only. Sign out clears memory; **Lock** wipes IDB + memory. Full-res **images** are never persisted.
+**Key storage (M3):** Master key and `cacheKey = HKDF(masterKey)` live in memory only. Metadata, collections, tag index, and **trash items** (+ trash collection keys) persist as blobs encrypted with `cacheKey` in IndexedDB (`ente-organizer-{userId}`). Thumbnails persist as server ciphertext (CDN bytes + decryption header) — readable only with `file.key` from decrypted metadata after login. **Videos** persist in IDB (`fileCiphertexts`) as server ciphertext **additionally wrapped with `cacheKey`** (size-capped LRU), plus an in-memory blob-URL session LRU; without login there is no `cacheKey`/`file.key`, so disk blobs are opaque. Sync cursors store timestamps only (including trash `lastUpdatedAt`). Sign out clears memory; **Lock** wipes IDB + memory. Full-res **images** are never persisted.
 
 ### Milestone completion (check when **all** exit criteria + checklist items for that milestone are done)
 

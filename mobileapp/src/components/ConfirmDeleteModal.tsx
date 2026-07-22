@@ -36,7 +36,7 @@ export function ConfirmDeleteModal({
                         Move this photo to trash?
                     </AlertDialogTitle>
                     <AlertDialogDescription>
-                        It can be restored from the Ente app.
+                        It can be restored from Manage → Trash within 30 days.
                     </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>

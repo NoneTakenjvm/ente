@@ -10,7 +10,9 @@ export type KvKey =
     | "tagOutbox"
     | "favoriteOutbox"
     | "visibilityOutbox"
-    | "derivedReplaceOutbox";
+    | "derivedReplaceOutbox"
+    | "trashItems"
+    | "trashCollectionKeys";
 
 export interface KvRecord {
     key: KvKey;

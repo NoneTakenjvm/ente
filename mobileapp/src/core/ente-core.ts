@@ -9,6 +9,7 @@ import type {
     CollectionFilesContext,
 } from "./api/collection-files";
 import {
+    getCollectionByID,
     getCollectionChanges,
     listOwnedCollections,
     type CollectionChange,
@@ -41,7 +42,12 @@ import {
     resetOrganizerConfigState,
     type BootstrapOrganizerConfigResult,
 } from "./organizer-config";
-import { moveToTrash } from "./api/trash";
+import {
+    deleteFromTrash,
+    emptyTrash,
+    moveToTrash,
+    restoreToCollection,
+} from "./api/trash";
 import {
     uploadCompressedImage as uploadCompressedImageToRemote,
     uploadCroppedImage as uploadCroppedImageToRemote,
@@ -180,6 +186,10 @@ export class EnteCore {
 
     getCollectionChanges(sinceTime: number): Promise<CollectionChange[]> {
         return getCollectionChanges(this.http, this.session, sinceTime);
+    }
+
+    getCollectionByID(collectionID: number): Promise<Collection> {
+        return getCollectionByID(this.http, this.session, collectionID);
     }
 
     getCollectionFileDiff(
@@ -464,10 +474,34 @@ export class EnteCore {
     }
 
     /**
-     * Move files to Ente trash (recoverable in the official app).
+     * Move files to Ente trash (recoverable for ~30 days).
      */
     moveFilesToTrash(files: EnteFile[]): Promise<void> {
         return moveToTrash(this.http, files);
+    }
+
+    /**
+     * Restore trashed files into {@link collection}.
+     */
+    restoreFilesFromTrash(
+        collection: Collection,
+        files: EnteFile[],
+    ): Promise<void> {
+        return restoreToCollection(this.http, collection, files);
+    }
+
+    /**
+     * Permanently delete files that are already in trash.
+     */
+    deleteFilesFromTrash(fileIDs: number[]): Promise<void> {
+        return deleteFromTrash(this.http, fileIDs);
+    }
+
+    /**
+     * Permanently empty trash up through {@link lastUpdatedAt}.
+     */
+    emptyTrash(lastUpdatedAt: number): Promise<void> {
+        return emptyTrash(this.http, lastUpdatedAt);
     }
 
     /**

@@ -111,6 +111,22 @@ export interface CreateRemoteCollectionOptions {
 }
 
 /**
+ * Fetch and decrypt a single collection by ID (including deleted-but-needed
+ * collections referenced by trash items).
+ */
+export const getCollectionByID = async (
+    http: HttpClient,
+    session: CoreSession,
+    collectionID: number,
+): Promise<Collection> => {
+    const { masterKey } = requireAuth(session);
+    const { collection } = CollectionResponse.parse(
+        await http.authFetchJSON(`/collections/${collectionID}`),
+    );
+    return remoteToCollection(collection, masterKey);
+};
+
+/**
  * Create a collection on remote and return its decrypted local representation.
  */
 export const createRemoteCollection = async (

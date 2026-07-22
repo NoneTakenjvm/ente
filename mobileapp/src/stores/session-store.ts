@@ -69,6 +69,9 @@ const resetDependentStores = (): void => {
     void import("./library-store").then(({ useLibraryStore }) => {
         useLibraryStore.getState().reset();
     });
+    void import("./trash-store").then(({ useTrashStore }) => {
+        useTrashStore.getState().reset();
+    });
     void import("./tag-store").then(({ useTagStore }) => {
         useTagStore.getState().reset();
     });
