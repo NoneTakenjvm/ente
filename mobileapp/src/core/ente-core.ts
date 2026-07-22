@@ -23,6 +23,7 @@ import {
     fetchEncryptedThumbnail,
     getDecryptedFile,
     getDecryptedThumbnail,
+    type BytesProgressCallback,
     type ServerCiphertext,
 } from "./download";
 import {
@@ -206,8 +207,11 @@ export class EnteCore {
         return requireAuth(this.session);
     }
 
-    getDecryptedFile(file: EnteFile): Promise<Uint8Array> {
-        return getDecryptedFile(this.http, this.session, file);
+    getDecryptedFile(
+        file: EnteFile,
+        onProgress?: BytesProgressCallback,
+    ): Promise<Uint8Array> {
+        return getDecryptedFile(this.http, this.session, file, onProgress);
     }
 
     getPublicMetadata(file: EnteFile): FilePublicMagicMetadataData {

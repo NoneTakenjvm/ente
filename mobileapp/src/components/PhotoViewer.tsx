@@ -36,6 +36,7 @@ import { VideoPlaybackControls } from "@/components/VideoPlaybackControls";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import { getEnteCore } from "@/core";
 import { usePinchZoom } from "@/hooks/use-pinch-zoom";
@@ -95,6 +96,8 @@ interface SlideLoader {
 interface SlideMedia {
     status: SlideStatus;
     url?: string;
+    /** Download percent 0–100 when known; undefined while indeterminate. */
+    progress?: number;
 }
 
 const CAROUSEL_TRANSITION_MS = 280;
@@ -487,13 +490,26 @@ export function PhotoViewer({
             loaders.push(loader);
 
             void getEnteCore()
-                .getDecryptedFile(slideFile)
+                .getDecryptedFile(slideFile, ({ loaded, total }) => {
+                    if (loader.cancelled || loader.timedOut || total <= 0) {
+                        return;
+                    }
+                    const progress = Math.min(
+                        100,
+                        Math.round((loaded / total) * 100),
+                    );
+                    setSlideMedia(slideFile.id, { status: "loading", progress });
+                })
                 .then(async (bytes) => {
                     window.clearTimeout(loader.timeoutId);
                     if (loader.cancelled) {
                         loadingIds.delete(slideFile.id);
                         return;
                     }
+                    setSlideMedia(slideFile.id, {
+                        status: "loading",
+                        progress: 100,
+                    });
                     const blob =
                         slideFile.metadata.fileType === FileType.video ?
                             new Blob([Uint8Array.from(bytes)], {
@@ -1390,9 +1406,29 @@ export function PhotoViewer({
                     ) : null
                 ) : slideMedia?.status === "loading" || !slideMedia?.url ? (
                     isActive ? (
-                        <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground">
-                            <Spinner />
-                            Loading…
+                        <div
+                            className="absolute inset-0 flex items-center justify-center"
+                            role="status"
+                            aria-label="Loading media"
+                        >
+                            <div className="flex w-48 flex-col items-center gap-2">
+                                {slideMedia?.progress !== undefined ? (
+                                    <>
+                                        <Progress
+                                            value={slideMedia.progress}
+                                            className="w-full"
+                                        />
+                                        <span className="text-xs tabular-nums text-muted-foreground">
+                                            {slideMedia.progress}%
+                                        </span>
+                                    </>
+                                ) : (
+                                    <div
+                                        className="h-1.5 w-full animate-pulse rounded-full bg-primary/50"
+                                        aria-hidden
+                                    />
+                                )}
+                            </div>
                         </div>
                     ) : null
                 ) : isVideo ? (
