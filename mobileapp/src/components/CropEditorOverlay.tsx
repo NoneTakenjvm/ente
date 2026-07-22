@@ -24,6 +24,7 @@ import {
     encodeBakedCrop,
     initialCropForDisplay,
 } from "@/lib/crop-editor";
+import { getLocalMediaOverride } from "@/lib/local-media-overrides";
 import { mimeTypeForFile } from "@/lib/media-kind";
 import { useLibraryStore } from "@/stores/library-store";
 import type { EnteFile } from "ente-media/file";
@@ -78,7 +79,9 @@ export function CropEditorOverlay({
 
         const loadBytes = async (): Promise<void> => {
             try {
-                const bytes = await getEnteCore().getDecryptedFile(file);
+                const bytes =
+                    getLocalMediaOverride(file.id) ??
+                    (await getEnteCore().getDecryptedFile(file));
                 if (cancelled) {
                     return;
                 }

@@ -27,6 +27,7 @@ import {
     videoCropChanged,
 } from "@/lib/crop-editor";
 import { mimeTypeForFile } from "@/lib/media-kind";
+import { getLocalMediaOverride } from "@/lib/local-media-overrides";
 import { logJsHeap } from "@/lib/memory-probe";
 import {
     applyVideoEdits,
@@ -106,7 +107,9 @@ export function VideoEditorOverlay({
 
         const loadBytes = async (): Promise<void> => {
             try {
-                const bytes = await getEnteCore().getDecryptedFile(file);
+                const bytes =
+                    getLocalMediaOverride(file.id) ??
+                    (await getEnteCore().getDecryptedFile(file));
                 if (cancelled) {
                     return;
                 }
