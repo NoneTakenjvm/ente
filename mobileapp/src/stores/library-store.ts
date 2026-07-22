@@ -204,6 +204,8 @@ interface LibraryState {
         mimeType: string,
     ) => Promise<EnteFile>;
     moveFilesToTrash: (fileIds: number[]) => Promise<void>;
+    /** Re-add files restored from trash into the local library snapshot. */
+    reinsertRestoredFiles: (files: EnteFile[]) => Promise<void>;
     batchUpdateTagsOnFiles: (
         fileIds: number[],
         mutator: TagMutator,
@@ -485,6 +487,10 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             );
         }
 
+        void import("@/stores/trash-store").then(({ useTrashStore }) => {
+            void useTrashStore.getState().hydrateFromCache();
+        });
+
         return Boolean(files?.length);
     },
 
@@ -560,6 +566,10 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 syncProgress: { current: 0, total: 0 },
             });
             await saveEncryptedFiles(allFiles, getSessionCacheKey());
+
+            void import("@/stores/trash-store").then(({ useTrashStore }) => {
+                void useTrashStore.getState().syncTrash(collections);
+            });
         } catch (error) {
             const offline =
                 typeof navigator !== "undefined" && !navigator.onLine;
@@ -1312,9 +1322,33 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         await saveEncryptedFiles(nextFiles, getSessionCacheKey());
         useTagStore.getState().rebuildFromFiles(nextFiles);
         useFavoritesStore.getState().removeTrashedFileIds([...trashedIds]);
-        await Promise.all(
-            [...trashedIds].map((fileId) => deleteThumbnailCiphertext(fileId)),
+        // Keep thumbnail ciphertext so Manage → Trash can still show previews;
+        // permanent delete / empty prunes caches.
+        void import("@/stores/trash-store").then(({ useTrashStore }) => {
+            void useTrashStore.getState().seedTrashedFiles(files);
+        });
+    },
+
+    reinsertRestoredFiles: async (files: EnteFile[]): Promise<void> => {
+        if (!files.length) {
+            return;
+        }
+        const byId = new Map(get().allFiles.map((file) => [file.id, file]));
+        for (const file of files) {
+            byId.set(file.id, file);
+        }
+        const nextFiles = [...byId.values()];
+        set({ allFiles: nextFiles });
+        await saveEncryptedFiles(nextFiles, getSessionCacheKey());
+        useTagStore.getState().rebuildFromFiles(nextFiles);
+        rebuildFavoritesFromLibrary(
+            getEnteCore().getUserID(),
+            get().collections,
+            nextFiles,
         );
+        for (const file of files) {
+            requestThumbnail(file);
+        }
     },
 
     batchUpdateTagsOnFiles: async (

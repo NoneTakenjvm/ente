@@ -15,6 +15,7 @@ import {
     type ManageSection,
 } from "@/components/manage/ManageHub";
 import { ManageArchivedPanel } from "@/components/manage/ManageArchivedPanel";
+import { ManageTrashPanel } from "@/components/manage/ManageTrashPanel";
 import { ManageAutoCropPanel } from "@/components/manage/ManageAutoCropPanel";
 import { ManageSettingsPanel } from "@/components/manage/ManageSettingsPanel";
 import { ManageTagsPanel } from "@/components/manage/ManageTagsPanel";
@@ -76,6 +77,7 @@ const parseManageSection = (value: string | string[] | undefined): ManageSection
         value === "similar" ||
         value === "compress" ||
         value === "archived" ||
+        value === "trash" ||
         value === "auto-crop" ||
         value === "tags" ||
         value === "settings"
@@ -328,6 +330,8 @@ export default function ManagePage(): JSX.Element {
             {section === "archived" ? (
                 <ManageArchivedPanel files={allFiles} />
             ) : null}
+
+            {section === "trash" ? <ManageTrashPanel /> : null}
 
             {section === "auto-crop" ? (
                 <ManageAutoCropPanel files={allFiles} />
