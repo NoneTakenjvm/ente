@@ -7,10 +7,10 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-07-22 |
-| **Last agent / session** | Carousel preload: keep 3 ahead + 1 behind; don't cancel in-flight loads on swipe. Also: video poster, cacheKey-wrapped video disk cache, download label+size. Not committed. |
+| **Last agent / session** | Fix stuck carousel media: take session video URL ownership; loader identity on cancel; max 2 concurrent full-file loads with pump. Not committed. |
 | **Current milestone** | Post-M8 UX / stability batch |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Device QA on carousel preload / video poster; commit when ready |)
+| **Next recommended action** | Device QA: fast-scroll carousel for stuck loads; then commit/push |)
 
 **Key storage (M3):** Master key and `cacheKey = HKDF(masterKey)` live in memory only. Metadata, collections, and tag index persist as blobs encrypted with `cacheKey` in IndexedDB (`ente-organizer-{userId}`). Thumbnails persist as server ciphertext (CDN bytes + decryption header) — readable only with `file.key` from decrypted metadata after login. **Videos** persist in IDB (`fileCiphertexts`) as server ciphertext **additionally wrapped with `cacheKey`** (size-capped LRU), plus an in-memory blob-URL session LRU; without login there is no `cacheKey`/`file.key`, so disk blobs are opaque. Sync cursors store timestamps only. Sign out clears memory; **Lock** wipes IDB + memory. Full-res **images** are never persisted.
 

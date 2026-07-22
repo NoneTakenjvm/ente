@@ -51,8 +51,8 @@ import {
     forgetSessionVideoUrl,
     invalidateVideoCache,
     loadCachedVideoBytes,
-    peekSessionVideo,
     retainSessionVideoUrl,
+    takeSessionVideoUrl,
     transferSessionVideoUrl,
 } from "@/lib/video-media-cache";
 import {
@@ -188,6 +188,8 @@ const MEDIA_LOAD_TIMEOUT_MS = 60_000;
  */
 const PRELOAD_AHEAD = 3;
 const PRELOAD_BEHIND = 1;
+/** Cap parallel full-file fetches so one hung download cannot saturate the browser. */
+const MAX_CONCURRENT_MEDIA_LOADS = 2;
 const TAP_MAX_MOVEMENT_PX = 10;
 const DOUBLE_TAP_MS = 300;
 const DOUBLE_TAP_MAX_DISTANCE_PX = 24;
@@ -553,10 +555,35 @@ export function PhotoViewer({
             sessionFiles.length,
         );
         const keepIds = new Set<number>();
+        const keepFiles: EnteFile[] = [];
 
         for (const index of keepIndices) {
-            keepIds.add(sessionFiles[index].id);
+            const slideFile = sessionFiles[index];
+            keepIds.add(slideFile.id);
+            keepFiles.push(slideFile);
         }
+
+        const releaseLoader = (loader: SlideLoader): void => {
+            // Only the active loader for this file may clear the slot — a
+            // cancelled predecessor must not wipe a newer in-flight load.
+            if (loadersByFileId.get(loader.fileId) !== loader) {
+                return;
+            }
+            loadersByFileId.delete(loader.fileId);
+            loadingIds.delete(loader.fileId);
+        };
+
+        const clearLoadingState = (fileId: number): void => {
+            setMediaByFileId((current) => {
+                const entry = current.get(fileId);
+                if (!entry || entry.status !== "loading") {
+                    return current;
+                }
+                const next = new Map(current);
+                next.delete(fileId);
+                return next;
+            });
+        };
 
         // Drop in-flight work only for slides that left the preload window.
         for (const [fileId, loader] of [...loadersByFileId.entries()]) {
@@ -567,99 +594,17 @@ export function PhotoViewer({
             window.clearTimeout(loader.timeoutId);
             loadersByFileId.delete(fileId);
             loadingIds.delete(fileId);
+            clearLoadingState(fileId);
         }
 
-        for (const index of keepIndices) {
-            const slideFile = sessionFiles[index];
+        let pumpLoads = (): void => undefined;
 
-            if (slideFile.metadata.fileType === FileType.video) {
-                requestThumbnail(slideFile);
-            }
-
-            const mediaOverride = getLocalMediaOverride(slideFile.id);
-            if (mediaOverride) {
-                // Keep an existing in-viewer URL (e.g. after revert/edit) —
-                // reloading would flash "loading" and can race-cancel.
-                if (mediaUrlsRef.current.has(slideFile.id)) {
-                    continue;
-                }
-                if (loadingIds.has(slideFile.id)) {
-                    continue;
-                }
-                loadingIds.add(slideFile.id);
-                setSlideMedia(slideFile.id, { status: "loading" });
-                const overrideLoader: SlideLoader = {
-                    fileId: slideFile.id,
-                    cancelled: false,
-                    timedOut: false,
-                    timeoutId: 0,
-                };
-                loadersByFileId.set(slideFile.id, overrideLoader);
-                void (async (): Promise<void> => {
-                    try {
-                        const blob =
-                            slideFile.metadata.fileType === FileType.video ?
-                                new Blob([Uint8Array.from(mediaOverride)], {
-                                    type: mimeTypeForFile(slideFile),
-                                }) :
-                                await toRenderableImageBlob(
-                                    slideFile,
-                                    mediaOverride,
-                                );
-                        if (overrideLoader.cancelled) {
-                            loadingIds.delete(slideFile.id);
-                            loadersByFileId.delete(slideFile.id);
-                            return;
-                        }
-                        const url = URL.createObjectURL(blob);
-                        const previousUrl = mediaUrlsRef.current.get(
-                            slideFile.id,
-                        );
-                        if (previousUrl) {
-                            URL.revokeObjectURL(previousUrl);
-                        }
-                        mediaUrlsRef.current.set(slideFile.id, url);
-                        if (slideFile.metadata.fileType === FileType.video) {
-                            mediaByteSizesRef.current.set(
-                                slideFile.id,
-                                blob.size,
-                            );
-                        }
-                        loadingIds.delete(slideFile.id);
-                        loadersByFileId.delete(slideFile.id);
-                        setSlideMedia(slideFile.id, { status: "ready", url });
-                    } catch {
-                        loadingIds.delete(slideFile.id);
-                        loadersByFileId.delete(slideFile.id);
-                        if (!overrideLoader.cancelled) {
-                            setSlideMedia(slideFile.id, { status: "error" });
-                        }
-                    }
-                })();
-                continue;
-            }
-
+        const startNetworkLoad = (slideFile: EnteFile): void => {
             if (
                 mediaUrlsRef.current.has(slideFile.id) ||
                 loadingIds.has(slideFile.id)
             ) {
-                continue;
-            }
-
-            if (slideFile.metadata.fileType === FileType.video) {
-                const sessionHit = peekSessionVideo(slideFile.id);
-                if (sessionHit) {
-                    mediaUrlsRef.current.set(slideFile.id, sessionHit.url);
-                    mediaByteSizesRef.current.set(
-                        slideFile.id,
-                        sessionHit.byteSize,
-                    );
-                    setSlideMedia(slideFile.id, {
-                        status: "ready",
-                        url: sessionHit.url,
-                    });
-                    continue;
-                }
+                return;
             }
 
             loadingIds.add(slideFile.id);
@@ -673,9 +618,9 @@ export function PhotoViewer({
                         return;
                     }
                     loader.timedOut = true;
-                    loadingIds.delete(slideFile.id);
-                    loadersByFileId.delete(slideFile.id);
+                    releaseLoader(loader);
                     setSlideMedia(slideFile.id, { status: "error" });
+                    pumpLoads();
                 }, MEDIA_LOAD_TIMEOUT_MS),
             };
             loadersByFileId.set(slideFile.id, loader);
@@ -713,8 +658,8 @@ export function PhotoViewer({
                 .then(async (bytes) => {
                     window.clearTimeout(loader.timeoutId);
                     if (loader.cancelled) {
-                        loadingIds.delete(slideFile.id);
-                        loadersByFileId.delete(slideFile.id);
+                        releaseLoader(loader);
+                        pumpLoads();
                         return;
                     }
                     setSlideMedia(slideFile.id, {
@@ -730,8 +675,8 @@ export function PhotoViewer({
                             }) :
                             await toRenderableImageBlob(slideFile, bytes);
                     if (loader.cancelled) {
-                        loadingIds.delete(slideFile.id);
-                        loadersByFileId.delete(slideFile.id);
+                        releaseLoader(loader);
+                        pumpLoads();
                         return;
                     }
                     const url = URL.createObjectURL(blob);
@@ -739,19 +684,127 @@ export function PhotoViewer({
                     if (isVideo) {
                         mediaByteSizesRef.current.set(slideFile.id, blob.size);
                     }
-                    loadingIds.delete(slideFile.id);
-                    loadersByFileId.delete(slideFile.id);
+                    releaseLoader(loader);
                     setSlideMedia(slideFile.id, { status: "ready", url });
+                    pumpLoads();
                 })
                 .catch(() => {
                     window.clearTimeout(loader.timeoutId);
-                    loadingIds.delete(slideFile.id);
-                    loadersByFileId.delete(slideFile.id);
+                    releaseLoader(loader);
                     if (!loader.cancelled) {
                         setSlideMedia(slideFile.id, { status: "error" });
                     }
+                    pumpLoads();
                 });
+        };
+
+        pumpLoads = (): void => {
+            let inFlight = loadersByFileId.size;
+            for (const slideFile of keepFiles) {
+                if (inFlight >= MAX_CONCURRENT_MEDIA_LOADS) {
+                    break;
+                }
+                if (
+                    mediaUrlsRef.current.has(slideFile.id) ||
+                    loadingIds.has(slideFile.id)
+                ) {
+                    continue;
+                }
+                if (getLocalMediaOverride(slideFile.id)) {
+                    continue;
+                }
+                startNetworkLoad(slideFile);
+                inFlight += 1;
+            }
+        };
+
+        for (const slideFile of keepFiles) {
+            if (slideFile.metadata.fileType === FileType.video) {
+                requestThumbnail(slideFile);
+            }
+
+            const mediaOverride = getLocalMediaOverride(slideFile.id);
+            if (mediaOverride) {
+                if (mediaUrlsRef.current.has(slideFile.id)) {
+                    continue;
+                }
+                if (loadingIds.has(slideFile.id)) {
+                    continue;
+                }
+                loadingIds.add(slideFile.id);
+                setSlideMedia(slideFile.id, { status: "loading" });
+                const overrideLoader: SlideLoader = {
+                    fileId: slideFile.id,
+                    cancelled: false,
+                    timedOut: false,
+                    timeoutId: 0,
+                };
+                loadersByFileId.set(slideFile.id, overrideLoader);
+                void (async (): Promise<void> => {
+                    try {
+                        const blob =
+                            slideFile.metadata.fileType === FileType.video ?
+                                new Blob([Uint8Array.from(mediaOverride)], {
+                                    type: mimeTypeForFile(slideFile),
+                                }) :
+                                await toRenderableImageBlob(
+                                    slideFile,
+                                    mediaOverride,
+                                );
+                        if (overrideLoader.cancelled) {
+                            releaseLoader(overrideLoader);
+                            pumpLoads();
+                            return;
+                        }
+                        const url = URL.createObjectURL(blob);
+                        const previousUrl = mediaUrlsRef.current.get(
+                            slideFile.id,
+                        );
+                        if (previousUrl) {
+                            URL.revokeObjectURL(previousUrl);
+                        }
+                        mediaUrlsRef.current.set(slideFile.id, url);
+                        if (slideFile.metadata.fileType === FileType.video) {
+                            mediaByteSizesRef.current.set(
+                                slideFile.id,
+                                blob.size,
+                            );
+                        }
+                        releaseLoader(overrideLoader);
+                        setSlideMedia(slideFile.id, { status: "ready", url });
+                        pumpLoads();
+                    } catch {
+                        releaseLoader(overrideLoader);
+                        if (!overrideLoader.cancelled) {
+                            setSlideMedia(slideFile.id, { status: "error" });
+                        }
+                        pumpLoads();
+                    }
+                })();
+                continue;
+            }
+
+            if (mediaUrlsRef.current.has(slideFile.id)) {
+                continue;
+            }
+
+            if (slideFile.metadata.fileType === FileType.video) {
+                const sessionHit = takeSessionVideoUrl(slideFile.id);
+                if (sessionHit) {
+                    mediaUrlsRef.current.set(slideFile.id, sessionHit.url);
+                    mediaByteSizesRef.current.set(
+                        slideFile.id,
+                        sessionHit.byteSize,
+                    );
+                    setSlideMedia(slideFile.id, {
+                        status: "ready",
+                        url: sessionHit.url,
+                    });
+                }
+            }
         }
+
+        pumpLoads();
 
         for (const [fileId, url] of [...mediaUrlsRef.current.entries()]) {
             if (keepIds.has(fileId)) {
@@ -968,6 +1021,31 @@ export function PhotoViewer({
         setSlideMedia(file.id, { status: "idle" });
         setRetryKey((k) => k + 1);
     }, [file, setSlideMedia]);
+
+    /**
+     * Blob URL revoked under us (e.g. session LRU) — drop it and reload.
+     */
+    const handleBrokenSlideMedia = useCallback(
+        (fileId: number): void => {
+            const activeLoader = mediaLoadersRef.current.get(fileId);
+            if (activeLoader) {
+                activeLoader.cancelled = true;
+                window.clearTimeout(activeLoader.timeoutId);
+                mediaLoadersRef.current.delete(fileId);
+            }
+            const url = mediaUrlsRef.current.get(fileId);
+            if (!url) {
+                return;
+            }
+            mediaUrlsRef.current.delete(fileId);
+            mediaByteSizesRef.current.delete(fileId);
+            loadingIdsRef.current.delete(fileId);
+            URL.revokeObjectURL(url);
+            setSlideMedia(fileId, { status: "idle" });
+            setRetryKey((key) => key + 1);
+        },
+        [setSlideMedia],
+    );
 
     const finishCarouselDrag = useCallback((mode?: CarouselDragMode): void => {
         if (mode === "dismiss") {
@@ -1710,6 +1788,11 @@ export function PhotoViewer({
                                     activeVideoThumb.url :
                                     undefined
                             }
+                            onError={() => {
+                                if (slideFile) {
+                                    handleBrokenSlideMedia(slideFile.id);
+                                }
+                            }}
                         />
                     </div>
                 ) : (
@@ -1753,10 +1836,9 @@ export function PhotoViewer({
                             alt=""
                             draggable={false}
                             onError={() => {
-                                if (!slideFile) {
-                                    return;
+                                if (slideFile) {
+                                    handleBrokenSlideMedia(slideFile.id);
                                 }
-                                setSlideMedia(slideFile.id, { status: "error" });
                             }}
                             onLoad={() => {
                                 if (
