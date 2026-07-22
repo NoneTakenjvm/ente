@@ -6,6 +6,7 @@ import {
     useSyncExternalStore,
     type JSX,
     type PointerEvent as ReactPointerEvent,
+    type ReactNode,
     type TouchEvent as ReactTouchEvent,
 } from "react";
 import {
@@ -106,6 +107,72 @@ interface SlideMedia {
     url?: string;
     /** Download percent 0–100 when known; undefined while indeterminate. */
     progress?: number;
+    bytesLoaded?: number;
+    bytesTotal?: number;
+}
+
+const formatDownloadBytes = (bytes: number): string => {
+    if (!Number.isFinite(bytes) || bytes < 0) {
+        return "?";
+    }
+    if (bytes < 1024) {
+        return `${Math.round(bytes)} B`;
+    }
+    if (bytes < 1024 * 1024) {
+        return `${(bytes / 1024).toFixed(1)} KB`;
+    }
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+/**
+ * Label + optional size/progress for full-media download in the viewer.
+ */
+function MediaDownloadIndicator({
+    kind,
+    progress,
+    bytesLoaded,
+    bytesTotal,
+}: {
+    kind: "video" | "photo";
+    progress?: number;
+    bytesLoaded?: number;
+    bytesTotal?: number;
+}): JSX.Element {
+    const label =
+        kind === "video" ? "Downloading video..." : "Downloading photo...";
+    const sizeLabel =
+        bytesLoaded !== undefined &&
+        bytesTotal !== undefined &&
+        bytesTotal > 0 ?
+            `${formatDownloadBytes(bytesLoaded)} / ${formatDownloadBytes(bytesTotal)}` :
+            bytesLoaded !== undefined && bytesLoaded > 0 ?
+                formatDownloadBytes(bytesLoaded) :
+                undefined;
+
+    return (
+        <div
+            className="flex w-52 flex-col items-center gap-1.5"
+            role="status"
+            aria-label={label}
+        >
+            <span className="text-center text-xs text-muted-foreground">
+                {label}
+            </span>
+            {sizeLabel ? (
+                <span className="text-xs tabular-nums text-muted-foreground">
+                    {sizeLabel}
+                </span>
+            ) : null}
+            {progress !== undefined ? (
+                <Progress value={progress} className="w-full" />
+            ) : (
+                <div
+                    className="h-1.5 w-full animate-pulse rounded-full bg-primary/50"
+                    aria-hidden
+                />
+            )}
+        </div>
+    );
 }
 
 const CAROUSEL_TRANSITION_MS = 280;
@@ -115,11 +182,82 @@ const CAROUSEL_DRAG_DEAD_ZONE_PX = 8;
 const CHROME_HIDE_MS = 2000;
 /** Full-res download + HEIC convert can exceed a few seconds on desktop. */
 const MEDIA_LOAD_TIMEOUT_MS = 60_000;
+/**
+ * Decoded media kept in the viewer: prefer ahead (typical swipe direction)
+ * over behind so forward browsing rarely hits a loading screen.
+ */
+const PRELOAD_AHEAD = 3;
+const PRELOAD_BEHIND = 1;
 const TAP_MAX_MOVEMENT_PX = 10;
 const DOUBLE_TAP_MS = 300;
 const DOUBLE_TAP_MAX_DISTANCE_PX = 24;
 const DISMISS_THRESHOLD_MIN_PX = 80;
 const DISMISS_THRESHOLD_RATIO = 0.15;
+
+/**
+ * Indices to keep loaded around {@link current}, current first then ahead then behind.
+ */
+const preloadSlideIndices = (
+    current: number,
+    length: number,
+): number[] => {
+    const ordered: number[] = [];
+    const seen = new Set<number>();
+    const push = (index: number): void => {
+        if (index < 0 || index >= length || seen.has(index)) {
+            return;
+        }
+        seen.add(index);
+        ordered.push(index);
+    };
+    push(current);
+    for (let distance = 1; distance <= PRELOAD_AHEAD; distance++) {
+        push(current + distance);
+    }
+    for (let distance = 1; distance <= PRELOAD_BEHIND; distance++) {
+        push(current - distance);
+    }
+    return ordered;
+};
+
+/**
+ * Show the cached gallery thumbnail while a video slide decrypts/downloads.
+ */
+function VideoSlidePoster({
+    file,
+    children,
+}: {
+    file: EnteFile;
+    children?: ReactNode;
+}): JSX.Element {
+    const thumb = useSyncExternalStore(
+        (listener) => subscribeThumbnail(file.id, listener),
+        () => getThumbnailEntry(file.id),
+        () => getThumbnailEntry(0),
+    );
+
+    useEffect((): void => {
+        requestThumbnail(file);
+    }, [file]);
+
+    return (
+        <div className="absolute inset-0 bg-black/40">
+            {thumb.status === "ready" && thumb.url ? (
+                <img
+                    className="pointer-events-none size-full object-contain select-none"
+                    src={thumb.url}
+                    alt=""
+                    draggable={false}
+                />
+            ) : null}
+            {children ? (
+                <div className="absolute inset-0 flex items-center justify-center">
+                    {children}
+                </div>
+            ) : null}
+        </div>
+    );
+}
 
 /**
  * Decode and pause on the first frame so the preview is not black when autoplay is off.
@@ -210,6 +348,7 @@ export function PhotoViewer({
     const mediaUrlsRef = useRef<Map<number, string>>(new Map());
     const mediaByteSizesRef = useRef<Map<number, number>>(new Map());
     const loadingIdsRef = useRef<Set<number>>(new Set());
+    const mediaLoadersRef = useRef<Map<number, SlideLoader>>(new Map());
     const viewerFileIdRef = useRef<number>(initialFileId);
     const currentIndexRef = useRef<number>(currentIndex);
     const sessionFilesRef = useRef<EnteFile[]>(sessionFiles);
@@ -408,26 +547,43 @@ export function PhotoViewer({
 
     useEffect(() => {
         const loadingIds = loadingIdsRef.current;
-        const visibleIndices = [
-            currentIndex - 1,
+        const loadersByFileId = mediaLoadersRef.current;
+        const keepIndices = preloadSlideIndices(
             currentIndex,
-            currentIndex + 1,
-        ];
-        const visibleIds = new Set<number>();
-        const loaders: SlideLoader[] = [];
+            sessionFiles.length,
+        );
+        const keepIds = new Set<number>();
 
-        for (const index of visibleIndices) {
-            if (index < 0 || index >= sessionFiles.length) {
+        for (const index of keepIndices) {
+            keepIds.add(sessionFiles[index].id);
+        }
+
+        // Drop in-flight work only for slides that left the preload window.
+        for (const [fileId, loader] of [...loadersByFileId.entries()]) {
+            if (keepIds.has(fileId)) {
                 continue;
             }
+            loader.cancelled = true;
+            window.clearTimeout(loader.timeoutId);
+            loadersByFileId.delete(fileId);
+            loadingIds.delete(fileId);
+        }
+
+        for (const index of keepIndices) {
             const slideFile = sessionFiles[index];
-            visibleIds.add(slideFile.id);
+
+            if (slideFile.metadata.fileType === FileType.video) {
+                requestThumbnail(slideFile);
+            }
 
             const mediaOverride = getLocalMediaOverride(slideFile.id);
             if (mediaOverride) {
                 // Keep an existing in-viewer URL (e.g. after revert/edit) —
                 // reloading would flash "loading" and can race-cancel.
                 if (mediaUrlsRef.current.has(slideFile.id)) {
+                    continue;
+                }
+                if (loadingIds.has(slideFile.id)) {
                     continue;
                 }
                 loadingIds.add(slideFile.id);
@@ -438,7 +594,7 @@ export function PhotoViewer({
                     timedOut: false,
                     timeoutId: 0,
                 };
-                loaders.push(overrideLoader);
+                loadersByFileId.set(slideFile.id, overrideLoader);
                 void (async (): Promise<void> => {
                     try {
                         const blob =
@@ -452,6 +608,7 @@ export function PhotoViewer({
                                 );
                         if (overrideLoader.cancelled) {
                             loadingIds.delete(slideFile.id);
+                            loadersByFileId.delete(slideFile.id);
                             return;
                         }
                         const url = URL.createObjectURL(blob);
@@ -469,9 +626,11 @@ export function PhotoViewer({
                             );
                         }
                         loadingIds.delete(slideFile.id);
+                        loadersByFileId.delete(slideFile.id);
                         setSlideMedia(slideFile.id, { status: "ready", url });
                     } catch {
                         loadingIds.delete(slideFile.id);
+                        loadersByFileId.delete(slideFile.id);
                         if (!overrideLoader.cancelled) {
                             setSlideMedia(slideFile.id, { status: "error" });
                         }
@@ -515,46 +674,39 @@ export function PhotoViewer({
                     }
                     loader.timedOut = true;
                     loadingIds.delete(slideFile.id);
+                    loadersByFileId.delete(slideFile.id);
                     setSlideMedia(slideFile.id, { status: "error" });
                 }, MEDIA_LOAD_TIMEOUT_MS),
             };
-            loaders.push(loader);
+            loadersByFileId.set(slideFile.id, loader);
 
             const isVideo = slideFile.metadata.fileType === FileType.video;
+            const reportDownloadProgress = ({
+                loaded,
+                total,
+            }: {
+                loaded: number;
+                total: number;
+            }): void => {
+                if (loader.cancelled || loader.timedOut) {
+                    return;
+                }
+                setSlideMedia(slideFile.id, {
+                    status: "loading",
+                    progress:
+                        total > 0 ?
+                            Math.min(100, Math.round((loaded / total) * 100)) :
+                            undefined,
+                    bytesLoaded: loaded,
+                    bytesTotal: total > 0 ? total : undefined,
+                });
+            };
             const loadBytes =
                 isVideo ?
-                    loadCachedVideoBytes(slideFile, ({ loaded, total }) => {
-                        if (loader.cancelled || loader.timedOut || total <= 0) {
-                            return;
-                        }
-                        const progress = Math.min(
-                            100,
-                            Math.round((loaded / total) * 100),
-                        );
-                        setSlideMedia(slideFile.id, {
-                            status: "loading",
-                            progress,
-                        });
-                    }) :
+                    loadCachedVideoBytes(slideFile, reportDownloadProgress) :
                     getEnteCore().getDecryptedFile(
                         slideFile,
-                        ({ loaded, total }) => {
-                            if (
-                                loader.cancelled ||
-                                loader.timedOut ||
-                                total <= 0
-                            ) {
-                                return;
-                            }
-                            const progress = Math.min(
-                                100,
-                                Math.round((loaded / total) * 100),
-                            );
-                            setSlideMedia(slideFile.id, {
-                                status: "loading",
-                                progress,
-                            });
-                        },
+                        reportDownloadProgress,
                     );
 
             void loadBytes
@@ -562,11 +714,14 @@ export function PhotoViewer({
                     window.clearTimeout(loader.timeoutId);
                     if (loader.cancelled) {
                         loadingIds.delete(slideFile.id);
+                        loadersByFileId.delete(slideFile.id);
                         return;
                     }
                     setSlideMedia(slideFile.id, {
                         status: "loading",
                         progress: 100,
+                        bytesLoaded: bytes.byteLength,
+                        bytesTotal: bytes.byteLength,
                     });
                     const blob =
                         isVideo ?
@@ -576,6 +731,7 @@ export function PhotoViewer({
                             await toRenderableImageBlob(slideFile, bytes);
                     if (loader.cancelled) {
                         loadingIds.delete(slideFile.id);
+                        loadersByFileId.delete(slideFile.id);
                         return;
                     }
                     const url = URL.createObjectURL(blob);
@@ -584,11 +740,13 @@ export function PhotoViewer({
                         mediaByteSizesRef.current.set(slideFile.id, blob.size);
                     }
                     loadingIds.delete(slideFile.id);
+                    loadersByFileId.delete(slideFile.id);
                     setSlideMedia(slideFile.id, { status: "ready", url });
                 })
                 .catch(() => {
                     window.clearTimeout(loader.timeoutId);
                     loadingIds.delete(slideFile.id);
+                    loadersByFileId.delete(slideFile.id);
                     if (!loader.cancelled) {
                         setSlideMedia(slideFile.id, { status: "error" });
                     }
@@ -596,47 +754,48 @@ export function PhotoViewer({
         }
 
         for (const [fileId, url] of [...mediaUrlsRef.current.entries()]) {
-            if (!visibleIds.has(fileId)) {
-                mediaUrlsRef.current.delete(fileId);
-                loadingIds.delete(fileId);
-                const leftFile = sessionFiles.find(
-                    (entry) => entry.id === fileId,
+            if (keepIds.has(fileId)) {
+                continue;
+            }
+            mediaUrlsRef.current.delete(fileId);
+            loadingIds.delete(fileId);
+            const leftFile = sessionFiles.find(
+                (entry) => entry.id === fileId,
+            );
+            const knownSize = mediaByteSizesRef.current.get(fileId);
+            mediaByteSizesRef.current.delete(fileId);
+            if (leftFile?.metadata.fileType === FileType.video) {
+                retainSessionVideoUrl(
+                    fileId,
+                    url,
+                    knownSize ?? leftFile.info?.fileSize ?? 0,
                 );
-                const knownSize = mediaByteSizesRef.current.get(fileId);
-                mediaByteSizesRef.current.delete(fileId);
-                if (leftFile?.metadata.fileType === FileType.video) {
-                    retainSessionVideoUrl(
-                        fileId,
-                        url,
-                        knownSize ?? leftFile.info?.fileSize ?? 0,
-                    );
-                } else {
-                    URL.revokeObjectURL(url);
+            } else {
+                URL.revokeObjectURL(url);
+            }
+            setMediaByFileId((current) => {
+                if (!current.has(fileId)) {
+                    return current;
                 }
-                setMediaByFileId((current) => {
-                    if (!current.has(fileId)) {
-                        return current;
-                    }
-                    const next = new Map(current);
-                    next.delete(fileId);
-                    return next;
-                });
-            }
+                const next = new Map(current);
+                next.delete(fileId);
+                return next;
+            });
         }
-
-        return (): void => {
-            for (const loader of loaders) {
-                loader.cancelled = true;
-                window.clearTimeout(loader.timeoutId);
-                loadingIds.delete(loader.fileId);
-            }
-        };
     }, [currentIndex, retryKey, sessionFiles, setSlideMedia]);
 
     useEffect((): (() => void) => {
         const urls = mediaUrlsRef.current;
         const sizes = mediaByteSizesRef.current;
+        const loaders = mediaLoadersRef.current;
+        const loadingIds = loadingIdsRef.current;
         return (): void => {
+            for (const loader of loaders.values()) {
+                loader.cancelled = true;
+                window.clearTimeout(loader.timeoutId);
+            }
+            loaders.clear();
+            loadingIds.clear();
             for (const [fileId, url] of [...urls.entries()]) {
                 const leftFile = sessionFilesRef.current.find(
                     (entry) => entry.id === fileId,
@@ -791,6 +950,12 @@ export function PhotoViewer({
     const handleRetry = useCallback((): void => {
         if (!file) {
             return;
+        }
+        const activeLoader = mediaLoadersRef.current.get(file.id);
+        if (activeLoader) {
+            activeLoader.cancelled = true;
+            window.clearTimeout(activeLoader.timeoutId);
+            mediaLoadersRef.current.delete(file.id);
         }
         const url = mediaUrlsRef.current.get(file.id);
         mediaUrlsRef.current.delete(file.id);
@@ -1509,45 +1674,39 @@ export function PhotoViewer({
                         </div>
                     ) : null
                 ) : slideMedia?.status === "loading" || !slideMedia?.url ? (
-                    isActive ? (
-                        <div
-                            className="absolute inset-0 flex items-center justify-center"
-                            role="status"
-                            aria-label="Loading media"
-                        >
-                            <div className="flex w-48 flex-col items-center gap-2">
-                                {slideMedia?.progress !== undefined ? (
-                                    <>
-                                        <Progress
-                                            value={slideMedia.progress}
-                                            className="w-full"
-                                        />
-                                        <span className="text-xs tabular-nums text-muted-foreground">
-                                            {slideMedia.progress}%
-                                        </span>
-                                    </>
-                                ) : (
-                                    <div
-                                        className="h-1.5 w-full animate-pulse rounded-full bg-primary/50"
-                                        aria-hidden
-                                    />
-                                )}
-                            </div>
+                    isVideo && slideFile ? (
+                        <VideoSlidePoster file={slideFile}>
+                            {isActive ? (
+                                <MediaDownloadIndicator
+                                    kind="video"
+                                    progress={slideMedia?.progress}
+                                    bytesLoaded={slideMedia?.bytesLoaded}
+                                    bytesTotal={slideMedia?.bytesTotal}
+                                />
+                            ) : null}
+                        </VideoSlidePoster>
+                    ) : isActive ? (
+                        <div className="absolute inset-0 flex items-center justify-center">
+                            <MediaDownloadIndicator
+                                kind="photo"
+                                progress={slideMedia?.progress}
+                                bytesLoaded={slideMedia?.bytesLoaded}
+                                bytesTotal={slideMedia?.bytesTotal}
+                            />
                         </div>
                     ) : null
                 ) : isVideo ? (
                     <div className="absolute inset-0">
+                        <VideoSlidePoster file={slideFile!} />
                         <video
                             ref={isActive ? activeVideoRef : undefined}
-                            className="pointer-events-none size-full object-contain select-none [-webkit-touch-callout:none]"
+                            className="pointer-events-none absolute inset-0 size-full object-contain select-none [-webkit-touch-callout:none]"
                             src={slideMedia.url}
                             loop={videoLoop}
                             playsInline
                             preload={videoAutoPlay ? "metadata" : "auto"}
                             poster={
-                                isActive &&
-                                !videoAutoPlay &&
-                                activeVideoThumb.url ?
+                                isActive && activeVideoThumb.url ?
                                     activeVideoThumb.url :
                                     undefined
                             }

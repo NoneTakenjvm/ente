@@ -1,6 +1,6 @@
 import { deleteDB, openDB, type IDBPDatabase } from "idb";
 
-const dbVersion = 3;
+const dbVersion = 4;
 
 export type KvKey =
     | "collections"
@@ -25,13 +25,18 @@ export interface ThumbnailRecord {
 }
 
 /**
- * Server ciphertext for a full file (videos). Stored as ArrayBuffer to avoid
- * base64 expansion of multi‑MB payloads.
+ * Full-file video bytes on disk: Ente server ciphertext wrapped again with the
+ * session {@code cacheKey}. Without login (no cacheKey / file.key) the blob is
+ * opaque. {@link decryptionHeader} is the cacheKey layer; {@link fileDecryptionHeader}
+ * is the original stream header for {@code file.key}.
+ *
+ * Legacy rows may omit {@link fileDecryptionHeader}; those are deleted on read.
  */
 export interface FileCiphertextRecord {
     fileId: number;
     encryptedData: ArrayBuffer;
     decryptionHeader: string;
+    fileDecryptionHeader?: string;
     byteSize: number;
     lastAccess: number;
 }
