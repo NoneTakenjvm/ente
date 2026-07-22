@@ -7,12 +7,12 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-07-22 |
-| **Last agent / session** | Review pass: fixed video blob-URL ownership on replace/delete, legacy outbox migrate, orphan outbox drop, even scale, encode progress reset |
+| **Last agent / session** | Carousel preload: keep 3 ahead + 1 behind; don't cancel in-flight loads on swipe. Also: video poster, cacheKey-wrapped video disk cache, download label+size. Not committed. |
 | **Current milestone** | Post-M8 UX / stability batch |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Device QA full batch: carousel delete, video cache scroll-back, compress preview/progress, crop save |)
+| **Next recommended action** | Device QA on carousel preload / video poster; commit when ready |)
 
-**Key storage (M3):** Master key and `cacheKey = HKDF(masterKey)` live in memory only. Metadata, collections, and tag index persist as blobs encrypted with `cacheKey` in IndexedDB (`ente-organizer-{userId}`). Thumbnails persist as server ciphertext (CDN bytes + decryption header) — readable only with `file.key` from decrypted metadata after login. **Videos** may also persist server ciphertext in IDB (`fileCiphertexts`, size-capped LRU) plus an in-memory blob-URL session LRU so carousel scroll-back does not re-download; still requires `file.key` after login. Sync cursors store timestamps only. Sign out clears memory; **Lock** wipes IDB + memory. Full-res **images** are never persisted.
+**Key storage (M3):** Master key and `cacheKey = HKDF(masterKey)` live in memory only. Metadata, collections, and tag index persist as blobs encrypted with `cacheKey` in IndexedDB (`ente-organizer-{userId}`). Thumbnails persist as server ciphertext (CDN bytes + decryption header) — readable only with `file.key` from decrypted metadata after login. **Videos** persist in IDB (`fileCiphertexts`) as server ciphertext **additionally wrapped with `cacheKey`** (size-capped LRU), plus an in-memory blob-URL session LRU; without login there is no `cacheKey`/`file.key`, so disk blobs are opaque. Sync cursors store timestamps only. Sign out clears memory; **Lock** wipes IDB + memory. Full-res **images** are never persisted.
 
 ### Milestone completion (check when **all** exit criteria + checklist items for that milestone are done)
 
