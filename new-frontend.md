@@ -7,12 +7,12 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-07-22 |
-| **Last agent / session** | Done: centered viewer load bar with accurate download % (streamed fetch + Content-Length / fileSize) |
+| **Last agent / session** | Done: video session blob-URL LRU (~120MB) + encrypted IDB ciphertext cache (~400MB LRU); images still not persisted |
 | **Current milestone** | Post-M8 UX / stability batch |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Device QA: progress bar on slow network; notch inset; crop reopen after save |)
+| **Next recommended action** | Device QA: scroll away/back on videos; cold restart disk hit; watch quota / memory |)
 
-**Key storage (M3):** Master key and `cacheKey = HKDF(masterKey)` live in memory only. Metadata, collections, and tag index persist as blobs encrypted with `cacheKey` in IndexedDB (`ente-organizer-{userId}`). Thumbnails persist as server ciphertext (CDN bytes + decryption header) — readable only with `file.key` from decrypted metadata after login. Sync cursors store timestamps only. Sign out clears memory; **Lock** wipes IDB + memory. Full-res images are never persisted.
+**Key storage (M3):** Master key and `cacheKey = HKDF(masterKey)` live in memory only. Metadata, collections, and tag index persist as blobs encrypted with `cacheKey` in IndexedDB (`ente-organizer-{userId}`). Thumbnails persist as server ciphertext (CDN bytes + decryption header) — readable only with `file.key` from decrypted metadata after login. **Videos** may also persist server ciphertext in IDB (`fileCiphertexts`, size-capped LRU) plus an in-memory blob-URL session LRU so carousel scroll-back does not re-download; still requires `file.key` after login. Sync cursors store timestamps only. Sign out clears memory; **Lock** wipes IDB + memory. Full-res **images** are never persisted.
 
 ### Milestone completion (check when **all** exit criteria + checklist items for that milestone are done)
 
@@ -393,7 +393,7 @@ The performance and offline backbone.
 - **Persisted metadata:** collections, file snapshots, and tag index encrypted with `cacheKey` in IndexedDB (`idb`, DB name `ente-organizer-{userId}`)
 - **Persisted thumbnails:** server ciphertext in IndexedDB (CDN encrypted bytes + header); decrypted with `file.key` only after login
 - **Lock button:** wipes in-memory keys + entire IndexedDB for the user (sign out clears memory only, keeps encrypted cache for fast re-login)
-- **Full-res viewer:** network on demand; never persisted; shows cached thumbnail while loading
+- **Full-res viewer:** images network on demand and never persisted; videos use session blob-URL LRU + optional encrypted IDB ciphertext cache (size-capped); shows cached thumbnail while loading
 
 **B. Local tag index** — built from `pubMagicMetadata.data._organizer_v1.tags` on sync. Persisted encrypted; exposed through `useTagStore` (read-only until M4).
 

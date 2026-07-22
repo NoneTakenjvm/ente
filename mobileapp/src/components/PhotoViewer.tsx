@@ -47,6 +47,12 @@ import { mediaKindForFile, mimeTypeForFile } from "@/lib/media-kind";
 import { toRenderableImageBlob } from "@/lib/renderable-image";
 import { cn } from "@/lib/utils";
 import {
+    invalidateVideoCache,
+    loadCachedVideoBytes,
+    peekSessionVideo,
+    retainSessionVideoUrl,
+} from "@/lib/video-media-cache";
+import {
     extractUserTags,
     isReservedTag,
 } from "@/lib/tags";
@@ -200,6 +206,7 @@ export function PhotoViewer({
         { x: number; y: number } | undefined
     >(undefined);
     const mediaUrlsRef = useRef<Map<number, string>>(new Map());
+    const mediaByteSizesRef = useRef<Map<number, number>>(new Map());
     const loadingIdsRef = useRef<Set<number>>(new Set());
     const viewerFileIdRef = useRef<number>(initialFileId);
     const currentIndexRef = useRef<number>(currentIndex);
@@ -453,6 +460,12 @@ export function PhotoViewer({
                             URL.revokeObjectURL(previousUrl);
                         }
                         mediaUrlsRef.current.set(slideFile.id, url);
+                        if (slideFile.metadata.fileType === FileType.video) {
+                            mediaByteSizesRef.current.set(
+                                slideFile.id,
+                                blob.size,
+                            );
+                        }
                         loadingIds.delete(slideFile.id);
                         setSlideMedia(slideFile.id, { status: "ready", url });
                     } catch {
@@ -472,6 +485,22 @@ export function PhotoViewer({
                 continue;
             }
 
+            if (slideFile.metadata.fileType === FileType.video) {
+                const sessionHit = peekSessionVideo(slideFile.id);
+                if (sessionHit) {
+                    mediaUrlsRef.current.set(slideFile.id, sessionHit.url);
+                    mediaByteSizesRef.current.set(
+                        slideFile.id,
+                        sessionHit.byteSize,
+                    );
+                    setSlideMedia(slideFile.id, {
+                        status: "ready",
+                        url: sessionHit.url,
+                    });
+                    continue;
+                }
+            }
+
             loadingIds.add(slideFile.id);
             setSlideMedia(slideFile.id, { status: "loading" });
             const loader: SlideLoader = {
@@ -489,17 +518,44 @@ export function PhotoViewer({
             };
             loaders.push(loader);
 
-            void getEnteCore()
-                .getDecryptedFile(slideFile, ({ loaded, total }) => {
-                    if (loader.cancelled || loader.timedOut || total <= 0) {
-                        return;
-                    }
-                    const progress = Math.min(
-                        100,
-                        Math.round((loaded / total) * 100),
+            const isVideo = slideFile.metadata.fileType === FileType.video;
+            const loadBytes =
+                isVideo ?
+                    loadCachedVideoBytes(slideFile, ({ loaded, total }) => {
+                        if (loader.cancelled || loader.timedOut || total <= 0) {
+                            return;
+                        }
+                        const progress = Math.min(
+                            100,
+                            Math.round((loaded / total) * 100),
+                        );
+                        setSlideMedia(slideFile.id, {
+                            status: "loading",
+                            progress,
+                        });
+                    }) :
+                    getEnteCore().getDecryptedFile(
+                        slideFile,
+                        ({ loaded, total }) => {
+                            if (
+                                loader.cancelled ||
+                                loader.timedOut ||
+                                total <= 0
+                            ) {
+                                return;
+                            }
+                            const progress = Math.min(
+                                100,
+                                Math.round((loaded / total) * 100),
+                            );
+                            setSlideMedia(slideFile.id, {
+                                status: "loading",
+                                progress,
+                            });
+                        },
                     );
-                    setSlideMedia(slideFile.id, { status: "loading", progress });
-                })
+
+            void loadBytes
                 .then(async (bytes) => {
                     window.clearTimeout(loader.timeoutId);
                     if (loader.cancelled) {
@@ -511,7 +567,7 @@ export function PhotoViewer({
                         progress: 100,
                     });
                     const blob =
-                        slideFile.metadata.fileType === FileType.video ?
+                        isVideo ?
                             new Blob([Uint8Array.from(bytes)], {
                                 type: mimeTypeForFile(slideFile),
                             }) :
@@ -522,6 +578,9 @@ export function PhotoViewer({
                     }
                     const url = URL.createObjectURL(blob);
                     mediaUrlsRef.current.set(slideFile.id, url);
+                    if (isVideo) {
+                        mediaByteSizesRef.current.set(slideFile.id, blob.size);
+                    }
                     loadingIds.delete(slideFile.id);
                     setSlideMedia(slideFile.id, { status: "ready", url });
                 })
@@ -536,9 +595,22 @@ export function PhotoViewer({
 
         for (const [fileId, url] of [...mediaUrlsRef.current.entries()]) {
             if (!visibleIds.has(fileId)) {
-                URL.revokeObjectURL(url);
                 mediaUrlsRef.current.delete(fileId);
                 loadingIds.delete(fileId);
+                const leftFile = sessionFiles.find(
+                    (entry) => entry.id === fileId,
+                );
+                const knownSize = mediaByteSizesRef.current.get(fileId);
+                mediaByteSizesRef.current.delete(fileId);
+                if (leftFile?.metadata.fileType === FileType.video) {
+                    retainSessionVideoUrl(
+                        fileId,
+                        url,
+                        knownSize ?? leftFile.info?.fileSize ?? 0,
+                    );
+                } else {
+                    URL.revokeObjectURL(url);
+                }
                 setMediaByFileId((current) => {
                     if (!current.has(fileId)) {
                         return current;
@@ -561,11 +633,25 @@ export function PhotoViewer({
 
     useEffect((): (() => void) => {
         const urls = mediaUrlsRef.current;
+        const sizes = mediaByteSizesRef.current;
         return (): void => {
-            for (const url of urls.values()) {
-                URL.revokeObjectURL(url);
+            for (const [fileId, url] of [...urls.entries()]) {
+                const leftFile = sessionFilesRef.current.find(
+                    (entry) => entry.id === fileId,
+                );
+                const knownSize = sizes.get(fileId);
+                if (leftFile?.metadata.fileType === FileType.video) {
+                    retainSessionVideoUrl(
+                        fileId,
+                        url,
+                        knownSize ?? leftFile.info?.fileSize ?? 0,
+                    );
+                } else {
+                    URL.revokeObjectURL(url);
+                }
             }
             urls.clear();
+            sizes.clear();
         };
     }, []);
 
@@ -705,9 +791,11 @@ export function PhotoViewer({
             return;
         }
         const url = mediaUrlsRef.current.get(file.id);
-        if (url) {
+        mediaUrlsRef.current.delete(file.id);
+        if (file.metadata.fileType === FileType.video) {
+            invalidateVideoCache(file.id);
+        } else if (url) {
             URL.revokeObjectURL(url);
-            mediaUrlsRef.current.delete(file.id);
         }
         loadingIdsRef.current.delete(file.id);
         setSlideMedia(file.id, { status: "idle" });
@@ -1293,9 +1381,14 @@ export function PhotoViewer({
                 setShowDeleteConfirm(false);
 
                 const staleUrl = mediaUrlsRef.current.get(deletedId);
-                if (staleUrl) {
+                const deletedFile = sessionFilesRef.current.find(
+                    (entry) => entry.id === deletedId,
+                );
+                mediaUrlsRef.current.delete(deletedId);
+                if (deletedFile?.metadata.fileType === FileType.video) {
+                    invalidateVideoCache(deletedId);
+                } else if (staleUrl) {
                     URL.revokeObjectURL(staleUrl);
-                    mediaUrlsRef.current.delete(deletedId);
                 }
                 setMediaByFileId((current) => {
                     if (!current.has(deletedId)) {
