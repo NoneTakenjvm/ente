@@ -7,10 +7,10 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-07-22 |
-| **Last agent / session** | Done: video session blob-URL LRU (~120MB) + encrypted IDB ciphertext cache (~400MB LRU); images still not persisted |
+| **Last agent / session** | Done: video compress/edit perf (1–6) — reuse preview bytes, ultrafast+1280 preview, ffmpeg %, video cache load, optimistic compress, IDB outbox payloads; skipped stream upload |
 | **Current milestone** | Post-M8 UX / stability batch |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Device QA: scroll away/back on videos; cold restart disk hit; watch quota / memory |)
+| **Next recommended action** | Device QA: compress video preview speed + progress; crop/rotate Save progress; cold outbox retry after kill |)
 
 **Key storage (M3):** Master key and `cacheKey = HKDF(masterKey)` live in memory only. Metadata, collections, and tag index persist as blobs encrypted with `cacheKey` in IndexedDB (`ente-organizer-{userId}`). Thumbnails persist as server ciphertext (CDN bytes + decryption header) — readable only with `file.key` from decrypted metadata after login. **Videos** may also persist server ciphertext in IDB (`fileCiphertexts`, size-capped LRU) plus an in-memory blob-URL session LRU so carousel scroll-back does not re-download; still requires `file.key` after login. Sync cursors store timestamps only. Sign out clears memory; **Lock** wipes IDB + memory. Full-res **images** are never persisted.
 

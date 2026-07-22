@@ -1,6 +1,6 @@
 import { deleteDB, openDB, type IDBPDatabase } from "idb";
 
-const dbVersion = 2;
+const dbVersion = 3;
 
 export type KvKey =
     | "collections"
@@ -36,6 +36,16 @@ export interface FileCiphertextRecord {
     lastAccess: number;
 }
 
+/**
+ * Pending derived-replace media bytes (crop/compress/video-edit), stored as
+ * ArrayBuffer so large videos are not base64'd into the encrypted kv blob.
+ */
+export interface DerivedReplacePayloadRecord {
+    fileId: number;
+    bytes: ArrayBuffer;
+    byteSize: number;
+}
+
 export interface SyncCursorRecord {
     collectionId: number;
     sinceTime: number;
@@ -53,6 +63,10 @@ export interface OrganizerDB {
     fileCiphertexts: {
         key: number;
         value: FileCiphertextRecord;
+    };
+    derivedReplacePayloads: {
+        key: number;
+        value: DerivedReplacePayloadRecord;
     };
     syncCursors: {
         key: number;
@@ -81,6 +95,11 @@ const openOrganizerDB = (userId: number): Promise<IDBPDatabase<OrganizerDB>> =>
             }
             if (!db.objectStoreNames.contains("fileCiphertexts")) {
                 db.createObjectStore("fileCiphertexts", { keyPath: "fileId" });
+            }
+            if (!db.objectStoreNames.contains("derivedReplacePayloads")) {
+                db.createObjectStore("derivedReplacePayloads", {
+                    keyPath: "fileId",
+                });
             }
             if (!db.objectStoreNames.contains("syncCursors")) {
                 db.createObjectStore("syncCursors", { keyPath: "collectionId" });

@@ -11,8 +11,8 @@ import { pendingFavoriteFilesByHashAndType } from "@/stores/favorites-store";
 import { isSessionAuthenticated } from "@/stores/session-store";
 import { useLibraryStore } from "@/stores/library-store";
 import {
-    base64ToBytes,
     hydrateDerivedReplaceOutbox,
+    loadDerivedReplaceOutboxBytes,
     type DerivedReplaceOutboxEntry,
 } from "@/lib/derived-replace-outbox";
 import {
@@ -147,9 +147,12 @@ export const useLibraryBootstrap: (
                     retryDerivedReplace: async (
                         entry: DerivedReplaceOutboxEntry,
                     ): Promise<void> => {
-                        const bytes: Uint8Array = base64ToBytes(
-                            entry.bytesBase64,
+                        const bytes = await loadDerivedReplaceOutboxBytes(
+                            entry.fileId,
                         );
+                        if (!bytes) {
+                            return;
+                        }
                         const library: ReturnType<
                             typeof useLibraryStore.getState
                         > = useLibraryStore.getState();
@@ -167,6 +170,47 @@ export const useLibraryBootstrap: (
                                     duration,
                                 },
                             );
+                            await finalize;
+                            return;
+                        }
+                        if (entry.kind === "compress") {
+                            const source = library.allFiles.find(
+                                (candidate) => candidate.id === entry.fileId,
+                            );
+                            const originalByteLength =
+                                source?.info?.fileSize &&
+                                source.info.fileSize > bytes.length ?
+                                    source.info.fileSize :
+                                    bytes.length * 2;
+                            const { mediaKindForFile } = await import(
+                                "@/lib/media-kind"
+                            );
+                            const kind = source ?
+                                mediaKindForFile(source) :
+                                "image";
+                            const mimeType =
+                                kind === "video" ?
+                                    "video/mp4" :
+                                    kind === "gif" ?
+                                        "image/gif" :
+                                        "image/jpeg";
+                            const { finalize } =
+                                library.compressAndReplaceMediaOptimistic(
+                                    entry.fileId,
+                                    {
+                                        bytes,
+                                        width: entry.width,
+                                        height: entry.height,
+                                        mimeType,
+                                        extension:
+                                            kind === "video" ?
+                                                "mp4" :
+                                                kind === "gif" ?
+                                                    "gif" :
+                                                    "jpg",
+                                    },
+                                    originalByteLength,
+                                );
                             await finalize;
                             return;
                         }

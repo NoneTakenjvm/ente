@@ -3,39 +3,32 @@ import {
     saveEncryptedDerivedReplaceOutbox,
     type PersistedDerivedReplaceOutboxEntry,
 } from "@/db/kv";
+import {
+    clearDerivedReplacePayloads,
+    deleteDerivedReplacePayload,
+    getDerivedReplacePayload,
+    putDerivedReplacePayload,
+} from "@/db/derived-replace-payloads";
 import { getSessionCacheKey } from "@/lib/cache-key";
+
+export type DerivedReplaceKind =
+    | "crop"
+    | "rotate"
+    | "auto-crop"
+    | "video-edit"
+    | "compress";
 
 export interface DerivedReplaceOutboxEntry {
     fileId: number;
-    /** Base64 of the replacement JPEG/PNG/video bytes. */
-    bytesBase64: string;
     width: number;
     height: number;
-    kind: "crop" | "rotate" | "auto-crop" | "video-edit";
+    kind: DerivedReplaceKind;
     enqueuedAt: number;
 }
 
 const outboxByFileId = new Map<number, DerivedReplaceOutboxEntry>();
 let hydrated = false;
 let persistChain: Promise<void> = Promise.resolve();
-
-const bytesToBase64 = (bytes: Uint8Array): string => {
-    let binary = "";
-    const chunk = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunk) {
-        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-    }
-    return btoa(binary);
-};
-
-export const base64ToBytes = (base64: string): Uint8Array => {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
-};
 
 const flushToDisk = async (): Promise<void> => {
     const entries: PersistedDerivedReplaceOutboxEntry[] = [
@@ -55,7 +48,17 @@ export const hydrateDerivedReplaceOutbox = async (): Promise<void> => {
     );
     outboxByFileId.clear();
     for (const entry of persisted ?? []) {
-        outboxByFileId.set(entry.fileId, entry);
+        // Drop legacy base64-in-kv entries — payloads now live in IDB.
+        if ("bytesBase64" in entry && entry.bytesBase64) {
+            continue;
+        }
+        outboxByFileId.set(entry.fileId, {
+            fileId: entry.fileId,
+            width: entry.width,
+            height: entry.height,
+            kind: entry.kind,
+            enqueuedAt: entry.enqueuedAt,
+        });
     }
     hydrated = true;
 };
@@ -74,14 +77,14 @@ export const upsertDerivedReplaceOutboxEntry = async (
     bytes: Uint8Array,
     width: number,
     height: number,
-    kind: DerivedReplaceOutboxEntry["kind"],
+    kind: DerivedReplaceKind,
 ): Promise<void> => {
     if (!hydrated) {
         await hydrateDerivedReplaceOutbox();
     }
+    await putDerivedReplacePayload(fileId, bytes);
     outboxByFileId.set(fileId, {
         fileId,
-        bytesBase64: bytesToBase64(bytes),
         width,
         height,
         kind,
@@ -89,6 +92,13 @@ export const upsertDerivedReplaceOutboxEntry = async (
     });
     await persist();
 };
+
+/**
+ * Load pending replacement bytes for an outbox entry.
+ */
+export const loadDerivedReplaceOutboxBytes = async (
+    fileId: number,
+): Promise<Uint8Array | undefined> => getDerivedReplacePayload(fileId);
 
 export const removeDerivedReplaceOutboxEntries = async (
     fileIds: number[],
@@ -98,6 +108,7 @@ export const removeDerivedReplaceOutboxEntries = async (
     }
     for (const fileId of fileIds) {
         outboxByFileId.delete(fileId);
+        await deleteDerivedReplacePayload(fileId);
     }
     await persist();
 };
@@ -109,4 +120,5 @@ export const clearDerivedReplaceOutbox = (): void => {
     outboxByFileId.clear();
     hydrated = false;
     persistChain = Promise.resolve();
+    void clearDerivedReplacePayloads();
 };

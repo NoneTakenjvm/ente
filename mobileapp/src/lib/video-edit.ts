@@ -25,6 +25,7 @@ export interface CroppedVideoResult {
 export interface VideoEditOptions {
     crop?: VideoCropRect;
     trim?: VideoTrimRange;
+    onProgress?: (ratio: number) => void;
 }
 
 const DEFAULT_VIDEO_CRF = "23";
@@ -131,12 +132,14 @@ const h264Tail = (audioMode: "copy" | "aac" | "none"): string[] => [
 const runH264Encode = async (
     argsBeforeOutput: string[],
     input: Blob,
+    onProgress?: (ratio: number) => void,
 ): Promise<Uint8Array> => {
     try {
         return await runFFmpeg(
             [...argsBeforeOutput, ...h264Tail("copy")],
             input,
             "mp4",
+            onProgress,
         );
     } catch {
         try {
@@ -144,12 +147,14 @@ const runH264Encode = async (
                 [...argsBeforeOutput, ...h264Tail("aac")],
                 input,
                 "mp4",
+                onProgress,
             );
         } catch {
             return await runFFmpeg(
                 [...argsBeforeOutput, ...h264Tail("none")],
                 input,
                 "mp4",
+                onProgress,
             );
         }
     }
@@ -163,12 +168,14 @@ export const rotateVideoBytes = async (
     mimeType: string,
     degrees: RotationDegrees,
     sourceDimensions: { width: number; height: number },
+    onProgress?: (ratio: number) => void,
 ): Promise<CroppedVideoResult> => {
     logJsHeap("video-rotate:start");
     const input = blobFromUint8Array(bytes, mimeType);
     const output = await runH264Encode(
         ["-i", "INPUT", "-vf", transposeFilterForRotation(degrees)],
         input,
+        onProgress,
     );
     const { width, height } = dimensionsAfterRotation(
         sourceDimensions.width,
@@ -220,9 +227,14 @@ export const applyVideoEdits = async (
         output = await runH264Encode(
             ["-ss", String(start), "-t", String(duration), "-i", "INPUT", ...vf],
             input,
+            options.onProgress,
         );
     } else {
-        output = await runH264Encode(["-i", "INPUT", ...vf], input);
+        output = await runH264Encode(
+            ["-i", "INPUT", ...vf],
+            input,
+            options.onProgress,
+        );
     }
 
     const duration = options.trim ?

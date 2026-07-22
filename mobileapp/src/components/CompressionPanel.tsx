@@ -17,6 +17,7 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog";
 import { Field, FieldLabel } from "@/components/ui/field";
+import { Progress } from "@/components/ui/progress";
 import {
     Sheet,
     SheetContent,
@@ -27,7 +28,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { Spinner } from "@/components/ui/spinner";
-import { getEnteCore } from "@/core";
 import {
     DEFAULT_JPEG_QUALITY,
     DEFAULT_VIDEO_CRF,
@@ -40,8 +40,13 @@ import {
     MIN_VIDEO_CRF,
     type SizeDelta,
 } from "@/lib/compress";
+import { loadMediaBytesForEdit } from "@/lib/load-media-bytes";
 import { mediaKindForFile, mimeTypeForFile } from "@/lib/media-kind";
-import { compressMediaBytes } from "@/lib/transcode/compress-media";
+import {
+    compressMediaBytes,
+    VIDEO_COMPRESS_PREVIEW_MAX_LONG_EDGE,
+    type CompressMediaResult,
+} from "@/lib/transcode/compress-media";
 import { useLibraryStore } from "@/stores/library-store";
 import type { EnteFile } from "ente-media/file";
 
@@ -64,8 +69,10 @@ export function CompressionPanel({
     onClose,
     onUploaded,
 }: CompressionPanelProps): JSX.Element {
+    const compressAndReplaceMediaOptimistic = useLibraryStore(
+        (s) => s.compressAndReplaceMediaOptimistic,
+    );
     const compressAndUploadFile = useLibraryStore((s) => s.compressAndUploadFile);
-    const compressAndUploadMedia = useLibraryStore((s) => s.compressAndUploadMedia);
 
     const mediaKind = mediaKindForFile(file);
     const usesFfmpeg = mediaKind === "gif" || mediaKind === "video";
@@ -75,23 +82,25 @@ export function CompressionPanel({
     const [videoCrf, setVideoCrf] = useState<number>(DEFAULT_VIDEO_CRF);
     const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
     const [originalBytes, setOriginalBytes] = useState<Uint8Array | undefined>();
-    const [compressedBytes, setCompressedBytes] = useState<Uint8Array | undefined>();
-    const [dimensions, setDimensions] = useState<
-        { width: number; height: number } | undefined
+    const [compressedResult, setCompressedResult] = useState<
+        CompressMediaResult | undefined
     >();
     const [originalUrl, setOriginalUrl] = useState<string | undefined>();
     const [compressedUrl, setCompressedUrl] = useState<string | undefined>();
-    const [uploadPhase, setUploadPhase] = useState<string | undefined>();
+    const [encodeProgress, setEncodeProgress] = useState<number | undefined>();
     const [error, setError] = useState<string | undefined>();
 
     const encodeRequestId = useRef<number>(0);
 
     const sizeDelta: SizeDelta | undefined = useMemo(() => {
-        if (!originalBytes || !compressedBytes) {
+        if (!originalBytes || !compressedResult) {
             return undefined;
         }
-        return formatSizeDelta(originalBytes.length, compressedBytes.length);
-    }, [originalBytes, compressedBytes]);
+        return formatSizeDelta(
+            originalBytes.length,
+            compressedResult.bytes.length,
+        );
+    }, [originalBytes, compressedResult]);
 
     useEffect(() => {
         let cancelled = false;
@@ -99,7 +108,7 @@ export function CompressionPanel({
 
         const loadOriginal = async (): Promise<void> => {
             try {
-                const bytes = await getEnteCore().getDecryptedFile(file);
+                const bytes = await loadMediaBytesForEdit(file);
                 if (cancelled) {
                     return;
                 }
@@ -139,37 +148,49 @@ export function CompressionPanel({
 
         const runEncode = async (): Promise<void> => {
             setPhase("encoding");
+            setEncodeProgress(undefined);
             setError(undefined);
             try {
                 const result = usesFfmpeg ?
                     await compressMediaBytes(file, originalBytes, {
                         quality,
                         videoCrf,
+                        maxLongEdge:
+                            mediaKind === "video" ?
+                                VIDEO_COMPRESS_PREVIEW_MAX_LONG_EDGE :
+                                undefined,
+                        onProgress: (ratio) => {
+                            if (
+                                cancelled ||
+                                requestId !== encodeRequestId.current
+                            ) {
+                                return;
+                            }
+                            setEncodeProgress(Math.round(ratio * 100));
+                        },
                     }) :
-                    await encodeJpegFromBytes(originalBytes, quality);
+                    {
+                        ...(await encodeJpegFromBytes(originalBytes, quality)),
+                        mimeType: "image/jpeg",
+                        extension: "jpg",
+                    } satisfies CompressMediaResult;
 
                 if (cancelled || requestId !== encodeRequestId.current) {
                     return;
                 }
 
-                const bytes = result.bytes;
-                setCompressedBytes(bytes);
-                setDimensions({
-                    width: result.width,
-                    height: result.height,
-                });
+                setCompressedResult(result);
                 setCompressedUrl((prev) => {
                     if (prev) {
                         URL.revokeObjectURL(prev);
                     }
-                    const mimeType = usesFfmpeg ?
-                        (result as { mimeType?: string }).mimeType ??
-                            mimeTypeForFile(file) :
-                        "image/jpeg";
                     return URL.createObjectURL(
-                        new Blob([Uint8Array.from(bytes)], { type: mimeType }),
+                        new Blob([Uint8Array.from(result.bytes)], {
+                            type: result.mimeType,
+                        }),
                     );
                 });
+                setEncodeProgress(100);
                 setPhase("ready");
             } catch (encodeError) {
                 if (cancelled || requestId !== encodeRequestId.current) {
@@ -189,7 +210,7 @@ export function CompressionPanel({
         return (): void => {
             cancelled = true;
         };
-    }, [file, originalBytes, quality, usesFfmpeg, videoCrf]);
+    }, [file, mediaKind, originalBytes, quality, usesFfmpeg, videoCrf]);
 
     useEffect(() => {
         return (): void => {
@@ -200,24 +221,46 @@ export function CompressionPanel({
     }, [compressedUrl]);
 
     const handleUpload = useCallback((): void => {
+        if (!originalBytes || !compressedResult) {
+            return;
+        }
         setPhase("uploading");
-        setUploadPhase("Encrypting and uploading…");
         setError(undefined);
 
-        const uploadPromise = usesFfmpeg ?
-            compressAndUploadMedia(file.id, { quality, videoCrf }) :
-            compressAndUploadFile(
-                file.id,
-                compressedBytes!,
-                dimensions!,
-            );
+        try {
+            if (!usesFfmpeg) {
+                void compressAndUploadFile(
+                    file.id,
+                    compressedResult.bytes,
+                    {
+                        width: compressedResult.width,
+                        height: compressedResult.height,
+                    },
+                )
+                    .then((uploaded) => {
+                        setPhase("success");
+                        onUploaded?.(uploaded);
+                    })
+                    .catch((uploadError: unknown) => {
+                        setPhase("error");
+                        setError(
+                            uploadError instanceof Error ?
+                                uploadError.message :
+                                "Upload failed",
+                        );
+                    });
+                return;
+            }
 
-        void uploadPromise
-            .then((uploaded) => {
-                setPhase("success");
-                onUploaded?.(uploaded);
-            })
-            .catch((uploadError: unknown) => {
+            const { optimisticFile, finalize } =
+                compressAndReplaceMediaOptimistic(
+                    file.id,
+                    compressedResult,
+                    originalBytes.length,
+                );
+            onUploaded?.(optimisticFile);
+            setPhase("success");
+            void finalize.catch((uploadError: unknown) => {
                 setPhase("error");
                 setError(
                     uploadError instanceof Error ?
@@ -225,16 +268,22 @@ export function CompressionPanel({
                         "Upload failed",
                 );
             });
+        } catch (uploadError: unknown) {
+            setPhase("error");
+            setError(
+                uploadError instanceof Error ?
+                    uploadError.message :
+                    "Upload failed",
+            );
+        }
     }, [
-        compressedBytes,
+        compressAndReplaceMediaOptimistic,
         compressAndUploadFile,
-        compressAndUploadMedia,
-        dimensions,
+        compressedResult,
         file.id,
         onUploaded,
-        quality,
+        originalBytes,
         usesFfmpeg,
-        videoCrf,
     ]);
 
     const qualityPercent = Math.round(quality * 100);
@@ -269,12 +318,6 @@ export function CompressionPanel({
                             <p className="flex items-center gap-2 text-sm text-muted-foreground">
                                 <Spinner />
                                 Loading original…
-                            </p>
-                        ) : null}
-
-                        {usesFfmpeg && phase === "encoding" && !originalUrl ? (
-                            <p className="text-sm text-muted-foreground">
-                                Loading encoder…
                             </p>
                         ) : null}
 
@@ -376,22 +419,37 @@ export function CompressionPanel({
                         </div>
 
                         {phase === "encoding" ? (
-                            <p className="text-sm text-muted-foreground">
-                                Updating preview…
-                            </p>
+                            <div className="flex flex-col gap-2">
+                                <p className="text-sm text-muted-foreground">
+                                    Encoding preview…
+                                    {encodeProgress !== undefined ?
+                                        ` ${encodeProgress}%` :
+                                        ""}
+                                </p>
+                                {encodeProgress !== undefined ? (
+                                    <Progress
+                                        value={encodeProgress}
+                                        className="w-full"
+                                    />
+                                ) : (
+                                    <div className="h-1.5 w-full animate-pulse rounded-full bg-primary/50" />
+                                )}
+                            </div>
                         ) : null}
 
-                        {phase === "uploading" && uploadPhase ? (
+                        {phase === "uploading" ? (
                             <p className="flex items-center gap-2 text-sm text-muted-foreground">
                                 <Spinner />
-                                {uploadPhase}
+                                Starting upload…
                             </p>
                         ) : null}
 
                         {phase === "success" ? (
                             <Alert>
                                 <AlertDescription>
-                                    Original replaced with compressed version.
+                                    {usesFfmpeg ?
+                                        "Compressed version ready — uploading in the background." :
+                                        "Original replaced with compressed version."}
                                 </AlertDescription>
                             </Alert>
                         ) : null}
@@ -411,7 +469,7 @@ export function CompressionPanel({
                             onClick={handleUpload}
                             disabled={
                                 phase !== "ready" ||
-                                (!usesFfmpeg && (!compressedBytes || !dimensions)) ||
+                                !compressedResult ||
                                 (sizeDelta !== undefined &&
                                     !isWorthReplacing(
                                         sizeDelta.originalBytes,

@@ -15,9 +15,9 @@ import "react-image-crop/dist/ReactCrop.css";
 import { RotateCcw, RotateCw } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
 import { Spinner } from "@/components/ui/spinner";
-import { getEnteCore } from "@/core";
 import {
     containedDisplaySize,
     cropRectForVideoSave,
@@ -27,7 +27,7 @@ import {
     videoCropChanged,
 } from "@/lib/crop-editor";
 import { mimeTypeForFile } from "@/lib/media-kind";
-import { getLocalMediaOverride } from "@/lib/local-media-overrides";
+import { loadMediaBytesForEdit } from "@/lib/load-media-bytes";
 import { logJsHeap } from "@/lib/memory-probe";
 import {
     applyVideoEdits,
@@ -83,6 +83,7 @@ export function VideoEditorOverlay({
     const [loading, setLoading] = useState<boolean>(true);
     const [rotating, setRotating] = useState<boolean>(false);
     const [saving, setSaving] = useState<boolean>(false);
+    const [encodeProgress, setEncodeProgress] = useState<number | undefined>();
     const [videoReady, setVideoReady] = useState<boolean>(false);
     const [error, setError] = useState<string | undefined>();
     const [workspaceSize, setWorkspaceSize] = useState<
@@ -107,9 +108,7 @@ export function VideoEditorOverlay({
 
         const loadBytes = async (): Promise<void> => {
             try {
-                const bytes =
-                    getLocalMediaOverride(file.id) ??
-                    (await getEnteCore().getDecryptedFile(file));
+                const bytes = await loadMediaBytesForEdit(file);
                 if (cancelled) {
                     return;
                 }
@@ -275,6 +274,7 @@ export function VideoEditorOverlay({
                 return;
             }
             setRotating(true);
+            setEncodeProgress(undefined);
             setError(undefined);
             setVideoReady(false);
             setCrop(undefined);
@@ -284,6 +284,9 @@ export function VideoEditorOverlay({
                 mimeType,
                 degrees,
                 sourceDimensions,
+                (ratio) => {
+                    setEncodeProgress(Math.round(ratio * 100));
+                },
             )
                 .then((rotated) => {
                     replaceWorkingVideo(
@@ -302,6 +305,7 @@ export function VideoEditorOverlay({
                 })
                 .finally(() => {
                     setRotating(false);
+                    setEncodeProgress(undefined);
                 });
         },
         [
@@ -328,6 +332,7 @@ export function VideoEditorOverlay({
             return;
         }
         setSaving(true);
+        setEncodeProgress(undefined);
         setError(undefined);
 
         const cropRect = cropRectForVideoSave(
@@ -375,7 +380,13 @@ export function VideoEditorOverlay({
             return applyVideoEdits(
                 sourceBytes,
                 mimeType,
-                { crop, trim },
+                {
+                    crop,
+                    trim,
+                    onProgress: (ratio) => {
+                        setEncodeProgress(Math.round(ratio * 100));
+                    },
+                },
                 sourceDimensions,
             );
         };
@@ -402,6 +413,7 @@ export function VideoEditorOverlay({
                     setWorkingUrl(url);
                 }
                 setSaving(false);
+                setEncodeProgress(undefined);
                 setError(
                     saveError instanceof Error ?
                         saveError.message :
@@ -494,7 +506,9 @@ export function VideoEditorOverlay({
                     {saving ? (
                         <>
                             <Spinner />
-                            Saving…
+                            {encodeProgress !== undefined ?
+                                `Saving ${encodeProgress}%` :
+                                "Saving…"}
                         </>
                     ) : (
                         "Save"
@@ -502,6 +516,11 @@ export function VideoEditorOverlay({
                 </Button>
             </div>
 
+            {(rotating || saving) && encodeProgress !== undefined ? (
+                <div className="shrink-0 border-b border-border/50 bg-background/95 px-3 py-2">
+                    <Progress value={encodeProgress} className="w-full" />
+                </div>
+            ) : null}
             <div className="flex min-h-0 flex-1 flex-col px-2 py-2">
                 {error ? (
                     <Alert variant="destructive" className="mb-2 max-w-md shrink-0">
