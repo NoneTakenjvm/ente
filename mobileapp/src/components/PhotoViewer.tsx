@@ -200,10 +200,12 @@ export function PhotoViewer({
     const loadingIdsRef = useRef<Set<number>>(new Set());
     const viewerFileIdRef = useRef<number>(initialFileId);
     const currentIndexRef = useRef<number>(currentIndex);
+    const sessionFilesRef = useRef<EnteFile[]>(sessionFiles);
     const tagBaselineRef = useRef<string[]>([]);
     const viewerActiveRef = useRef<boolean>(true);
 
     currentIndexRef.current = currentIndex;
+    sessionFilesRef.current = sessionFiles;
 
     useEffect((): (() => void) => {
         viewerActiveRef.current = true;
@@ -1263,12 +1265,57 @@ export function PhotoViewer({
         if (!file) {
             return;
         }
+        const deletedId = file.id;
+        const deletedIndex = currentIndexRef.current;
         setDeleteBusy(true);
         setDeleteError(undefined);
-        void moveFilesToTrash([file.id])
+        void moveFilesToTrash([deletedId])
             .then(() => {
+                if (!viewerActiveRef.current) {
+                    return;
+                }
                 setShowDeleteConfirm(false);
-                onClose();
+
+                const staleUrl = mediaUrlsRef.current.get(deletedId);
+                if (staleUrl) {
+                    URL.revokeObjectURL(staleUrl);
+                    mediaUrlsRef.current.delete(deletedId);
+                }
+                setMediaByFileId((current) => {
+                    if (!current.has(deletedId)) {
+                        return current;
+                    }
+                    const next = new Map(current);
+                    next.delete(deletedId);
+                    return next;
+                });
+
+                const current = sessionFilesRef.current;
+                const deletedAt = current.findIndex(
+                    (entry) => entry.id === deletedId,
+                );
+                const remaining = current.filter(
+                    (entry) => entry.id !== deletedId,
+                );
+                if (remaining.length === 0) {
+                    onClose();
+                    return;
+                }
+                const indexBasis =
+                    deletedAt >= 0 ? deletedAt : deletedIndex;
+                const nextIndex = Math.min(
+                    indexBasis > 0 ? indexBasis - 1 : 0,
+                    remaining.length - 1,
+                );
+                const neighbor = remaining[nextIndex];
+                if (!neighbor) {
+                    onClose();
+                    return;
+                }
+                setSessionFiles(remaining);
+                setCurrentIndex(nextIndex);
+                viewerFileIdRef.current = neighbor.id;
+                notifyFileUpdated(neighbor);
             })
             .catch((error: unknown) => {
                 setDeleteError(
@@ -1598,32 +1645,34 @@ export function PhotoViewer({
                 </div>
             </div>
 
-            <div
-                ref={viewportRef}
-                className="relative min-h-0 flex-1 touch-none overflow-hidden bg-black/40"
-                onPointerDown={handleCarouselPointerDown}
-                onPointerMove={handleCarouselPointerMove}
-                onPointerUp={handleCarouselPointerUp}
-                onPointerCancel={handleCarouselPointerUp}
-                onDoubleClick={(event) => {
-                    resetChromeTimer();
-                    handleMediaDoubleTap(event.clientX, event.clientY);
-                }}
-                onTouchEnd={handleTouchEnd}
-            >
+            <div className="relative min-h-0 flex-1 bg-black/40">
                 <div
-                    ref={trackRef}
-                    className="flex h-full min-h-0 items-stretch"
-                    style={{
-                        transform: `translate3d(${trackTranslatePx}px, ${dismissDragPx}px, 0)`,
-                        opacity: dismissDragPx > 0 ? dismissOpacity : 1,
-                        transition:
-                            carouselAnimating ?
-                                `transform ${CAROUSEL_TRANSITION_MS}ms ease-out, opacity ${CAROUSEL_TRANSITION_MS}ms ease-out` :
-                                undefined,
+                    ref={viewportRef}
+                    className="absolute inset-x-0 bottom-0 top-[env(safe-area-inset-top,0px)] touch-none overflow-hidden"
+                    onPointerDown={handleCarouselPointerDown}
+                    onPointerMove={handleCarouselPointerMove}
+                    onPointerUp={handleCarouselPointerUp}
+                    onPointerCancel={handleCarouselPointerUp}
+                    onDoubleClick={(event) => {
+                        resetChromeTimer();
+                        handleMediaDoubleTap(event.clientX, event.clientY);
                     }}
+                    onTouchEnd={handleTouchEnd}
                 >
-                    {slideOffsets.map((offset) => renderSlide(offset))}
+                    <div
+                        ref={trackRef}
+                        className="flex h-full min-h-0 items-stretch"
+                        style={{
+                            transform: `translate3d(${trackTranslatePx}px, ${dismissDragPx}px, 0)`,
+                            opacity: dismissDragPx > 0 ? dismissOpacity : 1,
+                            transition:
+                                carouselAnimating ?
+                                    `transform ${CAROUSEL_TRANSITION_MS}ms ease-out, opacity ${CAROUSEL_TRANSITION_MS}ms ease-out` :
+                                    undefined,
+                        }}
+                    >
+                        {slideOffsets.map((offset) => renderSlide(offset))}
+                    </div>
                 </div>
             </div>
 
