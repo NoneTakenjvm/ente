@@ -6,11 +6,20 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-07-22 |
-| **Last agent / session** | Manage Usage panel + Tools sub-hub shipped (commit + deploy). |
+| **Last updated** | 2026-08-10 |
+| **Last agent / session** | Gallery upload-date sorting + similarity Stage 1 (rotation/mirror) + Stage 2 (crop matching) shipped. |
 | **Current milestone** | Post-M8 UX / stability batch |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Device QA Manage → Usage / Tools nesting after deploy |)
+| **Next recommended action** | Device QA Manage → Usage / Tools nesting after deploy |
+
+**This session shipped two features:**
+1. **Gallery sorting by upload date** (default). Ente doesn't expose an upload date, so we stamp our own: `uploadedAt` (set once at upload) and `editedAt` (set on every pub-meta write by `withEditedAt`) live in `pubMagicMetadata.data`. Sort keys in `mobileapp/src/lib/sort-files.ts` (`fileUploadSortTime`: `uploadedAt` → `updationTime` → `creationTime`; `fileEditSortTime` likewise). A gallery toggle switches between **upload date** (default) and **edit date** (see `useSettingsStore.gallerySortBy`, wiring in `gallery.tsx`, `albums.tsx`, `AlbumEditorPanel.tsx`, `ManageArchivedPanel.tsx`, `pull-files.ts`).
+2. **Similar-image detection, Stages 1 + 2**:
+   - **Stage 1 (rotation/mirror)**: the phash worker now emits **8 dHash variants** per image (4 rotations × mirror), so rotated/mirrored duplicates match against the source under any orientation. Index schema widened to `PhashEntry.hashes: string[]`.
+   - **Stage 2 (crops)**: `mobileapp/src/lib/crop-match.ts` — a **64-bit color-palette signature** (`colorHashFromImageData`, translation-invariant) proposes candidates; a **48×48 grayscale template match** (`templateMatchScore`, scale+offset SAD over all 8 source orientations with coarse/full tiers and early-abort) verifies them. `mergeCropMatches` in `similarity-groups.ts` runs async in chunks, capped at `MAX_CROP_CHECKS_PER_FILE = 4`, and unions crop groups into the Stage-1 union-find.
+   - **Validation** (`mobileapp/scripts/crop-match-validate.ts`, real photos): rotate/crop recall **30/32**, cross-photo FP **0/28**. Cost: ~20 ms/pair on reject path, so the per-file cap keeps the async pass bounded.
+   - Replaced `sortFilesNewestFirst` in `ente-core.ts` with `sortFilesByUpload`. Upload paths stamp `uploadedAt`/`editedAt` (`upload-image.ts`, `upload-video.ts`, `upload-compressed-media.ts`).
+   - Dead-end exploration scripts removed (`crop-bench*`, `orb-cost*`); `@webarkit/purecv-wasm` dev-dependency dropped. Kept `crop-match-validate.ts` + `similarity-spike-real.ts` as reproducible regression harnesses.
 
 **Key storage (M3):** Master key and `cacheKey = HKDF(masterKey)` live in memory only. Metadata, collections, tag index, and **trash items** (+ trash collection keys) persist as blobs encrypted with `cacheKey` in IndexedDB (`ente-organizer-{userId}`). Thumbnails persist as server ciphertext (CDN bytes + decryption header) — readable only with `file.key` from decrypted metadata after login. **Videos** persist in IDB (`fileCiphertexts`) as server ciphertext **additionally wrapped with `cacheKey`** (size-capped LRU), plus an in-memory blob-URL session LRU; without login there is no `cacheKey`/`file.key`, so disk blobs are opaque. Sync cursors store timestamps only (including trash `lastUpdatedAt`). Sign out clears memory; **Lock** wipes IDB + memory. Full-res **images** are never persisted.
 

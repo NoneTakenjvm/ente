@@ -1,4 +1,4 @@
-import { fileCreationTime } from "ente-media/file-metadata";
+import { sortFilesByUpload } from "@/lib/sort-files";
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
 import { decryptFileChanges } from "@/core/api/files";
@@ -29,9 +29,6 @@ export interface PullFilesResult {
     files: EnteFile[];
     didUpdate: boolean;
 }
-
-const sortFilesNewestFirst = (files: EnteFile[]): EnteFile[] =>
-    [...files].sort((a, b) => fileCreationTime(b) - fileCreationTime(a));
 
 /**
  * Incrementally pull file changes for all collections and persist encrypted snapshots.
@@ -130,7 +127,7 @@ export const pullFiles = async (
         );
     }
 
-    const files = sortFilesNewestFirst([...libraryById.values()]);
+    const files = sortFilesByUpload([...libraryById.values()]);
     if (didUpdate) {
         await saveEncryptedFiles(files, getSessionCacheKey());
     }

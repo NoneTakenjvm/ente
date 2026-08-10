@@ -40,6 +40,12 @@ export interface UploadJpegOptions {
     width: number;
     height: number;
     organizerTags?: string[];
+    /**
+     * When set, this is a derived reupload of an existing file: the source
+     * file's upload time is preserved so the new file keeps its position, and
+     * the edit time is bumped instead.
+     */
+    uploadedAt?: number;
 }
 
 const computeContentHash = async (data: Uint8Array): Promise<string> => {
@@ -65,6 +71,10 @@ const buildPublicMagicData = (
     const data: Record<string, unknown> = {
         w: ensureInteger(options.width),
         h: ensureInteger(options.height),
+        // Original uploads stamp their upload time once; derived reuploads
+        // preserve the source file's time + record the edit instead.
+        uploadedAt: ensureInteger(options.uploadedAt ?? Date.now() * 1000),
+        editedAt: ensureInteger(Date.now() * 1000),
     };
     if (options.organizerTags?.length) {
         data._organizer_v1 = {
@@ -161,6 +171,7 @@ export const uploadDerivedImage = async (
         width: dimensions.width,
         height: dimensions.height,
         organizerTags: options.organizerTags,
+        uploadedAt: sourceFile.pubMagicMetadata?.data.uploadedAt,
     });
 };
 

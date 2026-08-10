@@ -23,6 +23,7 @@ import {
 } from "@/lib/album-cover";
 import { queryAlbumFilter, type QueryAlbum } from "@/lib/query-albums";
 import { dedupeFilesById } from "@/lib/sync/merge-files";
+import { sortFilesByUpload } from "@/lib/sort-files";
 import {
     countFavoritesInCandidates,
     countFilesMatchingTagFilter,
@@ -37,7 +38,6 @@ import {
     GROUPED_TAG_FILTER_DROPDOWN_HINT,
     isFlatTagFilterRoot,
 } from "@/lib/tags";
-import { fileCreationTime } from "ente-media/file-metadata";
 import { useAlbumStore } from "@/stores/album-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
@@ -72,9 +72,7 @@ export function AlbumEditorPanel({
 
     const libraryFiles = useMemo(() => {
         const deduped = dedupeFilesById(allFiles);
-        return [...deduped].sort(
-            (a, b) => fileCreationTime(b) - fileCreationTime(a),
-        );
+        return sortFilesByUpload(deduped);
     }, [allFiles]);
 
     const libraryFileIds = useMemo(

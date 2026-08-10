@@ -306,6 +306,22 @@ export interface FilePublicMagicMetadataData {
      */
     editedTime?: number;
     /**
+     * Epoch microseconds when the file was first uploaded by this client.
+     *
+     * Set once on the original upload and inherited unchanged by derived
+     * reuploads (e.g. compress/crop/rotate). Ente's server exposes no native
+     * "added" timestamp, so this is persisted here to give a stable sort key.
+     */
+    uploadedAt?: number;
+    /**
+     * Epoch microseconds when the file's metadata was last edited (tag,
+     * visibility, date, or a derived reupload).
+     *
+     * Distinct from {@link editedTime}, which is specifically an edit of the
+     * capture date. Used as a secondary sort key alongside {@link uploadedAt}.
+     */
+    editedAt?: number;
+    /**
      * Modified file name of the {@link EnteFile}.
      *
      * This field stores edits to the {@link title} {@link FileMetadata} field.
@@ -407,6 +423,8 @@ export const FilePublicMagicMetadataData = z.looseObject({
     offsetTime: z.string().nullish().transform(nullToUndefined),
     editedTime: z.number().nullish().transform(nullToUndefined),
     editedName: z.string().nullish().transform(nullToUndefined),
+    uploadedAt: z.number().nullish().transform(nullToUndefined),
+    editedAt: z.number().nullish().transform(nullToUndefined),
     w: z.number().nullish().transform(nullToUndefined),
     h: z.number().nullish().transform(nullToUndefined),
     // Some legacy remote records have been seen with numeric captions.

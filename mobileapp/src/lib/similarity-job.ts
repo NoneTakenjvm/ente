@@ -1,8 +1,10 @@
 import { FileType } from "ente-media/file-type";
 import type { EnteFile } from "ente-media/file";
+import type { PhashEntry } from "@/lib/crop-match";
 import {
     loadEncryptedPhashIndex,
     saveEncryptedPhashIndex,
+    type PersistedPhashEntry,
     type PersistedPhashIndex,
 } from "@/db/kv";
 import { getSessionCacheKey } from "@/lib/cache-key";
@@ -17,23 +19,23 @@ import type {
 
 export interface PhashJobOptions {
     files: EnteFile[];
-    entries: Map<number, string>;
+    entries: Map<number, PhashEntry>;
     onProgress?: (current: number, total: number) => void;
     shouldPause?: () => boolean;
     signal?: AbortSignal;
 }
 
 const emptyIndex = (): PersistedPhashIndex => ({
-    version: 1,
+    version: 3,
     entries: {},
 });
 
-const indexFromMap = (entries: Map<number, string>): PersistedPhashIndex => ({
-    version: 1,
+const indexFromMap = (entries: Map<number, PhashEntry>): PersistedPhashIndex => ({
+    version: 3,
     entries: Object.fromEntries(entries.entries()),
 });
 
-const persistIndex = async (entries: Map<number, string>): Promise<void> => {
+const persistIndex = async (entries: Map<number, PhashEntry>): Promise<void> => {
     await saveEncryptedPhashIndex(
         indexFromMap(entries),
         getSessionCacheKey(),
@@ -54,8 +56,7 @@ let requestCounter = 0;
 const getPhashWorkers = (): Worker[] => {
     if (!workers) {
         workers = Array.from({ length: phashWorkerCount() }, () =>
-            new Worker(new URL("../workers/phash.worker.ts", import.meta.url)),
-        );
+            new Worker(new URL("../workers/phash.worker.ts", import.meta.url)));
     }
     return workers;
 };
@@ -63,7 +64,7 @@ const getPhashWorkers = (): Worker[] => {
 const hashBytesInWorker = (
     fileId: number,
     bytes: Uint8Array,
-): Promise<string> =>
+): Promise<PhashEntry> =>
     new Promise((resolve, reject) => {
         const pool = getPhashWorkers();
         const phashWorker = pool[workerRoundRobin % pool.length]!;
@@ -75,11 +76,15 @@ const hashBytesInWorker = (
                 return;
             }
             phashWorker.removeEventListener("message", handleMessage);
-            if (event.data.error || !event.data.hash) {
+            if (event.data.error || !event.data.hashes || !event.data.color || !event.data.grid) {
                 reject(new Error(event.data.error ?? "Hash failed"));
                 return;
             }
-            resolve(event.data.hash);
+            resolve({
+                hashes: event.data.hashes,
+                color: event.data.color,
+                grid: event.data.grid,
+            });
         };
 
         phashWorker.addEventListener("message", handleMessage);
@@ -101,17 +106,33 @@ export const imageFilesForPhash = (
             file.metadata.fileType === FileType.image,
     );
 
-export const hydratePhashIndex = async (): Promise<Map<number, string>> => {
+/** Normalize a legacy (v1/v2) or current (v3) persisted value to a full {@link PhashEntry}. */
+const toPhashEntry = (
+    value: PersistedPhashEntry | string | string[],
+): PhashEntry => {
+    if (typeof value === "string") {
+        return { hashes: [value] };
+    }
+    if (Array.isArray(value)) {
+        return { hashes: value };
+    }
+    return {
+        hashes: Array.isArray(value.hashes) ? value.hashes : [value.hashes],
+        color: value.color,
+        grid: value.grid,
+    };
+};
+
+export const hydratePhashIndex = async (): Promise<Map<number, PhashEntry>> => {
     const persisted = await loadEncryptedPhashIndex(getSessionCacheKey());
     if (!persisted) {
         return new Map();
     }
-    return new Map(
-        Object.entries(persisted.entries).map(([fileId, hash]) => [
-            Number(fileId),
-            hash,
-        ]),
-    );
+    const entries = new Map<number, PhashEntry>();
+    for (const [fileId, value] of Object.entries(persisted.entries)) {
+        entries.set(Number(fileId), toPhashEntry(value));
+    }
+    return entries;
 };
 
 export const clearPersistedPhashIndex = async (): Promise<void> => {
@@ -129,7 +150,7 @@ export const removePhashEntry = async (fileId: number): Promise<void> => {
     const nextEntries = { ...persisted.entries };
     delete nextEntries[fileId];
     await saveEncryptedPhashIndex(
-        { version: 1, entries: nextEntries },
+        { version: 3, entries: nextEntries },
         getSessionCacheKey(),
     );
 };
@@ -173,11 +194,12 @@ const waitIfPaused = async (
 };
 
 /**
- * Compute dHash for image files missing from the index; persist incrementally.
+ * Compute dHash + crop signals for image files missing from the index; persist
+ * incrementally.
  */
 export const runPhashJob = async (
     options: PhashJobOptions,
-): Promise<Map<number, string>> => {
+): Promise<Map<number, PhashEntry>> => {
     const candidates = options.files
         .filter((file) => !options.entries.has(file.id))
         .sort((a, b) => a.id - b.id);
@@ -224,8 +246,8 @@ export const runPhashJob = async (
         const bytes = await getDecryptedThumbnailBytes(file);
         if (bytes) {
             try {
-                const hash = await hashBytesInWorker(file.id, bytes);
-                entries.set(file.id, hash);
+                const entry = await hashBytesInWorker(file.id, bytes);
+                entries.set(file.id, entry);
                 await noteHashed();
             } catch {
                 // Skip files we cannot hash.

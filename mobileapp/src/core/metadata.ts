@@ -46,6 +46,21 @@ export const getPublicMetadata = (
     file: EnteFile,
 ): FilePublicMagicMetadataData => file.pubMagicMetadata?.data ?? {};
 
+/**
+ * Stamp a fresh edit timestamp into a public-metadata update.
+ *
+ * Every post-upload metadata write (tags, visibility, date edits, ...) records
+ * when it happened under `editedAt`, so it can be used as a stable "last
+ * edited" sort key. The caller merges the result into existing data, which
+ * preserves any `uploadedAt` untouched.
+ */
+const withEditedAt = <T extends Record<string, unknown>>(
+    updates: T,
+): T & { editedAt: number } => ({
+    ...updates,
+    editedAt: Date.now() * 1000,
+});
+
 const putPublicMetadata = async (
     http: HttpClient,
     file: EnteFile,
@@ -126,7 +141,7 @@ export const updatePublicMetadata = async (
 ): Promise<void> => {
     const mergedData = {
         ...file.pubMagicMetadata?.data,
-        ...updates,
+        ...withEditedAt(updates),
     } as FilePublicMagicMetadataData;
     await putPublicMetadata(http, file, mergedData);
 };
@@ -174,7 +189,7 @@ const applyOrganizerTags = async (
     const update = buildOrganizerUpdate(tags);
     const mergedData = {
         ...file.pubMagicMetadata?.data,
-        ...update,
+        ...withEditedAt(update),
     } as OrganizerPublicMetadata;
     await putPublicMetadata(http, file, mergedData);
 };

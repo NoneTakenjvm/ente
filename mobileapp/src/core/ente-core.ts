@@ -1,4 +1,4 @@
-import { fileCreationTime } from "ente-media/file-metadata";
+import { sortFilesByUpload } from "@/lib/sort-files";
 import { loginSRP } from "./auth/srp";
 import {
     addToFavoritesCollection,
@@ -90,9 +90,6 @@ const dedupeFilesById = (files: EnteFile[]): EnteFile[] => {
     return [...byId.values()];
 };
 
-const sortFilesNewestFirst = (files: EnteFile[]): EnteFile[] =>
-    [...files].sort((a, b) => fileCreationTime(b) - fileCreationTime(a));
-
 export class EnteCore {
     private readonly session: CoreSession;
     private readonly http: HttpClient;
@@ -179,9 +176,9 @@ export class EnteCore {
         }
 
         if (options?.collectionId) {
-            return sortFilesNewestFirst(allFiles);
+            return sortFilesByUpload(allFiles);
         }
-        return sortFilesNewestFirst(dedupeFilesById(allFiles));
+        return sortFilesByUpload(dedupeFilesById(allFiles));
     }
 
     getCollectionChanges(sinceTime: number): Promise<CollectionChange[]> {

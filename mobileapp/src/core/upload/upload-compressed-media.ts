@@ -56,10 +56,13 @@ const buildMetadata = async (
 const buildPublicMagicData = (
     width: number,
     height: number,
+    uploadedAt: number,
     organizerTags: string[],
 ): Record<string, unknown> => ({
     w: ensureInteger(width),
     h: ensureInteger(height),
+    uploadedAt: ensureInteger(uploadedAt),
+    editedAt: ensureInteger(Date.now() * 1000),
     _organizer_v1: {
         tags: organizerTags,
         updatedAt: Date.now() * 1000,
@@ -109,6 +112,7 @@ export const uploadCompressedMedia = async (
     const publicMagicData = buildPublicMagicData(
         result.width,
         result.height,
+        sourceFile.pubMagicMetadata?.data.uploadedAt ?? Date.now() * 1000,
         organizerTags,
     );
     const publicMagicMetadata = createMagicMetadata(publicMagicData);

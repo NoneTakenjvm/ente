@@ -1,12 +1,13 @@
 import { create } from "zustand";
 import type { StateCreator } from "zustand";
+import type { PhashEntry } from "@/lib/crop-match";
 import { hydratePhashIndex } from "@/lib/similarity-job";
 
 interface PhashIndexState {
-    entries: Map<number, string>;
+    entries: Map<number, PhashEntry>;
     isHydrated: boolean;
     hydrate: () => Promise<void>;
-    setEntries: (entries: Map<number, string>) => void;
+    setEntries: (entries: Map<number, PhashEntry>) => void;
     reset: () => void;
 }
 
@@ -19,7 +20,7 @@ const createPhashIndexStore: StateCreator<PhashIndexState> = (set) => ({
         set({ entries, isHydrated: true });
     },
 
-    setEntries: (entries: Map<number, string>): void => {
+    setEntries: (entries: Map<number, PhashEntry>): void => {
         set({ entries, isHydrated: true });
     },
 

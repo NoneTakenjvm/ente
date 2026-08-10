@@ -83,9 +83,25 @@ export const saveEncryptedTagIndex = async (
     await putEncrypted("tagIndex", await encryptCachePayload(index, cacheKey));
 };
 
+/** A per-file entry as persisted on disk (v3). Legacy v1/v2 entries were just
+ * a dHash string or array, which hydrate normalizes into {@link PhashEntry}. */
+export interface PersistedPhashEntry {
+    hashes: string[] | string;
+    color?: string;
+    grid?: string;
+}
+
 export interface PersistedPhashIndex {
-    version: 1;
-    entries: Record<number, string>;
+    version: 3;
+    /**
+     * fileId → the image's similarity signals.
+     *
+     * Legacy version-1/2 entries stored a single dHash string or array of
+     * variant hashes; hydrate normalizes those to {@link PersistedPhashEntry}
+     * so any-variant matching behaves exactly like the original whole-image
+     * dHash compare, and the crop stage is skipped when color/grid are absent.
+     */
+    entries: Record<number, PersistedPhashEntry | string | string[]>;
 }
 
 export const loadEncryptedPhashIndex = async (
