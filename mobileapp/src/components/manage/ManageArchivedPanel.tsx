@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/empty";
 import { dedupeFilesById } from "@/lib/sync/merge-files";
 import { isFileArchivedLocally } from "@/lib/visibility-outbox";
-import { fileCreationTime } from "ente-media/file-metadata";
+import { sortFilesByUpload } from "@/lib/sort-files";
 import { useLibraryStore } from "@/stores/library-store";
 import type { EnteFile } from "ente-media/file";
 
@@ -34,9 +34,7 @@ export function ManageArchivedPanel({
         const deduped = dedupeFilesById(files).filter(
             (file) => isFileArchivedLocally(file),
         );
-        return [...deduped].sort(
-            (a, b) => fileCreationTime(b) - fileCreationTime(a),
-        );
+        return sortFilesByUpload(deduped);
     }, [files]);
 
     const handleToggle = (file: EnteFile): void => {

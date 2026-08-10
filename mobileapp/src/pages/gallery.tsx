@@ -7,7 +7,7 @@ import {
 } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/router";
-import { Upload } from "lucide-react";
+import { ArrowDownUp, Upload } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { PageLoader } from "@/components/PageLoader";
 import { SelectionActionFooter } from "@/components/SelectionActionFooter";
@@ -32,7 +32,8 @@ import {
     filterFilesByTags,
 } from "@/lib/tags";
 import { isFileArchivedLocally } from "@/lib/visibility-outbox";
-import { fileCreationTime } from "ente-media/file-metadata";
+import { sortFilesByEdit, sortFilesByUpload } from "@/lib/sort-files";
+import { useSettingsStore } from "@/stores/settings-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useSelectionStore } from "@/stores/selection-store";
@@ -63,15 +64,22 @@ export default function GalleryPage(): JSX.Element {
     const setUploadPanelOpen = useUploadJobStore((s) => s.setPanelOpen);
     const syncStatus = useLibraryStore((s) => s.syncStatus);
     const initialLoadDone = useLibraryBootstrap();
+    const gallerySortBy = useSettingsStore((s) => s.gallerySortBy);
+
+    const sortLibraryFiles = useCallback(
+        (files: EnteFile[]): EnteFile[] =>
+            gallerySortBy === "edited" ?
+                sortFilesByEdit(files) :
+                sortFilesByUpload(files),
+        [gallerySortBy],
+    );
 
     const libraryFiles = useMemo(() => {
         const deduped = dedupeFilesById(allFiles).filter(
             (file) => !isFileArchivedLocally(file),
         );
-        return [...deduped].sort(
-            (a, b) => fileCreationTime(b) - fileCreationTime(a),
-        );
-    }, [allFiles]);
+        return sortLibraryFiles(deduped);
+    }, [allFiles, sortLibraryFiles]);
 
     const filteredFiles = useMemo(
         () =>
@@ -189,6 +197,14 @@ export default function GalleryPage(): JSX.Element {
             current === undefined ? undefined : file.id);
     }, []);
 
+    const patchSettings = useSettingsStore((s) => s.patchSettings);
+
+    const handleToggleSort = (): void => {
+        patchSettings({
+            gallerySortBy: gallerySortBy === "edited" ? "uploaded" : "edited",
+        });
+    };
+
     const showFullPageLoader: boolean =
         !initialLoadDone &&
         (syncStatus === "loadingFromCache" || syncStatus === "syncing") &&
@@ -203,15 +219,36 @@ export default function GalleryPage(): JSX.Element {
             title="Media"
             email={email}
             actions={
-                <Button
-                    type="button"
-                    variant="outline"
-                    size="icon-sm"
-                    aria-label="Upload photos and videos"
-                    onClick={() => setUploadPanelOpen(true)}
-                >
-                    <Upload />
-                </Button>
+                <>
+                    <Button
+                        type="button"
+                        variant={gallerySortBy === "edited" ? "secondary" : "outline"}
+                        size="icon-sm"
+                        aria-label={
+                            gallerySortBy === "edited" ?
+                                "Sort by upload date" :
+                                "Sort by last edited"
+                        }
+                        aria-pressed={gallerySortBy === "edited"}
+                        onClick={handleToggleSort}
+                        title={
+                            gallerySortBy === "edited" ?
+                                "Sorting by edit time — tap to sort by upload" :
+                                "Sorting by upload — tap to sort by edit"
+                        }
+                    >
+                        <ArrowDownUp />
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="icon-sm"
+                        aria-label="Upload photos and videos"
+                        onClick={() => setUploadPanelOpen(true)}
+                    >
+                        <Upload />
+                    </Button>
+                </>
             }
         >
             <SyncBanner />

@@ -66,6 +66,8 @@ const buildPublicMagicData = (
 ): Record<string, unknown> => ({
     w: ensureInteger(options.width),
     h: ensureInteger(options.height),
+    uploadedAt: ensureInteger(Date.now() * 1000),
+    editedAt: ensureInteger(Date.now() * 1000),
 });
 
 /**

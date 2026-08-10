@@ -36,7 +36,7 @@ import {
     filterFilesByTags,
 } from "@/lib/tags";
 import { isFileArchivedLocally } from "@/lib/visibility-outbox";
-import { fileCreationTime } from "ente-media/file-metadata";
+import { sortFilesByUpload } from "@/lib/sort-files";
 import type { EnteFile } from "ente-media/file";
 import {
     isSessionAuthenticated,
@@ -87,9 +87,7 @@ export default function AlbumsPage(): JSX.Element {
         const deduped = dedupeFilesById(allFiles).filter(
             (file) => !isFileArchivedLocally(file),
         );
-        return [...deduped].sort(
-            (a, b) => fileCreationTime(b) - fileCreationTime(a),
-        );
+        return sortFilesByUpload(deduped);
     }, [allFiles]);
 
     const libraryFileIds = useMemo(

@@ -51,7 +51,9 @@ import {
 import {
     buildSimilarityGroups,
     defaultSimilarityThreshold,
+    mergeCropMatches,
     similarityGroupToSelection,
+    type SimilarityGroup,
 } from "@/lib/similarity-groups";
 import {
     imageFilesForPhash,
@@ -157,7 +159,7 @@ export default function ManagePage(): JSX.Element {
         [allFiles, collections, userId],
     );
 
-    const similarGroups = useMemo(() => {
+    const stage1SimilarGroups = useMemo(() => {
         const filesById = new Map(allFiles.map((file) => [file.id, file]));
         return buildSimilarityGroups(
             phashEntries,
@@ -167,6 +169,28 @@ export default function ManagePage(): JSX.Element {
             threshold,
         );
     }, [allFiles, collections, phashEntries, threshold, userId]);
+
+    // Show Stage-1 (dHash) groups immediately; refine async so crop matches are
+    // merged without blocking the main thread.
+    const [similarGroups, setSimilarGroups] = useState<SimilarityGroup[]>([]);
+    useEffect(() => {
+        let cancelled = false;
+        setSimilarGroups(stage1SimilarGroups);
+        const filesById = new Map(allFiles.map((file) => [file.id, file]));
+        void mergeCropMatches(stage1SimilarGroups, {
+            entries: phashEntries,
+            filesById,
+            collections,
+            userId,
+        }).then((merged) => {
+            if (!cancelled) {
+                setSimilarGroups(merged);
+            }
+        });
+        return (): void => {
+            cancelled = true;
+        };
+    }, [stage1SimilarGroups, allFiles, collections, phashEntries, userId]);
 
     const dedupMode = section === "exact" || section === "similar" ? section : null;
 

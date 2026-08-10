@@ -162,6 +162,9 @@ describe("local video upload pipeline", () => {
             posted.pubMagicMetadata,
             uploaded.key,
         );
-        expect(decryptedPubMagic.data).toEqual({ w: 1920, h: 1080 });
+        const pubData = decryptedPubMagic.data as Record<string, unknown>;
+        expect(pubData).toMatchObject({ w: 1920, h: 1080 });
+        expect(pubData.uploadedAt).toEqual(expect.any(Number));
+        expect(pubData.editedAt).toEqual(expect.any(Number));
     });
 });
