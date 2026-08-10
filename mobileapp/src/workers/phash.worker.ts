@@ -1,12 +1,15 @@
 /// <reference lib="webworker" />
 
 import {
+    areCropMatches,
     colorHashFromImageData,
     encodeLuminanceGrid,
     luminanceGridFromImageData,
 } from "@/lib/crop-match";
 import { computeDHashFromImageData } from "@/lib/phash";
 import type {
+    CropCheckMessage,
+    CropCheckResult,
     PhashWorkerRequest,
     PhashWorkerResponse,
 } from "@/workers/phash-worker-types";
@@ -37,8 +40,29 @@ const hashVariant = (
     return computeDHashFromImageData(imageData.data, canvasWidth, canvasHeight);
 };
 
-self.onmessage = async (event: MessageEvent<PhashWorkerRequest>): Promise<void> => {
-    const { id, fileId, bytes }: PhashWorkerRequest = event.data;
+self.onmessage = async (event: MessageEvent<CropCheckMessage | PhashWorkerRequest>): Promise<void> => {
+    const message = event.data;
+
+    // Crop verification: pure string decode + template match, off the UI thread.
+    if (message.kind === "crop-check") {
+        const { id, aColor, aGrid, bColor, bGrid } = message;
+        try {
+            const match = areCropMatches(aColor, aGrid, bColor, bGrid);
+            const response: CropCheckResult = { kind: "crop-check", id, match };
+            self.postMessage(response);
+        } catch (error: unknown) {
+            const response: CropCheckResult = {
+                kind: "crop-check",
+                id,
+                match: false,
+                error: error instanceof Error ? error.message : "Crop check failed",
+            };
+            self.postMessage(response);
+        }
+        return;
+    }
+
+    const { id, fileId, bytes }: PhashWorkerRequest = message;
     try {
         const blob: Blob = new Blob([Uint8Array.from(bytes)], {
             type: "image/jpeg",

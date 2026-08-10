@@ -3,7 +3,10 @@ import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
 import { FileType } from "ente-media/file-type";
 import type { PhashEntry } from "@/lib/crop-match";
-import { buildSimilarityGroups } from "@/lib/similarity-groups";
+import {
+    buildSimilarityGroups,
+    MAX_GROUP_SIZE,
+} from "@/lib/similarity-groups";
 
 const stubFile = (
     id: number,
@@ -113,5 +116,50 @@ describe("buildSimilarityGroups with rotation/mirror variants", () => {
         ]);
         const groups = describeGroups(entries, filesById, collections);
         expect(groups).toEqual([]);
+    });
+});
+
+describe("buildSimilarityGroups oversized-component cap", () => {
+    const filesById = new Map(
+        Array.from({ length: MAX_GROUP_SIZE + 20 }, (_, i) => [
+            i + 1,
+            stubFile(i + 1, 1, 1),
+        ]),
+    );
+    const collections = [stubCollection(1)];
+
+    it("never emits a group larger than MAX_GROUP_SIZE even when loose links chain", () => {
+        // A chain of hashes: each adjacent pair differs by 1 bit (dist 1 <= 10),
+        // so the plain union-find would collapse all ~60 into one component.
+        // The cap must split it into bounded clusters.
+        const entries = new Map<number, string[]>();
+        for (let i = 0; i < MAX_GROUP_SIZE + 20; i++) {
+            entries.set(i + 1, [
+                (0xa1b00000 + i).toString(16).padStart(16, "0"),
+            ]);
+        }
+        const groups = describeGroups(entries, filesById, collections);
+        for (const group of groups) {
+            expect(group.length).toBeLessThanOrEqual(MAX_GROUP_SIZE);
+        }
+        // The chain is real adjacency, so we should still get multiple groups
+        // covering the files — not a single cap-sized dump plus stragglers.
+        expect(groups.length).toBeGreaterThan(1);
+    });
+
+    it("keeps a genuinely identical cluster together below the cap", () => {
+        // 3 truly identical copies: same hash → one tight group, no split.
+        const entries = new Map<number, string[]>([
+            [1, ["a1bf000000000000"]],
+            [2, ["a1bf000000000000"]],
+            [3, ["a1bf000000000000"]],
+        ]);
+        const localFiles = new Map([
+            [1, stubFile(1, 1, 1)],
+            [2, stubFile(2, 1, 1)],
+            [3, stubFile(3, 1, 1)],
+        ]);
+        const groups = describeGroups(entries, localFiles, collections);
+        expect(groups).toEqual([[1, 2, 3]]);
     });
 });
