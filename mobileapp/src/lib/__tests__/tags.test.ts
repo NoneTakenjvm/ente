@@ -211,6 +211,7 @@ describe("tags", () => {
                 tagScope: "untagged",
                 favoritesScope: "all",
                 mediaScope: "all",
+                croppedScope: "all",
                 root: createEmptyTagFilterRoot(),
             },
             fileIdsByTag,
@@ -232,6 +233,7 @@ describe("tags", () => {
                     tagScope: "untagged",
                     favoritesScope: "all",
                     mediaScope: "all",
+                    croppedScope: "all",
                     root: createEmptyTagFilterRoot(),
                 },
                 fileIdsByTag,
@@ -254,6 +256,7 @@ describe("tags", () => {
                 tagScope: "tagged",
                 favoritesScope: "all",
                 mediaScope: "all",
+                croppedScope: "all",
                 root: createEmptyTagFilterRoot(),
             },
             fileIdsByTag,
@@ -310,6 +313,7 @@ describe("tags", () => {
                     tagScope: "tagged",
                     favoritesScope: "all",
                     mediaScope: "all",
+                    croppedScope: "all",
                     root: createEmptyTagFilterRoot(),
                 },
                 fileIdsByTag,
@@ -332,6 +336,7 @@ describe("tags", () => {
                 tagScope: "all",
                 favoritesScope: "favorites",
                 mediaScope: "all",
+                croppedScope: "all",
                 root: createEmptyTagFilterRoot(),
             },
             fileIdsByTag,
@@ -354,12 +359,49 @@ describe("tags", () => {
                 tagScope: "all",
                 favoritesScope: "not-favorites",
                 mediaScope: "all",
+                croppedScope: "all",
                 root: createEmptyTagFilterRoot(),
             },
             fileIdsByTag,
             { favoriteFileIds: new Set([1, 3]) },
         );
         expect(filtered.map((file) => file.id)).toEqual([2]);
+    });
+
+    it("filterFilesByTags supports manually-cropped scope", () => {
+        const files = [
+            fileWithTags(1, ["selfie", "cropped"]),
+            fileWithTags(2, ["vietnam", "cropped", "auto-cropped"]),
+            fileWithTags(3, ["beach", "auto-cropped"]),
+            fileWithTags(4, ["plain"]),
+        ];
+        const index = buildTagIndex(files);
+        const { fileIdsByTag } = tagIndexToMaps(index);
+        const cropped = filterFilesByTags(
+            files,
+            {
+                tagScope: "all",
+                favoritesScope: "all",
+                mediaScope: "all",
+                croppedScope: "cropped",
+                root: createEmptyTagFilterRoot(),
+            },
+            fileIdsByTag,
+        );
+        expect(cropped.map((file) => file.id)).toEqual([1]);
+
+        const notCropped = filterFilesByTags(
+            files,
+            {
+                tagScope: "all",
+                favoritesScope: "all",
+                mediaScope: "all",
+                croppedScope: "not-cropped",
+                root: createEmptyTagFilterRoot(),
+            },
+            fileIdsByTag,
+        );
+        expect(notCropped.map((file) => file.id)).toEqual([2, 3, 4]);
     });
 
     it("filterFilesByTags distinguishes grouped (A AND B) OR C from A AND (B OR C)", () => {
@@ -407,9 +449,12 @@ describe("tags", () => {
                 tagScope: "untagged",
                 favoritesScope: "favorites",
                 mediaScope: "all",
+                croppedScope: "cropped",
                 root: andRoot(includeClause("selfie"), excludeClause("vietnam")),
             }),
-        ).toBe("untagged · favourites · selfie AND not vietnam");
+        ).toBe(
+            "untagged · favourites · manually-cropped · selfie AND not vietnam",
+        );
 
         expect(
             describeTagFilter(

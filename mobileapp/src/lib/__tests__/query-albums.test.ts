@@ -44,6 +44,7 @@ describe("serializeTagFilter / hydrateTagFilter", () => {
             tagScope: "tagged",
             favoritesScope: "favorites",
             mediaScope: "photo",
+            croppedScope: "cropped",
             root: {
                 kind: "group",
                 id: newTagFilterNodeId(),
@@ -56,6 +57,7 @@ describe("serializeTagFilter / hydrateTagFilter", () => {
         expect(restored.tagScope).toBe("tagged");
         expect(restored.favoritesScope).toBe("favorites");
         expect(restored.mediaScope).toBe("photo");
+        expect(restored.croppedScope).toBe("cropped");
         expect(restored.root.children).toHaveLength(1);
         const group = restored.root.children[0];
         expect(group.kind).toBe("group");

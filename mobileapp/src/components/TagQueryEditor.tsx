@@ -8,6 +8,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
     describeTagFilterClause,
     isTagFilterClause,
+    type CroppedScope,
     type FavoritesScope,
     type MediaScope,
     type TagFilterGroup,
@@ -23,6 +24,7 @@ export interface TagQueryEditorActions {
     setTagScope: (scope: TagScope) => void;
     setFavoritesScope: (scope: FavoritesScope) => void;
     setMediaScope: (scope: MediaScope) => void;
+    setCroppedScope: (scope: CroppedScope) => void;
     setGroupOp: (groupId: string, op: TagFilterJoin) => void;
     wrapInGroup: (nodeIds: string[], op: TagFilterJoin) => void;
     ungroup: (groupId: string) => void;
@@ -44,6 +46,8 @@ interface TagQueryEditorProps {
     notFavoritesCount: number;
     photoCount: number;
     videoCount: number;
+    croppedCount: number;
+    notCroppedCount: number;
     emptyHint?: string;
 }
 
@@ -341,6 +345,8 @@ export function TagQueryEditor({
     notFavoritesCount,
     photoCount,
     videoCount,
+    croppedCount,
+    notCroppedCount,
     emptyHint = "No tag steps yet. Add tags below, then group steps with AND or OR.",
 }: TagQueryEditorProps): JSX.Element {
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -378,12 +384,16 @@ export function TagQueryEditor({
                     notFavoritesCount={notFavoritesCount}
                     photoCount={photoCount}
                     videoCount={videoCount}
+                    croppedCount={croppedCount}
+                    notCroppedCount={notCroppedCount}
                     tagScope={filter.tagScope}
                     onTagScopeChange={actions.setTagScope}
                     favoritesScope={filter.favoritesScope}
                     onFavoritesScopeChange={actions.setFavoritesScope}
                     mediaScope={filter.mediaScope}
                     onMediaScopeChange={actions.setMediaScope}
+                    croppedScope={filter.croppedScope}
+                    onCroppedScopeChange={actions.setCroppedScope}
                 />
             </div>
 

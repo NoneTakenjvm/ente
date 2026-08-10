@@ -3,6 +3,7 @@ import {
     isTagFilterClause,
     isTagFilterGroup,
     newTagFilterNodeId,
+    type CroppedScope,
     type FavoritesScope,
     type TagFilterClauseNode,
     type TagFilterGroup,
@@ -182,6 +183,14 @@ export const setTagFilterMediaScope = (
     mediaScope,
 });
 
+export const setTagFilterCroppedScope = (
+    filter: TagFilterSelection,
+    croppedScope: CroppedScope,
+): TagFilterSelection => ({
+    ...filter,
+    croppedScope,
+});
+
 export const setTagFilterModeOnFilter = (
     filter: TagFilterSelection,
     tag: string,
@@ -202,9 +211,8 @@ export const setTagFilterModeOnFilter = (
         mode,
     };
     return {
+        ...filter,
         tagScope: filter.tagScope === "untagged" ? "all" : filter.tagScope,
-        favoritesScope: filter.favoritesScope,
-        mediaScope: filter.mediaScope,
         root: {
             ...withoutTag,
             children: [...withoutTag.children, clause],
@@ -351,7 +359,6 @@ export const setClauseInGroupOnFilter = (
     return {
         ...filter,
         tagScope: filter.tagScope === "untagged" ? "all" : filter.tagScope,
-        favoritesScope: filter.favoritesScope,
         root: updatedRoot,
     };
 };

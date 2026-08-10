@@ -27,6 +27,7 @@ import {
     type TagFilterNode,
     type TagFilterSelection,
     type TagScope,
+    type CroppedScope,
     type FavoritesScope,
     type MediaScope,
 } from "@/lib/tags";
@@ -52,6 +53,7 @@ interface TagState {
     setTagScope: (scope: TagScope) => void;
     setFavoritesScope: (favoritesScope: FavoritesScope) => void;
     setMediaScope: (mediaScope: MediaScope) => void;
+    setCroppedScope: (croppedScope: CroppedScope) => void;
     setTagFilterMode: (tag: string, mode: TagFilterMode | null) => void;
     setClauseMode: (clauseId: string, mode: TagFilterMode) => void;
     setClauseInGroup: (
@@ -449,6 +451,16 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         });
     },
 
+    setCroppedScope: (croppedScope: CroppedScope): void => {
+        const { tagFilter } = get();
+        set({
+            tagFilter: {
+                ...tagFilter,
+                croppedScope,
+            },
+        });
+    },
+
     setTagFilterMode: (tag: string, mode: TagFilterMode | null): void => {
         const { tagFilter } = get();
         const withoutTag = removeClauseByTagFromRoot(tagFilter.root, tag);
@@ -472,11 +484,10 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         };
         set({
             tagFilter: {
+                ...tagFilter,
                 tagScope: tagFilter.tagScope === "untagged" ?
                     "all" :
                     tagFilter.tagScope,
-                favoritesScope: tagFilter.favoritesScope,
-                mediaScope: tagFilter.mediaScope,
                 root: {
                     ...withoutTag,
                     children: [...withoutTag.children, clause],

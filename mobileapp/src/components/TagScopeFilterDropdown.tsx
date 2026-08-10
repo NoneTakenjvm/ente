@@ -10,7 +10,12 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { FavoritesScope, MediaScope, TagScope } from "@/lib/tags";
+import type {
+    CroppedScope,
+    FavoritesScope,
+    MediaScope,
+    TagScope,
+} from "@/lib/tags";
 import { useTagStore } from "@/stores/tag-store";
 
 interface TagScopeFilterDropdownProps {
@@ -20,12 +25,16 @@ interface TagScopeFilterDropdownProps {
     notFavoritesCount: number;
     photoCount: number;
     videoCount: number;
+    croppedCount: number;
+    notCroppedCount: number;
     tagScope?: TagScope;
     onTagScopeChange?: (scope: TagScope) => void;
     favoritesScope?: FavoritesScope;
     onFavoritesScopeChange?: (scope: FavoritesScope) => void;
     mediaScope?: MediaScope;
     onMediaScopeChange?: (scope: MediaScope) => void;
+    croppedScope?: CroppedScope;
+    onCroppedScopeChange?: (scope: CroppedScope) => void;
 }
 
 const isTagScope = (value: unknown): value is TagScope =>
@@ -37,6 +46,9 @@ const isFavoritesScope = (value: unknown): value is FavoritesScope =>
 const isMediaScope = (value: unknown): value is MediaScope =>
     value === "all" || value === "photo" || value === "video";
 
+const isCroppedScope = (value: unknown): value is CroppedScope =>
+    value === "all" || value === "cropped" || value === "not-cropped";
+
 export function TagScopeFilterDropdown({
     taggedCount,
     untaggedCount,
@@ -44,20 +56,26 @@ export function TagScopeFilterDropdown({
     notFavoritesCount,
     photoCount,
     videoCount,
+    croppedCount,
+    notCroppedCount,
     tagScope: controlledScope,
     onTagScopeChange,
     favoritesScope: controlledFavoritesScope,
     onFavoritesScopeChange,
     mediaScope: controlledMediaScope,
     onMediaScopeChange,
+    croppedScope: controlledCroppedScope,
+    onCroppedScopeChange,
 }: TagScopeFilterDropdownProps): JSX.Element {
     const storeFilter = useTagStore((s) => s.tagFilter);
     const setTagScope = useTagStore((s) => s.setTagScope);
     const setFavoritesScope = useTagStore((s) => s.setFavoritesScope);
     const setMediaScope = useTagStore((s) => s.setMediaScope);
+    const setCroppedScope = useTagStore((s) => s.setCroppedScope);
     const tagScope = controlledScope ?? storeFilter.tagScope;
     const favoritesScope = controlledFavoritesScope ?? storeFilter.favoritesScope;
     const mediaScope = controlledMediaScope ?? storeFilter.mediaScope;
+    const croppedScope = controlledCroppedScope ?? storeFilter.croppedScope;
 
     const handleScopeChange = (value: TagScope): void => {
         if (onTagScopeChange) {
@@ -83,10 +101,19 @@ export function TagScopeFilterDropdown({
         }
     };
 
+    const handleCroppedScopeChange = (value: CroppedScope): void => {
+        if (onCroppedScopeChange) {
+            onCroppedScopeChange(value);
+        } else {
+            setCroppedScope(value);
+        }
+    };
+
     const filterActive =
         tagScope !== "all" ||
         favoritesScope !== "all" ||
-        mediaScope !== "all";
+        mediaScope !== "all" ||
+        croppedScope !== "all";
 
     return (
         <DropdownMenu>
@@ -97,7 +124,7 @@ export function TagScopeFilterDropdown({
                         variant={filterActive ? "secondary" : "outline"}
                         size="sm"
                         className="shrink-0 gap-1.5"
-                        aria-label="Filter by tag presence, favourites, and media type"
+                        aria-label="Filter by tag presence, favourites, media type, and crop"
                     >
                         <Filter className="size-3.5 shrink-0" />
                         Filter
@@ -160,6 +187,36 @@ export function TagScopeFilterDropdown({
                             Not favourite
                             <span className="text-xs tabular-nums text-muted-foreground">
                                 {notFavoritesCount}
+                            </span>
+                        </span>
+                    </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuRadioGroup
+                    value={croppedScope}
+                    onValueChange={(value) => {
+                        if (isCroppedScope(value)) {
+                            handleCroppedScopeChange(value);
+                        }
+                    }}
+                >
+                    <DropdownMenuLabel>Manual crop</DropdownMenuLabel>
+                    <DropdownMenuRadioItem value="all" closeOnClick>
+                        All
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="cropped" closeOnClick>
+                        <span className="flex w-full items-center justify-between gap-2">
+                            Cropped
+                            <span className="text-xs tabular-nums text-muted-foreground">
+                                {croppedCount}
+                            </span>
+                        </span>
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="not-cropped" closeOnClick>
+                        <span className="flex w-full items-center justify-between gap-2">
+                            Not cropped
+                            <span className="text-xs tabular-nums text-muted-foreground">
+                                {notCroppedCount}
                             </span>
                         </span>
                     </DropdownMenuRadioItem>

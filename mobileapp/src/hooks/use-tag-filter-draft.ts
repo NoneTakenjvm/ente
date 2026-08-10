@@ -5,6 +5,7 @@ import {
     setClauseModeOnFilter,
     setTagFilterFavoritesScope,
     setTagFilterMediaScope,
+    setTagFilterCroppedScope,
     setTagFilterGroupOp,
     setTagFilterModeOnFilter,
     setTagFilterScope,
@@ -13,6 +14,7 @@ import {
 } from "@/lib/tag-filter-mutations";
 import {
     emptyTagFilter,
+    type CroppedScope,
     type FavoritesScope,
     type MediaScope,
     type TagFilterJoin,
@@ -65,6 +67,14 @@ export const useTagFilterDraft: (
         (mediaScope: MediaScope): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
                 setTagFilterMediaScope(current, mediaScope));
+        },
+        [],
+    );
+
+    const setCroppedScope: (croppedScope: CroppedScope) => void = useCallback(
+        (croppedScope: CroppedScope): void => {
+            setFilter((current: TagFilterSelection): TagFilterSelection =>
+                setTagFilterCroppedScope(current, croppedScope));
         },
         [],
     );
@@ -138,6 +148,7 @@ export const useTagFilterDraft: (
             setTagScope,
             setFavoritesScope,
             setMediaScope,
+            setCroppedScope,
             setGroupOp,
             wrapInGroup,
             ungroup,
@@ -150,6 +161,7 @@ export const useTagFilterDraft: (
             setTagScope,
             setFavoritesScope,
             setMediaScope,
+            setCroppedScope,
             setGroupOp,
             wrapInGroup,
             ungroup,
