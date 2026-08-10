@@ -7,12 +7,15 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-08-10 |
-| **Last agent / session** | Duplicate-detection hardening: crop matching offloaded to workers (no more main-thread freeze), chained 1894-image group split into bounded clusters, threshold-slider recompute debounced. |
+| **Last agent / session** | Gallery filter: manually cropped vs not (mirrors favourites scope). |
 | **Current milestone** | Post-M8 UX / stability batch |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
 | **Next recommended action** | Device QA Manage → Usage / Tools nesting after deploy |
 
 **This session shipped:**
+1. **Manual-crop filter scope** in the gallery Filter dropdown (and query builder / smart albums): All / Cropped / Not cropped. Matches files with organizer tag `cropped` but not `auto-cropped` (auto-crop results and never-cropped files fall under Not cropped). Wired through `TagFilterSelection.croppedScope`, persistence in query albums, and counts like favourites.
+
+**Previous session shipped:**
 1. **Crop matching runs on the worker pool, not the UI thread.** `mergeCropMatches` (Stage-2) previously ran `templateMatchScore` on the main thread — ~20 ms/pair × up to ~4 checks × 5k files froze the phone for minutes on every Manage open / threshold change. Now candidate pairs are batched (`batchSize = 48`) and verified by `checkCropMatchInWorkers` → `crop-check` messages on the shared phash worker pool; the UI thread only unions verdicts between batches. `PhashWorkerRequest` gained a `kind: "hash"` discriminator so the worker's `onmessage` now dispatches a proper discriminated union.
 2. **Giant chained groups are capped.** Union-find is transitive (A~B, B~C ⇒ A,B,C grouped even when A≁C), so a loose 8-variant/threshold=10 graph could collapse thousands of distinct photos into one 1894-image group. Any component over `MAX_GROUP_SIZE = 40` is re-clustered by recursive strict single-linkage: exact hash-prefix buckets (no ±1 neighbor unions) × best-variant distance ≤ half threshold, recursing to a longer prefix until bounded, with a deterministic hard slice at the full 64-bit exact-identical case. Genuine duplicates (dist ~0-4) stay grouped; the "bridge" links that manufacture mega-groups are dropped. Regression tests cover both the chain-split and the intact-identical-cluster cases.
 3. **Threshold recompute debounced.** The similarity slider updates live while dragging; `buildSimilarityGroups` + worker crop merging only re-run after the user pauses (300 ms debounce) instead of on every tick. `manage.tsx` drives grouping from a `debouncedThreshold`, keeping `threshold` bound to the visible slider.

@@ -27,7 +27,9 @@ import { sortFilesByUpload } from "@/lib/sort-files";
 import {
     countFavoritesInCandidates,
     countFilesMatchingTagFilter,
+    countManuallyCroppedInCandidates,
     countNotFavoritesInCandidates,
+    countNotManuallyCroppedInCandidates,
     countPhotosInCandidates,
     countTaggedInCandidates,
     countUntaggedInCandidates,
@@ -148,6 +150,16 @@ export function AlbumEditorPanel({
         [libraryFileIds, libraryFiles],
     );
 
+    const croppedCount = useMemo(
+        () => countManuallyCroppedInCandidates(libraryFileIds, libraryFiles),
+        [libraryFileIds, libraryFiles],
+    );
+
+    const notCroppedCount = useMemo(
+        () => countNotManuallyCroppedInCandidates(libraryFileIds, libraryFiles),
+        [libraryFileIds, libraryFiles],
+    );
+
     const handleSubmit = (event: FormEvent): void => {
         event.preventDefault();
         const trimmed = name.trim();
@@ -239,6 +251,8 @@ export function AlbumEditorPanel({
                     notFavoritesCount={notFavoritesCount}
                     photoCount={photoCount}
                     videoCount={videoCount}
+                    croppedCount={croppedCount}
+                    notCroppedCount={notCroppedCount}
                 />
             </div>
 

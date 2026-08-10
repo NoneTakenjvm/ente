@@ -33,6 +33,12 @@ export const PHOTO_FILTER = "photo";
 /** Gallery filter for videos. */
 export const VIDEO_FILTER = "video";
 
+/** Gallery filter for files manually cropped in this app. */
+export const MANUALLY_CROPPED_FILTER = "manually-cropped";
+
+/** Gallery filter for files that were not manually cropped. */
+export const NOT_MANUALLY_CROPPED_FILTER = "not-manually-cropped";
+
 export type TagFilterMode = "include" | "exclude";
 
 export type TagFilterJoin = "and" | "or";
@@ -42,6 +48,9 @@ export type TagScope = "all" | "tagged" | "untagged";
 export type FavoritesScope = "all" | "favorites" | "not-favorites";
 
 export type MediaScope = "all" | "photo" | "video";
+
+/** Manual crop presence: user crop (not auto-crop) vs everything else. */
+export type CroppedScope = "all" | "cropped" | "not-cropped";
 
 export interface TagFilterClauseNode {
     kind: "clause";
@@ -63,6 +72,7 @@ export interface TagFilterSelection {
     tagScope: TagScope;
     favoritesScope: FavoritesScope;
     mediaScope: MediaScope;
+    croppedScope: CroppedScope;
     root: TagFilterGroup;
 }
 
@@ -90,6 +100,7 @@ export const emptyTagFilter = (): TagFilterSelection => ({
     tagScope: "all",
     favoritesScope: "all",
     mediaScope: "all",
+    croppedScope: "all",
     root: createEmptyTagFilterRoot(),
 });
 
@@ -175,6 +186,7 @@ export const isTagFilterActive = (filter: TagFilterSelection): boolean =>
     filter.tagScope !== "all" ||
     filter.favoritesScope !== "all" ||
     filter.mediaScope !== "all" ||
+    filter.croppedScope !== "all" ||
     countTagFilterClauses(filter.root) > 0;
 
 const describeClauseNode = (clause: TagFilterClauseNode): string =>
@@ -214,6 +226,11 @@ export const describeTagFilter = (filter: TagFilterSelection): string => {
     } else if (filter.mediaScope === "video") {
         parts.push(VIDEO_FILTER);
     }
+    if (filter.croppedScope === "cropped") {
+        parts.push(MANUALLY_CROPPED_FILTER);
+    } else if (filter.croppedScope === "not-cropped") {
+        parts.push(NOT_MANUALLY_CROPPED_FILTER);
+    }
     const expr = describeGroupNode(filter.root);
     if (expr) {
         parts.push(expr);
@@ -240,7 +257,9 @@ export const isReservedTag = (tag: string): boolean =>
     tag === FAVORITES_FILTER ||
     tag === NOT_FAVORITES_FILTER ||
     tag === PHOTO_FILTER ||
-    tag === VIDEO_FILTER;
+    tag === VIDEO_FILTER ||
+    tag === MANUALLY_CROPPED_FILTER ||
+    tag === NOT_MANUALLY_CROPPED_FILTER;
 
 /**
  * Read organizer tags from public magic metadata (`_organizer_v1.tags`).
@@ -253,6 +272,18 @@ export const extractTags = (file: EnteFile): string[] => {
         return [];
     }
     return tags.filter((tag) => typeof tag === "string" && tag.length > 0);
+};
+
+/**
+ * Return true when the file was cropped by the user (not only by auto-crop).
+ *
+ * Manual crop stamps `cropped`; auto-crop stamps both `cropped` and
+ * `auto-cropped`. Files only marked `auto-cropped` (scanned, no border) are
+ * not manually cropped.
+ */
+export const isManuallyCroppedFile = (file: EnteFile): boolean => {
+    const tags = extractTags(file);
+    return tags.includes("cropped") && !tags.includes("auto-cropped");
 };
 
 /**
@@ -466,6 +497,29 @@ const applyMediaScope = (
     return next;
 };
 
+const applyCroppedScope = (
+    matchingIds: Set<number>,
+    files: EnteFile[],
+    croppedScope: CroppedScope,
+): Set<number> => {
+    if (croppedScope === "all") {
+        return matchingIds;
+    }
+    const fileById = new Map(files.map((file) => [file.id, file] as const));
+    const next = new Set<number>();
+    for (const id of matchingIds) {
+        const file = fileById.get(id);
+        if (!file) {
+            continue;
+        }
+        const manuallyCropped = isManuallyCroppedFile(file);
+        if (croppedScope === "cropped" ? manuallyCropped : !manuallyCropped) {
+            next.add(id);
+        }
+    }
+    return next;
+};
+
 const resolveMatchingIds = (
     files: EnteFile[],
     candidateIds: Set<number>,
@@ -491,6 +545,7 @@ const resolveMatchingIds = (
     );
 
     matchingIds = applyMediaScope(matchingIds, files, filter.mediaScope);
+    matchingIds = applyCroppedScope(matchingIds, files, filter.croppedScope);
 
     if (matchingIds.size === 0) {
         return matchingIds;
@@ -630,6 +685,34 @@ export const countVideosInCandidates = (
             candidateFileIds.has(file.id) &&
             file.metadata.fileType === FileType.video
         ) {
+            count += 1;
+        }
+    }
+    return count;
+};
+
+/** Number of manually cropped files within a candidate id set. */
+export const countManuallyCroppedInCandidates = (
+    candidateFileIds: Set<number>,
+    files: EnteFile[],
+): number => {
+    let count = 0;
+    for (const file of files) {
+        if (candidateFileIds.has(file.id) && isManuallyCroppedFile(file)) {
+            count += 1;
+        }
+    }
+    return count;
+};
+
+/** Number of files that were not manually cropped within a candidate id set. */
+export const countNotManuallyCroppedInCandidates = (
+    candidateFileIds: Set<number>,
+    files: EnteFile[],
+): number => {
+    let count = 0;
+    for (const file of files) {
+        if (candidateFileIds.has(file.id) && !isManuallyCroppedFile(file)) {
             count += 1;
         }
     }

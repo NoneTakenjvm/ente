@@ -20,6 +20,8 @@ interface TagQueryBuilderPanelProps {
     untaggedCount: number;
     photoCount: number;
     videoCount: number;
+    croppedCount: number;
+    notCroppedCount: number;
 }
 
 export function TagQueryBuilderPanel({
@@ -31,10 +33,13 @@ export function TagQueryBuilderPanel({
     untaggedCount,
     photoCount,
     videoCount,
+    croppedCount,
+    notCroppedCount,
 }: TagQueryBuilderPanelProps): JSX.Element {
     const tagFilter = useTagStore((s) => s.tagFilter);
     const setFavoritesScope = useTagStore((s) => s.setFavoritesScope);
     const setMediaScope = useTagStore((s) => s.setMediaScope);
+    const setCroppedScope = useTagStore((s) => s.setCroppedScope);
     const setTagScope = useTagStore((s) => s.setTagScope);
     const setGroupOpOnTree = useTagStore((s) => s.setGroupOp);
     const wrapInGroup = useTagStore((s) => s.wrapInGroup);
@@ -75,6 +80,7 @@ export function TagQueryBuilderPanel({
                             setTagScope,
                             setFavoritesScope,
                             setMediaScope,
+                            setCroppedScope,
                             setGroupOp: setGroupOpOnTree,
                             wrapInGroup,
                             ungroup,
@@ -88,6 +94,8 @@ export function TagQueryBuilderPanel({
                         notFavoritesCount={notFavoritesCount}
                         photoCount={photoCount}
                         videoCount={videoCount}
+                        croppedCount={croppedCount}
+                        notCroppedCount={notCroppedCount}
                     />
                 </DropdownMenuGroup>
             </DropdownMenuContent>

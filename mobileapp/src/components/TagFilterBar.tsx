@@ -5,7 +5,9 @@ import { TagScopeFilterDropdown } from "@/components/TagScopeFilterDropdown";
 import { Button } from "@/components/ui/button";
 import {
     countFavoritesInCandidates,
+    countManuallyCroppedInCandidates,
     countNotFavoritesInCandidates,
+    countNotManuallyCroppedInCandidates,
     countPhotosInCandidates,
     countTaggedInCandidates,
     countTagFilterClauses,
@@ -82,6 +84,17 @@ export function TagFilterBar({
         [libraryFileIds, allFiles],
     );
 
+    const croppedCount = useMemo(
+        (): number => countManuallyCroppedInCandidates(libraryFileIds, allFiles),
+        [libraryFileIds, allFiles],
+    );
+
+    const notCroppedCount = useMemo(
+        (): number =>
+            countNotManuallyCroppedInCandidates(libraryFileIds, allFiles),
+        [libraryFileIds, allFiles],
+    );
+
     const clauseCount = countTagFilterClauses(tagFilter.root);
     const isFlat = isFlatTagFilterRoot(tagFilter.root);
 
@@ -96,7 +109,8 @@ export function TagFilterBar({
         clauseCount > 0 ||
         tagFilter.tagScope !== "all" ||
         tagFilter.favoritesScope !== "all" ||
-        tagFilter.mediaScope !== "all";
+        tagFilter.mediaScope !== "all" ||
+        tagFilter.croppedScope !== "all";
 
     return (
         <div className="flex flex-col gap-2 border-b border-border/60 px-4 py-3">
@@ -108,6 +122,8 @@ export function TagFilterBar({
                     notFavoritesCount={notFavoritesCount}
                     photoCount={photoCount}
                     videoCount={videoCount}
+                    croppedCount={croppedCount}
+                    notCroppedCount={notCroppedCount}
                 />
                 <TagClausePicker
                     filter={tagFilter}
@@ -146,6 +162,8 @@ export function TagFilterBar({
                     untaggedCount={untaggedCount}
                     photoCount={photoCount}
                     videoCount={videoCount}
+                    croppedCount={croppedCount}
+                    notCroppedCount={notCroppedCount}
                 />
                 <SelectionModeToggle />
             </div>
