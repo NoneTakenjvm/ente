@@ -64,33 +64,85 @@ export const fetchUploadURL = async (
     return url;
 };
 
+const retryableStatus = (status: number): boolean =>
+    status === 429 || status >= 500;
+
+const isRetryableError = (error: unknown): boolean => {
+    // A network-level failure (TypeError from fetch), or a retryable status
+    // wrapped by ensureOk's `HTTP <status>` message.
+    if (error instanceof TypeError) {
+        return true;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    if (/failed to fetch|network|load failed/i.test(message)) {
+        return true;
+    }
+    const statusMatch = /^HTTP (\d{3})/.exec(message);
+    return statusMatch ? retryableStatus(Number(statusMatch[1]!)) : false;
+};
+
 /**
- * Upload encrypted bytes to a pre-signed S3 URL.
+ * Retry {@link request} on transient failures (5xx, 429, network errors) with
+ * bounded exponential backoff.
+ *
+ * Retrying is safe even when the first attempt partially succeeded: a repeated
+ * `PUT` to a pre-signed URL overwrites the same object, and `POST /files`
+ * finalize is idempotent on the server (it reuses an existing file with the
+ * same object keys). Errors are only thrown once retries are exhausted.
+ */
+export const withUploadRetry = async <T>(
+    request: () => Promise<T>,
+    maxAttempts = 4,
+): Promise<T> => {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await request();
+        } catch (error) {
+            lastError = error;
+            if (!isRetryableError(error) || attempt >= maxAttempts) {
+                throw error;
+            }
+            const delayMs = Math.min(8_000, 500 * 2 ** (attempt - 1));
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+    }
+    throw lastError;
+};
+
+/**
+ * Upload encrypted bytes to a pre-signed S3 URL, retrying transient failures.
  */
 export const putFile = async (
     http: HttpClient,
     uploadURL: string,
     fileData: Uint8Array<ArrayBuffer>,
 ): Promise<void> => {
-    const res = await fetch(uploadURL, {
-        method: "PUT",
-        headers: http.publicHeaders(),
-        body: fileData,
+    await withUploadRetry(async () => {
+        const res = await fetch(uploadURL, {
+            method: "PUT",
+            headers: http.publicHeaders(),
+            body: fileData,
+        });
+        http.ensureOk(res);
     });
-    http.ensureOk(res);
 };
 
 /**
- * Create a new file record on remote after objects are uploaded.
+ * Create a new file record on remote after objects are uploaded, retrying
+ * transient failures. The request is idempotent: if the objects were already
+ * finalized by a prior attempt, the server returns the existing file.
  */
 export const postEnteFile = async (
     http: HttpClient,
     request: PostEnteFileRequest,
 ): Promise<RemoteEnteFile> => {
-    const res = await http.authFetch("/files", undefined, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(request),
+    const res = await withUploadRetry(async () => {
+        return http.authFetch("/files", undefined, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
     });
     return RemoteEnteFile.parse(await res.json());
 };
