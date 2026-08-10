@@ -13,6 +13,7 @@ import {
     isThumbnailCachedLocally,
 } from "@/lib/thumbnail-bytes";
 import type {
+    CropCheckResult,
     PhashWorkerRequest,
     PhashWorkerResponse,
 } from "@/workers/phash-worker-types";
@@ -66,9 +67,7 @@ const hashBytesInWorker = (
     bytes: Uint8Array,
 ): Promise<PhashEntry> =>
     new Promise((resolve, reject) => {
-        const pool = getPhashWorkers();
-        const phashWorker = pool[workerRoundRobin % pool.length]!;
-        workerRoundRobin += 1;
+        const phashWorker = nextWorker();
         const requestId = ++requestCounter;
 
         const handleMessage = (event: MessageEvent<PhashWorkerResponse>): void => {
@@ -89,11 +88,58 @@ const hashBytesInWorker = (
 
         phashWorker.addEventListener("message", handleMessage);
         const request: PhashWorkerRequest = {
+            kind: "hash",
             id: requestId,
             fileId,
             bytes: bytes.slice(),
         };
         phashWorker.postMessage(request, [request.bytes.buffer]);
+    });
+
+/** Pick the next worker round-robin from the shared pool. */
+const nextWorker = (): Worker => {
+    const pool = getPhashWorkers();
+    const worker = pool[workerRoundRobin % pool.length]!;
+    workerRoundRobin += 1;
+    return worker;
+};
+
+/**
+ * Verify whether two images could be the same photo under a crop, entirely on
+ * the worker thread. Cheap to call per candidate pair; unions the verdicts
+ * back on the caller.
+ */
+export const checkCropMatchInWorkers = (
+    aColor: string,
+    aGrid: string,
+    bColor: string,
+    bGrid: string,
+): Promise<boolean> =>
+    new Promise((resolve) => {
+        const worker = nextWorker();
+        const requestId = ++requestCounter;
+
+        const handleMessage = (event: MessageEvent<CropCheckResult>): void => {
+            if (event.data.id !== requestId) {
+                return;
+            }
+            worker.removeEventListener("message", handleMessage);
+            if (event.data.error) {
+                resolve(false);
+                return;
+            }
+            resolve(event.data.match);
+        };
+
+        worker.addEventListener("message", handleMessage);
+        worker.postMessage({
+            kind: "crop-check",
+            id: requestId,
+            aColor,
+            aGrid,
+            bColor,
+            bGrid,
+        });
     });
 
 export const imageFilesForPhash = (

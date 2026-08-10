@@ -125,6 +125,13 @@ export default function ManagePage(): JSX.Element {
     const [threshold, setThreshold] = useState<number>(
         defaultSimilarityThreshold,
     );
+    // The slider updates live while dragging; grouping only recomputes after
+    // the user pauses, so moving the thumb doesn't re-run dHash grouping and
+    // worker crop matches on every tick.
+    const [debouncedThreshold, setDebouncedThreshold] = useState<number>(
+        defaultSimilarityThreshold,
+    );
+    const thresholdTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const [confirmOpen, setConfirmOpen] = useState<boolean>(false);
     const [isPruning, setIsPruning] = useState<boolean>(false);
     const [error, setError] = useState<string | undefined>();
@@ -149,6 +156,9 @@ export default function ManagePage(): JSX.Element {
 
     useEffect(() => {
         return (): void => {
+            if (thresholdTimer.current) {
+                clearTimeout(thresholdTimer.current);
+            }
             jobAbort.current?.abort();
             terminatePhashWorker();
         };
@@ -166,9 +176,9 @@ export default function ManagePage(): JSX.Element {
             filesById,
             collections,
             userId,
-            threshold,
+            debouncedThreshold,
         );
-    }, [allFiles, collections, phashEntries, threshold, userId]);
+    }, [allFiles, collections, phashEntries, debouncedThreshold, userId]);
 
     // Show Stage-1 (dHash) groups immediately; refine async so crop matches are
     // merged without blocking the main thread.
@@ -447,6 +457,12 @@ export default function ManagePage(): JSX.Element {
                                             const next = Array.isArray(value) ? value[0] : value;
                                             if (next !== undefined) {
                                                 setThreshold(next);
+                                                if (thresholdTimer.current) {
+                                                    clearTimeout(thresholdTimer.current);
+                                                }
+                                                thresholdTimer.current = setTimeout(() => {
+                                                    setDebouncedThreshold(next);
+                                                }, 300);
                                             }
                                         }}
                                     />

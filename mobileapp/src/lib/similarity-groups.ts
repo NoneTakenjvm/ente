@@ -1,11 +1,9 @@
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
 import { FileType } from "ente-media/file-type";
-import {
-    areCropMatches,
-    type PhashEntry,
-} from "@/lib/crop-match";
+import type { PhashEntry } from "@/lib/crop-match";
 import { hammingDistance } from "@/lib/phash";
+import { checkCropMatchInWorkers } from "@/lib/similarity-job";
 import {
     collectionNameByID,
     normalOwnedCollections,
@@ -29,6 +27,15 @@ const colorBucketKey = (color: string): string => color.slice(0, 2);
 
 /** Hard cap on crop checks paid per file, so the async pass stays bounded. */
 export const MAX_CROP_CHECKS_PER_FILE = 4;
+
+/**
+ * Hard cap on a single similarity group. Real duplicate groups (near-identical /
+ * rotate-crop copies) are small; anything ballooning past this is a chained
+ * union-find artifact (A~B, B~C ⇒ A,B,C grouped even when A≁C). Oversized
+ * components are re-clustered by strict-prefix single-linkage so the loose
+ * "bridge" links are dropped rather than unioned across.
+ */
+export const MAX_GROUP_SIZE = 40;
 
 class UnionFind {
     private readonly parent: number[];
@@ -181,13 +188,131 @@ export const buildSimilarityGroups = (
         if (memberIndices.length < 2) {
             continue;
         }
-        const group = assembleGroup(memberIndices, indexed, filesById, collections, userId);
-        if (group) {
-            groups.push(group);
+        // A component that exploded past the cap is a union-find chaining
+        // artifact. Re-cluster it by single-linkage — strict hash-prefix buckets
+        // plus a tight best-variant distance — so near-identical duplicates
+        // survive while the loose "bridge" links get dropped, never re-chained.
+        const clusters =
+            memberIndices.length > MAX_GROUP_SIZE ?
+                reclusterOversized(memberIndices, indexed, threshold) :
+                [memberIndices];
+        for (const cluster of clusters) {
+            const group = assembleGroup(cluster, indexed, filesById, collections, userId);
+            if (group) {
+                groups.push(group);
+            }
         }
     }
 
     return groups.sort((a, b) => b.items.length - a.items.length);
+};
+
+/**
+ * Split an oversized union-find component into tighter clusters.
+ *
+ * The original union-find was transitive: A~B and B~C implies A~C, which is
+ * how distinct photos chain into one giant group. We can't un-transitivize a
+ * single shared component, so we re-partition it here by recursive strict
+ * single-linkage:
+ *
+ *   - Level 1 links two images only if some *exact* hash prefix holds both of
+ *     them AND their best variant distance is at most half the normal
+ *     threshold. Genuine duplicates match near 0-4 on a shared prefix, so they
+ *     stay together; the loose "bridge" links crossing prefixes are dropped
+ *     deterministically (no ±1 neighbor buckets, unlike the outer pass).
+ *   - If a re-clustered group still exceeds {@link MAX_GROUP_SIZE}, we recurse
+ *     with a longer hash prefix, which subdivides the bucket until the group is
+ *     bounded. This terminates at the full 64-bit hash: a bucket there is a set
+ *     of images sharing an identical variant — true exact copies.
+ *   - As a hard floor, an exact-identical cluster above the cap is sliced into
+ *     bounded deterministic chunks (they are true duplicates; a handful of
+ *     bounded groups is strictly better than one absurd one).
+ */
+const reclusterOversized = (
+    memberIndices: number[],
+    indexed: Array<{ fileId: number; entry: PhashEntry }>,
+    threshold: number,
+): number[][] => {
+    const clusters = reclusterByPrefix(memberIndices, indexed, threshold, 1);
+    const bounded: number[][] = [];
+    for (const cluster of clusters) {
+        if (cluster.length <= MAX_GROUP_SIZE) {
+            bounded.push(cluster);
+            continue;
+        }
+        for (let i = 0; i < cluster.length; i += MAX_GROUP_SIZE) {
+            bounded.push(cluster.slice(i, i + MAX_GROUP_SIZE));
+        }
+    }
+    return bounded;
+};
+
+/**
+ * Recursive strict-prefix single-linkage clustering over `memberIndices`.
+ * `prefixHexes` is the number of 3-hex (12-bit) prefix chunks to require as an
+ * exact match before considering a pair. Each recursion doubles the matched
+ * prefix, so buckets shrink geometrically; genuinely identical images that
+ * survive to the full hash share an exact 64-bit variant.
+ */
+const reclusterByPrefix = (
+    memberIndices: number[],
+    indexed: Array<{ fileId: number; entry: PhashEntry }>,
+    threshold: number,
+    prefixHexes: number,
+): number[][] => {
+    const tightThreshold = Math.max(2, Math.floor(threshold / 2));
+    const prefixLength = prefixHexes * 3;
+    const clusterUf = new UnionFind(memberIndices.length);
+
+    const buckets = new Map<string, number[]>();
+    for (let i = 0; i < memberIndices.length; i++) {
+        const seen = new Set<string>();
+        for (const hash of indexed[memberIndices[i]!]!.entry.hashes) {
+            const key = hash.slice(0, prefixLength);
+            if (!seen.has(key)) {
+                seen.add(key);
+                buckets.set(key, [...(buckets.get(key) ?? []), i]);
+            }
+        }
+    }
+
+    for (const indices of buckets.values()) {
+        for (let i = 0; i < indices.length; i++) {
+            for (let j = i + 1; j < indices.length; j++) {
+                const a = indexed[memberIndices[indices[i]!]!]!.entry;
+                const b = indexed[memberIndices[indices[j]!]!]!.entry;
+                if (variantDistance(a.hashes, b.hashes) <= tightThreshold) {
+                    clusterUf.union(indices[i]!, indices[j]!);
+                }
+            }
+        }
+    }
+
+    const clusters = new Map<number, number[]>();
+    for (let i = 0; i < memberIndices.length; i++) {
+        const root = clusterUf.find(i);
+        clusters.set(root, [...(clusters.get(root) ?? []), memberIndices[i]!]);
+    }
+
+    const result: number[][] = [];
+    const stillOversized: number[] = [];
+    for (const cluster of clusters.values()) {
+        if (cluster.length > MAX_GROUP_SIZE) {
+            stillOversized.push(...cluster);
+        } else {
+            result.push(cluster);
+        }
+    }
+    if (stillOversized.length === 0) {
+        return result;
+    }
+    const deeper = reclusterByPrefix(
+        stillOversized,
+        indexed,
+        threshold,
+        prefixHexes + 1,
+    );
+    return [...result, ...deeper];
 };
 
 /**
@@ -252,21 +377,21 @@ export interface CropMergeOptions {
     filesById: Map<number, EnteFile>;
     collections: Collection[];
     userId: number;
-    /** Yield to the event loop every N crop checks. */
-    yieldEvery?: number;
+    /** How many crop checks to run per batch before yielding to the event loop. */
+    batchSize?: number;
 }
 
 /**
  * Stage-2: refine the Stage-1 groups by linking cross-group (or singleton)
  * pairs that are the same photo under a crop. Color proposes candidates; the
- * template match verifies them. Runs asynchronously in chunks to keep the main
- * thread responsive.
+ * template match — executed on the worker pool, never the UI thread —
+ * verifies them. Runs in asynchronous batches to keep the UI responsive.
  */
 export const mergeCropMatches = async (
     groups: SimilarityGroup[],
     options: CropMergeOptions,
 ): Promise<SimilarityGroup[]> => {
-    const { entries, filesById, collections, userId, yieldEvery = 32 } = options;
+    const { entries, filesById, collections, userId, batchSize = 48 } = options;
 
     const indexed = indexableFiles(entries, filesById, collections, userId);
     const cropEligible = indexed.filter(
@@ -325,23 +450,30 @@ export const mergeCropMatches = async (
         }
     }
 
-    for (let i = 0; i < candidates.length; i++) {
-        if (i % yieldEvery === 0) {
-            await new Promise((resolve) => setTimeout(resolve, 0));
-        }
-        const [a, b] = candidates[i]!;
-        if (uf.find(a) === uf.find(b)) {
-            continue;
-        }
-        const left = indexed[a]!.entry;
-        const right = indexed[b]!.entry;
-        if (
-            left.color !== undefined && left.grid !== undefined &&
-            right.color !== undefined && right.grid !== undefined &&
-            areCropMatches(left.color, left.grid, right.color, right.grid)
-        ) {
-            uf.union(a, b);
-        }
+    // Verify candidate pairs on the worker pool in batches; each verdict is a
+    // small postMessage round-trip, so the UI thread only does the unioning.
+    for (let start = 0; start < candidates.length; start += batchSize) {
+        const batch = candidates.slice(start, start + batchSize);
+        const verdicts = await Promise.all(
+            batch.map(([a, b]) => {
+                const left = indexed[a]!.entry;
+                const right = indexed[b]!.entry;
+                return checkCropMatchInWorkers(
+                    left.color!,
+                    left.grid!,
+                    right.color!,
+                    right.grid!,
+                );
+            }),
+        );
+        verdicts.forEach((match, index) => {
+            const [a, b] = batch[index]!;
+            if (match && uf.find(a) !== uf.find(b)) {
+                uf.union(a, b);
+            }
+        });
+        // Yield between batches so progress renders and the tab stays alive.
+        await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
     const groupsByRoot = new Map<number, number[]>();
