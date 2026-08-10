@@ -7,10 +7,14 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-08-10 |
-| **Last agent / session** | Gallery upload-date sorting + similarity Stage 1 (rotation/mirror) + Stage 2 (crop matching) shipped. |
+| **Last agent / session** | Resilient uploads: idempotent retry on transitive object-store / finalize failures (B2 HTTP 500 no longer leaves duplicate gallery images). |
 | **Current milestone** | Post-M8 UX / stability batch |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
 | **Next recommended action** | Device QA Manage → Usage / Tools nesting after deploy |
+
+**This session shipped:**
+1. **Resilient upload finalize.** `putFile` (B2/object-store PUT) and `postEnteFile` (POST /files finalize) now retry transient failures (5xx, 429, network `TypeError`) with bounded exponential backoff (`remote.ts`). The server already dedupes `POST /files` by object key (`onDuplicateObjectDetected` reuses the existing file), so replaying the finalize is idempotent and converges to one file instead of leaving a duplicate gallery row. Upload callers (`upload-image.ts`, `upload-video.ts`, `upload-compressed-media.ts`) inherit the retry via the shared primitives; errors only surface after retries are exhausted, at which point the existing derived-replace outbox (`tag-outbox-runner`, 60s) self-heals on the next pass.
+2. **Retry unit tests** (`mobileapp/src/core/upload/__tests__/remote-retry.test.ts`): 5 cases cover transient 500 → success, persistent-500 exhaustion, non-retryable 4xx short-circuit, network `TypeError` retry, and idempotent `POST /files` finalize replay (same body re-sent, converges to one file).
 
 **This session shipped two features:**
 1. **Gallery sorting by upload date** (default). Ente doesn't expose an upload date, so we stamp our own: `uploadedAt` (set once at upload) and `editedAt` (set on every pub-meta write by `withEditedAt`) live in `pubMagicMetadata.data`. Sort keys in `mobileapp/src/lib/sort-files.ts` (`fileUploadSortTime`: `uploadedAt` → `updationTime` → `creationTime`; `fileEditSortTime` likewise). A gallery toggle switches between **upload date** (default) and **edit date** (see `useSettingsStore.gallerySortBy`, wiring in `gallery.tsx`, `albums.tsx`, `AlbumEditorPanel.tsx`, `ManageArchivedPanel.tsx`, `pull-files.ts`).
