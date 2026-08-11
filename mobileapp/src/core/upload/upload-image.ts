@@ -164,6 +164,12 @@ export const uploadDerivedImage = async (
     options: UploadDerivedImageOptions,
 ): Promise<EnteFile> => {
     const nowMicros = Date.now() * 1000;
+    // Prefer stamped uploadedAt; otherwise keep the source's gallery sort key
+    // (updationTime → creationTime) so crops don't jump to "just uploaded".
+    const uploadedAt =
+        sourceFile.pubMagicMetadata?.data.uploadedAt ??
+        sourceFile.updationTime ??
+        sourceFile.metadata.creationTime;
     return uploadJpegImage(http, collection, jpegBytes, {
         title: options.title,
         creationTime: sourceFile.metadata.creationTime,
@@ -171,7 +177,7 @@ export const uploadDerivedImage = async (
         width: dimensions.width,
         height: dimensions.height,
         organizerTags: options.organizerTags,
-        uploadedAt: sourceFile.pubMagicMetadata?.data.uploadedAt,
+        uploadedAt,
     });
 };
 

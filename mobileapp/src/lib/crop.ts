@@ -2,7 +2,7 @@ import { FileType } from "ente-media/file-type";
 import { fileFileName } from "ente-media/file-metadata";
 import type { EnteFile } from "ente-media/file";
 import { extractTags } from "@/lib/tags";
-import { addTagNames } from "@/lib/tag-writes";
+import { addTagNames, removeTagNames } from "@/lib/tag-writes";
 import { isGifFile } from "@/lib/media-kind";
 import {
     DEFAULT_JPEG_QUALITY,
@@ -50,6 +50,9 @@ export const croppedUploadTitle = (sourceFile: EnteFile): string => {
 
 /**
  * Merge source organizer tags and ensure the cropped tag is present.
+ *
+ * Manual crop strips `auto-cropped` so the file matches the manual-crop filter
+ * (and leaves "Not cropped"). Auto-crop keeps both markers.
  */
 export const buildCroppedOrganizerTags = (
     sourceFile: EnteFile,
@@ -58,6 +61,8 @@ export const buildCroppedOrganizerTags = (
     let tags = addTagNames(extractTags(sourceFile), CROPPED_TAG);
     if (options?.autoCropped) {
         tags = addTagNames(tags, AUTO_CROPPED_TAG);
+    } else {
+        tags = removeTagNames(tags, AUTO_CROPPED_TAG);
     }
     return tags;
 };

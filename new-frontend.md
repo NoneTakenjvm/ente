@@ -6,13 +6,29 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-08-10 |
-| **Last agent / session** | Gallery filter: manually cropped vs not (mirrors favourites scope). |
+| **Last updated** | 2026-08-11 |
+| **Last agent / session** | Ship UX batch: zoom-lock, archive menu, upload-sort on crop, manual-crop filter, Safari back absorb. |
 | **Current milestone** | Post-M8 UX / stability batch |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Device QA Manage → Usage / Tools nesting after deploy |
+| **Next recommended action** | Device QA Manage hub + Similar; then QA the five UX fixes on phone Safari. |
 
 **This session shipped:**
+1. **Zoomed carousel locked** — removed edge-pan→slide (`onPanRelease`) so zoomed images pan only.
+2. **Archive tucked away** — Archive/Unarchive moved into a ⋮ More menu in the viewer chrome.
+3. **Upload-date sort preserved on crop/compress** — derived uploads fall back to source `updationTime` → `creationTime` when `uploadedAt` is missing.
+4. **Manual crop filter** — `buildCroppedOrganizerTags` strips `auto-cropped` on manual crop.
+5. **Safari edge-back absorbed** — viewer `pushState` + `popstate` re-push stays put (noop); cleaned up on close; `overscroll-none` on viewer root.
+
+**Previous session shipped:**
+1. **Manage-tab freeze fix (crop / similarity).** Similarity + crop merge no longer run on Manage hub open. Stage-2 uses size-aware `tryUnion` (cap `MAX_GROUP_SIZE`) so crop matches cannot re-chain mega-groups and freeze the UI on O(n²) `assembleGroup`. Crop merge is abortable; Similar shows Stage-1 then “refining…”. Hot-path bucket builds are O(n). Regression tests cover size cap + abort. Served at `http://192.168.0.182:3080` for phone QA.
+
+**Previous session shipped:**
+1. **Planned five UX fixes** (implemented above).
+
+**Previous session shipped:**
+1. **Diagnosed Manage-tab multi-minute freeze** (crop / similarity path). Root causes: eager Manage-mount work + Stage-2 mega-groups + main-thread O(n²) assemble — now fixed above.
+
+**Previous session shipped:**
 1. **Manual-crop filter scope** in the gallery Filter dropdown (and query builder / smart albums): All / Cropped / Not cropped. Matches files with organizer tag `cropped` but not `auto-cropped` (auto-crop results and never-cropped files fall under Not cropped). Wired through `TagFilterSelection.croppedScope`, persistence in query albums, and counts like favourites.
 
 **Previous session shipped:**

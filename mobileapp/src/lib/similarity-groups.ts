@@ -39,9 +39,11 @@ export const MAX_GROUP_SIZE = 40;
 
 class UnionFind {
     private readonly parent: number[];
+    private readonly sizes: number[];
 
     constructor(size: number) {
         this.parent = Array.from({ length: size }, (_, index) => index);
+        this.sizes = Array.from({ length: size }, () => 1);
     }
 
     find(index: number): number {
@@ -51,12 +53,42 @@ class UnionFind {
         return this.parent[index]!;
     }
 
+    /** Number of members in the component containing `index`. */
+    componentSize(index: number): number {
+        return this.sizes[this.find(index)]!;
+    }
+
     union(left: number, right: number): void {
         const rootLeft = this.find(left);
         const rootRight = this.find(right);
-        if (rootLeft !== rootRight) {
-            this.parent[rootRight] = rootLeft;
+        if (rootLeft === rootRight) {
+            return;
         }
+        // Union by size so roots stay representative of the larger side.
+        if (this.sizes[rootLeft]! < this.sizes[rootRight]!) {
+            this.parent[rootLeft] = rootRight;
+            this.sizes[rootRight]! += this.sizes[rootLeft]!;
+        } else {
+            this.parent[rootRight] = rootLeft;
+            this.sizes[rootLeft]! += this.sizes[rootRight]!;
+        }
+    }
+
+    /**
+     * Union only when the merged component would stay within `maxSize`.
+     * Returns whether the two indices share a component afterwards.
+     */
+    tryUnion(left: number, right: number, maxSize: number): boolean {
+        const rootLeft = this.find(left);
+        const rootRight = this.find(right);
+        if (rootLeft === rootRight) {
+            return true;
+        }
+        if (this.sizes[rootLeft]! + this.sizes[rootRight]! > maxSize) {
+            return false;
+        }
+        this.union(left, right);
+        return true;
     }
 }
 
@@ -135,7 +167,12 @@ export const buildSimilarityGroups = (
                 continue;
             }
             seen.add(key);
-            buckets.set(key, [...(buckets.get(key) ?? []), i]);
+            const bucket = buckets.get(key);
+            if (bucket) {
+                bucket.push(i);
+            } else {
+                buckets.set(key, [i]);
+            }
         }
     }
 
@@ -180,7 +217,12 @@ export const buildSimilarityGroups = (
     const groupsByRoot = new Map<number, number[]>();
     for (let i = 0; i < indexed.length; i++) {
         const root = uf.find(i);
-        groupsByRoot.set(root, [...(groupsByRoot.get(root) ?? []), i]);
+        const members = groupsByRoot.get(root);
+        if (members) {
+            members.push(i);
+        } else {
+            groupsByRoot.set(root, [i]);
+        }
     }
 
     const groups: SimilarityGroup[] = [];
@@ -269,9 +311,15 @@ const reclusterByPrefix = (
         const seen = new Set<string>();
         for (const hash of indexed[memberIndices[i]!]!.entry.hashes) {
             const key = hash.slice(0, prefixLength);
-            if (!seen.has(key)) {
-                seen.add(key);
-                buckets.set(key, [...(buckets.get(key) ?? []), i]);
+            if (seen.has(key)) {
+                continue;
+            }
+            seen.add(key);
+            const bucket = buckets.get(key);
+            if (bucket) {
+                bucket.push(i);
+            } else {
+                buckets.set(key, [i]);
             }
         }
     }
@@ -291,7 +339,12 @@ const reclusterByPrefix = (
     const clusters = new Map<number, number[]>();
     for (let i = 0; i < memberIndices.length; i++) {
         const root = clusterUf.find(i);
-        clusters.set(root, [...(clusters.get(root) ?? []), memberIndices[i]!]);
+        const members = clusters.get(root);
+        if (members) {
+            members.push(memberIndices[i]!);
+        } else {
+            clusters.set(root, [memberIndices[i]!]);
+        }
     }
 
     const result: number[][] = [];
@@ -379,6 +432,8 @@ export interface CropMergeOptions {
     userId: number;
     /** How many crop checks to run per batch before yielding to the event loop. */
     batchSize?: number;
+    /** Abort in-flight crop verification (e.g. user left the Similar section). */
+    signal?: AbortSignal;
 }
 
 /**
@@ -386,12 +441,32 @@ export interface CropMergeOptions {
  * pairs that are the same photo under a crop. Color proposes candidates; the
  * template match — executed on the worker pool, never the UI thread —
  * verifies them. Runs in asynchronous batches to keep the UI responsive.
+ *
+ * [Note: crop unions are size-capped.] Verified crop edges must not re-chain
+ * Stage-1 components into a mega-group: {@link UnionFind.tryUnion} refuses any
+ * merge that would exceed {@link MAX_GROUP_SIZE}. Re-applying dHash reclustering
+ * here would wrongly split genuine crop-only matches (different dHash prefixes).
  */
 export const mergeCropMatches = async (
     groups: SimilarityGroup[],
     options: CropMergeOptions,
 ): Promise<SimilarityGroup[]> => {
-    const { entries, filesById, collections, userId, batchSize = 48 } = options;
+    const {
+        entries,
+        filesById,
+        collections,
+        userId,
+        batchSize = 48,
+        signal,
+    } = options;
+
+    const throwIfAborted = (): void => {
+        if (signal?.aborted) {
+            throw new DOMException("Crop merge aborted", "AbortError");
+        }
+    };
+
+    throwIfAborted();
 
     const indexed = indexableFiles(entries, filesById, collections, userId);
     const cropEligible = indexed.filter(
@@ -411,7 +486,7 @@ export const mergeCropMatches = async (
     for (const group of groups) {
         const memberIndexes = group.items
             .map((item) => indexById.get(item.file.id))
-            .filter((index) => index !== undefined) as number[];
+            .filter((index): index is number => index !== undefined);
         if (memberIndexes.length < 2) {
             continue;
         }
@@ -426,7 +501,13 @@ export const mergeCropMatches = async (
     const buckets = new Map<string, number[]>();
     for (const { fileId, entry } of cropEligible) {
         const prefix = colorBucketKey(entry.color!);
-        buckets.set(prefix, [...(buckets.get(prefix) ?? []), indexById.get(fileId)!]);
+        const index = indexById.get(fileId)!;
+        const bucket = buckets.get(prefix);
+        if (bucket) {
+            bucket.push(index);
+        } else {
+            buckets.set(prefix, [index]);
+        }
     }
     for (const bucketIndexes of buckets.values()) {
         bucketIndexes.sort((a, b) =>
@@ -443,9 +524,15 @@ export const mergeCropMatches = async (
             ) {
                 const a = bucketIndexes[p]!;
                 const b = bucketIndexes[p + offset]!;
-                if (uf.find(a) !== uf.find(b)) {
-                    candidates.push([a, b]);
+                // Skip pairs already co-grouped, and pairs that can never merge
+                // without exceeding the size cap (avoids wasted worker checks).
+                if (uf.find(a) === uf.find(b)) {
+                    continue;
                 }
+                if (uf.componentSize(a) + uf.componentSize(b) > MAX_GROUP_SIZE) {
+                    continue;
+                }
+                candidates.push([a, b]);
             }
         }
     }
@@ -453,9 +540,18 @@ export const mergeCropMatches = async (
     // Verify candidate pairs on the worker pool in batches; each verdict is a
     // small postMessage round-trip, so the UI thread only does the unioning.
     for (let start = 0; start < candidates.length; start += batchSize) {
+        throwIfAborted();
         const batch = candidates.slice(start, start + batchSize);
         const verdicts = await Promise.all(
             batch.map(([a, b]) => {
+                // Re-check size after earlier unions in prior batches may have
+                // grown components; skip the worker call when merge is impossible.
+                if (uf.find(a) === uf.find(b)) {
+                    return Promise.resolve(false);
+                }
+                if (uf.componentSize(a) + uf.componentSize(b) > MAX_GROUP_SIZE) {
+                    return Promise.resolve(false);
+                }
                 const left = indexed[a]!.entry;
                 const right = indexed[b]!.entry;
                 return checkCropMatchInWorkers(
@@ -466,20 +562,29 @@ export const mergeCropMatches = async (
                 );
             }),
         );
+        throwIfAborted();
         verdicts.forEach((match, index) => {
-            const [a, b] = batch[index]!;
-            if (match && uf.find(a) !== uf.find(b)) {
-                uf.union(a, b);
+            if (!match) {
+                return;
             }
+            const [a, b] = batch[index]!;
+            uf.tryUnion(a, b, MAX_GROUP_SIZE);
         });
         // Yield between batches so progress renders and the tab stays alive.
         await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
+    throwIfAborted();
+
     const groupsByRoot = new Map<number, number[]>();
     for (let i = 0; i < indexed.length; i++) {
         const root = uf.find(i);
-        groupsByRoot.set(root, [...(groupsByRoot.get(root) ?? []), i]);
+        const members = groupsByRoot.get(root);
+        if (members) {
+            members.push(i);
+        } else {
+            groupsByRoot.set(root, [i]);
+        }
     }
 
     const rebuilt: SimilarityGroup[] = [];
@@ -487,7 +592,31 @@ export const mergeCropMatches = async (
         if (memberIndices.length < 2) {
             continue;
         }
-        const group = assembleGroup(memberIndices, indexed, filesById, collections, userId);
+        // Safety net: size-aware unions should already keep components ≤ cap.
+        // Hard-slice rather than dHash-recluster so genuine crop links survive.
+        if (memberIndices.length > MAX_GROUP_SIZE) {
+            for (let i = 0; i < memberIndices.length; i += MAX_GROUP_SIZE) {
+                const slice = memberIndices.slice(i, i + MAX_GROUP_SIZE);
+                const group = assembleGroup(
+                    slice,
+                    indexed,
+                    filesById,
+                    collections,
+                    userId,
+                );
+                if (group) {
+                    rebuilt.push(group);
+                }
+            }
+            continue;
+        }
+        const group = assembleGroup(
+            memberIndices,
+            indexed,
+            filesById,
+            collections,
+            userId,
+        );
         if (group) {
             rebuilt.push(group);
         }
