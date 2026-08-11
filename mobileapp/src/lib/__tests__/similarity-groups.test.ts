@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
 import { FileType } from "ente-media/file-type";
@@ -6,7 +6,12 @@ import type { PhashEntry } from "@/lib/crop-match";
 import {
     buildSimilarityGroups,
     MAX_GROUP_SIZE,
+    mergeCropMatches,
 } from "@/lib/similarity-groups";
+
+vi.mock("@/lib/similarity-job", () => ({
+    checkCropMatchInWorkers: vi.fn(async () => true),
+}));
 
 const stubFile = (
     id: number,
@@ -161,5 +166,70 @@ describe("buildSimilarityGroups oversized-component cap", () => {
         ]);
         const groups = describeGroups(entries, localFiles, collections);
         expect(groups).toEqual([[1, 2, 3]]);
+    });
+});
+
+describe("mergeCropMatches size cap", () => {
+    const count = MAX_GROUP_SIZE + 25;
+    const collections = [stubCollection(1)];
+    const filesById = new Map(
+        Array.from({ length: count }, (_, i) => [i + 1, stubFile(i + 1, 1, 1)]),
+    );
+
+    /** Distinct dHash so Stage-1 leaves everything as singletons; shared color
+     *  prefix so Stage-2 proposes a long chain of crop candidates. */
+    const cropChainEntries = (): Map<number, PhashEntry> => {
+        const entries = new Map<number, PhashEntry>();
+        for (let i = 0; i < count; i++) {
+            // Far-apart dHash values (unique 3-hex buckets, high Hamming distance)
+            // so Stage-1 leaves everything as singletons. Shared color prefix `aa`
+            // puts them all in one Stage-2 color bucket.
+            const hashPrefix = (i * 17).toString(16).padStart(3, "0").slice(-3);
+            const color = `aa${i.toString(16).padStart(14, "0")}`;
+            entries.set(i + 1, {
+                hashes: [`${hashPrefix}${"f".repeat(13)}`],
+                color,
+                // Worker is mocked; payload only needs to be present.
+                grid: "AAAA",
+            });
+        }
+        return entries;
+    };
+
+    it("never emits a group larger than MAX_GROUP_SIZE when every crop check matches", async () => {
+        const entries = cropChainEntries();
+        const stage1 = buildSimilarityGroups(entries, filesById, collections, 1, 10);
+        expect(stage1).toEqual([]);
+
+        const merged = await mergeCropMatches(stage1, {
+            entries,
+            filesById,
+            collections,
+            userId: 1,
+            batchSize: 16,
+        });
+
+        expect(merged.length).toBeGreaterThan(0);
+        for (const group of merged) {
+            expect(group.items.length).toBeLessThanOrEqual(MAX_GROUP_SIZE);
+        }
+        const covered = merged.reduce((sum, group) => sum + group.items.length, 0);
+        // Every file should land in some capped group when all pairs match.
+        expect(covered).toBe(count);
+    });
+
+    it("aborts when the signal is already aborted", async () => {
+        const entries = cropChainEntries();
+        const abort = new AbortController();
+        abort.abort();
+        await expect(
+            mergeCropMatches([], {
+                entries,
+                filesById,
+                collections,
+                userId: 1,
+                signal: abort.signal,
+            }),
+        ).rejects.toMatchObject({ name: "AbortError" });
     });
 });

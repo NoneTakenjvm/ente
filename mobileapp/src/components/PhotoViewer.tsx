@@ -17,6 +17,7 @@ import {
     Crop,
     Heart,
     Image,
+    MoreVertical,
     Tag,
     Trash2,
     Undo2,
@@ -37,6 +38,13 @@ import { VideoPlaybackControls } from "@/components/VideoPlaybackControls";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuGroup,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import { getEnteCore } from "@/core";
@@ -178,6 +186,8 @@ function MediaDownloadIndicator({
 const CAROUSEL_TRANSITION_MS = 280;
 const SWIPE_THRESHOLD_RATIO = 0.22;
 const SWIPE_THRESHOLD_MIN_PX = 40;
+/** History-state marker so Safari edge-back can be absorbed while the viewer is open. */
+const VIEWER_HISTORY_STATE = { entePhotoViewer: true } as const;
 const CAROUSEL_DRAG_DEAD_ZONE_PX = 8;
 const CHROME_HIDE_MS = 2000;
 /** Full-res download + HEIC convert can exceed a few seconds on desktop. */
@@ -367,6 +377,25 @@ export function PhotoViewer({
         };
     }, []);
 
+    // Absorb Safari / browser edge-back while the viewer is open (stay put).
+    useEffect((): (() => void) => {
+        const marker = { ...VIEWER_HISTORY_STATE };
+        history.pushState(marker, "");
+
+        const onPopState = (): void => {
+            history.pushState(marker, "");
+        };
+        window.addEventListener("popstate", onPopState);
+
+        return (): void => {
+            window.removeEventListener("popstate", onPopState);
+            const state = history.state as { entePhotoViewer?: boolean } | null;
+            if (state?.entePhotoViewer) {
+                history.back();
+            }
+        };
+    }, []);
+
     const notifyFileUpdated = useCallback(
         (updated: EnteFile): void => {
             if (!viewerActiveRef.current) {
@@ -497,27 +526,9 @@ export function PhotoViewer({
         () => undefined,
     );
 
-    const handlePanRelease = useCallback(
-        (edgeOverflowX: number): void => {
-            const threshold = Math.max(
-                SWIPE_THRESHOLD_MIN_PX,
-                viewportWidth * SWIPE_THRESHOLD_RATIO,
-            );
-            if (edgeOverflowX > threshold && currentIndex > 0) {
-                goToIndexRef.current(currentIndex - 1, true);
-            } else if (
-                edgeOverflowX < -threshold &&
-                currentIndex < sessionFiles.length - 1
-            ) {
-                goToIndexRef.current(currentIndex + 1, true);
-            }
-        },
-        [currentIndex, sessionFiles.length, viewportWidth],
-    );
-
+    // Zoomed pan must not advance the carousel — edge overflow stays in-image only.
     const pinchZoom = usePinchZoom({
         enabled: zoomEnabled,
-        onPanRelease: handlePanRelease,
         layoutRef: pinchLayoutRef,
     });
 
@@ -576,7 +587,7 @@ export function PhotoViewer({
         const clearLoadingState = (fileId: number): void => {
             setMediaByFileId((current) => {
                 const entry = current.get(fileId);
-                if (!entry || entry.status !== "loading") {
+                if (entry?.status !== "loading") {
                     return current;
                 }
                 const next = new Map(current);
@@ -1865,7 +1876,7 @@ export function PhotoViewer({
 
     return (
         <div
-            className="fixed inset-0 z-50 flex select-none flex-col bg-background [-webkit-touch-callout:none]"
+            className="fixed inset-0 z-50 flex select-none flex-col bg-background overscroll-none [-webkit-touch-callout:none]"
             role="dialog"
             aria-modal="true"
             aria-label="Media viewer"
@@ -1942,22 +1953,6 @@ export function PhotoViewer({
                         >
                             <Heart className={cn(isFavorite && "fill-current")} />
                         </Button>
-                        <Button
-                            type="button"
-                            variant={isArchived ? "secondary" : "ghost"}
-                            size="icon-sm"
-                            onClick={() => {
-                                resetChromeTimer();
-                                handleToggleArchive();
-                            }}
-                            disabled={archiveBusy}
-                            aria-label={
-                                isArchived ? "Unarchive" : "Archive"
-                            }
-                            aria-pressed={isArchived}
-                        >
-                            {isArchived ? <ArchiveRestore /> : <Archive />}
-                        </Button>
                         {canRevertEdit ? (
                             <Button
                                 type="button"
@@ -2022,6 +2017,40 @@ export function PhotoViewer({
                         >
                             <Trash2 />
                         </Button>
+                        <DropdownMenu
+                            onOpenChange={() => {
+                                resetChromeTimer();
+                            }}
+                        >
+                            <DropdownMenuTrigger
+                                render={
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon-sm"
+                                        aria-label="More actions"
+                                    />
+                                }
+                            >
+                                <MoreVertical />
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-44">
+                                <DropdownMenuGroup>
+                                    <DropdownMenuItem
+                                        disabled={archiveBusy}
+                                        onClick={() => {
+                                            resetChromeTimer();
+                                            handleToggleArchive();
+                                        }}
+                                    >
+                                        {isArchived ?
+                                            <ArchiveRestore data-icon="inline-start" /> :
+                                            <Archive data-icon="inline-start" />}
+                                        {isArchived ? "Unarchive" : "Archive"}
+                                    </DropdownMenuItem>
+                                </DropdownMenuGroup>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
                     </div>
                 </div>
             </div>

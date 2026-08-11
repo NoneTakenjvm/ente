@@ -112,7 +112,9 @@ export const uploadCompressedMedia = async (
     const publicMagicData = buildPublicMagicData(
         result.width,
         result.height,
-        sourceFile.pubMagicMetadata?.data.uploadedAt ?? Date.now() * 1000,
+        sourceFile.pubMagicMetadata?.data.uploadedAt ??
+            sourceFile.updationTime ??
+            sourceFile.metadata.creationTime,
         organizerTags,
     );
     const publicMagicMetadata = createMagicMetadata(publicMagicData);

@@ -84,6 +84,17 @@ describe("crop", () => {
         ).toEqual(["vacation", CROPPED_TAG, AUTO_CROPPED_TAG]);
     });
 
+    it("buildCroppedOrganizerTags strips auto-cropped on manual crop", () => {
+        expect(
+            buildCroppedOrganizerTags(
+                fileWithTags(1, FileType.image, [
+                    "vacation",
+                    AUTO_CROPPED_TAG,
+                ]),
+            ),
+        ).toEqual(["vacation", CROPPED_TAG]);
+    });
+
     it("croppedReplaceTitle swaps extension for images", () => {
         expect(croppedReplaceTitle(fileWithTags(1, FileType.image, []))).toBe(
             "vacation.jpg",

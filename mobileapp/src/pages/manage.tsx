@@ -135,10 +135,13 @@ export default function ManagePage(): JSX.Element {
     const [confirmOpen, setConfirmOpen] = useState<boolean>(false);
     const [isPruning, setIsPruning] = useState<boolean>(false);
     const [error, setError] = useState<string | undefined>();
+    const [similarGroups, setSimilarGroups] = useState<SimilarityGroup[]>([]);
+    const [similarBusy, setSimilarBusy] = useState<boolean>(false);
     const initialLoadDone = useLibraryBootstrap({ afterSync: hydratePhash });
 
     const jobAbort = useRef<AbortController | undefined>(undefined);
     const jobPaused = useRef<boolean>(false);
+    const cropMergeAbort = useRef<AbortController | undefined>(undefined);
 
     useEffect(() => {
         reconcileSessionWithCore();
@@ -160,49 +163,109 @@ export default function ManagePage(): JSX.Element {
                 clearTimeout(thresholdTimer.current);
             }
             jobAbort.current?.abort();
+            cropMergeAbort.current?.abort();
             terminatePhashWorker();
         };
     }, []);
 
-    const exactGroups = useMemo(
-        () => findExactDuplicateGroups(allFiles, collections, userId),
-        [allFiles, collections, userId],
-    );
+    const dedupMode = section === "exact" || section === "similar" ? section : null;
 
-    const stage1SimilarGroups = useMemo(() => {
-        const filesById = new Map(allFiles.map((file) => [file.id, file]));
-        return buildSimilarityGroups(
-            phashEntries,
-            filesById,
-            collections,
-            userId,
-            debouncedThreshold,
-        );
-    }, [allFiles, collections, phashEntries, debouncedThreshold, userId]);
+    // Exact duplicates are cheap, but still skip them until the Exact section
+    // is open — Manage hub / tags / trash must stay instant.
+    const exactGroups = useMemo(() => {
+        if (dedupMode !== "exact") {
+            return [];
+        }
+        return findExactDuplicateGroups(allFiles, collections, userId);
+    }, [dedupMode, allFiles, collections, userId]);
 
-    // Show Stage-1 (dHash) groups immediately; refine async so crop matches are
-    // merged without blocking the main thread.
-    const [similarGroups, setSimilarGroups] = useState<SimilarityGroup[]>([]);
+    // Similar: Stage-1 then async crop merge, only while the Similar section is
+    // open. Abort on leave / threshold change so workers don't keep burning.
     useEffect(() => {
+        cropMergeAbort.current?.abort();
+        cropMergeAbort.current = undefined;
+
+        if (dedupMode !== "similar") {
+            setSimilarGroups([]);
+            setSimilarBusy(false);
+            return;
+        }
+
+        const abort = new AbortController();
+        cropMergeAbort.current = abort;
         let cancelled = false;
-        setSimilarGroups(stage1SimilarGroups);
-        const filesById = new Map(allFiles.map((file) => [file.id, file]));
-        void mergeCropMatches(stage1SimilarGroups, {
-            entries: phashEntries,
-            filesById,
-            collections,
-            userId,
-        }).then((merged) => {
-            if (!cancelled) {
+        setSimilarBusy(true);
+
+        const run = async (): Promise<void> => {
+            // Let the Similar chrome paint before any heavy grouping work.
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            if (abort.signal.aborted || cancelled) {
+                return;
+            }
+
+            const filesById = new Map(allFiles.map((file) => [file.id, file]));
+            const stage1 = buildSimilarityGroups(
+                phashEntries,
+                filesById,
+                collections,
+                userId,
+                debouncedThreshold,
+            );
+            if (abort.signal.aborted || cancelled) {
+                return;
+            }
+            setSimilarGroups(stage1);
+
+            try {
+                const merged = await mergeCropMatches(stage1, {
+                    entries: phashEntries,
+                    filesById,
+                    collections,
+                    userId,
+                    signal: abort.signal,
+                });
+                if (abort.signal.aborted || cancelled) {
+                    return;
+                }
                 setSimilarGroups(merged);
+            } catch (mergeError: unknown) {
+                if (
+                    mergeError instanceof DOMException &&
+                    mergeError.name === "AbortError"
+                ) {
+                    return;
+                }
+                throw mergeError;
+            } finally {
+                if (!cancelled && !abort.signal.aborted) {
+                    setSimilarBusy(false);
+                }
+            }
+        };
+
+        void run().catch((runError: unknown) => {
+            if (!cancelled && !abort.signal.aborted) {
+                setSimilarBusy(false);
+                setError(
+                    runError instanceof Error ?
+                        runError.message :
+                        "Similar-photo scan failed",
+                );
             }
         });
+
         return (): void => {
             cancelled = true;
+            abort.abort();
         };
-    }, [stage1SimilarGroups, allFiles, collections, phashEntries, userId]);
-
-    const dedupMode = section === "exact" || section === "similar" ? section : null;
+    }, [
+        dedupMode,
+        allFiles,
+        collections,
+        phashEntries,
+        debouncedThreshold,
+        userId,
+    ]);
 
     useEffect(() => {
         if (dedupMode === "exact") {
@@ -211,6 +274,8 @@ export default function ManagePage(): JSX.Element {
             setSelections(
                 similarGroups.map((group) => similarityGroupToSelection(group)),
             );
+        } else {
+            setSelections([]);
         }
     }, [dedupMode, exactGroups, similarGroups]);
 
@@ -471,6 +536,7 @@ export default function ManagePage(): JSX.Element {
                                     Indexed {phashIndexedCount} / {phashCandidateCount} images
                                     · {similarGroups.length} similar group
                                     {similarGroups.length === 1 ? "" : "s"}
+                                    {similarBusy ? " · refining…" : ""}
                                 </p>
                                 {phashJobStatus === "running" ? (
                                     <div className="flex flex-col gap-1">
@@ -511,16 +577,20 @@ export default function ManagePage(): JSX.Element {
                                 <EmptyTitle>
                                     {dedupMode === "exact" ?
                                         "No exact duplicates" :
-                                        phashIndexedCount < 2 ?
-                                            "Scan your library" :
-                                            "No similar groups"}
+                                        similarBusy ?
+                                            "Finding similar photos…" :
+                                            phashIndexedCount < 2 ?
+                                                "Scan your library" :
+                                                "No similar groups"}
                                 </EmptyTitle>
                                 <EmptyDescription>
                                     {dedupMode === "exact" ?
                                         "No exact duplicates found in your library." :
-                                        phashIndexedCount < 2 ?
-                                            "Scan your library to find similar photos." :
-                                            "No similar groups at this threshold."}
+                                        similarBusy ?
+                                            "Matching rotations and crops in the background." :
+                                            phashIndexedCount < 2 ?
+                                                "Scan your library to find similar photos." :
+                                                "No similar groups at this threshold."}
                                 </EmptyDescription>
                             </EmptyHeader>
                         </Empty>
