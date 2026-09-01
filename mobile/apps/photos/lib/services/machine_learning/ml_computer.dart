@@ -1,6 +1,6 @@
 import 'dart:async';
 import "dart:io" show Platform;
-import "dart:typed_data" show Float32List;
+import "dart:typed_data" show Float32List, Uint8List;
 
 import "package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart"
     show Uint64List;
@@ -13,6 +13,7 @@ import "package:photos/services/machine_learning/ml_constants.dart";
 import "package:photos/services/machine_learning/ml_model_download_service.dart";
 import "package:photos/services/machine_learning/semantic_search/clip/clip_text_encoder.dart";
 import "package:photos/services/machine_learning/semantic_search/query_result.dart";
+import "package:photos/services/machine_learning/similar_images/similar_images_graph.dart";
 import "package:photos/services/remote_assets_service.dart";
 import "package:photos/utils/isolate/isolate_operations.dart";
 import "package:photos/utils/isolate/super_isolate.dart";
@@ -62,16 +63,70 @@ class MLComputer extends SuperIsolate {
     }
   }
 
-  Future<(Uint64List, List<Uint64List>, List<Float32List>)>
-  bulkVectorSearchWithKeys(Uint64List potentialKeys, bool exact) async {
+  /// Finds candidate near-duplicate pairs among [potentialKeys] via a CLIP
+  /// nearest-neighbour search followed by mutual-kNN + threshold filtering,
+  /// entirely inside the isolate (see [Note: similar images grouping]).
+  /// Returns three aligned lists describing each candidate edge.
+  Future<(List<int>, List<int>, List<double>)> findSimilarImageCandidateEdges({
+    required Uint64List potentialKeys,
+    required bool exact,
+    required double distanceThreshold,
+    required int mutualRankK,
+    required Map<int, List<String>> personIdsByFileId,
+  }) async {
     try {
-      final result = await runInIsolate(
-        IsolateOperation.bulkVectorSearchWithKeys,
-        {"potentialKeys": potentialKeys, "exact": exact},
+      final result =
+          await runInIsolate(
+                IsolateOperation.findSimilarImageCandidateEdges,
+                {
+                  "potentialKeys": potentialKeys,
+                  "exact": exact,
+                  "distanceThreshold": distanceThreshold,
+                  "mutualRankK": mutualRankK,
+                  "personIdsByFileId": personIdsByFileId,
+                },
+              )
+              as Map;
+      return (
+        List<int>.from(result["edgeFileIdA"] as List),
+        List<int>.from(result["edgeFileIdB"] as List),
+        List<double>.from(result["edgeDistance"] as List),
       );
-      return result;
     } catch (e, s) {
-      _logger.severe("Could not run bulk vector search in MLComputer", e, s);
+      _logger.severe("Could not find similar image candidate edges", e, s);
+      rethrow;
+    }
+  }
+
+  /// Verifies candidate near-duplicate edges against a rotation-aware
+  /// perceptual hash of each file's thumbnail, then groups the surviving
+  /// edges into connected components, entirely inside the isolate.
+  Future<List<SimilarFilesGroupResult>> verifyAndClusterSimilarImages({
+    required List<int> edgeFileIdA,
+    required List<int> edgeFileIdB,
+    required List<double> edgeDistance,
+    required Map<int, Uint8List> thumbnailBytesByFileId,
+    required int maxHammingDistance,
+  }) async {
+    try {
+      final result =
+          await runInIsolate(IsolateOperation.verifyAndClusterSimilarImages, {
+                "edgeFileIdA": edgeFileIdA,
+                "edgeFileIdB": edgeFileIdB,
+                "edgeDistance": edgeDistance,
+                "thumbnailBytesByFileId": thumbnailBytesByFileId,
+                "maxHammingDistance": maxHammingDistance,
+              })
+              as List;
+      return [
+        for (final raw in result)
+          SimilarFilesGroupResult(
+            List<int>.from((raw as Map)["fileIds"] as List),
+            (raw["furthestDistance"] as num).toDouble(),
+          ),
+      ];
+    } catch (e, s) {
+      _logger.severe("Could not verify and cluster similar images", e, s);
       rethrow;
     }
   }

@@ -1,5 +1,6 @@
 import "dart:io" show File;
-import "dart:math" show max;
+import "dart:math" show max, min;
+import "dart:typed_data" show Uint8List;
 
 import "package:ente_pure_utils/ente_pure_utils.dart";
 import "package:flutter/foundation.dart" show kDebugMode;
@@ -16,9 +17,23 @@ import "package:photos/services/machine_learning/ml_computer.dart";
 import "package:photos/services/machine_learning/ml_result.dart";
 import "package:photos/services/search_service.dart";
 import "package:photos/utils/cache_util.dart";
+import "package:photos/utils/thumbnail_util.dart" show getThumbnail;
 
 class SimilarImagesService {
   static const double _groupedClipEmbeddingLossRefreshRatio = 0.05;
+
+  /// A candidate pair only becomes an edge if each file is among the
+  /// other's closest [_mutualRankK] CLIP neighbours (see
+  /// [Note: similar images grouping] in similar_images_graph.dart).
+  static const int _mutualRankK = 10;
+
+  /// Maximum allowed Hamming distance (out of 64 bits) between perceptual
+  /// hashes for a CLIP-flagged pair to be treated as a genuine near-duplicate.
+  static const int _maxHammingDistance = 8;
+
+  /// How many thumbnails to fetch/decode at a time while reporting
+  /// progress, so a large candidate set never blocks the UI in one go.
+  static const int _thumbnailFetchBatchSize = 40;
 
   final _logger = Logger("SimilarImagesService");
 
@@ -32,6 +47,7 @@ class SimilarImagesService {
     double distanceThreshold, {
     bool exact = false,
     bool forceRefresh = false,
+    SimilarImagesProgressCallback? onProgress,
   }) async {
     try {
       final now = DateTime.now();
@@ -39,6 +55,7 @@ class SimilarImagesService {
         distanceThreshold,
         exact,
         forceRefresh,
+        onProgress,
       );
       final duration = DateTime.now().difference(now);
       _logger.info(
@@ -55,6 +72,7 @@ class SimilarImagesService {
     double distanceThreshold,
     bool exact,
     bool forceRefresh,
+    SimilarImagesProgressCallback? onProgress,
   ) async {
     final w = (kDebugMode ? EnteWatch('getSimilarFiles') : null)?..start();
     final mlDataDB = MLDataDB.instance;
@@ -111,6 +129,7 @@ class SimilarImagesService {
         fileIDToPersonIDs,
         distanceThreshold,
         exact,
+        onProgress,
       );
       await _cacheSimilarFiles(
         result,
@@ -197,6 +216,7 @@ class SimilarImagesService {
         fileIDToPersonIDs,
         distanceThreshold,
         exact,
+        onProgress,
       );
       await _cacheSimilarFiles(
         result,
@@ -214,6 +234,7 @@ class SimilarImagesService {
         fileIDToPersonIDs,
         distanceThreshold,
         exact,
+        onProgress,
       );
     }
   }
@@ -225,6 +246,7 @@ class SimilarImagesService {
     Map<int, Set<String>> fileIDToPersonIDs,
     double distanceThreshold,
     bool exact,
+    SimilarImagesProgressCallback? onProgress,
   ) async {
     _logger.info("Performing incremental update for similar files");
     final existingGroups = await cachedData.similarFilesList();
@@ -264,104 +286,47 @@ class SimilarImagesService {
       return existingGroups;
     }
 
-    // Search only new files
-    final newFileIDsList = Uint64List.fromList(newFileIDs.toList());
-    final (keys, vectorKeys, distances) = await MLComputer.instance
-        .bulkVectorSearchWithKeys(newFileIDsList, exact);
-    final keysList = keys.map((key) => key.toInt()).toList();
+    // Re-run the candidate+verify pipeline scoped to the new files plus
+    // whichever files are already grouped, so a new file can either join an
+    // existing group or form a new one alongside other new files.
+    final existingGroupedFileIds = <int>{};
+    for (final group in existingGroups) {
+      existingGroupedFileIds.addAll(group.fileIds);
+    }
+    final scopedFileIds = <int>{...newFileIDs, ...existingGroupedFileIds};
+    final freshGroups = await _findAndVerifySimilarGroups(
+      Uint64List.fromList(scopedFileIds.toList()),
+      allFileIdsToFile,
+      fileIDToPersonIDs,
+      distanceThreshold,
+      exact,
+      onProgress,
+    );
 
-    // Try to assign new files to existing groups
-    final unassignedNewFilesIndices = <int>{};
-    final unassignedNewFileIDs = <int>{};
-    for (int i = 0; i < keysList.length; i++) {
-      final newFileID = keysList[i];
-      final newFile = allFileIdsToFile[newFileID];
-      if (newFile == null) continue;
-      final similarFileIDs = vectorKeys[i];
-      final fileDistances = distances[i];
-      final newFilePersonIDs = fileIDToPersonIDs[newFileID] ?? <String>{};
-      bool assigned = false;
-      for (int j = 0; j < similarFileIDs.length; j++) {
-        final otherFileID = similarFileIDs[j].toInt();
-        if (otherFileID == newFileID) continue;
-        final distance = fileDistances[j];
-        if (distance > distanceThreshold) break;
-        for (final group in existingGroups) {
-          if (group.fileIds.contains(otherFileID)) {
-            final otherPersonIDs = fileIDToPersonIDs[otherFileID] ?? <String>{};
-            if (setsAreEqual(newFilePersonIDs, otherPersonIDs)) {
-              group.addFile(newFile);
-              group.furthestDistance = max(group.furthestDistance, distance);
-              group.files.sort((a, b) {
-                if (FavoritesService.instance.isFavoriteCache(a)) {
-                  return -1;
-                } else if (FavoritesService.instance.isFavoriteCache(b)) {
-                  return 1;
-                }
-                final sizeComparison = (b.fileSize ?? 0).compareTo(
-                  a.fileSize ?? 0,
-                );
-                if (sizeComparison != 0) return sizeComparison;
-                return a.displayName.compareTo(b.displayName);
-              });
-              assigned = true;
-              break;
-            }
-          }
+    for (final freshGroup in freshGroups) {
+      SimilarFiles? matchedExisting;
+      for (final existing in existingGroups) {
+        if (existing.fileIds.intersection(freshGroup.fileIds).isNotEmpty) {
+          matchedExisting = existing;
+          break;
         }
-        if (assigned) break;
       }
-      if (!assigned) {
-        unassignedNewFilesIndices.add(i);
-        unassignedNewFileIDs.add(newFileID);
+      if (matchedExisting == null) {
+        existingGroups.add(freshGroup);
+        continue;
       }
+      for (final file in freshGroup.files) {
+        if (!matchedExisting.containsFile(file)) {
+          matchedExisting.addFile(file);
+        }
+      }
+      matchedExisting.furthestDistance = max(
+        matchedExisting.furthestDistance,
+        freshGroup.furthestDistance,
+      );
+      _sortGroupFiles(matchedExisting.files);
     }
 
-    // Check if unassigned new files form groups among themselves
-    if (unassignedNewFilesIndices.isNotEmpty) {
-      final alreadyUsedNewFiles = <int>{};
-      for (final searchIndex in unassignedNewFilesIndices) {
-        final newFileID = keysList[searchIndex];
-        if (alreadyUsedNewFiles.contains(newFileID)) continue;
-        final newFile = allFileIdsToFile[newFileID];
-        if (newFile == null) continue;
-        final similarFileIDs = vectorKeys[searchIndex];
-        final fileDistances = distances[searchIndex];
-        final newFilePersonIDs = fileIDToPersonIDs[newFileID] ?? <String>{};
-        final similarNewFiles = <EnteFile>[];
-        double furthestDistance = 0.0;
-        for (int j = 0; j < similarFileIDs.length; j++) {
-          final otherFileID = similarFileIDs[j].toInt();
-          if (otherFileID == newFileID) continue;
-          if (!unassignedNewFileIDs.contains(otherFileID)) continue;
-          if (alreadyUsedNewFiles.contains(otherFileID)) continue;
-          final distance = fileDistances[j];
-          if (distance > distanceThreshold) break;
-          final otherFile = allFileIdsToFile[otherFileID];
-          if (otherFile == null) continue;
-          final otherPersonIDs = fileIDToPersonIDs[otherFileID] ?? <String>{};
-          if (!setsAreEqual(newFilePersonIDs, otherPersonIDs)) continue;
-          similarNewFiles.add(otherFile);
-          alreadyUsedNewFiles.add(otherFileID);
-          furthestDistance = max(furthestDistance, distance);
-        }
-        if (similarNewFiles.isNotEmpty) {
-          similarNewFiles.add(newFile);
-          alreadyUsedNewFiles.add(newFileID);
-          similarNewFiles.sort((a, b) {
-            if (FavoritesService.instance.isFavoriteCache(a)) {
-              return -1;
-            } else if (FavoritesService.instance.isFavoriteCache(b)) {
-              return 1;
-            }
-            final sizeComparison = (b.fileSize ?? 0).compareTo(a.fileSize ?? 0);
-            if (sizeComparison != 0) return sizeComparison;
-            return a.displayName.compareTo(b.displayName);
-          });
-          existingGroups.add(SimilarFiles(similarNewFiles, furthestDistance));
-        }
-      }
-    }
     await _cacheSimilarFiles(
       existingGroups,
       currentFileIDsSet,
@@ -379,68 +344,157 @@ class SimilarImagesService {
     Map<int, Set<String>> fileIDToPersonIDs,
     double distanceThreshold,
     bool exact,
+    SimilarImagesProgressCallback? onProgress,
   ) async {
     _logger.info("Performing full search for similar files");
+    return _findAndVerifySimilarGroups(
+      potentialKeys,
+      allFileIdsToFile,
+      fileIDToPersonIDs,
+      distanceThreshold,
+      exact,
+      onProgress,
+    );
+  }
+
+  /// The shared pipeline behind both a full search and an incremental
+  /// update: find CLIP-based mutual-nearest-neighbour candidates, verify
+  /// each candidate against a perceptual hash of its thumbnail (see
+  /// [Note: similar images grouping] in similar_images_graph.dart), then
+  /// group the verified pairs. All of the CPU-heavy work runs inside an
+  /// isolate; only the (already-cached-locally) thumbnail reads happen on
+  /// the caller's isolate, and those are async and chunked so the UI never
+  /// blocks for long.
+  Future<List<SimilarFiles>> _findAndVerifySimilarGroups(
+    Uint64List potentialKeys,
+    Map<int, EnteFile> allFileIdsToFile,
+    Map<int, Set<String>> fileIDToPersonIDs,
+    double distanceThreshold,
+    bool exact,
+    SimilarImagesProgressCallback? onProgress,
+  ) async {
+    if (potentialKeys.isEmpty) return [];
     final w = (kDebugMode ? EnteWatch('getSimilarFiles') : null)?..start();
-    // Run bulk vector search
-    final (keys, vectorKeys, distances) = await MLComputer.instance
-        .bulkVectorSearchWithKeys(potentialKeys, exact);
-    w?.log("bulkSearchVectors");
 
-    // Run through the vector search results and create SimilarFiles objects
-    final alreadyUsedFileIDs = <int>{};
-    final allSimilarFiles = <SimilarFiles>[];
-    for (int i = 0; i < keys.length; i++) {
-      final fileID = keys[i].toInt();
-      if (alreadyUsedFileIDs.contains(fileID)) continue;
-      final firstLoopFile = allFileIdsToFile[fileID];
-      if (firstLoopFile == null || firstLoopFile.uploadedFileID == null) {
-        continue;
-      }
-      final otherFileIDs = vectorKeys[i];
-      final distancesToFiles = distances[i];
-      final similarFilesList = <EnteFile>[];
-      final personIDs = fileIDToPersonIDs[fileID] ?? <String>{};
-      double furthestDistance = 0.0;
-      for (int j = 0; j < otherFileIDs.length; j++) {
-        final otherFileID = otherFileIDs[j].toInt();
-        if (otherFileID == fileID) continue;
-        if (alreadyUsedFileIDs.contains(otherFileID)) continue;
-        final distance = distancesToFiles[j];
-        if (distance > distanceThreshold) break;
-        final otherFile = allFileIdsToFile[otherFileID];
-        if (otherFile == null || otherFile.uploadedFileID == null) {
-          continue;
-        }
-        final otherPersonIDs = fileIDToPersonIDs[otherFileID] ?? <String>{};
-        if (!setsAreEqual(personIDs, otherPersonIDs)) continue;
-        similarFilesList.add(otherFile);
-        furthestDistance = max(furthestDistance, distance);
-        alreadyUsedFileIDs.add(otherFileID);
-      }
-      if (similarFilesList.isNotEmpty) {
-        similarFilesList.add(firstLoopFile);
-        for (final file in similarFilesList) {
-          alreadyUsedFileIDs.add(file.uploadedFileID!);
-        }
-        // show highest quality files first
-        similarFilesList.sort((a, b) {
-          if (FavoritesService.instance.isFavoriteCache(a)) {
-            return -1;
-          } else if (FavoritesService.instance.isFavoriteCache(b)) {
-            return 1;
-          }
-          final sizeComparison = (b.fileSize ?? 0).compareTo(a.fileSize ?? 0);
-          if (sizeComparison != 0) return sizeComparison;
-          return a.displayName.compareTo(b.displayName);
-        });
-        final similarFiles = SimilarFiles(similarFilesList, furthestDistance);
-        allSimilarFiles.add(similarFiles);
-      }
+    onProgress?.call(
+      const SimilarImagesProgress(
+        stepDescription: "Comparing photos",
+        completed: 0,
+        total: 1,
+      ),
+    );
+    final personIdsByFileId = <int, List<String>>{
+      for (final entry in fileIDToPersonIDs.entries)
+        if (entry.value.isNotEmpty) entry.key: entry.value.toList(),
+    };
+    final (edgeFileIdA, edgeFileIdB, edgeDistance) = await MLComputer.instance
+        .findSimilarImageCandidateEdges(
+          potentialKeys: potentialKeys,
+          exact: exact,
+          distanceThreshold: distanceThreshold,
+          mutualRankK: _mutualRankK,
+          personIdsByFileId: personIdsByFileId,
+        );
+    w?.log("findSimilarImageCandidateEdges");
+    onProgress?.call(
+      const SimilarImagesProgress(
+        stepDescription: "Comparing photos",
+        completed: 1,
+        total: 1,
+      ),
+    );
+
+    if (edgeFileIdA.isEmpty) return [];
+
+    final candidateFileIds = <int>{...edgeFileIdA, ...edgeFileIdB};
+    final thumbnailBytesByFileId = await _fetchThumbnails(
+      candidateFileIds,
+      allFileIdsToFile,
+      onProgress,
+    );
+    w?.log("fetchThumbnails");
+
+    final groupResults = await MLComputer.instance.verifyAndClusterSimilarImages(
+      edgeFileIdA: edgeFileIdA,
+      edgeFileIdB: edgeFileIdB,
+      edgeDistance: edgeDistance,
+      thumbnailBytesByFileId: thumbnailBytesByFileId,
+      maxHammingDistance: _maxHammingDistance,
+    );
+    w?.log("verifyAndClusterSimilarImages");
+
+    final result = <SimilarFiles>[];
+    for (final groupResult in groupResults) {
+      final files = <EnteFile>[
+        for (final fileId in groupResult.fileIds)
+          if (allFileIdsToFile[fileId] != null) allFileIdsToFile[fileId]!,
+      ];
+      if (files.length <= 1) continue;
+      _sortGroupFiles(files);
+      result.add(SimilarFiles(files, groupResult.furthestDistance));
     }
-    w?.log("going through files");
+    return result;
+  }
 
-    return allSimilarFiles;
+  /// Fetches (and, if needed, decrypts) the thumbnail bytes for each file in
+  /// [fileIds] in small batches, reporting progress after every batch.
+  Future<Map<int, Uint8List>> _fetchThumbnails(
+    Set<int> fileIds,
+    Map<int, EnteFile> allFileIdsToFile,
+    SimilarImagesProgressCallback? onProgress,
+  ) async {
+    final thumbnailBytesByFileId = <int, Uint8List>{};
+    final fileIdList = fileIds.toList();
+    int completed = 0;
+    for (int i = 0; i < fileIdList.length; i += _thumbnailFetchBatchSize) {
+      final batch = fileIdList.sublist(
+        i,
+        min(i + _thumbnailFetchBatchSize, fileIdList.length),
+      );
+      final batchBytes = await Future.wait(
+        batch.map((fileId) async {
+          final file = allFileIdsToFile[fileId];
+          if (file == null) return null;
+          try {
+            return await getThumbnail(file);
+          } catch (e) {
+            _logger.warning(
+              "Could not load thumbnail for similar images verification: $fileId",
+              e,
+            );
+            return null;
+          }
+        }),
+      );
+      for (int j = 0; j < batch.length; j++) {
+        final bytes = batchBytes[j];
+        if (bytes != null) {
+          thumbnailBytesByFileId[batch[j]] = bytes;
+        }
+      }
+      completed += batch.length;
+      onProgress?.call(
+        SimilarImagesProgress(
+          stepDescription: "Verifying matches",
+          completed: completed,
+          total: fileIdList.length,
+        ),
+      );
+    }
+    return thumbnailBytesByFileId;
+  }
+
+  void _sortGroupFiles(List<EnteFile> files) {
+    files.sort((a, b) {
+      if (FavoritesService.instance.isFavoriteCache(a)) {
+        return -1;
+      } else if (FavoritesService.instance.isFavoriteCache(b)) {
+        return 1;
+      }
+      final sizeComparison = (b.fileSize ?? 0).compareTo(a.fileSize ?? 0);
+      if (sizeComparison != 0) return sizeComparison;
+      return a.displayName.compareTo(b.displayName);
+    });
   }
 
   Future<String> _getCachePath() async {
@@ -495,8 +549,4 @@ class SimilarImagesService {
       rethrow;
     }
   }
-}
-
-bool setsAreEqual(Set<String> set1, Set<String> set2) {
-  return set1.length == set2.length && set1.containsAll(set2);
 }

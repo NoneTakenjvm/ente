@@ -3,6 +3,25 @@ import "dart:convert";
 import "package:photos/models/file/file.dart";
 import "package:photos/services/search_service.dart";
 
+/// Reports progress of the (potentially slow, but never UI-blocking)
+/// similar-images computation, so the UI can show real feedback instead of
+/// a fixed animation while the background isolate works.
+class SimilarImagesProgress {
+  final String stepDescription;
+  final int completed;
+  final int total;
+
+  const SimilarImagesProgress({
+    required this.stepDescription,
+    required this.completed,
+    required this.total,
+  });
+}
+
+typedef SimilarImagesProgressCallback = void Function(
+  SimilarImagesProgress progress,
+);
+
 class SimilarFiles {
   final List<EnteFile> files;
   final Set<int> fileIds;
