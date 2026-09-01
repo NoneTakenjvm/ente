@@ -59,6 +59,7 @@ class _SimilarImagesPageState extends State<SimilarImagesPage>
   SimilarImagesPageState _pageState = SimilarImagesPageState.setup;
   double _distanceThreshold = 0.04; // Default value
   List<SimilarFiles> _similarFilesList = [];
+  SimilarImagesProgress? _findSimilarProgress;
 
   SortKey _sortKey = SortKey.size;
   bool _exactSearch = false;
@@ -316,7 +317,7 @@ class _SimilarImagesPageState extends State<SimilarImagesPage>
   }
 
   Widget _getLoadingView() {
-    return const _LoadingScreen();
+    return _LoadingScreen(progress: _findSimilarProgress);
   }
 
   Widget _getResultsView() {
@@ -642,6 +643,7 @@ class _SimilarImagesPageState extends State<SimilarImagesPage>
     if (_isDisposed) return;
     setState(() {
       _pageState = SimilarImagesPageState.loading;
+      _findSimilarProgress = null;
     });
 
     try {
@@ -651,6 +653,12 @@ class _SimilarImagesPageState extends State<SimilarImagesPage>
         _distanceThreshold,
         exact: _exactSearch,
         forceRefresh: _fullRefresh,
+        onProgress: (progress) {
+          if (_isDisposed) return;
+          setState(() {
+            _findSimilarProgress = progress;
+          });
+        },
       );
       _logger.info("Found ${similarFiles.length} groups of similar images");
 
@@ -1260,7 +1268,9 @@ class _SimilarImagesPageState extends State<SimilarImagesPage>
 }
 
 class _LoadingScreen extends StatefulWidget {
-  const _LoadingScreen();
+  final SimilarImagesProgress? progress;
+
+  const _LoadingScreen({this.progress});
 
   @override
   State<_LoadingScreen> createState() => _LoadingScreenState();
@@ -1309,6 +1319,7 @@ class _LoadingScreenState extends State<_LoadingScreen> {
   @override
   Widget build(BuildContext context) {
     final textTheme = getEnteTextTheme(context);
+    final colorScheme = getEnteColorScheme(context);
 
     _loadingTexts = [
       AppLocalizations.of(context).analyzingPhotosLocally,
@@ -1317,6 +1328,12 @@ class _LoadingScreenState extends State<_LoadingScreen> {
       AppLocalizations.of(context).findingSimilarImages,
       AppLocalizations.of(context).almostDone,
     ];
+
+    final progress = widget.progress;
+    final statusText = progress?.stepDescription ?? _loadingTexts[_currentTextIndex];
+    final progressFraction = (progress != null && progress.total > 0)
+        ? progress.completed / progress.total
+        : null;
 
     return Center(
       child: Column(
@@ -1341,12 +1358,27 @@ class _LoadingScreenState extends State<_LoadingScreen> {
           AnimatedSwitcher(
             duration: const Duration(milliseconds: 500),
             child: Text(
-              _loadingTexts[_currentTextIndex],
-              key: ValueKey<int>(_currentTextIndex),
+              statusText,
+              key: ValueKey<String>(statusText),
               style: textTheme.bodyMuted,
               textAlign: TextAlign.center,
             ),
           ),
+          if (progressFraction != null) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: 160,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: progressFraction.clamp(0.0, 1.0),
+                  backgroundColor: colorScheme.fillFaint,
+                  color: colorScheme.primary500,
+                  minHeight: 4,
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );

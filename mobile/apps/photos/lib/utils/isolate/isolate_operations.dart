@@ -15,6 +15,7 @@ import "package:photos/services/machine_learning/ml_result.dart";
 import "package:photos/services/machine_learning/semantic_search/clip/clip_text_encoder.dart";
 import "package:photos/services/machine_learning/semantic_search/clip/clip_text_tokenizer.dart";
 import "package:photos/services/machine_learning/semantic_search/query_result.dart";
+import "package:photos/services/machine_learning/similar_images/similar_images_graph.dart";
 import "package:photos/src/rust/api/image_processing_api.dart"
     as rust_image_processing;
 import "package:photos/src/rust/api/ml_indexing_api.dart" as rust_ml;
@@ -22,6 +23,7 @@ import "package:photos/src/rust/api/usearch_api.dart" as rust_usearch;
 import "package:photos/src/rust/frb_generated.dart" show EntePhotosRust;
 import "package:photos/utils/image_ml_util.dart";
 import "package:photos/utils/ml_util.dart";
+import "package:photos/utils/similar_images/perceptual_hash.dart";
 
 final Map<String, dynamic> _isolateCache = {};
 const _rustLibLoadedCacheKey = "rustLibLoaded";
@@ -74,7 +76,10 @@ enum IsolateOperation {
   bulkVectorSearch,
 
   /// [MLComputer]
-  bulkVectorSearchWithKeys,
+  findSimilarImageCandidateEdges,
+
+  /// [MLComputer]
+  verifyAndClusterSimilarImages,
 
   /// [FaceClusteringService]
   linearIncrementalClustering,
@@ -101,17 +106,6 @@ Future<dynamic> isolateFunction(
   Map<String, dynamic> args,
 ) async {
   switch (function) {
-    case IsolateOperation.bulkVectorSearchWithKeys:
-      await _ensureRustLoaded();
-      final potentialKeys = args["potentialKeys"] as Uint64List;
-      final exact = args["exact"] as bool;
-
-      return ClipVectorDB.instance.bulkSearchWithKeys(
-        potentialKeys,
-        BigInt.from(100),
-        exact: exact,
-      );
-
     case IsolateOperation.bulkVectorSearch:
       await _ensureRustLoaded();
       final clipFloat32 = args["clipFloat32"] as List<Float32List>;
@@ -122,6 +116,89 @@ Future<dynamic> isolateFunction(
         BigInt.from(100),
         exact: exact,
       );
+
+    case IsolateOperation.findSimilarImageCandidateEdges:
+      await _ensureRustLoaded();
+      final potentialKeys = args["potentialKeys"] as Uint64List;
+      final exact = args["exact"] as bool;
+      final distanceThreshold = args["distanceThreshold"] as double;
+      final mutualRankK = args["mutualRankK"] as int;
+      final personIdsByFileId = (args["personIdsByFileId"] as Map)
+          .map<int, Set<String>>(
+            (key, value) =>
+                MapEntry(key as int, Set<String>.from(value as List)),
+          );
+
+      final (keys, vectorKeys, distances) = await ClipVectorDB.instance
+          .bulkSearchWithKeys(potentialKeys, BigInt.from(100), exact: exact);
+
+      final knnEntries = <KnnEntry>[
+        for (int i = 0; i < keys.length; i++)
+          KnnEntry(
+            fileId: keys[i].toInt(),
+            neighborIds: vectorKeys[i]
+                .map((key) => key.toInt())
+                .toList(growable: false),
+            neighborDistances: distances[i]
+                .map((distance) => distance.toDouble())
+                .toList(growable: false),
+          ),
+      ];
+
+      final edges = findMutualCandidateEdges(
+        knnEntries: knnEntries,
+        distanceThreshold: distanceThreshold,
+        mutualRankK: mutualRankK,
+        extraConstraint: personIdsByFileId.isEmpty
+            ? null
+            : (fileIdA, fileIdB) => _samePersonIds(
+                personIdsByFileId,
+                fileIdA,
+                fileIdB,
+              ),
+      );
+
+      return {
+        "edgeFileIdA": [for (final edge in edges) edge.fileIdA],
+        "edgeFileIdB": [for (final edge in edges) edge.fileIdB],
+        "edgeDistance": [for (final edge in edges) edge.distance],
+      };
+
+    case IsolateOperation.verifyAndClusterSimilarImages:
+      final edgeFileIdA = args["edgeFileIdA"] as List<int>;
+      final edgeFileIdB = args["edgeFileIdB"] as List<int>;
+      final edgeDistance = args["edgeDistance"] as List<double>;
+      final thumbnailBytesByFileId =
+          args["thumbnailBytesByFileId"] as Map<int, Uint8List>;
+      final maxHammingDistance = args["maxHammingDistance"] as int;
+
+      final candidateEdges = <CandidateEdge>[
+        for (int i = 0; i < edgeFileIdA.length; i++)
+          CandidateEdge(edgeFileIdA[i], edgeFileIdB[i], edgeDistance[i]),
+      ];
+
+      final rotationHashesByFileId = <int, List<int>>{};
+      for (final entry in thumbnailBytesByFileId.entries) {
+        final hashes = dHashForAllRotations(entry.value);
+        if (hashes.isNotEmpty) {
+          rotationHashesByFileId[entry.key] = hashes;
+        }
+      }
+
+      final verifiedEdges = filterEdgesByPerceptualHash(
+        candidateEdges: candidateEdges,
+        rotationHashesByFileId: rotationHashesByFileId,
+        maxHammingDistance: maxHammingDistance,
+      );
+
+      final groups = groupConnectedComponents(verifiedEdges);
+      return [
+        for (final group in groups)
+          {
+            "fileIds": group.fileIds,
+            "furthestDistance": group.furthestDistance,
+          },
+      ];
 
     /// Cases for MLIndexingIsolate start here
 
@@ -389,6 +466,20 @@ Future<dynamic> isolateFunction(
 
     /// Cases for Caching stop here
   }
+}
+
+/// Two files are only grouped as similar if they carry the exact same set of
+/// identified people, so e.g. a landscape shot doesn't get grouped with a
+/// portrait purely because CLIP thinks they look alike. Files with no entry
+/// in [personIdsByFileId] are treated as having no identified people.
+bool _samePersonIds(
+  Map<int, Set<String>> personIdsByFileId,
+  int fileIdA,
+  int fileIdB,
+) {
+  final personsA = personIdsByFileId[fileIdA] ?? const <String>{};
+  final personsB = personIdsByFileId[fileIdB] ?? const <String>{};
+  return personsA.length == personsB.length && personsA.containsAll(personsB);
 }
 
 _CachedImageEmbeddings _getCachedImageEmbeddings() {
