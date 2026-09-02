@@ -6,13 +6,16 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-08-11 |
-| **Last agent / session** | Ship UX batch: zoom-lock, archive menu, upload-sort on crop, manual-crop filter, Safari back absorb. |
+| **Last updated** | 2026-09-02 |
+| **Last agent / session** | Fix bottom nav floating high on first load (iOS PWA fixed-position quirk). |
 | **Current milestone** | Post-M8 UX / stability batch |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Device QA Manage hub + Similar; then QA the five UX fixes on phone Safari. |
+| **Next recommended action** | Device QA: cold-open PWA — bottom nav flush on first paint; then Manage hub + Similar. |
 
 **This session shipped:**
+1. **Bottom nav first-load offset** — AppShell no longer uses `position: fixed` for the tab bar (iOS standalone leaves a gap until a route change reflows). Shell is `h-dvh` flex column; nav is an in-flow `shrink-0` child with safe-area padding; main scrolls.
+
+**Previous session shipped:**
 1. **Zoomed carousel locked** — removed edge-pan→slide (`onPanRelease`) so zoomed images pan only.
 2. **Archive tucked away** — Archive/Unarchive moved into a ⋮ More menu in the viewer chrome.
 3. **Upload-date sort preserved on crop/compress** — derived uploads fall back to source `updationTime` → `creationTime` when `uploadedAt` is missing.
