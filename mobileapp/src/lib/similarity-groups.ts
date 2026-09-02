@@ -20,7 +20,7 @@ export interface SimilarityGroup {
     maxDistance: number;
 }
 
-export const defaultSimilarityThreshold = 10;
+export const defaultSimilarityThreshold = 8;
 
 const hashBucketKey = (hash: string): string => hash.slice(0, 3);
 const colorBucketKey = (color: string): string => color.slice(0, 2);
@@ -36,6 +36,27 @@ export const MAX_CROP_CHECKS_PER_FILE = 4;
  * "bridge" links are dropped rather than unioned across.
  */
 export const MAX_GROUP_SIZE = 40;
+
+/**
+ * A candidate pair only becomes an edge when each file is among the other's
+ * closest {@link MUTUAL_RANK_K} threshold-neighbours. Stops a single dense
+ * "hub" photo from chaining hundreds of loosely-related images into one blob.
+ * Near-exact matches (distance ≤ {@link TIGHT_MATCH_DISTANCE}) skip this check
+ * so a pile of truly identical copies still groups even when bigger than K.
+ */
+export const MUTUAL_RANK_K = 8;
+
+/** Distances at or below this always union — genuine near-duplicates. */
+export const TIGHT_MATCH_DISTANCE = 2;
+
+/** Yield to the event loop every this many Stage-1 buckets so the UI stays live. */
+const STAGE1_YIELD_EVERY_BUCKETS = 24;
+
+type CandidateEdge = {
+    left: number;
+    right: number;
+    distance: number;
+};
 
 class UnionFind {
     private readonly parent: number[];
@@ -140,8 +161,12 @@ const indexableFiles = (
 
 /**
  * Stage-1: build similarity groups from the dHash-variant index using
+ * mutual nearest-neighbour edges + Kruskal (closest-first, size-capped)
  * union-find. This catches identical and rotation/mirror duplicates fast.
  * Crops are added later by {@link mergeCropMatches}.
+ *
+ * Prefer {@link buildSimilarityGroupsAsync} from UI code — the sync version is
+ * kept for unit tests and small indexes.
  */
 export const buildSimilarityGroups = (
     entries: Map<number, PhashEntry>,
@@ -151,13 +176,45 @@ export const buildSimilarityGroups = (
     threshold: number,
 ): SimilarityGroup[] => {
     const indexed = indexableFiles(entries, filesById, collections, userId);
-
     if (indexed.length < 2) {
         return [];
     }
+    const edges = collectMutualCandidateEdges(indexed, threshold);
+    return groupsFromEdges(edges, indexed, filesById, collections, userId, threshold);
+};
 
-    // Bucket by the prefix of each variant hash, so a rotated file's variant
-    // that matches the source's orientation lands in the same bucket.
+/**
+ * Async Stage-1: same algorithm as {@link buildSimilarityGroups}, but yields
+ * between bucket scans so a multi-thousand-photo library never freezes the
+ * phone tab while Similar is open.
+ */
+export const buildSimilarityGroupsAsync = async (
+    entries: Map<number, PhashEntry>,
+    filesById: Map<number, EnteFile>,
+    collections: Collection[],
+    userId: number,
+    threshold: number,
+    signal?: AbortSignal,
+): Promise<SimilarityGroup[]> => {
+    const indexed = indexableFiles(entries, filesById, collections, userId);
+    if (indexed.length < 2) {
+        return [];
+    }
+    const edges = await collectMutualCandidateEdgesAsync(
+        indexed,
+        threshold,
+        signal,
+    );
+    if (signal?.aborted) {
+        throw new DOMException("Similarity grouping aborted", "AbortError");
+    }
+    return groupsFromEdges(edges, indexed, filesById, collections, userId, threshold);
+};
+
+/** Bucket indices by each variant's 3-hex prefix (and record every key). */
+const buildHashBuckets = (
+    indexed: Array<{ fileId: number; entry: PhashEntry }>,
+): { buckets: Map<string, number[]>; bucketKeys: string[] } => {
     const buckets = new Map<string, number[]>();
     for (let i = 0; i < indexed.length; i++) {
         const seen = new Set<string>();
@@ -175,43 +232,173 @@ export const buildSimilarityGroups = (
             }
         }
     }
+    return { buckets, bucketKeys: [...buckets.keys()] };
+};
 
-    const uf = new UnionFind(indexed.length);
-    const bucketKeys = [...buckets.keys()];
+/**
+ * Walk Stage-1 hash buckets and collect under-threshold pairs, then keep only
+ * mutual top-{@link MUTUAL_RANK_K} edges sorted closest-first.
+ */
+const collectMutualCandidateEdges = (
+    indexed: Array<{ fileId: number; entry: PhashEntry }>,
+    threshold: number,
+): CandidateEdge[] => {
+    const { buckets, bucketKeys } = buildHashBuckets(indexed);
+    const edgeByKey = new Map<string, CandidateEdge>();
+    for (const key of bucketKeys) {
+        collectBucketEdges(key, buckets, indexed, threshold, edgeByKey);
+    }
+    return filterMutualNearestEdges(edgeByKey);
+};
 
-    // Union a comparable pair if any of their variants are within threshold.
-    const unionIfSimilar = (leftIndex: number, rightIndex: number): void => {
-        const left = indexed[leftIndex]!;
-        const right = indexed[rightIndex]!;
-        if (variantDistance(left.entry.hashes, right.entry.hashes) <= threshold) {
-            uf.union(leftIndex, rightIndex);
+const collectMutualCandidateEdgesAsync = async (
+    indexed: Array<{ fileId: number; entry: PhashEntry }>,
+    threshold: number,
+    signal?: AbortSignal,
+): Promise<CandidateEdge[]> => {
+    const { buckets, bucketKeys } = buildHashBuckets(indexed);
+    const edgeByKey = new Map<string, CandidateEdge>();
+    for (let i = 0; i < bucketKeys.length; i++) {
+        if (signal?.aborted) {
+            throw new DOMException("Similarity grouping aborted", "AbortError");
+        }
+        collectBucketEdges(bucketKeys[i]!, buckets, indexed, threshold, edgeByKey);
+        if ((i + 1) % STAGE1_YIELD_EVERY_BUCKETS === 0) {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+    }
+    return filterMutualNearestEdges(edgeByKey);
+};
+
+const collectBucketEdges = (
+    key: string,
+    buckets: Map<string, number[]>,
+    indexed: Array<{ fileId: number; entry: PhashEntry }>,
+    threshold: number,
+    edgeByKey: Map<string, CandidateEdge>,
+): void => {
+    const indices = buckets.get(key) ?? [];
+    for (let i = 0; i < indices.length; i++) {
+        for (let j = i + 1; j < indices.length; j++) {
+            maybeAddEdge(indices[i]!, indices[j]!, indexed, threshold, edgeByKey);
+        }
+    }
+
+    const keyValue = Number.parseInt(key, 16);
+    for (const delta of [-1, 1]) {
+        const neighborKey = (keyValue + delta)
+            .toString(16)
+            .padStart(3, "0")
+            .slice(-3);
+        const neighborIndices = buckets.get(neighborKey);
+        if (!neighborIndices) {
+            continue;
+        }
+        for (const leftIndex of indices) {
+            for (const rightIndex of neighborIndices) {
+                maybeAddEdge(leftIndex, rightIndex, indexed, threshold, edgeByKey);
+            }
+        }
+    }
+};
+
+const maybeAddEdge = (
+    leftIndex: number,
+    rightIndex: number,
+    indexed: Array<{ fileId: number; entry: PhashEntry }>,
+    threshold: number,
+    edgeByKey: Map<string, CandidateEdge>,
+): void => {
+    if (leftIndex === rightIndex) {
+        return;
+    }
+    const left = Math.min(leftIndex, rightIndex);
+    const right = Math.max(leftIndex, rightIndex);
+    const key = `${left}:${right}`;
+    if (edgeByKey.has(key)) {
+        return;
+    }
+    const distance = variantDistance(
+        indexed[left]!.entry.hashes,
+        indexed[right]!.entry.hashes,
+    );
+    if (distance <= threshold) {
+        edgeByKey.set(key, { left, right, distance });
+    }
+};
+
+/**
+ * Drop one-sided neighbours: keep an edge only when each endpoint ranks the
+ * other among its closest {@link MUTUAL_RANK_K} under-threshold matches —
+ * except near-exact matches (≤ {@link TIGHT_MATCH_DISTANCE}), which always
+ * survive so large piles of identical copies stay grouped.
+ * Surviving edges are sorted ascending by distance for Kruskal union.
+ */
+const filterMutualNearestEdges = (
+    edgeByKey: Map<string, CandidateEdge>,
+): CandidateEdge[] => {
+    const neighbors = new Map<number, Array<{ other: number; distance: number }>>();
+    const pushNeighbor = (
+        from: number,
+        other: number,
+        distance: number,
+    ): void => {
+        const list = neighbors.get(from);
+        if (list) {
+            list.push({ other, distance });
+        } else {
+            neighbors.set(from, [{ other, distance }]);
         }
     };
 
-    for (const key of bucketKeys) {
-        const indices = buckets.get(key) ?? [];
-        for (let i = 0; i < indices.length; i++) {
-            for (let j = i + 1; j < indices.length; j++) {
-                unionIfSimilar(indices[i]!, indices[j]!);
-            }
-        }
+    for (const edge of edgeByKey.values()) {
+        pushNeighbor(edge.left, edge.right, edge.distance);
+        pushNeighbor(edge.right, edge.left, edge.distance);
+    }
 
-        const keyValue = Number.parseInt(key, 16);
-        for (const delta of [-1, 1]) {
-            const neighborKey = (keyValue + delta)
-                .toString(16)
-                .padStart(3, "0")
-                .slice(-3);
-            const neighborIndices = buckets.get(neighborKey);
-            if (!neighborIndices) {
-                continue;
-            }
-            for (const leftIndex of indices) {
-                for (const rightIndex of neighborIndices) {
-                    unionIfSimilar(leftIndex, rightIndex);
-                }
-            }
+    const topKByIndex = new Map<number, Set<number>>();
+    for (const [index, list] of neighbors.entries()) {
+        list.sort((a, b) => a.distance - b.distance || a.other - b.other);
+        topKByIndex.set(
+            index,
+            new Set(list.slice(0, MUTUAL_RANK_K).map((entry) => entry.other)),
+        );
+    }
+
+    const mutual: CandidateEdge[] = [];
+    for (const edge of edgeByKey.values()) {
+        if (edge.distance <= TIGHT_MATCH_DISTANCE) {
+            mutual.push(edge);
+            continue;
         }
+        const leftTop = topKByIndex.get(edge.left);
+        const rightTop = topKByIndex.get(edge.right);
+        if (!leftTop?.has(edge.right) || !rightTop?.has(edge.left)) {
+            continue;
+        }
+        mutual.push(edge);
+    }
+
+    mutual.sort((a, b) => a.distance - b.distance);
+    return mutual;
+};
+
+/**
+ * Kruskal-style union of mutual edges (closest first, size-capped), then
+ * assemble UI groups. Oversized leftovers still go through
+ * {@link reclusterOversized} as a safety net.
+ */
+const groupsFromEdges = (
+    edges: CandidateEdge[],
+    indexed: Array<{ fileId: number; entry: PhashEntry }>,
+    filesById: Map<number, EnteFile>,
+    collections: Collection[],
+    userId: number,
+    threshold: number,
+): SimilarityGroup[] => {
+    const uf = new UnionFind(indexed.length);
+    for (const edge of edges) {
+        uf.tryUnion(edge.left, edge.right, MAX_GROUP_SIZE);
     }
 
     const groupsByRoot = new Map<number, number[]>();
@@ -230,16 +417,18 @@ export const buildSimilarityGroups = (
         if (memberIndices.length < 2) {
             continue;
         }
-        // A component that exploded past the cap is a union-find chaining
-        // artifact. Re-cluster it by single-linkage — strict hash-prefix buckets
-        // plus a tight best-variant distance — so near-identical duplicates
-        // survive while the loose "bridge" links get dropped, never re-chained.
         const clusters =
             memberIndices.length > MAX_GROUP_SIZE ?
                 reclusterOversized(memberIndices, indexed, threshold) :
                 [memberIndices];
         for (const cluster of clusters) {
-            const group = assembleGroup(cluster, indexed, filesById, collections, userId);
+            const group = assembleGroup(
+                cluster,
+                indexed,
+                filesById,
+                collections,
+                userId,
+            );
             if (group) {
                 groups.push(group);
             }

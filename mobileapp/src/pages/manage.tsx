@@ -49,7 +49,7 @@ import {
     type DedupGroupSelection,
 } from "@/lib/dedup-prune";
 import {
-    buildSimilarityGroups,
+    buildSimilarityGroupsAsync,
     defaultSimilarityThreshold,
     mergeCropMatches,
     similarityGroupToSelection,
@@ -203,20 +203,21 @@ export default function ManagePage(): JSX.Element {
                 return;
             }
 
-            const filesById = new Map(allFiles.map((file) => [file.id, file]));
-            const stage1 = buildSimilarityGroups(
-                phashEntries,
-                filesById,
-                collections,
-                userId,
-                debouncedThreshold,
-            );
-            if (abort.signal.aborted || cancelled) {
-                return;
-            }
-            setSimilarGroups(stage1);
-
             try {
+                const filesById = new Map(allFiles.map((file) => [file.id, file]));
+                const stage1 = await buildSimilarityGroupsAsync(
+                    phashEntries,
+                    filesById,
+                    collections,
+                    userId,
+                    debouncedThreshold,
+                    abort.signal,
+                );
+                if (abort.signal.aborted || cancelled) {
+                    return;
+                }
+                setSimilarGroups(stage1);
+
                 const merged = await mergeCropMatches(stage1, {
                     entries: phashEntries,
                     filesById,
