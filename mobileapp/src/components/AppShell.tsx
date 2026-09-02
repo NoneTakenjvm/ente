@@ -60,8 +60,12 @@ export function AppShell({
         uploadPanelOpen || uploadStatus === "running";
 
     return (
-        <div className="flex min-h-dvh flex-col bg-background">
-            <header className="sticky top-0 z-40 border-b border-border bg-background/95 pt-[env(safe-area-inset-top)] backdrop-blur supports-backdrop-filter:bg-background/80">
+        // [Note: bottom nav] Do not use position:fixed for the tab bar. On iOS
+        // standalone PWAs, fixed bottom:0 often sits above the true screen
+        // bottom until a later navigation/reflow. Keep the shell exactly one
+        // dvh tall and pin the nav as a normal flex child instead.
+        <div className="flex h-dvh flex-col overflow-hidden bg-background">
+            <header className="z-40 shrink-0 border-b border-border bg-background/95 pt-[env(safe-area-inset-top)] backdrop-blur supports-backdrop-filter:bg-background/80">
                 <UploadProgressBar />
                 <div className="flex items-center gap-2 px-4 py-3">
                     {onBack ? (
@@ -97,14 +101,14 @@ export function AppShell({
                 </div>
             </header>
 
-            <main className="flex min-h-0 flex-1 flex-col pb-[calc(4rem+env(safe-area-inset-bottom))]">
+            <main className="flex min-h-0 flex-1 flex-col overflow-y-auto">
                 {children}
             </main>
 
             {mountUploadPanel ? <UploadPanel /> : null}
 
             <nav
-                className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur supports-backdrop-filter:bg-background/80"
+                className="z-40 shrink-0 border-t border-border bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur supports-backdrop-filter:bg-background/80"
                 aria-label="Main navigation"
             >
                 <div className="grid grid-cols-3 gap-1 px-2 py-1.5">
