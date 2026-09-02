@@ -7,12 +7,15 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-02 |
-| **Last agent / session** | Fix bottom nav floating high on first load (iOS PWA fixed-position quirk). |
+| **Last agent / session** | Port similar-images quality/freeze fixes into PWA (`mobileapp/`) so Deploy (NTPhotos) runs. Prior session wrongly shipped Flutter-only changes. |
 | **Current milestone** | Post-M8 UX / stability batch |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Device QA: cold-open PWA — bottom nav flush on first paint; then Manage hub + Similar. |
+| **Next recommended action** | Device QA on Cloudflare deploy: Manage → Similar — groups should be small true duplicates, UI stays responsive. |
 
 **This session shipped:**
+1. **PWA Similar Stage-1 rewrite** — mutual nearest-neighbour + Kruskal/`tryUnion` (size-capped), async yielding so the tab stays live; default threshold 8. Near-exact matches (≤2) skip mutual filter so identical piles still group. Tests + production build green. Push to `ntphotos` triggers Deploy (NTPhotos) via `mobileapp/**` paths.
+
+**Previous session shipped:**
 1. **Bottom nav first-load offset** — AppShell no longer uses `position: fixed` for the tab bar (iOS standalone leaves a gap until a route change reflows). Shell is `h-dvh` flex column; nav is an in-flow `shrink-0` child with safe-area padding; main scrolls.
 
 **Previous session shipped:**

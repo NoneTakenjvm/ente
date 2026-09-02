@@ -124,6 +124,33 @@ describe("buildSimilarityGroups with rotation/mirror variants", () => {
     });
 });
 
+describe("buildSimilarityGroups mutual nearest-neighbour", () => {
+    const collections = [stubCollection(1)];
+
+    it("does not let a hub photo chain many one-sided neighbours into one blob", () => {
+        // 10 peripherals share an identical hash (true cluster). The hub is
+        // within the Stage-1 threshold of that cluster, but each peripheral's
+        // closest matches are the other 9 peripherals — so the hub falls outside
+        // every peripheral's top-MUTUAL_RANK_K and must not join the group.
+        const filesById = new Map(
+            Array.from({ length: 11 }, (_, i) => [i + 1, stubFile(i + 1, 1, 1)]),
+        );
+        const entries = new Map<number, string[]>();
+        // Hamming distance between these two 64-bit hex values is 8 (one nibble
+        // differs by 0xF→0x7 is wrong — use a single-bit nibble flip pattern).
+        // `a100...` vs `a101...` differs by 1 bit; stack 8 distinct bit flips:
+        // hub a100000000000000, cluster a1000000000000ff → 8 bits in the last byte.
+        entries.set(1, ["a100000000000000"]);
+        for (let i = 2; i <= 11; i++) {
+            entries.set(i, ["a1000000000000ff"]);
+        }
+        const groups = describeGroups(entries, filesById, collections);
+        expect(groups).toHaveLength(1);
+        expect(groups[0]).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+        expect(groups[0]!.includes(1)).toBe(false);
+    });
+});
+
 describe("buildSimilarityGroups oversized-component cap", () => {
     const filesById = new Map(
         Array.from({ length: MAX_GROUP_SIZE + 20 }, (_, i) => [
