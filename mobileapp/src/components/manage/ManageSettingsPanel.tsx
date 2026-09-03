@@ -170,9 +170,9 @@ export function ManageSettingsPanel(): JSX.Element {
                 <CardHeader>
                     <CardTitle>Similar photos</CardTitle>
                     <CardDescription>
-                        Caps how many images appear in one similar-group card
-                        after matching. Matching itself is uncapped — oversized
-                        piles are split only for display.
+                        Matching finds natural similar piles with no size cap.
+                        Groups larger than this setting are hidden (not split
+                        into smaller cards).
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -210,8 +210,8 @@ export function ManageSettingsPanel(): JSX.Element {
                                 ))}
                             </ToggleGroup>
                             <p className="text-xs text-muted-foreground">
-                                Images per group (larger piles are almost always
-                                false positives)
+                                Hide piles larger than this (usually false
+                                positives)
                             </p>
                         </Field>
                     </FieldGroup>

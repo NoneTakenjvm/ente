@@ -7,16 +7,16 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-03 |
-| **Last agent / session** | Similar-photos stability (2509 groups / freeze / crop OOM). |
+| **Last agent / session** | Similar max-size = hide oversized (not slice). |
 | **Current milestone** | Post-M8 UX / stability batch |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Phone QA Find similar on ~7k library. Footer `NTPhotos 0.3.25`. Expect ≪2509 groups, crop total ≤2000, UI stays responsive during scan. |
+| **Next recommended action** | Phone QA Find similar. Footer `NTPhotos 0.3.26`. Max size should hide large piles, not mint thousands of tiny cards; end-of-crop should not hang. |
 
 **This session shipped:**
-1. **Similar stability** — Stage-2: 3-hex color buckets, color Hamming prefilter, `MAX_TOTAL_CROP_CANDIDATES=2000`, size-capped `tryUnion` (stops mega-component → trim → thousands of cards). UI: progress-only during hash/crop (no mid-scan group thumbs). Crop-verdict cache capped at 4k; cleared on leave Similar. Served at `http://192.168.0.182:3080` as `NTPhotos 0.3.25`.
+1. **Similar max size semantics fixed** — matching stays uncapped; `trimSimilarityGroups` **hides** groups larger than the setting (no more slicing mega-clusters into ~2500 pair cards). Crop UF no longer size-caps on the setting. Skip assembling components > settings max (fixes end-of-crop hang). Settings copy updated. `APP_VERSION` → `0.3.26`.
 
 **Previous session shipped:**
-1. **Faster Stage-2 crop checks** — decode-once luminance grids + WeakMap orientation cache; packed color Hamming; batched `crop-check-batch` worker messages (unique grids per chunk); throttled group rebuilds (~300ms). Works with session crop-verdict cache. `APP_VERSION` → `0.3.24`.
+1. **Similar stability** — Stage-2: 3-hex color buckets, color Hamming prefilter, `MAX_TOTAL_CROP_CANDIDATES=2000`, size-capped `tryUnion` (stops mega-component → trim → thousands of cards). UI: progress-only during hash/crop (no mid-scan group thumbs). Crop-verdict cache capped at 4k; cleared on leave Similar. Served at `http://192.168.0.182:3080` as `NTPhotos 0.3.25`.
 
 **Previous session shipped:**
 1. **Stamp as its own tool** — stamp icon next to select; pick tags/kit then tap (or drag) photos to apply instantly. Mutually exclusive with selection; no checkmarks while stamping. `APP_VERSION` → `0.3.23`.
