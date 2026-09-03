@@ -20,10 +20,12 @@ import { getEnteCore } from "@/core";
 import {
     bakeRotation,
     containedDisplaySize,
-    detectContentBoundsFromElement,
     encodeBakedCrop,
-    initialCropForDisplay,
 } from "@/lib/crop-editor";
+import {
+    deviceViewerAspectRatio,
+    maxAspectRatioCrop,
+} from "@/lib/viewport-fit";
 import { getLocalMediaOverride } from "@/lib/local-media-overrides";
 import { mimeTypeForFile } from "@/lib/media-kind";
 import { useLibraryStore } from "@/stores/library-store";
@@ -71,7 +73,6 @@ export function CropEditorOverlay({
     const imageRef = useRef<HTMLImageElement>(null);
     const workingUrlRef = useRef<string | undefined>(undefined);
     const workspaceRef = useRef<HTMLDivElement>(null);
-    const layoutGenerationRef = useRef<number>(0);
     const mimeType = mimeTypeForFile(file);
 
     useEffect(() => {
@@ -150,9 +151,9 @@ export function CropEditorOverlay({
         setImageReady(false);
     }, []);
 
-    const applyDisplayLayout = useCallback(async (
+    const applyDisplayLayout = useCallback((
         image: HTMLImageElement,
-    ): Promise<void> => {
+    ): void => {
         if (
             !workspaceSize ||
             image.naturalWidth <= 0 ||
@@ -160,23 +161,16 @@ export function CropEditorOverlay({
         ) {
             return;
         }
-        const generation = ++layoutGenerationRef.current;
         const layout = containedDisplaySize(
             image.naturalWidth,
             image.naturalHeight,
             workspaceSize.width,
             workspaceSize.height,
         );
-        const contentBounds = await detectContentBoundsFromElement(image);
-        if (generation !== layoutGenerationRef.current) {
-            return;
-        }
-        const nextCrop = initialCropForDisplay(
+        const nextCrop = maxAspectRatioCrop(
             layout.width,
             layout.height,
-            image.naturalWidth,
-            image.naturalHeight,
-            contentBounds,
+            deviceViewerAspectRatio(),
         );
         setDisplayLayout(layout);
         setCrop(nextCrop);
@@ -189,7 +183,7 @@ export function CropEditorOverlay({
         if (!image?.complete || image.naturalWidth <= 0) {
             return;
         }
-        void applyDisplayLayout(image);
+        applyDisplayLayout(image);
     }, [applyDisplayLayout, workspaceSize]);
 
     const handleImageLoad = useCallback(
@@ -197,7 +191,7 @@ export function CropEditorOverlay({
             const image = event.currentTarget;
             imageRef.current = image;
             requestAnimationFrame(() => {
-                void applyDisplayLayout(image);
+                applyDisplayLayout(image);
             });
         },
         [applyDisplayLayout],

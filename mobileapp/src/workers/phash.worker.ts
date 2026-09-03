@@ -7,7 +7,7 @@ import {
     luminanceGridFromImageData,
 } from "@/lib/crop-match";
 import { computeDHashFromImageData } from "@/lib/phash";
-import { runStage1Clustering } from "@/lib/similarity-stage1-core";
+import { runStage1Clustering, MAX_GROUP_SIZE } from "@/lib/similarity-stage1-core";
 import type {
     CropCheckMessage,
     CropCheckResult,
@@ -63,6 +63,7 @@ const handleStage1 = async (message: Stage1Message): Promise<void> => {
                 self.postMessage(progress);
             },
             () => abortedStage1Ids.has(message.id),
+            message.maxGroupSize ?? MAX_GROUP_SIZE,
         );
         if (abortedStage1Ids.has(message.id)) {
             abortedStage1Ids.delete(message.id);

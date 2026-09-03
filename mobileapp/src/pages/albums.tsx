@@ -325,6 +325,19 @@ export default function AlbumsPage(): JSX.Element {
                     </>
                 ) : mode === "view" && activeAlbum ? (
                     <>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={viewFiles.length === 0}
+                            onClick={() => {
+                                useSelectionStore
+                                    .getState()
+                                    .selectAll(viewFiles.map((file) => file.id));
+                            }}
+                        >
+                            Select all
+                        </Button>
                         <SelectionModeToggle />
                         <Button
                             type="button"

@@ -75,8 +75,14 @@ const resetDependentStores = (): void => {
     void import("./tag-store").then(({ useTagStore }) => {
         useTagStore.getState().reset();
     });
+    void import("./tag-speed-store").then(({ useTagSpeedStore }) => {
+        useTagSpeedStore.getState().reset();
+    });
     void import("./album-store").then(({ useAlbumStore }) => {
         useAlbumStore.getState().reset();
+    });
+    void import("./selection-store").then(({ useSelectionStore }) => {
+        useSelectionStore.getState().reset();
     });
     void import("./settings-store").then(({ useSettingsStore }) => {
         useSettingsStore.getState().reset();

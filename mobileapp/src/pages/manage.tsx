@@ -73,6 +73,7 @@ import {
 } from "@/stores/session-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { usePhashIndexStore } from "@/stores/phash-index-store";
+import { useSettingsStore } from "@/stores/settings-store";
 import { usePhashJobStore, useUIStore } from "@/stores/ui-store";
 
 const formatBytes = (bytes: number): string => {
@@ -125,6 +126,7 @@ export default function ManagePage(): JSX.Element {
 
     const dedupDryRun = useUIStore((s) => s.dedupDryRun);
     const setDedupDryRun = useUIStore((s) => s.setDedupDryRun);
+    const similarMaxGroupSize = useSettingsStore((s) => s.similarMaxGroupSize);
 
     const [section, setSection] = useState<ManageSection>("hub");
     const [selections, setSelections] = useState<DedupGroupSelection[]>([]);
@@ -146,6 +148,8 @@ export default function ManagePage(): JSX.Element {
     const [similarProgress, setSimilarProgress] = useState<
         SimilarMatchProgress | undefined
     >(undefined);
+    /** >0 means the user asked to find similar groups; 0 = idle until they tap Find. */
+    const [similarFindGeneration, setSimilarFindGeneration] = useState<number>(0);
     const initialLoadDone = useLibraryBootstrap({ afterSync: hydratePhash });
 
     const jobAbort = useRef<AbortController | undefined>(undefined);
@@ -188,13 +192,21 @@ export default function ManagePage(): JSX.Element {
         return findExactDuplicateGroups(allFiles, collections, userId);
     }, [dedupMode, allFiles, collections, userId]);
 
-    // Similar: Stage-1 then async crop merge, only while the Similar section is
-    // open. Abort on leave / threshold change so workers don't keep burning.
+    // Similar: Stage-1 then async crop merge — only after the user taps Find
+    // similar (so they can hash new photos first). Abort on leave / param change.
     useEffect(() => {
         cropMergeAbort.current?.abort();
         cropMergeAbort.current = undefined;
 
         if (dedupMode !== "similar") {
+            setSimilarFindGeneration(0);
+            setSimilarGroups([]);
+            setSimilarBusy(false);
+            setSimilarProgress(undefined);
+            return;
+        }
+
+        if (similarFindGeneration === 0) {
             setSimilarGroups([]);
             setSimilarBusy(false);
             setSimilarProgress(undefined);
@@ -249,6 +261,7 @@ export default function ManagePage(): JSX.Element {
                     debouncedThreshold,
                     {
                         signal: abort.signal,
+                        maxGroupSize: similarMaxGroupSize,
                         onProgress: (update) => {
                             if (abort.signal.aborted || cancelled) {
                                 return;
@@ -281,6 +294,7 @@ export default function ManagePage(): JSX.Element {
                     collections,
                     userId,
                     signal: abort.signal,
+                    maxGroupSize: similarMaxGroupSize,
                     onProgress: (progress) => {
                         if (abort.signal.aborted || cancelled) {
                             return;
@@ -337,6 +351,8 @@ export default function ManagePage(): JSX.Element {
         collections,
         phashEntries,
         debouncedThreshold,
+        similarMaxGroupSize,
+        similarFindGeneration,
         userId,
     ]);
 
@@ -588,6 +604,39 @@ export default function ManagePage(): JSX.Element {
                                             Pause
                                         </Button>
                                     ) : null}
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="secondary"
+                                        onClick={() => {
+                                            setSimilarFindGeneration((n) => n + 1);
+                                        }}
+                                        disabled={
+                                            similarBusy ||
+                                            !phashHydrated ||
+                                            phashIndexedCount < 2
+                                        }
+                                    >
+                                        {similarFindGeneration > 0 && !similarBusy ?
+                                            "Find again" :
+                                            "Find similar"}
+                                    </Button>
+                                    {similarBusy ? (
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => {
+                                                cropMergeAbort.current?.abort();
+                                                setSimilarFindGeneration(0);
+                                                setSimilarBusy(false);
+                                                setSimilarProgress(undefined);
+                                                setSimilarGroups([]);
+                                            }}
+                                        >
+                                            Cancel
+                                        </Button>
+                                    ) : null}
                                 </div>
                                 <Field>
                                     <FieldLabel htmlFor="similarity-threshold">
@@ -676,18 +725,26 @@ export default function ManagePage(): JSX.Element {
                                         "No exact duplicates" :
                                         similarBusy ?
                                             "Finding similar photos…" :
-                                            phashIndexedCount < 2 ?
-                                                "Scan your library" :
-                                                "No similar groups"}
+                                            similarFindGeneration === 0 ?
+                                                phashIndexedCount < 2 ?
+                                                    "Scan your library" :
+                                                    "Ready when you are" :
+                                                phashIndexedCount < 2 ?
+                                                    "Scan your library" :
+                                                    "No similar groups"}
                                 </EmptyTitle>
                                 <EmptyDescription>
                                     {dedupMode === "exact" ?
                                         "No exact duplicates found in your library." :
                                         similarBusy ?
                                             "Comparing photos — groups appear as matches are found." :
-                                            phashIndexedCount < 2 ?
-                                                "Scan your library to find similar photos." :
-                                                "No similar groups at this threshold."}
+                                            similarFindGeneration === 0 ?
+                                                phashIndexedCount < 2 ?
+                                                    "Scan your library to hash photos, then tap Find similar." :
+                                                    "Hash new photos with Scan library if needed, then tap Find similar." :
+                                                phashIndexedCount < 2 ?
+                                                    "Scan your library to find similar photos." :
+                                                    "No similar groups at this threshold."}
                                 </EmptyDescription>
                             </EmptyHeader>
                         </Empty>

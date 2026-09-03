@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { StateCreator } from "zustand";
 import { reconcileShuffledIds } from "@/lib/shuffle-files";
+import type { ViewportFitSort } from "@/lib/viewport-fit";
 
 export type MediaViewOrder = "default" | "shuffled";
 
@@ -143,6 +144,9 @@ interface UIState {
     mediaViewOrder: MediaViewOrder;
     mediaShuffleSeed: number;
     mediaShuffledFileIds: number[];
+    /** Gallery reorder by viewer viewport fit (session-only; device-specific). */
+    viewportFitSort: ViewportFitSort;
+    setViewportFitSort: (mode: ViewportFitSort) => void;
     setMediaShuffled: (seed: number) => void;
     setMediaDefaultOrder: () => void;
     reshuffleMedia: () => void;
@@ -158,11 +162,22 @@ export const useUIStore = create<UIState>((set) => ({
     mediaViewOrder: "default",
     mediaShuffleSeed: 1,
     mediaShuffledFileIds: [],
+    viewportFitSort: "none",
+    setViewportFitSort: (mode: ViewportFitSort): void => {
+        set((state) => ({
+            viewportFitSort: mode,
+            // Viewport-fit order and shuffle cannot both apply.
+            ...(mode !== "none" && state.mediaViewOrder === "shuffled" ?
+                { mediaViewOrder: "default" as const, mediaShuffledFileIds: [] } :
+                {}),
+        }));
+    },
     setMediaShuffled: (seed: number): void => {
         set({
             mediaViewOrder: "shuffled",
             mediaShuffleSeed: seed,
             mediaShuffledFileIds: [],
+            viewportFitSort: "none",
         });
     },
     setMediaDefaultOrder: (): void => {
