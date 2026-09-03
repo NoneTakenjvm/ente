@@ -71,6 +71,7 @@ import {
     clusterFromFileEdges,
 } from "@/lib/similarity-stage1-core";
 import {
+    clearSimilarityMatchCache,
     getCachedStage1Edges,
     setCachedStage1Edges,
     similarityIndexKey,
@@ -218,6 +219,9 @@ export default function ManagePage(): JSX.Element {
             setSimilarBusy(false);
             setSimilarProgress(undefined);
             lastFullSimilarGroups.current = [];
+            // Drop session edge/crop caches when leaving Similar — they can
+            // pin tens of thousands of verdicts and freeze/OOM the phone.
+            clearSimilarityMatchCache();
             return;
         }
 
@@ -284,19 +288,8 @@ export default function ManagePage(): JSX.Element {
                     });
                 };
 
-                const applyClusters = (
-                    clusters: Parameters<typeof clustersToSimilarityGroups>[0],
-                ): SimilarityGroup[] => {
-                    const full = clustersToSimilarityGroups(
-                        clusters,
-                        filesById,
-                        collections,
-                        userId,
-                    );
-                    showTrimmed(full);
-                    return full;
-                };
-
+                // Progress bar only during the scan — mounting thousands of
+                // DedupGroupCards (and their thumbs) mid-pass freezes the UI.
                 let stage1Clusters: Parameters<
                     typeof clustersToSimilarityGroups
                 >[0];
@@ -332,9 +325,6 @@ export default function ManagePage(): JSX.Element {
                                     completed: update.completed,
                                     total: Math.max(update.total, 1),
                                 });
-                                if (update.clusters !== undefined) {
-                                    applyClusters(update.clusters);
-                                }
                             },
                         },
                     );
@@ -351,7 +341,12 @@ export default function ManagePage(): JSX.Element {
                 if (abort.signal.aborted || cancelled) {
                     return;
                 }
-                const stage1 = applyClusters(stage1Clusters);
+                const stage1 = clustersToSimilarityGroups(
+                    stage1Clusters,
+                    filesById,
+                    collections,
+                    userId,
+                );
 
                 const merged = await mergeCropMatches(stage1, {
                     entries: phashEntries,
@@ -366,25 +361,11 @@ export default function ManagePage(): JSX.Element {
                         }
                         setSimilarProgress(progress);
                     },
-                    onGroups: (groups) => {
-                        if (abort.signal.aborted || cancelled) {
-                            return;
-                        }
-                        startTransition(() => {
-                            setSimilarGroups(groups);
-                        });
-                    },
                 });
                 if (abort.signal.aborted || cancelled) {
                     return;
                 }
-                lastFullSimilarGroups.current = merged;
-                setSimilarGroups(
-                    trimSimilarityGroups(
-                        merged,
-                        similarMaxGroupSizeRef.current,
-                    ),
-                );
+                showTrimmed(merged);
                 setSimilarProgress(undefined);
             } catch (mergeError: unknown) {
                 if (

@@ -4,6 +4,9 @@ import type { Stage1FileEdge } from "@/lib/similarity-stage1-core";
  * Session cache for Similar-photo matching: Stage-1 edges (so threshold
  * changes recluster without recomparing hashes) and crop verdicts (so Stage-2
  * skips template-match for pairs already checked).
+ *
+ * Crop verdicts are hard-capped — an uncapped map of ~15k+ entries (plus the
+ * grids retained elsewhere) contributed to phone memory kills.
  */
 
 type EdgeCacheEntry = {
@@ -12,6 +15,9 @@ type EdgeCacheEntry = {
     collectThreshold: number;
     edges: Stage1FileEdge[];
 };
+
+/** Soft cap; when exceeded, drop oldest half (insertion order). */
+const MAX_CROP_VERDICTS = 4000;
 
 let edgeCache: EdgeCacheEntry | undefined;
 const cropVerdicts = new Map<string, boolean>();
@@ -61,7 +67,21 @@ export const setCachedCropVerdict = (
     fileIdB: number,
     match: boolean,
 ): void => {
-    cropVerdicts.set(cropPairKey(fileIdA, fileIdB), match);
+    const key = cropPairKey(fileIdA, fileIdB);
+    if (cropVerdicts.has(key)) {
+        cropVerdicts.delete(key);
+    } else if (cropVerdicts.size >= MAX_CROP_VERDICTS) {
+        const dropCount = Math.floor(MAX_CROP_VERDICTS / 2);
+        let dropped = 0;
+        for (const oldKey of cropVerdicts.keys()) {
+            cropVerdicts.delete(oldKey);
+            dropped += 1;
+            if (dropped >= dropCount) {
+                break;
+            }
+        }
+    }
+    cropVerdicts.set(key, match);
 };
 
 export const clearSimilarityMatchCache = (): void => {
