@@ -164,7 +164,7 @@ describe("buildSimilarityGroups mutual nearest-neighbour", () => {
     });
 });
 
-describe("buildSimilarityGroups oversized-component cap", () => {
+describe("buildSimilarityGroups oversized-component filter", () => {
     const filesById = new Map(
         Array.from({ length: MAX_GROUP_SIZE + 20 }, (_, i) => [
             i + 1,
@@ -173,10 +173,9 @@ describe("buildSimilarityGroups oversized-component cap", () => {
     );
     const collections = [stubCollection(1)];
 
-    it("never emits a group larger than MAX_GROUP_SIZE even when loose links chain", () => {
-        // A chain of hashes: each adjacent pair differs by 1 bit (dist 1 <= 10),
-        // so union-find collapses them into one component; display trim then
-        // slices that component into bounded cards.
+    it("hides a loose chain larger than maxGroupSize instead of slicing it", () => {
+        // Adjacent 1-bit hash chain → one Stage-1 component larger than the
+        // display max. Filter hides it; must not mint dozens of tiny cards.
         const entries = new Map<number, string[]>();
         for (let i = 0; i < MAX_GROUP_SIZE + 20; i++) {
             entries.set(i + 1, [
@@ -184,10 +183,7 @@ describe("buildSimilarityGroups oversized-component cap", () => {
             ]);
         }
         const groups = describeGroups(entries, filesById, collections);
-        for (const group of groups) {
-            expect(group.length).toBeLessThanOrEqual(MAX_GROUP_SIZE);
-        }
-        expect(groups.length).toBeGreaterThan(1);
+        expect(groups).toEqual([]);
     });
 
     it("keeps a genuinely identical cluster together below the cap", () => {
@@ -207,7 +203,7 @@ describe("buildSimilarityGroups oversized-component cap", () => {
     });
 });
 
-describe("mergeCropMatches size cap", () => {
+describe("mergeCropMatches uncapped match + display filter", () => {
     const count = MAX_GROUP_SIZE + 25;
     const collections = [stubCollection(1)];
     const filesById = new Map(
@@ -219,22 +215,18 @@ describe("mergeCropMatches size cap", () => {
     const cropChainEntries = (): Map<number, PhashEntry> => {
         const entries = new Map<number, PhashEntry>();
         for (let i = 0; i < count; i++) {
-            // Far-apart dHash values (unique 3-hex buckets, high Hamming distance)
-            // so Stage-1 leaves everything as singletons. Shared color prefix
-            // `aaa` puts them all in one Stage-2 color bucket.
             const hashPrefix = (i * 17).toString(16).padStart(3, "0").slice(-3);
             const color = `aaa${i.toString(16).padStart(13, "0")}`;
             entries.set(i + 1, {
                 hashes: [`${hashPrefix}${"f".repeat(13)}`],
                 color,
-                // Worker is mocked; payload only needs to be present.
                 grid: "AAAA",
             });
         }
         return entries;
     };
 
-    it("keeps crop-merged groups ≤ maxGroupSize (no mega-component trim storm)", async () => {
+    it("does not assemble/display a crop mega-chain above the settings max", async () => {
         const { clearSimilarityMatchCache } = await import(
             "@/lib/similarity-match-cache"
         );
@@ -257,16 +249,13 @@ describe("mergeCropMatches size cap", () => {
             },
         });
 
-        expect(merged.length).toBeGreaterThan(0);
-        for (const group of merged) {
-            expect(group.items.length).toBeLessThanOrEqual(MAX_GROUP_SIZE);
-        }
+        // Matching may chain everyone; assembly skips components > settings max.
+        expect(merged.every((group) => group.items.length <= MAX_GROUP_SIZE)).toBe(
+            true,
+        );
         for (const group of lastEmitted) {
             expect(group.items.length).toBeLessThanOrEqual(MAX_GROUP_SIZE);
         }
-        // Path-shaped candidates still cover every file in bounded chunks.
-        const covered = merged.reduce((sum, group) => sum + group.items.length, 0);
-        expect(covered).toBe(count);
     });
 
     it("aborts when the signal is already aborted", async () => {

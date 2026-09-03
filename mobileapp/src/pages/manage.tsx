@@ -50,7 +50,6 @@ import {
     type DedupGroupSelection,
 } from "@/lib/dedup-prune";
 import {
-    clustersToSimilarityGroups,
     defaultSimilarityThreshold,
     indexableFiles,
     mergeCropMatches,
@@ -69,6 +68,7 @@ import {
 import {
     EDGE_COLLECT_THRESHOLD,
     clusterFromFileEdges,
+    type Stage1Cluster,
 } from "@/lib/similarity-stage1-core";
 import {
     clearSimilarityMatchCache,
@@ -290,9 +290,7 @@ export default function ManagePage(): JSX.Element {
 
                 // Progress bar only during the scan — mounting thousands of
                 // DedupGroupCards (and their thumbs) mid-pass freezes the UI.
-                let stage1Clusters: Parameters<
-                    typeof clustersToSimilarityGroups
-                >[0];
+                let stage1Clusters: Stage1Cluster[];
                 if (cachedEdges) {
                     stage1Clusters = clusterFromFileEdges(
                         stage1Items,
@@ -341,20 +339,16 @@ export default function ManagePage(): JSX.Element {
                 if (abort.signal.aborted || cancelled) {
                     return;
                 }
-                const stage1 = clustersToSimilarityGroups(
-                    stage1Clusters,
-                    filesById,
-                    collections,
-                    userId,
-                );
-
-                const merged = await mergeCropMatches(stage1, {
+                // Seed crop merge from raw clusters (including oversized) so UF
+                // stays correct; assembly/display skips groups above the settings max.
+                const merged = await mergeCropMatches([], {
                     entries: phashEntries,
                     filesById,
                     collections,
                     userId,
                     signal: abort.signal,
                     maxGroupSize: similarMaxGroupSizeRef.current,
+                    stage1Clusters,
                     onProgress: (progress) => {
                         if (abort.signal.aborted || cancelled) {
                             return;

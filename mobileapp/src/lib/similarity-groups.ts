@@ -15,6 +15,7 @@ import {
     type Stage1Cluster,
     type Stage1Item,
 } from "@/lib/similarity-stage1-core";
+import { MAX_SIMILAR_MAX_GROUP_SIZE } from "@/lib/app-settings";
 import {
     collectionNameByID,
     normalOwnedCollections,
@@ -59,11 +60,9 @@ export type SimilarMatchProgress = {
 
 class UnionFind {
     private readonly parent: number[];
-    private readonly sizes: number[];
 
     constructor(size: number) {
         this.parent = Array.from({ length: size }, (_, index) => index);
-        this.sizes = Array.from({ length: size }, () => 1);
     }
 
     find(index: number): number {
@@ -73,40 +72,18 @@ class UnionFind {
         return this.parent[index]!;
     }
 
-    componentSize(index: number): number {
-        return this.sizes[this.find(index)]!;
-    }
-
+    /**
+     * Unite two components with no size limit.
+     * Display filtering ({@link trimSimilarityGroups}) hides oversized groups;
+     * matching itself stays uncapped so true piles are not fragmented.
+     */
     union(left: number, right: number): void {
         const rootLeft = this.find(left);
         const rootRight = this.find(right);
         if (rootLeft === rootRight) {
             return;
         }
-        if (this.sizes[rootLeft]! < this.sizes[rootRight]!) {
-            this.parent[rootLeft] = rootRight;
-            this.sizes[rootRight]! += this.sizes[rootLeft]!;
-        } else {
-            this.parent[rootRight] = rootLeft;
-            this.sizes[rootLeft]! += this.sizes[rootRight]!;
-        }
-    }
-
-    /**
-     * Merge only when the combined component stays ≤ {@link maxSize}.
-     * Prevents transitive crop false-positives from chaining the whole library.
-     */
-    tryUnion(left: number, right: number, maxSize: number): boolean {
-        const rootLeft = this.find(left);
-        const rootRight = this.find(right);
-        if (rootLeft === rootRight) {
-            return true;
-        }
-        if (this.sizes[rootLeft]! + this.sizes[rootRight]! > maxSize) {
-            return false;
-        }
-        this.union(left, right);
-        return true;
+        this.parent[rootRight] = rootLeft;
     }
 }
 
@@ -198,8 +175,9 @@ export const clustersToSimilarityGroups = (
 };
 
 /**
- * Slice oversized groups for display after clustering. Does not change which
- * photos are considered similar — only how large each presented card can be.
+ * Keep only groups whose size is in [2, maxGroupSize]. Larger natural clusters
+ * are hidden (not sliced) — oversized piles are usually false-positive chains,
+ * and slicing them manufactures hundreds of useless cards.
  */
 export const trimSimilarityGroups = (
     groups: SimilarityGroup[],
@@ -208,25 +186,13 @@ export const trimSimilarityGroups = (
     if (maxGroupSize < 2) {
         return [];
     }
-    const trimmed: SimilarityGroup[] = [];
-    for (const group of groups) {
-        if (group.items.length <= maxGroupSize) {
-            trimmed.push(group);
-            continue;
-        }
-        for (let i = 0; i < group.items.length; i += maxGroupSize) {
-            const slice = group.items.slice(i, i + maxGroupSize);
-            if (slice.length < 2) {
-                continue;
-            }
-            trimmed.push({
-                id: `similar-${slice.map((item) => item.file.id).sort((a, b) => a - b).join("-")}`,
-                items: slice,
-                maxDistance: group.maxDistance,
-            });
-        }
-    }
-    return trimmed.sort((a, b) => b.items.length - a.items.length);
+    return groups
+        .filter(
+            (group) =>
+                group.items.length >= 2 &&
+                group.items.length <= maxGroupSize,
+        )
+        .sort((a, b) => b.items.length - a.items.length);
 };
 
 /**
@@ -251,6 +217,9 @@ export const buildSimilarityGroups = (
         maxGroupSize,
     );
 };
+
+/** Skip O(k²) max-distance when a component is this large (display will hide it anyway). */
+const MAX_DISTANCE_PAIRWISE_MEMBERS = 48;
 
 const assembleGroup = (
     memberIndices: number[],
@@ -289,7 +258,10 @@ const assembleGroup = (
         return undefined;
     }
 
-    if (computeMaxDistance) {
+    if (
+        computeMaxDistance &&
+        memberHashes.length <= MAX_DISTANCE_PAIRWISE_MEMBERS
+    ) {
         for (let i = 0; i < memberHashes.length; i++) {
             for (let j = i + 1; j < memberHashes.length; j++) {
                 maxDistance = Math.max(
@@ -319,6 +291,11 @@ export interface CropMergeOptions {
     onProgress?: (progress: SimilarMatchProgress) => void;
     onGroups?: (groups: SimilarityGroup[]) => void;
     maxGroupSize?: number;
+    /**
+     * Preferred Stage-1 seed (file-id clusters). Avoids assembling huge
+     * SimilarityGroups just to union them before crop checks.
+     */
+    stage1Clusters?: Stage1Cluster[];
 }
 
 /** Soft throttle for provisional group rebuilds during crop merge (ms). */
@@ -327,11 +304,10 @@ const CROP_GROUP_PROGRESS_INTERVAL_MS = 800;
 /**
  * Stage-2: refine Stage-1 groups by linking crop matches via the worker pool.
  *
- * Candidates are color-bucketed with a Hamming pre-filter and a hard total cap
- * so large libraries cannot enqueue tens of thousands of template matches.
- * Crop unions are size-capped so transitive false positives cannot chain the
- * whole library into one mega-component (which trim would then slice into
- * thousands of cards).
+ * Matching is uncapped (natural clusters). Candidates are color-bucketed with a
+ * Hamming pre-filter and a hard total cap so large libraries cannot enqueue
+ * tens of thousands of template matches. Callers filter oversized groups for
+ * display via {@link trimSimilarityGroups}.
  */
 export const mergeCropMatches = async (
     groups: SimilarityGroup[],
@@ -347,6 +323,7 @@ export const mergeCropMatches = async (
         onProgress,
         onGroups,
         maxGroupSize = MAX_GROUP_SIZE,
+        stage1Clusters,
     } = options;
 
     const throwIfAborted = (): void => {
@@ -363,6 +340,19 @@ export const mergeCropMatches = async (
     );
 
     if (indexed.length < 2 || cropEligible.length < 2) {
+        if (stage1Clusters && stage1Clusters.length > 0) {
+            const displayable = stage1Clusters.filter(
+                (cluster) =>
+                    cluster.fileIds.length >= 2 &&
+                    cluster.fileIds.length <= MAX_SIMILAR_MAX_GROUP_SIZE,
+            );
+            return clustersToSimilarityGroups(
+                displayable,
+                filesById,
+                collections,
+                userId,
+            );
+        }
         return groups;
     }
 
@@ -370,20 +360,36 @@ export const mergeCropMatches = async (
     const indexById = new Map(fileIds.map((fileId, i) => [fileId, i]));
     const uf = new UnionFind(fileIds.length);
 
-    const stage1MemberIndexes = new Set<number>();
-    for (const group of groups) {
-        const memberIndexes = group.items
-            .map((item) => indexById.get(item.file.id))
-            .filter((index): index is number => index !== undefined);
+    const seedMemberIndexes = (memberIndexes: number[]): void => {
         if (memberIndexes.length < 2) {
-            continue;
+            return;
         }
         const first = memberIndexes[0]!;
-        for (const index of memberIndexes) {
-            stage1MemberIndexes.add(index);
-        }
         for (const index of memberIndexes.slice(1)) {
             uf.union(first, index);
+        }
+    };
+
+    const stage1MemberIndexes = new Set<number>();
+    if (stage1Clusters && stage1Clusters.length > 0) {
+        for (const cluster of stage1Clusters) {
+            const memberIndexes = cluster.fileIds
+                .map((fileId) => indexById.get(fileId))
+                .filter((index): index is number => index !== undefined);
+            for (const index of memberIndexes) {
+                stage1MemberIndexes.add(index);
+            }
+            seedMemberIndexes(memberIndexes);
+        }
+    } else {
+        for (const group of groups) {
+            const memberIndexes = group.items
+                .map((item) => indexById.get(item.file.id))
+                .filter((index): index is number => index !== undefined);
+            for (const index of memberIndexes) {
+                stage1MemberIndexes.add(index);
+            }
+            seedMemberIndexes(memberIndexes);
         }
     }
 
@@ -416,11 +422,6 @@ export const mergeCropMatches = async (
                 const a = bucketIndexes[p]!;
                 const b = bucketIndexes[p + offset]!;
                 if (uf.find(a) === uf.find(b)) {
-                    continue;
-                }
-                if (
-                    uf.componentSize(a) + uf.componentSize(b) > maxGroupSize
-                ) {
                     continue;
                 }
                 const colorA = indexed[a]!.entry.color!;
@@ -458,7 +459,11 @@ export const mergeCropMatches = async (
         }
         const rebuilt: SimilarityGroup[] = [];
         for (const memberIndices of groupsByRoot.values()) {
-            if (memberIndices.length < 2) {
+            // Never displayable with the settings max (1–5); skip assembly.
+            if (
+                memberIndices.length < 2 ||
+                memberIndices.length > MAX_SIMILAR_MAX_GROUP_SIZE
+            ) {
                 continue;
             }
             const group = assembleGroup(
@@ -482,14 +487,13 @@ export const mergeCropMatches = async (
         return full;
     };
 
-    const applyCachedUnion = (a: number, b: number): boolean => {
+    const applyCachedUnion = (a: number, b: number): void => {
         if (
             getCachedCropVerdict(indexed[a]!.fileId, indexed[b]!.fileId) &&
             uf.find(a) !== uf.find(b)
         ) {
-            return uf.tryUnion(a, b, maxGroupSize);
+            uf.union(a, b);
         }
-        return false;
     };
 
     // All pairs already verified this session — apply sync (threshold changes).
@@ -523,9 +527,6 @@ export const mergeCropMatches = async (
         const activePairs: Array<[number, number]> = [];
         for (const [a, b] of batch) {
             if (uf.find(a) === uf.find(b)) {
-                continue;
-            }
-            if (uf.componentSize(a) + uf.componentSize(b) > maxGroupSize) {
                 continue;
             }
             activePairs.push([a, b]);
@@ -594,9 +595,8 @@ export const mergeCropMatches = async (
                 if (!cachedMatches[slot]) {
                     return;
                 }
-                if (uf.tryUnion(a, b, maxGroupSize)) {
-                    groupsDirty = true;
-                }
+                uf.union(a, b);
+                groupsDirty = true;
             });
         }
 

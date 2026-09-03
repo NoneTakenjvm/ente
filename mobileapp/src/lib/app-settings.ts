@@ -18,7 +18,7 @@ export interface PersistedAppSettings {
     galleryColumns: GalleryColumnCount;
     galleryThumbnailMode: GalleryThumbnailMode;
     gallerySortBy: MediaSortBy;
-    /** Cap on how many images can appear in one Similar-photos group. */
+    /** Cap: hide Similar groups larger than this (matching stays uncapped). */
     similarMaxGroupSize: number;
 }
 
