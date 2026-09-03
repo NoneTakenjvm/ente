@@ -38,7 +38,7 @@ export const defaultSimilarityThreshold = 8;
 const colorBucketKey = (color: string): string => color.slice(0, 3);
 
 /** Hard cap on crop checks paid per file within a color bucket. */
-export const MAX_CROP_CHECKS_PER_FILE = 4;
+export const MAX_CROP_CHECKS_PER_FILE = 6;
 
 /**
  * Hard cap on total Stage-2 crop pairs. Library-wide color buckets otherwise
@@ -304,10 +304,11 @@ const CROP_GROUP_PROGRESS_INTERVAL_MS = 800;
 /**
  * Stage-2: refine Stage-1 groups by linking crop matches via the worker pool.
  *
- * Matching is uncapped (natural clusters). Candidates are color-bucketed with a
- * Hamming pre-filter and a hard total cap so large libraries cannot enqueue
- * tens of thousands of template matches. Callers filter oversized groups for
- * display via {@link trimSimilarityGroups}.
+ * Matching is uncapped (natural clusters). Candidates are color-bucketed; within
+ * each bucket neighbours are ranked by color Hamming (not lex order) before the
+ * per-file / total pair caps apply, so large libraries cannot enqueue tens of
+ * thousands of template matches. Callers filter oversized groups for display
+ * via {@link trimSimilarityGroups}.
  */
 export const mergeCropMatches = async (
     groups: SimilarityGroup[],
@@ -404,31 +405,54 @@ export const mergeCropMatches = async (
             buckets.set(prefix, [index]);
         }
     }
-    for (const bucketIndexes of buckets.values()) {
-        bucketIndexes.sort((a, b) =>
-            indexed[a]!.entry.color!.localeCompare(indexed[b]!.entry.color!));
-    }
-
+    /**
+     * Within each color bucket, pick each file's nearest palette neighbours by
+     * Hamming distance (not lex-adjacent hex). That keeps the per-file / total
+     * pair caps but spends them on siblings that are actually close in color.
+     */
     const preferred: Array<[number, number]> = [];
     const other: Array<[number, number]> = [];
+    const seenPairs = new Set<string>();
     for (const bucketIndexes of buckets.values()) {
         for (let p = 0; p < bucketIndexes.length; p++) {
-            for (
-                let offset = 1;
-                offset <= MAX_CROP_CHECKS_PER_FILE &&
-                p + offset < bucketIndexes.length;
-                offset++
-            ) {
-                const a = bucketIndexes[p]!;
-                const b = bucketIndexes[p + offset]!;
+            const a = bucketIndexes[p]!;
+            const colorA = indexed[a]!.entry.color!;
+            const neighbours: Array<{ index: number; distance: number }> = [];
+            for (let q = 0; q < bucketIndexes.length; q++) {
+                if (q === p) {
+                    continue;
+                }
+                const b = bucketIndexes[q]!;
                 if (uf.find(a) === uf.find(b)) {
                     continue;
                 }
-                const colorA = indexed[a]!.entry.color!;
-                const colorB = indexed[b]!.entry.color!;
-                if (hammingDistance(colorA, colorB) > COLOR_PALETTE_THRESHOLD) {
+                const distance = hammingDistance(
+                    colorA,
+                    indexed[b]!.entry.color!,
+                );
+                if (distance > COLOR_PALETTE_THRESHOLD) {
                     continue;
                 }
+                neighbours.push({ index: b, distance });
+            }
+            neighbours.sort((left, right) => {
+                if (left.distance !== right.distance) {
+                    return left.distance - right.distance;
+                }
+                return left.index - right.index;
+            });
+            for (const neighbour of neighbours.slice(
+                0,
+                MAX_CROP_CHECKS_PER_FILE,
+            )) {
+                const b = neighbour.index;
+                const lo = Math.min(a, b);
+                const hi = Math.max(a, b);
+                const key = `${lo}:${hi}`;
+                if (seenPairs.has(key)) {
+                    continue;
+                }
+                seenPairs.add(key);
                 const pair: [number, number] = [a, b];
                 if (
                     stage1MemberIndexes.has(a) ||

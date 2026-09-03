@@ -8,9 +8,11 @@ export default defineConfig({
     resolve: {
         alias: {
             "@": path.resolve(__dirname, "src"),
+            // Prefer the installed package junction so a git worktree can share
+            // main's node_modules without resolving worktree-local web/tsconfig.
             "ente-base/crypto/libsodium": path.resolve(
                 __dirname,
-                "../web/packages/base/crypto/libsodium.ts",
+                "node_modules/ente-base/crypto/libsodium.ts",
             ),
             "ente-base/crypto": path.resolve(
                 __dirname,

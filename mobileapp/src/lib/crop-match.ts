@@ -8,15 +8,18 @@
  *   RGB cube. Translation-invariant, so crops of the same photo share most
  *   populated color bins. Used as a *candidate generator* (which pairs to check).
  * - **Template-match** (`templateMatchScore`): a tiny 48x48 grayscale grid is
- *   numerically aligned over scale + offset, and the lowest mean-absolute
- *   luminance difference is compared against a threshold. A true crop lines up
- *   tightly; a different photo never aligns. Rotating the source grid through
- *   its 8 canonical orientations also catches "rotate-then-crop" combos.
+ *   numerically aligned over scale + offset. The coarse tier uses raw luminance
+ *   MAD for fast reject; plausible orientations escalate to a full sweep that
+ *   scores residual MAD after a per-alignment gain+bias fit (`a·src + b ≈ crop`)
+ *   so global brightness/contrast shifts still match. Rotating the source grid
+ *   through its 8 canonical orientations also catches "rotate-then-crop" combos.
+ *   The full tier also tries a few anisotropic (sx≠sy) scales for non-uniform
+ *   zooms.
  *
- * Cost control: a coarse 48x48 alignment with early termination rejects
+ * Cost control: a coarse 48x48 raw-SAD alignment with early termination rejects
  * clearly-different pairs in a couple of ms (it aborts an offset as soon as its
  * running mean exceeds a loose bound), and only orientations the coarse tier
- * flags as plausible run the expensive unbounded sweep — so recall is never
+ * flags as plausible run the expensive photometric sweep — so recall is never
  * capped by the cheap tier while bulk rejection stays fast.
  *
  * Both signals are pure and dependency-free (no ML, no WASM).
@@ -41,25 +44,43 @@ export interface PhashEntry {
     grid?: string;
 }
 
-/** Threshold on the normalized mean-absolute luminance difference (0..1). */
+/**
+ * Threshold on the match score (0..1). Coarse reject uses raw MAD; the full
+ * tier uses photometric residual after gain+bias fit. Tuned with a secondary
+ * color-distance soft-gate so cross-photo false positives stay near zero on an
+ * expanded Picsum pool.
+ */
 export const CROP_SAD_THRESHOLD = 0.08;
 
 /**
- * Color Hamming gate. Keep it lenient — it only rejects markedly different
- * palettes so it doesn't drop recall; the template SAD is the precision gate.
+ * Color Hamming gate for candidate generation. Lenient on purpose — the
+ * template residual (+ soft color gate in {@link areCropMatchesGrids}) is the
+ * precision filter.
  */
 export const COLOR_PALETTE_THRESHOLD = 12;
 
 /**
- * Above this fast-pass score the pair is clearly not a crop under any
- * orientation, so the expensive full sweep is skipped. The fast tier is only a
- * reject gate — plausible pairs always escalate to the authoritative 48x48
- * search so recall isn't capped by the cheap tier.
+ * When palette Hamming is at least this high, demand a stronger template score
+ * (`<= {@link CROP_SAD_THRESHOLD} * {@link SOFT_COLOR_SCORE_FACTOR}`) so soft
+ * photometric fits between unrelated-but-palette-adjacent photos don't pass.
  */
-export const CROP_REJECT_THRESHOLD = 0.3;
+const SOFT_COLOR_HAMMING = 6;
+const SOFT_COLOR_SCORE_FACTOR = 0.55;
+
+/**
+ * Above this fast-pass raw-SAD score the pair is clearly not a crop under any
+ * orientation, so the expensive full (photometric) sweep is skipped. Mild
+ * exposure shifts (raw MAD ~0.1–0.2) still escalate; tighter than 0.3 so
+ * unrelated photos rarely pay for a full photometric search.
+ */
+export const CROP_REJECT_THRESHOLD = 0.25;
 
 /** Nearest fast orientations (within this margin of the best) also escalate. */
 const ESCALATE_NEIGHBOR_MARGIN = 0.05;
+
+/** Clamp gain so a flat unrelated patch cannot invent an arbitrary match. */
+const GAIN_MIN = 0.55;
+const GAIN_MAX = 1.85;
 
 /** Scale steps for the full template search (fraction of the full frame). */
 const SCALES = [
@@ -72,6 +93,33 @@ const COARSE_OFFSET_STEPS = 8;
 
 /** Offsets to try per axis in the full pass. */
 const FULL_OFFSET_STEPS = 6;
+
+interface ScalePair {
+    sx: number;
+    sy: number;
+}
+
+const isotropicPairs = (scales: number[]): ScalePair[] =>
+    scales.map((scale) => ({ sx: scale, sy: scale }));
+
+/** Full isotropic scales; anisotropic is tried only when isotropic is close. */
+const FULL_ISOTROPIC_PAIRS = isotropicPairs(SCALES);
+
+/**
+ * Extra anisotropic pairs — only used when the isotropic full score is near
+ * the accept threshold, so non-uniform zooms can still match without paying
+ * this cost on every escalated pair.
+ */
+const ANISOTROPIC_PAIRS: ScalePair[] = [
+    { sx: 0.45, sy: 0.55 },
+    { sx: 0.55, sy: 0.45 },
+    { sx: 0.55, sy: 0.7 },
+    { sx: 0.7, sy: 0.55 },
+    { sx: 0.7, sy: 0.85 },
+    { sx: 0.85, sy: 0.7 },
+];
+
+const COARSE_PAIRS = isotropicPairs(COARSE_SCALES);
 
 /** Encode a 48x48 luminance grid (0..255) as a base64 string. */
 export const encodeLuminanceGrid = (grid: Uint8Array): string => {
@@ -217,7 +265,7 @@ const cachedGridVariants = (grid: Uint8Array, size: number): Uint8Array[] => {
     return variants;
 };
 
-/** Result of an alignment: the best normalized SAD and whether every offset
+/** Result of an alignment: the best residual MAD and whether every offset
  * exceeded the abort bound (i.e. this orientation could not be a near-match). */
 interface AlignResult {
     score: number;
@@ -225,50 +273,159 @@ interface AlignResult {
 }
 
 /**
- * Best match of `crop` within `src` over the given scale steps and offset step.
- * `abortAbove` (normalized SAD) stops evaluating an offset as soon as its
- * running mean exceeds it after a minimum sample, so clearly-mismatched offsets
- * are skipped; that makes reject paths fast while true matches still find their
- * minimum. Both grids are `size` x `size`.
+ * Fit `a·src + b ≈ crop` with clamped gain, then residual MAD / 255.
+ * Degenerate (near-constant) patches fall back to bias-only.
+ */
+const photometricResidual = (
+    sumS: number,
+    sumC: number,
+    sumSS: number,
+    sumCS: number,
+    n: number,
+): { a: number; b: number } => {
+    const denom = sumSS * n - sumS * sumS;
+    if (Math.abs(denom) <= 1e-6) {
+        return { a: 1, b: sumC / n - sumS / n };
+    }
+    const a = Math.min(
+        GAIN_MAX,
+        Math.max(GAIN_MIN, (sumCS * n - sumS * sumC) / denom),
+    );
+    return { a, b: (sumC - a * sumS) / n };
+};
+
+/**
+ * Best match of `crop` within `src` over the given scale pairs and offset step.
+ *
+ * - `raw`: mean-absolute luminance difference (fast reject / coarse tier).
+ * - `photometric`: residual MAD after per-offset gain+bias fit (full tier) so
+ *   exposure/contrast shifts still match.
+ *
+ * `abortAbove` stops an offset once its running score cannot beat the best
+ * seen so far.
  */
 const align = (
     src: Uint8Array,
     crop: Uint8Array,
     size: number,
-    sizes: number[],
+    pairs: ScalePair[],
     offsetStep: number,
+    mode: "raw" | "photometric",
     abortAbove = Number.POSITIVE_INFINITY,
 ): AlignResult => {
-    // Seed with the abort bound so the very first offset also aborts early for
-    // clearly-mismatched pairs, and every later offset aborts once it can no
-    // longer beat the best seen so far.
     let best = abortAbove;
     let aborted = true;
     const minCells = Math.floor(size * size * 0.6);
     const abortAfter = Math.floor(size * size * 0.25);
-    for (const scale of sizes) {
-        const spanX = Math.max(1, Math.ceil(size - size * scale));
-        const spanY = Math.max(1, Math.ceil(size - size * scale));
+
+    for (const { sx, sy } of pairs) {
+        const spanX = Math.max(1, Math.ceil(size - size * sx));
+        const spanY = Math.max(1, Math.ceil(size - size * sy));
         const dxs = Math.max(1, Math.floor(spanX / offsetStep));
         const dys = Math.max(1, Math.floor(spanY / offsetStep));
         for (let ox = 0; ox <= spanX; ox += dxs) {
             for (let oy = 0; oy <= spanY; oy += dys) {
-                let sum = 0;
+                if (mode === "raw") {
+                    let sum = 0;
+                    let n = 0;
+                    let offsetAborted = false;
+                    for (let i = 0; i < size; i++) {
+                        for (let j = 0; j < size; j++) {
+                            const srcRow = Math.round(oy + j * sy);
+                            const srcCol = Math.round(ox + i * sx);
+                            if (
+                                srcCol < 0 ||
+                                srcCol >= size ||
+                                srcRow < 0 ||
+                                srcRow >= size
+                            ) {
+                                continue;
+                            }
+                            sum += Math.abs(
+                                crop[j * size + i]! -
+                                    src[srcRow * size + srcCol]!,
+                            );
+                            n++;
+                            if (n >= abortAfter && sum / n / 255 > best) {
+                                offsetAborted = true;
+                                break;
+                            }
+                        }
+                        if (offsetAborted) {
+                            break;
+                        }
+                    }
+                    if (n < minCells || offsetAborted) {
+                        continue;
+                    }
+                    aborted = false;
+                    const normalized = sum / n / 255;
+                    if (normalized < best) {
+                        best = normalized;
+                    }
+                    continue;
+                }
+
+                let sumS = 0;
+                let sumC = 0;
+                let sumSS = 0;
+                let sumCS = 0;
                 let n = 0;
-                let offsetAborted = false;
                 for (let i = 0; i < size; i++) {
                     for (let j = 0; j < size; j++) {
-                        const srcRow = Math.round(oy + j * scale);
-                        const srcCol = Math.round(ox + i * scale);
+                        const srcRow = Math.round(oy + j * sy);
+                        const srcCol = Math.round(ox + i * sx);
                         if (
-                            srcCol < 0 || srcCol >= size ||
-                            srcRow < 0 || srcRow >= size
+                            srcCol < 0 ||
+                            srcCol >= size ||
+                            srcRow < 0 ||
+                            srcRow >= size
                         ) {
                             continue;
                         }
-                        sum += Math.abs(crop[j * size + i]! - src[srcRow * size + srcCol]!);
+                        const s = src[srcRow * size + srcCol]!;
+                        const c = crop[j * size + i]!;
+                        sumS += s;
+                        sumC += c;
+                        sumSS += s * s;
+                        sumCS += c * s;
                         n++;
-                        if (n >= abortAfter && sum / n / 255 > best) {
+                    }
+                }
+                if (n < minCells) {
+                    continue;
+                }
+
+                const { a, b } = photometricResidual(
+                    sumS,
+                    sumC,
+                    sumSS,
+                    sumCS,
+                    n,
+                );
+
+                let sum = 0;
+                let counted = 0;
+                let offsetAborted = false;
+                for (let i = 0; i < size; i++) {
+                    for (let j = 0; j < size; j++) {
+                        const srcRow = Math.round(oy + j * sy);
+                        const srcCol = Math.round(ox + i * sx);
+                        if (
+                            srcCol < 0 ||
+                            srcCol >= size ||
+                            srcRow < 0 ||
+                            srcRow >= size
+                        ) {
+                            continue;
+                        }
+                        const predicted = a * src[srcRow * size + srcCol]! + b;
+                        sum += Math.abs(crop[j * size + i]! - predicted);
+                        counted++;
+                        if (
+                            counted >= abortAfter &&
+                            sum / counted / 255 > best
+                        ) {
                             offsetAborted = true;
                             break;
                         }
@@ -277,14 +434,18 @@ const align = (
                         break;
                     }
                 }
-                if (n < minCells) {
-                    continue;
-                }
-                if (offsetAborted) {
+                if (offsetAborted || counted < minCells) {
                     continue;
                 }
                 aborted = false;
-                const normalized = sum / n / 255;
+                let normalized = sum / counted / 255;
+                // Flat patches can fit an arbitrary gain/bias; demand a near-exact
+                // residual there so soft matches on sky/blur don't pass.
+                const meanS = sumS / n;
+                const variance = sumSS / n - meanS * meanS;
+                if (variance < 100 && normalized > 0.02) {
+                    normalized = Math.max(normalized, 0.12);
+                }
                 if (normalized < best) {
                     best = normalized;
                 }
@@ -294,7 +455,7 @@ const align = (
     return { score: best, aborted };
 };
 
-/** Coarse 48x48 alignment used as the cheap reject gate (loose bound). */
+/** Coarse 48x48 alignment used as the cheap reject gate (raw SAD). */
 const coarseAlign = (
     src: Uint8Array,
     crop: Uint8Array,
@@ -303,13 +464,14 @@ const coarseAlign = (
         src,
         crop,
         TEMPLATE_GRID_SIZE,
-        COARSE_SCALES,
+        COARSE_PAIRS,
         COARSE_OFFSET_STEPS,
+        "raw",
         CROP_REJECT_THRESHOLD,
     );
 
-/** Full 48x48 alignment: all scales, fine offsets, no abort. */
-const fullAlign = (
+/** Full 48x48 isotropic photometric alignment. */
+const fullAlignIsotropic = (
     src: Uint8Array,
     crop: Uint8Array,
 ): number =>
@@ -317,12 +479,27 @@ const fullAlign = (
         src,
         crop,
         TEMPLATE_GRID_SIZE,
-        SCALES,
+        FULL_ISOTROPIC_PAIRS,
         FULL_OFFSET_STEPS,
+        "photometric",
+    ).score;
+
+/** Limited anisotropic photometric refinement. */
+const fullAlignAnisotropic = (
+    src: Uint8Array,
+    crop: Uint8Array,
+): number =>
+    align(
+        src,
+        crop,
+        TEMPLATE_GRID_SIZE,
+        ANISOTROPIC_PAIRS,
+        FULL_OFFSET_STEPS,
+        "photometric",
     ).score;
 
 /**
- * Lowest achievable normalized SAD between two decoded 48×48 luminance grids.
+ * Lowest achievable photometric residual between two decoded 48×48 luminance grids.
  * Prefer this when grids are already decoded (batch crop checks).
  */
 export const templateMatchScoreGrids = (
@@ -354,27 +531,53 @@ export const templateMatchScoreGrids = (
         if (coarse[i]!.score > bestScore + ESCALATE_NEIGHBOR_MARGIN) {
             continue;
         }
-        const full = fullAlign(variants[i]!, crop);
+        const full = fullAlignIsotropic(variants[i]!, crop);
         if (full < best) {
             best = full;
         }
         if (best <= CROP_SAD_THRESHOLD) {
             return best;
         }
+        // Near-miss: try anisotropic scales before giving up on this orientation.
+        if (full <= CROP_SAD_THRESHOLD + 0.04) {
+            const aniso = fullAlignAnisotropic(variants[i]!, crop);
+            if (aniso < best) {
+                best = aniso;
+            }
+            if (best <= CROP_SAD_THRESHOLD) {
+                return best;
+            }
+        }
     }
     return best;
 };
 
 /**
- * Lowest achievable normalized SAD between two images. Runs a cheap 48x48
+ * Lowest achievable score treating either grid as the crop of the other.
+ * Production pairs do not know which file is the tighter crop. Second direction
+ * is skipped when the first already matches.
+ */
+export const templateMatchScoreGridsEither = (
+    a: Uint8Array,
+    b: Uint8Array,
+): number => {
+    const ab = templateMatchScoreGrids(a, b);
+    if (ab <= CROP_SAD_THRESHOLD) {
+        return ab;
+    }
+    return Math.min(ab, templateMatchScoreGrids(b, a));
+};
+
+/**
+ * Lowest achievable photometric residual between two images. Runs a cheap 48x48
  * coarse alignment against all 8 source orientations with a loose abort bound;
  * a pair whose every orientation aborts is clearly not a crop and is rejected
  * early. Plausible orientations escalate to the unbounded full sweep, so the
- * cheap tier never caps recall. The crop is held fixed while the source is
- * rotated, which is the validated rotate-then-crop semantics.
+ * cheap tier never caps recall. Both orderings are tried (either image may be
+ * the crop).
  */
 export const templateMatchScore = (aGrid: string, bGrid: string): number =>
-    templateMatchScoreGrids(
+    templateMatchScoreGridsEither(
         decodeLuminanceGrid(aGrid),
         decodeLuminanceGrid(bGrid),
     );
@@ -389,10 +592,21 @@ export const areCropMatchesGrids = (
     bColor: string,
     bGrid: Uint8Array,
 ): boolean => {
-    if (hammingDistance(aColor, bColor) > COLOR_PALETTE_THRESHOLD) {
+    const colorDistance = hammingDistance(aColor, bColor);
+    if (colorDistance > COLOR_PALETTE_THRESHOLD) {
         return false;
     }
-    return templateMatchScoreGrids(aGrid, bGrid) <= CROP_SAD_THRESHOLD;
+    const score = templateMatchScoreGridsEither(aGrid, bGrid);
+    if (score > CROP_SAD_THRESHOLD) {
+        return false;
+    }
+    if (
+        colorDistance >= SOFT_COLOR_HAMMING &&
+        score > CROP_SAD_THRESHOLD * SOFT_COLOR_SCORE_FACTOR
+    ) {
+        return false;
+    }
+    return true;
 };
 
 /**

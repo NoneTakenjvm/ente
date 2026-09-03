@@ -7,7 +7,10 @@ import {
     putThumbnailCiphertext,
 } from "@/db/thumbnails";
 import { blobFromUint8Array } from "@/lib/bytes-blob";
-import { isJsHeapUnderPressure } from "@/lib/memory-probe";
+import {
+    readJsHeapSnapshot,
+    type JsHeapSnapshot,
+} from "@/lib/memory-probe";
 import type { EnteFile } from "ente-media/file";
 
 type ThumbnailStatus = "idle" | "loading" | "ready" | "error";
@@ -21,10 +24,13 @@ interface ThumbnailEntry {
 
 /**
  * Soft cap on decrypted thumbnail blob URLs retained in RAM this session.
- * Thumbs are ≤~100KB JPEG; ~64MB holds hundreds of decoded URLs without
- * unbounded growth after long gallery scrolls.
+ * Raised from 64MB so long gallery scrolls keep recently-seen thumbs warm
+ * without going fully unbounded.
  */
-const SESSION_BUDGET_BYTES = 64 * 1024 * 1024;
+const SESSION_BUDGET_BYTES = 160 * 1024 * 1024;
+
+/** Only thrash the session cache when the heap is near the limit. */
+const THUMB_HEAP_PRESSURE_RATIO = 0.85;
 
 const idleEntry: ThumbnailEntry = { status: "idle" };
 const loadingEntry: ThumbnailEntry = { status: "loading" };
@@ -32,13 +38,20 @@ const loadingEntry: ThumbnailEntry = { status: "loading" };
 const cache: Map<number, ThumbnailEntry> = new Map();
 const listeners: Map<number, Set<() => void>> = new Map();
 
-const maxConcurrent = 6;
+const maxConcurrent = 8;
 let inFlight = 0;
-const queue: Array<() => void> = [];
+/** Visible / subscribed cells — drained first. */
+const highQueue: Array<() => void> = [];
+/** Off-screen work — runs only when highQueue is empty. */
+const lowQueue: Array<() => void> = [];
 
 const runNext = (): void => {
-    while (inFlight < maxConcurrent && queue.length > 0) {
-        const task: (() => void) | undefined = queue.shift();
+    while (
+        inFlight < maxConcurrent &&
+        (highQueue.length > 0 || lowQueue.length > 0)
+    ) {
+        const task: (() => void) | undefined =
+            highQueue.shift() ?? lowQueue.shift();
         if (task) {
             inFlight++;
             task();
@@ -48,6 +61,15 @@ const runNext = (): void => {
 
 const finishTask = (): void => {
     inFlight--;
+    runNext();
+};
+
+const enqueueLoad = (fileId: number, task: () => void): void => {
+    if (hasSubscribers(fileId)) {
+        highQueue.push(task);
+    } else {
+        lowQueue.push(task);
+    }
     runNext();
 };
 
@@ -112,7 +134,7 @@ const evictSessionUntilFit = (incomingBytes: number): void => {
     }
 };
 
-/** Evict ~25% of unsubscribed ready thumbs (oldest first). */
+/** Evict ~10% of unsubscribed ready thumbs (oldest first). */
 const emergencyEvict = (): void => {
     const ranked = [...cache.entries()]
         .filter(
@@ -124,7 +146,7 @@ const emergencyEvict = (): void => {
         .sort(
             (a, b) => (a[1].lastAccess ?? 0) - (b[1].lastAccess ?? 0),
         );
-    const dropCount = Math.max(1, Math.ceil(ranked.length * 0.25));
+    const dropCount = Math.max(1, Math.ceil(ranked.length * 0.1));
     for (let i = 0; i < dropCount && i < ranked.length; i++) {
         const [fileId, entry] = ranked[i]!;
         revokeEntryUrl(entry);
@@ -132,11 +154,25 @@ const emergencyEvict = (): void => {
     }
 };
 
+const isThumbHeapUnderPressure = (
+    snapshot: JsHeapSnapshot | undefined = readJsHeapSnapshot(),
+): boolean =>
+    snapshot !== undefined && snapshot.usedRatio >= THUMB_HEAP_PRESSURE_RATIO;
+
 const relieveHeapPressureIfNeeded = (): void => {
-    if (!isJsHeapUnderPressure()) {
+    if (!isThumbHeapUnderPressure()) {
         return;
     }
     emergencyEvict();
+};
+
+/** Reset a cancelled in-flight load so a remount can request again. */
+const resetToIdle = (fileId: number): void => {
+    const entry = cache.get(fileId);
+    if (entry?.status === "loading") {
+        cache.delete(fileId);
+        notify(fileId);
+    }
 };
 
 export const subscribeThumbnail = (
@@ -205,11 +241,19 @@ const loadThumbnail = (file: EnteFile): void => {
 
                 const cached = await getThumbnailCiphertext(file.id);
                 if (cached) {
+                    // IDB hit is cheap enough to finish even if the cell
+                    // scrolled away — warms scroll-back without a network trip.
                     const bytes = await decryptThumbnailCiphertext(
                         cached,
                         file.key,
                     );
                     setReady(file.id, bytes);
+                    return;
+                }
+
+                // Network fetch: skip if nothing is waiting on this thumb.
+                if (!hasSubscribers(file.id)) {
+                    resetToIdle(file.id);
                     return;
                 }
 
@@ -231,8 +275,7 @@ const loadThumbnail = (file: EnteFile): void => {
         })();
     };
 
-    queue.push(task);
-    runNext();
+    enqueueLoad(file.id, task);
 };
 
 export const requestThumbnail = (file: EnteFile): ThumbnailEntry => {
@@ -347,6 +390,7 @@ export const clearThumbnailCache = (): void => {
     }
     cache.clear();
     listeners.clear();
-    queue.length = 0;
+    highQueue.length = 0;
+    lowQueue.length = 0;
     inFlight = 0;
 };

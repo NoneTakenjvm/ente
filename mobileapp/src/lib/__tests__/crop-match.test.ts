@@ -43,6 +43,40 @@ const makeGrid = (dotOffset: number): Uint8Array => {
     return grid;
 };
 
+/** Apply global luminance gain+bias and clamp to 0..255. */
+const applyGainBias = (
+    grid: Uint8Array,
+    gain: number,
+    bias: number,
+): Uint8Array => {
+    const out = new Uint8Array(grid.length);
+    for (let i = 0; i < grid.length; i++) {
+        out[i] = Math.round(
+            Math.max(0, Math.min(255, grid[i]! * gain + bias)),
+        );
+    }
+    return out;
+};
+
+/** Center-crop fraction of the grid and scale back up to full size. */
+const centerCropScaleUp = (
+    grid: Uint8Array,
+    fraction: number,
+): Uint8Array => {
+    const size = TEMPLATE_GRID_SIZE;
+    const out = new Uint8Array(size * size);
+    const inset = Math.floor(size * (1 - fraction) * 0.5);
+    const span = size - inset * 2;
+    for (let row = 0; row < size; row++) {
+        for (let col = 0; col < size; col++) {
+            const srcCol = inset + Math.min(span - 1, Math.floor((col * span) / size));
+            const srcRow = inset + Math.min(span - 1, Math.floor((row * span) / size));
+            out[row * size + col] = grid[srcRow * size + srcCol]!;
+        }
+    }
+    return out;
+};
+
 /** RGBA image split vertically between two colors. */
 const splitRgba = (
     width: number,
@@ -118,6 +152,73 @@ describe("templateMatchScore", () => {
             encodeLuminanceGrid(b),
         )).toBeGreaterThan(CROP_SAD_THRESHOLD);
     });
+
+    it("matches a globally brighter copy of the same grid", () => {
+        const src = makeGrid(2);
+        const bright = applyGainBias(src, 1.15, 28);
+        expect(templateMatchScore(
+            encodeLuminanceGrid(src),
+            encodeLuminanceGrid(bright),
+        )).toBeLessThanOrEqual(CROP_SAD_THRESHOLD);
+    });
+
+    it("matches a darker lower-contrast copy of the same grid", () => {
+        const src = makeGrid(2);
+        const dark = applyGainBias(src, 0.7, -12);
+        expect(templateMatchScore(
+            encodeLuminanceGrid(src),
+            encodeLuminanceGrid(dark),
+        )).toBeLessThanOrEqual(CROP_SAD_THRESHOLD);
+    });
+
+    it("matches a center crop of the same grid", () => {
+        const src = makeGrid(2);
+        const crop = centerCropScaleUp(src, 0.6);
+        expect(templateMatchScore(
+            encodeLuminanceGrid(src),
+            encodeLuminanceGrid(crop),
+        )).toBeLessThanOrEqual(CROP_SAD_THRESHOLD);
+    });
+
+    it("matches a brightened center crop", () => {
+        const src = makeGrid(2);
+        const crop = applyGainBias(centerCropScaleUp(src, 0.6), 1.2, 20);
+        expect(templateMatchScore(
+            encodeLuminanceGrid(src),
+            encodeLuminanceGrid(crop),
+        )).toBeLessThanOrEqual(CROP_SAD_THRESHOLD);
+    });
+
+    it("matches when the tighter crop is passed as the first argument", () => {
+        const src = makeGrid(2);
+        const crop = centerCropScaleUp(src, 0.55);
+        // Either ordering must succeed — production does not know which is the crop.
+        expect(templateMatchScore(
+            encodeLuminanceGrid(crop),
+            encodeLuminanceGrid(src),
+        )).toBeLessThanOrEqual(CROP_SAD_THRESHOLD);
+    });
+
+    it("matches an offset (non-centered) crop", () => {
+        const src = makeGrid(2);
+        const size = TEMPLATE_GRID_SIZE;
+        const out = new Uint8Array(size * size);
+        const x0 = Math.floor(size * 0.1);
+        const y0 = Math.floor(size * 0.15);
+        const w = Math.floor(size * 0.55);
+        const h = Math.floor(size * 0.55);
+        for (let row = 0; row < size; row++) {
+            for (let col = 0; col < size; col++) {
+                const srcCol = x0 + Math.min(w - 1, Math.floor((col * w) / size));
+                const srcRow = y0 + Math.min(h - 1, Math.floor((row * h) / size));
+                out[row * size + col] = src[srcRow * size + srcCol]!;
+            }
+        }
+        expect(templateMatchScore(
+            encodeLuminanceGrid(src),
+            encodeLuminanceGrid(out),
+        )).toBeLessThanOrEqual(CROP_SAD_THRESHOLD);
+    });
 });
 
 describe("areCropMatches", () => {
@@ -151,5 +252,15 @@ describe("areCropMatches", () => {
             warm,
             encodeLuminanceGrid(gridB),
         )).toBe(false);
+    });
+
+    it("matches a shaded crop under the same palette", () => {
+        const shadedCrop = applyGainBias(centerCropScaleUp(grid, 0.6), 0.75, 18);
+        expect(areCropMatches(
+            warm,
+            encodeLuminanceGrid(grid),
+            warm,
+            encodeLuminanceGrid(shadedCrop),
+        )).toBe(true);
     });
 });

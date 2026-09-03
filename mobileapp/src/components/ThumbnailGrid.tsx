@@ -138,6 +138,7 @@ function SizedGrid({
             itemCount={rowCount}
             itemSize={layout.rowHeight}
             itemData={itemData}
+            overscanCount={6}
             onScroll={(props) => {
                 onScrollOffsetChange(props.scrollOffset);
             }}
@@ -175,7 +176,7 @@ function SizedMasonryGrid({
         [columns, files, width],
     );
     const visibleItems = useMemo(
-        () => visibleMasonryItems(layout.items, scrollTop, height),
+        () => visibleMasonryItems(layout.items, scrollTop, height, 800),
         [height, layout.items, scrollTop],
     );
 
