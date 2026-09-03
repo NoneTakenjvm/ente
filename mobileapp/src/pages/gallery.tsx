@@ -11,16 +11,16 @@ import { ArrowDownUp, Upload } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { PageLoader } from "@/components/PageLoader";
 import { SelectionActionFooter } from "@/components/SelectionActionFooter";
+import { StampToolFooter } from "@/components/StampToolFooter";
 import { SyncBanner } from "@/components/SyncBanner";
 import { TagFilterBar } from "@/components/TagFilterBar";
-import {
-    ThumbnailGrid,
-    type ThumbnailGridSelection,
-} from "@/components/ThumbnailGrid";
+import { ThumbnailGrid } from "@/components/ThumbnailGrid";
 import { Button } from "@/components/ui/button";
 import { useLibraryBootstrap } from "@/hooks/use-library-bootstrap";
-import { SELECTION_FOOTER_INSET_PX } from "@/lib/selection";
-import { bulkAddTags } from "@/lib/tag-bulk-actions";
+import {
+    SELECTION_FOOTER_INSET_PX,
+    buildMediaGridSelection,
+} from "@/lib/selection";
 import {
     isSessionAuthenticated,
     reconcileSessionWithCore,
@@ -38,6 +38,7 @@ import {
     deviceViewerAspectRatio,
     sortFilesByViewportFit,
 } from "@/lib/viewport-fit";
+import { sortFilesByImageSize } from "@/lib/image-size-sort";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
@@ -67,6 +68,7 @@ export default function GalleryPage(): JSX.Element {
     const mediaShuffledFileIds = useUIStore((s) => s.mediaShuffledFileIds);
     const reconcileMediaShuffle = useUIStore((s) => s.reconcileMediaShuffle);
     const viewportFitSort = useUIStore((s) => s.viewportFitSort);
+    const imageSizeSort = useUIStore((s) => s.imageSizeSort);
     const setUploadPanelOpen = useUploadJobStore((s) => s.setPanelOpen);
     const syncStatus = useLibraryStore((s) => s.syncStatus);
     const initialLoadDone = useLibraryBootstrap();
@@ -116,13 +118,26 @@ export default function GalleryPage(): JSX.Element {
     );
 
     useEffect(() => {
-        if (mediaViewOrder !== "shuffled" || viewportFitSort !== "none") {
+        if (
+            mediaViewOrder !== "shuffled" ||
+            viewportFitSort !== "none" ||
+            imageSizeSort !== "none"
+        ) {
             return;
         }
         reconcileMediaShuffle(filteredFiles.map((file) => file.id));
-    }, [filteredFiles, mediaViewOrder, reconcileMediaShuffle, viewportFitSort]);
+    }, [
+        filteredFiles,
+        mediaViewOrder,
+        reconcileMediaShuffle,
+        viewportFitSort,
+        imageSizeSort,
+    ]);
 
     const files = useMemo(() => {
+        if (imageSizeSort !== "none") {
+            return sortFilesByImageSize(filteredFiles, imageSizeSort);
+        }
         if (viewportFitSort !== "none") {
             return sortFilesByViewportFit(
                 filteredFiles,
@@ -148,6 +163,7 @@ export default function GalleryPage(): JSX.Element {
         });
     }, [
         filteredFiles,
+        imageSizeSort,
         mediaShuffledFileIds,
         mediaShuffleSeed,
         mediaViewOrder,
@@ -197,41 +213,28 @@ export default function GalleryPage(): JSX.Element {
         };
     }, [resetSelection]);
 
-    const gridSelection = useMemo((): ThumbnailGridSelection | undefined => {
-        if (!selectionEnabled) {
-            return undefined;
-        }
-        if (stampActive && stampTags.length > 0) {
-            return {
-                selectedIds: new Set(selectedIds),
-                onToggle: (file) => {
-                    toggleSelection(file.id);
-                    void bulkAddTags([file.id], stampTags);
-                },
-                onSelectMany: (fileIds, mode) => {
-                    selectMany(fileIds, mode);
-                    if (mode === "add") {
-                        void bulkAddTags(fileIds, stampTags);
-                    }
-                },
-            };
-        }
-        return {
-            selectedIds: new Set(selectedIds),
-            onToggle: (file) => toggleSelection(file.id),
-            onSelectMany: selectMany,
-        };
-    }, [
-        selectionEnabled,
-        selectedIds,
-        selectMany,
-        stampActive,
-        stampTags,
-        toggleSelection,
-    ]);
+    const gridSelection = useMemo(
+        () =>
+            buildMediaGridSelection({
+                selectionEnabled,
+                selectedIds,
+                stampActive,
+                stampTags,
+                toggleSelection,
+                selectMany,
+            }),
+        [
+            selectMany,
+            selectedIds,
+            selectionEnabled,
+            stampActive,
+            stampTags,
+            toggleSelection,
+        ],
+    );
 
     const footerInsetPx =
-        selectionEnabled && (selectedIds.length > 0 || stampActive) ?
+        stampActive || (selectionEnabled && selectedIds.length > 0) ?
             SELECTION_FOOTER_INSET_PX :
             0;
 
@@ -243,7 +246,8 @@ export default function GalleryPage(): JSX.Element {
     }, [router]);
 
     const handleOpenFile = useCallback((file: EnteFile): void => {
-        if (useSelectionStore.getState().enabled) {
+        const { enabled, stampActive: stamping } = useSelectionStore.getState();
+        if (enabled || stamping) {
             return;
         }
         setViewerFileId(file.id);
@@ -323,13 +327,18 @@ export default function GalleryPage(): JSX.Element {
             ) : (
                 <ThumbnailGrid
                     files={files}
-                    onOpenFile={selectionEnabled ? undefined : handleOpenFile}
+                    onOpenFile={
+                        selectionEnabled || stampActive ?
+                            undefined :
+                            handleOpenFile
+                    }
                     selection={gridSelection}
                     footerInsetPx={footerInsetPx}
                 />
             )}
 
             <SelectionActionFooter />
+            <StampToolFooter />
 
             {viewerFileId !== undefined ? (
                 <PhotoViewer

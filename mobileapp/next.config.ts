@@ -1,14 +1,25 @@
 import path from "node:path";
 import type { NextConfig } from "next";
 import withSerwistInit from "@serwist/next";
-import type { ManifestTransform } from "@serwist/build";
+import type { ManifestEntry, ManifestTransform } from "@serwist/build";
+
+type PrecacheManifestEntry = ManifestEntry & { size: number };
+
+/** Webpack config slice we touch — avoid depending on webpack's Configuration type. */
+type WebpackConfigSlice = {
+    experiments?: Record<string, unknown>;
+};
 
 /** Serwist glob on Windows can emit backslashes — URLs must use forward slashes. */
-const normalizePrecacheManifest: ManifestTransform = async (manifest) => ({
-    manifest: manifest.map((entry) => ({
-        ...entry,
-        url: entry.url.replace(/\\/g, "/"),
-    })),
+const normalizePrecacheManifest: ManifestTransform = async (
+    manifest: PrecacheManifestEntry[],
+): Promise<{ manifest: PrecacheManifestEntry[]; warnings: string[] }> => ({
+    manifest: manifest.map(
+        (entry: PrecacheManifestEntry): PrecacheManifestEntry => ({
+            ...entry,
+            url: entry.url.replace(/\\/g, "/"),
+        }),
+    ),
     warnings: [],
 });
 
@@ -25,7 +36,7 @@ const nextConfig: NextConfig = {
     ...(process.env.NODE_ENV === "production" ? { output: "export" as const } : {}),
     outputFileTracingRoot: path.join(__dirname, ".."),
     transpilePackages: ["ente-base", "ente-media", "ente-utils"],
-    webpack: (config) => {
+    webpack: (config: WebpackConfigSlice): WebpackConfigSlice => {
         config.experiments = {
             ...config.experiments,
             asyncWebAssembly: true,

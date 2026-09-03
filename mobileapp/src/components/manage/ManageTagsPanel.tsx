@@ -326,8 +326,7 @@ export function ManageTagsPanel(): JSX.Element {
             current.filter(
                 (entry) =>
                     entry.tags.join("\0") !== suggestion.tags.join("\0"),
-            ),
-        );
+            ));
     };
 
     const presetTagChoices = useMemo(
@@ -475,8 +474,7 @@ export function ManageTagsPanel(): JSX.Element {
                                                 setPresetTags((current) =>
                                                     current.filter(
                                                         (entry) => entry !== tag,
-                                                    ),
-                                                );
+                                                    ));
                                             }}
                                         >
                                             ×
@@ -498,8 +496,7 @@ export function ManageTagsPanel(): JSX.Element {
                                 setPresetTags((current) =>
                                     current.includes(tag) ?
                                         current :
-                                        [...current, tag],
-                                );
+                                        [...current, tag]);
                             }}
                         >
                             <option value="">

@@ -58,29 +58,26 @@ describe("viewport-fit", () => {
         expect(mild).toBeGreaterThan(0);
     });
 
-    it("sortFilesByViewportFit puts the worst blank-space mismatch first", () => {
+    it("sortFilesByViewportFit worst puts the largest mismatch first", () => {
         const viewport = 9 / 16;
         const files = [
             fileWithAspect(1, 9, 16), // perfect fit
             fileWithAspect(2, 16, 9), // severe landscape
             fileWithAspect(3, 4, 3), // mild landscape
         ];
-        const ordered = sortFilesByViewportFit(files, "blank-space", viewport);
+        const ordered = sortFilesByViewportFit(files, "worst", viewport);
         expect(ordered.map((file) => file.id)).toEqual([2, 3, 1]);
     });
 
-    it("sortFilesByViewportFit too-large uses the same mismatch ranking", () => {
+    it("sortFilesByViewportFit best puts the closest match first", () => {
         const viewport = 9 / 16;
         const files = [
             fileWithAspect(1, 9, 16),
             fileWithAspect(2, 16, 9),
             fileWithAspect(3, 4, 3),
         ];
-        const blank = sortFilesByViewportFit(files, "blank-space", viewport);
-        const large = sortFilesByViewportFit(files, "too-large", viewport);
-        expect(large.map((file) => file.id)).toEqual(
-            blank.map((file) => file.id),
-        );
+        const ordered = sortFilesByViewportFit(files, "best", viewport);
+        expect(ordered.map((file) => file.id)).toEqual([1, 3, 2]);
     });
 
     it("sortFilesByViewportFit none preserves input order in a copy", () => {

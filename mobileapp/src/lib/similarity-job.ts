@@ -14,11 +14,13 @@ import {
 } from "@/lib/thumbnail-bytes";
 import type {
     Stage1Cluster,
+    Stage1FileEdge,
     Stage1Item,
     Stage1ProgressUpdate,
 } from "@/lib/similarity-stage1-core";
 import type {
-    CropCheckResult,
+    CropCheckBatchMessage,
+    CropCheckBatchResult,
     PhashWorkerOutbound,
     PhashWorkerRequest,
     PhashWorkerResponse,
@@ -115,8 +117,7 @@ const nextWorker = (): Worker => {
 
 /**
  * Verify whether two images could be the same photo under a crop, entirely on
- * the worker thread. Cheap to call per candidate pair; unions the verdicts
- * back on the caller.
+ * the worker thread. Prefer {@link checkCropMatchBatchInWorkers} for Stage-2.
  */
 export const checkCropMatchInWorkers = (
     aColor: string,
@@ -124,38 +125,109 @@ export const checkCropMatchInWorkers = (
     bColor: string,
     bGrid: string,
 ): Promise<boolean> =>
-    new Promise((resolve) => {
-        const worker = nextWorker();
-        const requestId = ++requestCounter;
+    checkCropMatchBatchInWorkers(
+        {
+            a: { color: aColor, grid: aGrid },
+            b: { color: bColor, grid: bGrid },
+        },
+        [["a", "b"]],
+    ).then((matches) => matches[0] ?? false);
 
-        const handleMessage = (event: MessageEvent<PhashWorkerOutbound>): void => {
-            const data = event.data;
-            if (
-                !("kind" in data) ||
-                data.kind !== "crop-check" ||
-                data.id !== requestId
-            ) {
-                return;
-            }
-            const response = data as CropCheckResult;
-            worker.removeEventListener("message", handleMessage);
-            if (response.error) {
-                resolve(false);
-                return;
-            }
-            resolve(response.match);
-        };
+export type CropBatchEntry = { color: string; grid: string };
 
-        worker.addEventListener("message", handleMessage);
-        worker.postMessage({
-            kind: "crop-check",
-            id: requestId,
-            aColor,
-            aGrid,
-            bColor,
-            bGrid,
+/**
+ * Batch crop checks across the worker pool. Unique grids are decoded once per
+ * worker chunk; pairs are split round-robin so cores stay busy.
+ */
+export const checkCropMatchBatchInWorkers = (
+    entries: Record<string, CropBatchEntry>,
+    pairs: Array<[string, string]>,
+): Promise<boolean[]> => {
+    if (pairs.length === 0) {
+        return Promise.resolve([]);
+    }
+
+    const pool = getPhashWorkers();
+    const chunkCount = Math.min(pool.length, pairs.length);
+    const matches = new Array<boolean>(pairs.length).fill(false);
+
+    const runChunk = (
+        worker: Worker,
+        chunkPairs: Array<[string, string]>,
+        absoluteIndexes: number[],
+    ): Promise<void> =>
+        new Promise((resolve) => {
+            const usedKeys = new Set<string>();
+            for (const [a, b] of chunkPairs) {
+                usedKeys.add(a);
+                usedKeys.add(b);
+            }
+            const chunkEntries: Record<string, CropBatchEntry> = {};
+            for (const key of usedKeys) {
+                const entry = entries[key];
+                if (entry) {
+                    chunkEntries[key] = entry;
+                }
+            }
+
+            const requestId = ++requestCounter;
+            const handleMessage = (
+                event: MessageEvent<PhashWorkerOutbound>,
+            ): void => {
+                const data = event.data;
+                if (
+                    !("kind" in data) ||
+                    data.kind !== "crop-check-batch" ||
+                    data.id !== requestId
+                ) {
+                    return;
+                }
+                const response = data as CropCheckBatchResult;
+                worker.removeEventListener("message", handleMessage);
+                const verdicts = response.matches;
+                for (let i = 0; i < absoluteIndexes.length; i++) {
+                    matches[absoluteIndexes[i]!] = verdicts[i] ?? false;
+                }
+                resolve();
+            };
+
+            worker.addEventListener("message", handleMessage);
+            const message: CropCheckBatchMessage = {
+                kind: "crop-check-batch",
+                id: requestId,
+                entries: chunkEntries,
+                pairs: chunkPairs,
+            };
+            worker.postMessage(message);
         });
-    });
+
+    const chunkPairs: Array<Array<[string, string]>> = Array.from(
+        { length: chunkCount },
+        () => [],
+    );
+    const chunkIndexes: number[][] = Array.from(
+        { length: chunkCount },
+        () => [],
+    );
+    for (let i = 0; i < pairs.length; i++) {
+        const chunk = i % chunkCount;
+        chunkPairs[chunk]!.push(pairs[i]!);
+        chunkIndexes[chunk]!.push(i);
+    }
+
+    return Promise.all(
+        chunkPairs.map((pairsForChunk, chunk) => {
+            if (pairsForChunk.length === 0) {
+                return Promise.resolve();
+            }
+            return runChunk(
+                pool[chunk]!,
+                pairsForChunk,
+                chunkIndexes[chunk]!,
+            );
+        }),
+    ).then(() => matches);
+};
 
 export const imageFilesForPhash = (
     files: EnteFile[],
@@ -339,18 +411,24 @@ export const terminatePhashWorker = (): void => {
 export interface Stage1WorkerOptions {
     onProgress?: (update: Stage1ProgressUpdate) => void;
     signal?: AbortSignal;
-    maxGroupSize?: number;
 }
+
+export type Stage1WorkerResult = {
+    clusters: Stage1Cluster[];
+    edges: Stage1FileEdge[];
+};
 
 /**
  * Run Stage-1 clustering on a dedicated worker so the UI thread stays free.
  * Progress (and provisional tight-match groups) stream back via {@link onProgress}.
+ * Returns clusters for the requested threshold plus edges collected up to
+ * {@link EDGE_COLLECT_THRESHOLD} for later threshold changes.
  */
 export const runStage1InWorker = (
     items: Stage1Item[],
     threshold: number,
     options: Stage1WorkerOptions = {},
-): Promise<Stage1Cluster[]> =>
+): Promise<Stage1WorkerResult> =>
     new Promise((resolve, reject) => {
         if (items.length < 2) {
             options.onProgress?.({
@@ -359,7 +437,7 @@ export const runStage1InWorker = (
                 total: 0,
                 clusters: [],
             });
-            resolve([]);
+            resolve({ clusters: [], edges: [] });
             return;
         }
 
@@ -383,13 +461,13 @@ export const runStage1InWorker = (
             reject(error);
         };
 
-        const succeed = (clusters: Stage1Cluster[]): void => {
+        const succeed = (result: Stage1WorkerResult): void => {
             if (settled) {
                 return;
             }
             settled = true;
             cleanup();
-            resolve(clusters);
+            resolve(result);
         };
 
         const onAbort = (): void => {
@@ -417,7 +495,10 @@ export const runStage1InWorker = (
                     fail(new Error(data.error));
                     return;
                 }
-                succeed(data.clusters ?? []);
+                succeed({
+                    clusters: data.clusters ?? [],
+                    edges: data.edges ?? [],
+                });
             }
         };
 
@@ -430,7 +511,6 @@ export const runStage1InWorker = (
             id: requestId,
             items,
             threshold,
-            maxGroupSize: options.maxGroupSize,
         };
         worker.postMessage(message);
     });

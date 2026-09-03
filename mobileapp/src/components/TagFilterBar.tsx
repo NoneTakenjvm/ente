@@ -36,6 +36,7 @@ import {
 import { bulkAddTags, bulkRemoveTags } from "@/lib/tag-bulk-actions";
 import { Shuffle } from "lucide-react";
 import { SelectionModeToggle } from "@/components/SelectionModeToggle";
+import { StampModeToggle } from "@/components/StampModeToggle";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useSelectionStore } from "@/stores/selection-store";
@@ -74,6 +75,8 @@ export function TagFilterBar({
     const setMediaDefaultOrder = useUIStore((s) => s.setMediaDefaultOrder);
     const viewportFitSort = useUIStore((s) => s.viewportFitSort);
     const setViewportFitSort = useUIStore((s) => s.setViewportFitSort);
+    const imageSizeSort = useUIStore((s) => s.imageSizeSort);
+    const setImageSizeSort = useUIStore((s) => s.setImageSizeSort);
 
     const [bulkTagOpen, setBulkTagOpen] = useState<boolean>(false);
     const [confirmBulkOpen, setConfirmBulkOpen] = useState<boolean>(false);
@@ -230,6 +233,8 @@ export function TagFilterBar({
                         notCroppedCount={notCroppedCount}
                         viewportFitSort={viewportFitSort}
                         onViewportFitSortChange={setViewportFitSort}
+                        imageSizeSort={imageSizeSort}
+                        onImageSizeSortChange={setImageSizeSort}
                     />
                     <TagClausePicker
                         filter={tagFilter}
@@ -271,6 +276,7 @@ export function TagFilterBar({
                         croppedCount={croppedCount}
                         notCroppedCount={notCroppedCount}
                     />
+                    <StampModeToggle />
                     <SelectionModeToggle />
                 </div>
                 {filterActive ? (

@@ -7,13 +7,35 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-03 |
-| **Last agent / session** | Thumbnail RAM/disk LRU + heap-pressure eviction. |
+| **Last agent / session** | Stage-2 crop-match speedups (finished after parallel interference). |
 | **Current milestone** | Post-M8 UX / stability batch |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Phone QA: long gallery scroll for OOM + kit suggestions exact sets. Footer `NTPhotos 0.3.13`. |
+| **Next recommended action** | Phone QA Find similar crop phase + stamp tool. Footer `NTPhotos 0.3.24`. Lint/tests/build green. |
 
 **This session shipped:**
-1. **Thumbnail memory efficiency** — session RAM LRU (64 MB) with `revokeObjectURL` (never evicts subscribed cells); emergency 25% evict under JS heap pressure; IDB thumb store LRU (200 MB); `invalidateThumbnailCache` on trash/sync-content-change/replace; hashing no longer re-fetches blob URLs. `APP_VERSION` → `0.3.13`. Tests + production build green.
+1. **Faster Stage-2 crop checks** — decode-once luminance grids + WeakMap orientation cache; packed color Hamming; batched `crop-check-batch` worker messages (unique grids per chunk); throttled group rebuilds (~300ms). Works with session crop-verdict cache. `APP_VERSION` → `0.3.24`.
+
+**Previous session shipped:**
+1. **Stamp as its own tool** — stamp icon next to select; pick tags/kit then tap (or drag) photos to apply instantly. Mutually exclusive with selection; no checkmarks while stamping. `APP_VERSION` → `0.3.23`.
+
+**Previous session shipped:**
+1. **Crop aspect lock** — image crop overlay checkbox “Lock aspect ratio” (default on). Locked resize keeps the device-viewer aspect so you can shrink without distorting the ratio; unchecked allows free resize. `APP_VERSION` → `0.3.22`.
+
+**Previous session shipped:**
+1. **Gallery Filter → Image size** — Largest / Smallest reorder by pixel area (`w×h` from pub magic metadata), not file bytes. Session-only; mutually exclusive with viewport fit and shuffle. `APP_VERSION` → `0.3.21`.
+
+**Previous session shipped:**
+1. **Similar threshold/max-size cache** — after Find similar, Stage-1 edges (up to distance 20) and crop-pair verdicts stay in a session cache. Changing threshold reclusters from edges + reapplies crop cache (sync when fully cached); max group size only re-trims display. `APP_VERSION` → `0.3.19`.
+
+**Previous session shipped:**
+1. **Gallery Filter → Viewport fit** — Best Fit / Worst Fit. `APP_VERSION` → `0.3.17`.
+
+**Previous session shipped:**
+1. **Similar max group size = display trim only** — Stage-1/Stage-2 cluster uncapped; `trimSimilarityGroups` slices cards after matching. Fixes artificial mega-fragmentation when the setting was applied during union-find. `APP_VERSION` → `0.3.16`.
+
+**This session (in progress, other thread):**
+1. Faster Stage-2 crop checks — decode-once grids, batched worker messages, packed color Hamming, throttled group rebuilds.
+2. **Faster Stage-1 hash compare** — packed dHash Hamming, variant short-circuit, cheaper progress rebuilds. `APP_VERSION` → `0.3.14`.
 
 **Previous session shipped:**
 1. **Kit suggestions = exact tag sets only** — no pairwise co-occurrence; a photo with A+B+C only counts toward `A + B + C`, not `A + B`. `APP_VERSION` → `0.3.12`.
@@ -40,7 +62,7 @@
 
 **Previous session shipped:**
 1. **Crop default = device viewer aspect** — opening crop (image/video) seeds a centered max-fit crop box matching the current device viewport aspect ratio (replaces content-bounds as the initial selection).
-2. **Gallery Filter → Viewport fit** — None / Blank Space / Too Large. Reorders (does not hide) by aspect mismatch vs the live viewer viewport; session-only. Shuffle clears when a fit mode is active.
+2. **Gallery Filter → Viewport fit** — None / Best Fit / Worst Fit. Reorders (does not hide) by aspect match vs the live viewer viewport; session-only. Shuffle clears when a fit mode is active.
 3. `APP_VERSION` → `0.3.4`.
 
 **Previous session shipped:**

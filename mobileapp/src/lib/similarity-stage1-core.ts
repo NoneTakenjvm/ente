@@ -1,19 +1,33 @@
 /**
  * Worker-safe Stage-1 similar-photo clustering: dHash buckets → edges →
- * mutual nearest-neighbour → size-capped Kruskal. No DOM / EnteFile imports.
+ * mutual nearest-neighbour → Kruskal. No DOM / EnteFile imports.
  *
  * [Note: progressive tight groups.] While comparing, near-exact edges
  * (distance ≤ {@link TIGHT_MATCH_DISTANCE}) are unioned immediately so the UI
  * can show real duplicate groups before the full mutual pass finishes. The
  * final result always re-runs mutual-kNN + Kruskal over every collected edge —
  * no pairs are skipped.
+ *
+ * [Note: packed hashes.] Hex strings are parsed once into {@link PackedDHash}
+ * limbs before the compare loop — Hamming uses uint32 XOR + SWAR popcount.
+ *
+ * [Note: group size cap.] Clustering itself is uncapped. Callers trim oversized
+ * components for display after grouping; capping during union artificially
+ * fragments the graph into many small groups.
  */
-import { hammingDistance } from "@/lib/phash";
+import {
+    parseDHashHex,
+    variantHammingDistance,
+    type PackedDHash,
+} from "@/lib/phash";
 
-/** Default cap when callers omit {@link maxGroupSize}. */
+/** Default display trim when callers omit a max (not used during clustering). */
 export const MAX_GROUP_SIZE = 5;
 export const MUTUAL_RANK_K = 8;
 export const TIGHT_MATCH_DISTANCE = 2;
+
+/** Soft throttle for provisional cluster snapshots during compare (ms). */
+const CLUSTER_PROGRESS_INTERVAL_MS = 300;
 
 export type Stage1Item = {
     fileId: number;
@@ -24,6 +38,26 @@ export type Stage1Cluster = {
     fileIds: number[];
     furthestDistance: number;
 };
+
+/** Pairwise Stage-1 edge keyed by file id (safe to cache across threshold changes). */
+export type Stage1FileEdge = {
+    leftFileId: number;
+    rightFileId: number;
+    distance: number;
+};
+
+export type Stage1ClusteringResult = {
+    clusters: Stage1Cluster[];
+    /** All edges collected at {@link collectThreshold} (for threshold re-clustering). */
+    edges: Stage1FileEdge[];
+};
+
+/**
+ * Collect Hamming edges up to this distance so later threshold changes within
+ * the Similar slider range can recluster without recomparing hashes.
+ * Must stay ≥ the UI slider max in manage.tsx.
+ */
+export const EDGE_COLLECT_THRESHOLD = 20;
 
 export type Stage1ProgressUpdate = {
     phase: "comparing" | "finalizing" | "done";
@@ -43,6 +77,13 @@ type CandidateEdge = {
     distance: number;
 };
 
+type NumericStage1Item = {
+    fileId: number;
+    hashes: PackedDHash[];
+    /** Unique 12-bit bucket keys derived from each variant. */
+    bucketKeys: string[];
+};
+
 class UnionFind {
     private readonly parent: number[];
     private readonly sizes: number[];
@@ -60,16 +101,14 @@ class UnionFind {
     }
 
     /**
-     * @returns whether two different components were merged (false if already
-     * united or the merge would exceed {@link maxSize}).
+     * Unite two components with no size limit.
+     *
+     * @returns whether two different components were merged.
      */
-    tryUnion(left: number, right: number, maxSize: number): boolean {
+    union(left: number, right: number): boolean {
         const rootLeft = this.find(left);
         const rootRight = this.find(right);
         if (rootLeft === rootRight) {
-            return false;
-        }
-        if (this.sizes[rootLeft]! + this.sizes[rootRight]! > maxSize) {
             return false;
         }
         if (this.sizes[rootLeft]! < this.sizes[rootRight]!) {
@@ -83,33 +122,32 @@ class UnionFind {
     }
 }
 
-const hashBucketKey = (hash: string): string => hash.slice(0, 3);
+/** Top 12 bits of the high limb as a 3-hex-char bucket key (matches hex.slice(0, 3)). */
+const hashBucketKeyPacked = (hash: PackedDHash): string =>
+    ((hash.high >>> 20) & 0xfff).toString(16).padStart(3, "0");
 
-const variantDistance = (left: string[], right: string[]): number => {
-    let best = Number.MAX_SAFE_INTEGER;
-    for (const leftHash of left) {
-        for (const rightHash of right) {
-            const distance = hammingDistance(leftHash, rightHash);
-            if (distance < best) {
-                best = distance;
-            }
-        }
-    }
-    return best;
-};
-
-const buildHashBuckets = (
-    items: Stage1Item[],
-): Map<string, number[]> => {
-    const buckets = new Map<string, number[]>();
-    for (let i = 0; i < items.length; i++) {
+const toNumericItems = (items: Stage1Item[]): NumericStage1Item[] =>
+    items.map((item) => {
+        const hashes = item.hashes.map(parseDHashHex);
         const seen = new Set<string>();
-        for (const hash of items[i]!.hashes) {
-            const key = hashBucketKey(hash);
+        const bucketKeys: string[] = [];
+        for (const hash of hashes) {
+            const key = hashBucketKeyPacked(hash);
             if (seen.has(key)) {
                 continue;
             }
             seen.add(key);
+            bucketKeys.push(key);
+        }
+        return { fileId: item.fileId, hashes, bucketKeys };
+    });
+
+const buildHashBuckets = (
+    items: NumericStage1Item[],
+): Map<string, number[]> => {
+    const buckets = new Map<string, number[]>();
+    for (let i = 0; i < items.length; i++) {
+        for (const key of items[i]!.bucketKeys) {
             const bucket = buckets.get(key);
             if (bucket) {
                 bucket.push(i);
@@ -123,9 +161,8 @@ const buildHashBuckets = (
 
 const clustersFromUnionFind = (
     uf: UnionFind,
-    items: Stage1Item[],
+    items: NumericStage1Item[],
     edgeDistanceByPair: Map<string, number>,
-    maxGroupSize: number,
 ): Stage1Cluster[] => {
     const membersByRoot = new Map<number, number[]>();
     for (let i = 0; i < items.length; i++) {
@@ -154,17 +191,10 @@ const clustersFromUnionFind = (
                 }
             }
         }
-        // Hard-slice oversized components (safety net; tryUnion should prevent most).
-        for (let start = 0; start < memberIndices.length; start += maxGroupSize) {
-            const slice = memberIndices.slice(start, start + maxGroupSize);
-            if (slice.length < 2) {
-                continue;
-            }
-            clusters.push({
-                fileIds: slice.map((index) => items[index]!.fileId),
-                furthestDistance: furthest,
-            });
-        }
+        clusters.push({
+            fileIds: memberIndices.map((index) => items[index]!.fileId),
+            furthestDistance: furthest,
+        });
     }
     return clusters.sort((a, b) => b.fileIds.length - a.fileIds.length);
 };
@@ -217,17 +247,22 @@ const filterMutualNearestEdges = (
     return mutual;
 };
 
-/** @returns true when a provisional tight-match merge occurred. */
+type CompareResult = {
+    mergedTight: boolean;
+    newEdges: CandidateEdge[];
+};
+
+/** @returns new edges added and whether a provisional tight-match merge occurred. */
 const compareFileAgainstLaterBucketMates = (
     fileIndex: number,
     buckets: Map<string, number[]>,
-    items: Stage1Item[],
+    items: NumericStage1Item[],
     threshold: number,
     edgeByKey: Map<string, CandidateEdge>,
     provisionalUf: UnionFind,
-    maxGroupSize: number,
-): boolean => {
+): CompareResult => {
     const seenPartners = new Set<number>();
+    const newEdges: CandidateEdge[] = [];
     let mergedTight = false;
     const consider = (otherIndex: number): void => {
         if (otherIndex <= fileIndex || seenPartners.has(otherIndex)) {
@@ -240,23 +275,24 @@ const compareFileAgainstLaterBucketMates = (
         if (edgeByKey.has(key)) {
             return;
         }
-        const distance = variantDistance(
+        const distance = variantHammingDistance(
             items[left]!.hashes,
             items[right]!.hashes,
         );
         if (distance > threshold) {
             return;
         }
-        edgeByKey.set(key, { left, right, distance });
+        const edge: CandidateEdge = { left, right, distance };
+        edgeByKey.set(key, edge);
+        newEdges.push(edge);
         if (distance <= TIGHT_MATCH_DISTANCE) {
-            if (provisionalUf.tryUnion(left, right, maxGroupSize)) {
+            if (provisionalUf.union(left, right)) {
                 mergedTight = true;
             }
         }
     };
 
-    for (const hash of items[fileIndex]!.hashes) {
-        const key = hashBucketKey(hash);
+    for (const key of items[fileIndex]!.bucketKeys) {
         for (const other of buckets.get(key) ?? []) {
             consider(other);
         }
@@ -271,7 +307,80 @@ const compareFileAgainstLaterBucketMates = (
             }
         }
     }
-    return mergedTight;
+    return { mergedTight, newEdges };
+};
+
+const finalizeClusters = (
+    items: NumericStage1Item[],
+    edgeByKey: Map<string, CandidateEdge>,
+    clusterThreshold: number,
+): Stage1Cluster[] => {
+    const filtered = new Map<string, CandidateEdge>();
+    for (const [key, edge] of edgeByKey.entries()) {
+        if (edge.distance <= clusterThreshold) {
+            filtered.set(key, edge);
+        }
+    }
+    const mutual = filterMutualNearestEdges(filtered);
+    const uf = new UnionFind(items.length);
+    const edgeDistanceByPair = new Map<string, number>();
+    for (const edge of mutual) {
+        uf.union(edge.left, edge.right);
+        edgeDistanceByPair.set(`${edge.left}:${edge.right}`, edge.distance);
+    }
+    return clustersFromUnionFind(uf, items, edgeDistanceByPair);
+};
+
+const edgesToFileEdges = (
+    items: NumericStage1Item[],
+    edgeByKey: Map<string, CandidateEdge>,
+): Stage1FileEdge[] => {
+    const edges: Stage1FileEdge[] = [];
+    for (const edge of edgeByKey.values()) {
+        edges.push({
+            leftFileId: items[edge.left]!.fileId,
+            rightFileId: items[edge.right]!.fileId,
+            distance: edge.distance,
+        });
+    }
+    return edges;
+};
+
+/**
+ * Recluster from cached file-id edges at a (possibly lower) threshold.
+ * Sync and cheap — no hash compares.
+ */
+export const clusterFromFileEdges = (
+    items: Stage1Item[],
+    edges: Stage1FileEdge[],
+    threshold: number,
+): Stage1Cluster[] => {
+    if (items.length < 2) {
+        return [];
+    }
+    const numericItems = toNumericItems(items);
+    const indexByFileId = new Map(
+        numericItems.map((item, index) => [item.fileId, index]),
+    );
+    const edgeByKey = new Map<string, CandidateEdge>();
+    for (const edge of edges) {
+        if (edge.distance > threshold) {
+            continue;
+        }
+        const left = indexByFileId.get(edge.leftFileId);
+        const right = indexByFileId.get(edge.rightFileId);
+        if (left === undefined || right === undefined) {
+            continue;
+        }
+        const a = Math.min(left, right);
+        const b = Math.max(left, right);
+        edgeByKey.set(`${a}:${b}`, {
+            left: a,
+            right: b,
+            distance: edge.distance,
+        });
+    }
+    return finalizeClusters(numericItems, edgeByKey, threshold);
 };
 
 /**
@@ -281,46 +390,40 @@ const compareFileAgainstLaterBucketMates = (
 export const runStage1ClusteringSync = (
     items: Stage1Item[],
     threshold: number,
-    maxGroupSize: number = MAX_GROUP_SIZE,
 ): Stage1Cluster[] => {
     if (items.length < 2) {
         return [];
     }
-    const buckets = buildHashBuckets(items);
+    const numericItems = toNumericItems(items);
+    const buckets = buildHashBuckets(numericItems);
     const edgeByKey = new Map<string, CandidateEdge>();
-    const provisionalUf = new UnionFind(items.length);
-    for (let i = 0; i < items.length; i++) {
+    const provisionalUf = new UnionFind(numericItems.length);
+    for (let i = 0; i < numericItems.length; i++) {
         compareFileAgainstLaterBucketMates(
             i,
             buckets,
-            items,
+            numericItems,
             threshold,
             edgeByKey,
             provisionalUf,
-            maxGroupSize,
         );
     }
-    const mutual = filterMutualNearestEdges(edgeByKey);
-    const uf = new UnionFind(items.length);
-    const edgeDistanceByPair = new Map<string, number>();
-    for (const edge of mutual) {
-        uf.tryUnion(edge.left, edge.right, maxGroupSize);
-        edgeDistanceByPair.set(`${edge.left}:${edge.right}`, edge.distance);
-    }
-    return clustersFromUnionFind(uf, items, edgeDistanceByPair, maxGroupSize);
+    return finalizeClusters(numericItems, edgeByKey, threshold);
 };
 
 /**
- * Async Stage-1 with per-image progress. Yields to the event loop after each
- * image so worker `postMessage` progress actually reaches the UI thread.
+ * Async Stage-1 with per-image progress. Collects edges up to
+ * {@link collectThreshold} (default {@link EDGE_COLLECT_THRESHOLD}) so callers
+ * can recluster at lower thresholds without recomparing. Yields to the event
+ * loop so worker `postMessage` progress reaches the UI thread.
  */
 export const runStage1Clustering = async (
     items: Stage1Item[],
     threshold: number,
     onProgress: (update: Stage1ProgressUpdate) => void,
     shouldAbort?: () => boolean,
-    maxGroupSize: number = MAX_GROUP_SIZE,
-): Promise<Stage1Cluster[]> => {
+    collectThreshold: number = EDGE_COLLECT_THRESHOLD,
+): Promise<Stage1ClusteringResult> => {
     if (items.length < 2) {
         onProgress({
             phase: "done",
@@ -328,56 +431,74 @@ export const runStage1Clustering = async (
             total: 0,
             clusters: [],
         });
-        return [];
+        return { clusters: [], edges: [] };
     }
 
-    const buckets = buildHashBuckets(items);
+    const collectAt = Math.max(threshold, collectThreshold);
+    const numericItems = toNumericItems(items);
+    const buckets = buildHashBuckets(numericItems);
     const edgeByKey = new Map<string, CandidateEdge>();
-    const provisionalUf = new UnionFind(items.length);
+    const provisionalUf = new UnionFind(numericItems.length);
     const provisionalDistances = new Map<string, number>();
-    const total = items.length;
+    const total = numericItems.length;
     // Yield often enough for a live progress bar without drowning the main thread.
-    const yieldEvery = Math.max(1, Math.min(24, Math.floor(total / 200) || 1));
+    const yieldEvery = Math.max(1, Math.min(48, Math.floor(total / 150) || 1));
+    let lastClusterAt = 0;
+    let clustersDirty = false;
 
-    for (let i = 0; i < items.length; i++) {
+    for (let i = 0; i < numericItems.length; i++) {
         if (shouldAbort?.()) {
             throw new DOMException("Similarity grouping aborted", "AbortError");
         }
-        const beforeSize = edgeByKey.size;
-        const mergedTight = compareFileAgainstLaterBucketMates(
+        const { mergedTight, newEdges } = compareFileAgainstLaterBucketMates(
             i,
             buckets,
-            items,
-            threshold,
+            numericItems,
+            collectAt,
             edgeByKey,
             provisionalUf,
-            maxGroupSize,
         );
-        if (edgeByKey.size > beforeSize) {
-            for (const [key, edge] of edgeByKey.entries()) {
-                if (!provisionalDistances.has(key)) {
-                    provisionalDistances.set(key, edge.distance);
-                }
+        for (const edge of newEdges) {
+            if (edge.distance <= threshold) {
+                provisionalDistances.set(
+                    `${edge.left}:${edge.right}`,
+                    edge.distance,
+                );
             }
+        }
+        if (mergedTight || newEdges.some((edge) => edge.distance <= threshold)) {
+            clustersDirty = true;
         }
 
         const completed = i + 1;
-        const shouldAttachClusters =
-            mergedTight || completed === total || completed % yieldEvery === 0;
+        const now =
+            typeof performance !== "undefined" ? performance.now() : Date.now();
+        const dueForClusters =
+            clustersDirty &&
+            (completed === total ||
+                now - lastClusterAt >= CLUSTER_PROGRESS_INTERVAL_MS);
+        const shouldYield =
+            completed % yieldEvery === 0 ||
+            mergedTight ||
+            completed === total;
+
         onProgress({
             phase: "comparing",
             completed,
             total,
-            clusters: shouldAttachClusters ?
+            clusters: dueForClusters ?
                 clustersFromUnionFind(
                     provisionalUf,
-                    items,
+                    numericItems,
                     provisionalDistances,
-                    maxGroupSize,
                 ) :
                 undefined,
         });
-        if (completed % yieldEvery === 0 || mergedTight || completed === total) {
+        if (dueForClusters) {
+            lastClusterAt = now;
+            clustersDirty = false;
+        }
+        if (shouldYield) {
             await new Promise<void>((resolve) => {
                 setTimeout(resolve, 0);
             });
@@ -388,39 +509,24 @@ export const runStage1Clustering = async (
         throw new DOMException("Similarity grouping aborted", "AbortError");
     }
 
+    const edges = edgesToFileEdges(numericItems, edgeByKey);
+    const finalClusters = finalizeClusters(numericItems, edgeByKey, threshold);
+
     onProgress({
         phase: "finalizing",
         completed: total,
         total,
-        clusters: clustersFromUnionFind(
-            provisionalUf,
-            items,
-            provisionalDistances,
-            maxGroupSize,
-        ),
+        clusters: finalClusters,
     });
     await new Promise<void>((resolve) => {
         setTimeout(resolve, 0);
     });
 
-    const mutual = filterMutualNearestEdges(edgeByKey);
-    const uf = new UnionFind(items.length);
-    const edgeDistanceByPair = new Map<string, number>();
-    for (const edge of mutual) {
-        uf.tryUnion(edge.left, edge.right, maxGroupSize);
-        edgeDistanceByPair.set(`${edge.left}:${edge.right}`, edge.distance);
-    }
-    const finalClusters = clustersFromUnionFind(
-        uf,
-        items,
-        edgeDistanceByPair,
-        maxGroupSize,
-    );
     onProgress({
         phase: "done",
         completed: total,
         total,
         clusters: finalClusters,
     });
-    return finalClusters;
+    return { clusters: finalClusters, edges };
 };

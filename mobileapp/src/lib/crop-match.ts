@@ -21,6 +21,9 @@
  *
  * Both signals are pure and dependency-free (no ML, no WASM).
  */
+import { hammingDistance } from "@/lib/phash";
+
+export { hammingDistance };
 
 export const TEMPLATE_GRID_SIZE = 48;
 
@@ -40,6 +43,12 @@ export interface PhashEntry {
 
 /** Threshold on the normalized mean-absolute luminance difference (0..1). */
 export const CROP_SAD_THRESHOLD = 0.08;
+
+/**
+ * Color Hamming gate. Keep it lenient — it only rejects markedly different
+ * palettes so it doesn't drop recall; the template SAD is the precision gate.
+ */
+export const COLOR_PALETTE_THRESHOLD = 12;
 
 /**
  * Above this fast-pass score the pair is clearly not a crop under any
@@ -157,18 +166,6 @@ export const colorHashFromImageData = (
     );
 };
 
-/** Hamming distance between two 64-bit hex signatures (color or dHash). */
-export const hammingDistance = (left: string, right: string): number => {
-    let distance = 0;
-    for (let i = 0; i < left.length; i++) {
-        const xor = Number.parseInt(left[i]!, 16) ^ Number.parseInt(right[i]!, 16);
-        for (let bit = 0; bit < 4; bit++) {
-            distance += (xor >> bit) & 1;
-        }
-    }
-    return distance;
-};
-
 const rot90 = (grid: Uint8Array, size: number): Uint8Array => {
     const out = new Uint8Array(size * size);
     for (let i = 0; i < size; i++) {
@@ -205,6 +202,19 @@ const gridVariants = (grid: Uint8Array, size: number): Uint8Array[] => {
         rot90(rot90(m, size), size),
         rot90(rot90(rot90(m, size), size), size),
     ];
+};
+
+/** Reuse orientation variants when the same decoded grid is the source for many pairs. */
+const variantCache = new WeakMap<Uint8Array, Uint8Array[]>();
+
+const cachedGridVariants = (grid: Uint8Array, size: number): Uint8Array[] => {
+    const cached = variantCache.get(grid);
+    if (cached) {
+        return cached;
+    }
+    const variants = gridVariants(grid, size);
+    variantCache.set(grid, variants);
+    return variants;
 };
 
 /** Result of an alignment: the best normalized SAD and whether every offset
@@ -312,16 +322,13 @@ const fullAlign = (
     ).score;
 
 /**
- * Lowest achievable normalized SAD between two images. Runs a cheap 48x48
- * coarse alignment against all 8 source orientations with a loose abort bound;
- * a pair whose every orientation aborts is clearly not a crop and is rejected
- * early. Plausible orientations escalate to the unbounded full sweep, so the
- * cheap tier never caps recall. The crop is held fixed while the source is
- * rotated, which is the validated rotate-then-crop semantics.
+ * Lowest achievable normalized SAD between two decoded 48×48 luminance grids.
+ * Prefer this when grids are already decoded (batch crop checks).
  */
-export const templateMatchScore = (aGrid: string, bGrid: string): number => {
-    const src = decodeLuminanceGrid(aGrid);
-    const crop = decodeLuminanceGrid(bGrid);
+export const templateMatchScoreGrids = (
+    src: Uint8Array,
+    crop: Uint8Array,
+): number => {
     if (
         src.length !== TEMPLATE_GRID_SIZE * TEMPLATE_GRID_SIZE ||
         crop.length !== TEMPLATE_GRID_SIZE * TEMPLATE_GRID_SIZE
@@ -329,7 +336,7 @@ export const templateMatchScore = (aGrid: string, bGrid: string): number => {
         return Number.POSITIVE_INFINITY;
     }
 
-    const variants = gridVariants(src, TEMPLATE_GRID_SIZE);
+    const variants = cachedGridVariants(src, TEMPLATE_GRID_SIZE);
     const coarse = variants.map((variant) => coarseAlign(variant, crop));
     const bestScore = Math.min(...coarse.map((result) => result.score));
     if (bestScore <= CROP_SAD_THRESHOLD) {
@@ -359,6 +366,36 @@ export const templateMatchScore = (aGrid: string, bGrid: string): number => {
 };
 
 /**
+ * Lowest achievable normalized SAD between two images. Runs a cheap 48x48
+ * coarse alignment against all 8 source orientations with a loose abort bound;
+ * a pair whose every orientation aborts is clearly not a crop and is rejected
+ * early. Plausible orientations escalate to the unbounded full sweep, so the
+ * cheap tier never caps recall. The crop is held fixed while the source is
+ * rotated, which is the validated rotate-then-crop semantics.
+ */
+export const templateMatchScore = (aGrid: string, bGrid: string): number =>
+    templateMatchScoreGrids(
+        decodeLuminanceGrid(aGrid),
+        decodeLuminanceGrid(bGrid),
+    );
+
+/**
+ * Whether two images could be the same photo under a crop, using already-decoded
+ * luminance grids (batch path — decode once per file).
+ */
+export const areCropMatchesGrids = (
+    aColor: string,
+    aGrid: Uint8Array,
+    bColor: string,
+    bGrid: Uint8Array,
+): boolean => {
+    if (hammingDistance(aColor, bColor) > COLOR_PALETTE_THRESHOLD) {
+        return false;
+    }
+    return templateMatchScoreGrids(aGrid, bGrid) <= CROP_SAD_THRESHOLD;
+};
+
+/**
  * Whether two images could be the same photo under a crop. Color is the cheap
  * candidate gate; the template match is the precision gate.
  */
@@ -367,15 +404,10 @@ export const areCropMatches = (
     aGrid: string,
     bColor: string,
     bGrid: string,
-): boolean => {
-    if (hammingDistance(aColor, bColor) > COLOR_PALETTE_THRESHOLD) {
-        return false;
-    }
-    return templateMatchScore(aGrid, bGrid) <= CROP_SAD_THRESHOLD;
-};
-
-/**
- * Color Hamming gate. Keep it lenient — it only rejects markedly different
- * palettes so it doesn't drop recall; the template SAD is the precision gate.
- */
-export const COLOR_PALETTE_THRESHOLD = 12;
+): boolean =>
+    areCropMatchesGrids(
+        aColor,
+        decodeLuminanceGrid(aGrid),
+        bColor,
+        decodeLuminanceGrid(bGrid),
+    );

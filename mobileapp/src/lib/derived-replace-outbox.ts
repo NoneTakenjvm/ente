@@ -12,11 +12,11 @@ import {
 import { getSessionCacheKey } from "@/lib/cache-key";
 
 export type DerivedReplaceKind =
-    | "crop"
-    | "rotate"
-    | "auto-crop"
-    | "video-edit"
-    | "compress";
+    | "crop" |
+    "rotate" |
+    "auto-crop" |
+    "video-edit" |
+    "compress";
 
 export interface DerivedReplaceOutboxEntry {
     fileId: number;

@@ -3,16 +3,16 @@ import { deleteDB, openDB, type IDBPDatabase } from "idb";
 const dbVersion = 4;
 
 export type KvKey =
-    | "collections"
-    | "files"
-    | "tagIndex"
-    | "phashIndex"
-    | "tagOutbox"
-    | "favoriteOutbox"
-    | "visibilityOutbox"
-    | "derivedReplaceOutbox"
-    | "trashItems"
-    | "trashCollectionKeys";
+    | "collections" |
+    "files" |
+    "tagIndex" |
+    "phashIndex" |
+    "tagOutbox" |
+    "favoriteOutbox" |
+    "visibilityOutbox" |
+    "derivedReplaceOutbox" |
+    "trashItems" |
+    "trashCollectionKeys";
 
 export interface KvRecord {
     key: KvKey;

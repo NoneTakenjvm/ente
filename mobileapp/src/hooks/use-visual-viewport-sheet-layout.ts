@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import {
+    useCallback,
+    useEffect,
+    useRef,
+    useSyncExternalStore,
+    type MutableRefObject,
+} from "react";
 
 export interface VisualViewportSheetLayout {
     bottomInset: number;
@@ -55,16 +61,17 @@ export const useVisualViewportSheetLayout: (
     active: boolean,
     heightRatio: number,
 ): VisualViewportSheetSyncResult => {
-    const cacheRef = useRef<VisualViewportSheetLayout>(INACTIVE_LAYOUT);
-    const maxHeightRef = useRef<number>(0);
+    const cacheRef: MutableRefObject<VisualViewportSheetLayout> =
+        useRef<VisualViewportSheetLayout>(INACTIVE_LAYOUT);
+    const maxHeightRef: MutableRefObject<number> = useRef<number>(0);
 
-    useEffect(() => {
+    useEffect((): void => {
         if (!active) {
             maxHeightRef.current = 0;
         }
     }, [active]);
 
-    const resetStaleViewportIfNeeded = useCallback((): void => {
+    const resetStaleViewportIfNeeded: () => void = useCallback((): void => {
         const vv: VisualViewport | null = window.visualViewport;
         if (!vv || !active) {
             return;
@@ -75,12 +82,12 @@ export const useVisualViewportSheetLayout: (
         }
     }, [active]);
 
-    const getSnapshot = useCallback((): VisualViewportSheetLayout => {
+    const getSnapshot: () => VisualViewportSheetLayout = useCallback((): VisualViewportSheetLayout => {
         if (!active) {
             return INACTIVE_LAYOUT;
         }
-        const next = readLayout(heightRatio);
-        const cached = cacheRef.current;
+        const next: VisualViewportSheetLayout = readLayout(heightRatio);
+        const cached: VisualViewportSheetLayout = cacheRef.current;
         if (
             cached.bottomInset === next.bottomInset &&
             cached.heightPx === next.heightPx
@@ -91,24 +98,25 @@ export const useVisualViewportSheetLayout: (
         return next;
     }, [active, heightRatio]);
 
-    const subscribeViewport = useCallback(
-        (onChange: () => void): (() => void) => {
-            const vv: VisualViewport | null = window.visualViewport;
-            const handler: () => void = (): void => {
-                resetStaleViewportIfNeeded();
-                onChange();
-            };
-            vv?.addEventListener("resize", handler);
-            vv?.addEventListener("scroll", handler);
-            window.addEventListener("resize", handler);
-            return (): void => {
-                vv?.removeEventListener("resize", handler);
-                vv?.removeEventListener("scroll", handler);
-                window.removeEventListener("resize", handler);
-            };
-        },
-        [resetStaleViewportIfNeeded],
-    );
+    const subscribeViewport: (onChange: () => void) => () => void =
+        useCallback(
+            (onChange: () => void): (() => void) => {
+                const vv: VisualViewport | null = window.visualViewport;
+                const handler: () => void = (): void => {
+                    resetStaleViewportIfNeeded();
+                    onChange();
+                };
+                vv?.addEventListener("resize", handler);
+                vv?.addEventListener("scroll", handler);
+                window.addEventListener("resize", handler);
+                return (): void => {
+                    vv?.removeEventListener("resize", handler);
+                    vv?.removeEventListener("scroll", handler);
+                    window.removeEventListener("resize", handler);
+                };
+            },
+            [resetStaleViewportIfNeeded],
+        );
 
     const layout: VisualViewportSheetLayout = useSyncExternalStore(
         active ? subscribeViewport : emptySubscribe,
@@ -121,6 +129,5 @@ export const useVisualViewportSheetLayout: (
         window.dispatchEvent(new Event("resize"));
         window.visualViewport?.dispatchEvent(new Event("resize"));
     }, [resetStaleViewportIfNeeded]);
-
     return { ...layout, syncLayout };
 };

@@ -9,7 +9,6 @@ import {
     Copy,
     Heart,
     HeartOff,
-    Stamp,
     Tag,
     Trash2,
 } from "lucide-react";
@@ -34,11 +33,6 @@ export function SelectionActionFooter(): JSX.Element | null {
     const enabled = useSelectionStore((s) => s.enabled);
     const selectedIds = useSelectionStore((s) => s.selectedIds);
     const setEnabled = useSelectionStore((s) => s.setEnabled);
-    const stampActive = useSelectionStore((s) => s.stampActive);
-    const stampTags = useSelectionStore((s) => s.stampTags);
-    const setStampActive = useSelectionStore((s) => s.setStampActive);
-    const setStampTags = useSelectionStore((s) => s.setStampTags);
-    const toggleStampTag = useSelectionStore((s) => s.toggleStampTag);
 
     const allFiles = useLibraryStore((s) => s.allFiles);
     const batchSetFavorite = useLibraryStore((s) => s.batchSetFavorite);
@@ -72,7 +66,7 @@ export function SelectionActionFooter(): JSX.Element | null {
     const workingSetTags = useMemo((): string[] => {
         const seen = new Set<string>();
         const result: string[] = [];
-        for (const tag of [...pinnedTags, ...recentTags, ...stampTags]) {
+        for (const tag of [...pinnedTags, ...recentTags]) {
             if (seen.has(tag)) {
                 continue;
             }
@@ -80,7 +74,7 @@ export function SelectionActionFooter(): JSX.Element | null {
             result.push(tag);
         }
         return result.slice(0, 16);
-    }, [pinnedTags, recentTags, stampTags]);
+    }, [pinnedTags, recentTags]);
 
     const exitSelection = useCallback((): void => {
         setEnabled(false);
@@ -138,10 +132,6 @@ export function SelectionActionFooter(): JSX.Element | null {
 
     const handleWorkingSetTap = useCallback(
         async (tag: string): Promise<void> => {
-            if (stampActive) {
-                toggleStampTag(tag);
-                return;
-            }
             if (!selectedIds.length) {
                 return;
             }
@@ -157,8 +147,6 @@ export function SelectionActionFooter(): JSX.Element | null {
             handleBatchRemoveTag,
             presence,
             selectedIds.length,
-            stampActive,
-            toggleStampTag,
         ],
     );
 
@@ -179,23 +167,6 @@ export function SelectionActionFooter(): JSX.Element | null {
         const targets = selectedFiles.slice(1).map((file) => file.id);
         await runTagBusy(() => bulkAddTags(targets, tags));
     }, [runTagBusy, selectedFiles]);
-
-    const handleToggleStamp = useCallback((): void => {
-        if (stampActive) {
-            setStampActive(false);
-            return;
-        }
-        if (stampTags.length > 0) {
-            setStampActive(true);
-            return;
-        }
-        if (workingSetTags[0]) {
-            setStampTags([workingSetTags[0]]);
-            return;
-        }
-        toast.message("Pick a tag first, then tap Stamp");
-        setTagsOpen(true);
-    }, [setStampActive, setStampTags, stampActive, stampTags.length, workingSetTags]);
 
     const handleFavorite = useCallback(
         async (isFavorite: boolean): Promise<void> => {
@@ -270,9 +241,8 @@ export function SelectionActionFooter(): JSX.Element | null {
 
     const count = selectedIds.length;
     const actionsBusy = tagBusy || favoriteBusy || archiveBusy || trashBusy;
-    const showActions = count > 0 || stampActive;
 
-    if (!showActions) {
+    if (count === 0) {
         return null;
     }
 
@@ -281,25 +251,11 @@ export function SelectionActionFooter(): JSX.Element | null {
             <footer className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-30 flex flex-col gap-2 border-t border-border bg-background/95 px-3 py-2.5 backdrop-blur">
                 <div className="flex items-center justify-between gap-2">
                     <p className="min-w-0 truncate text-sm text-muted-foreground">
-                        {stampActive ?
-                            `Stamp: ${stampTags.length ? stampTags.join(", ") : "pick tags"}` :
-                            `${count} selected`}
+                        {count} selected
                     </p>
-                    <Button
-                        type="button"
-                        variant={stampActive ? "secondary" : "outline"}
-                        size="sm"
-                        className="gap-1.5 shrink-0"
-                        disabled={actionsBusy}
-                        aria-pressed={stampActive}
-                        onClick={handleToggleStamp}
-                    >
-                        <Stamp className="size-3.5 shrink-0" />
-                        Stamp
-                    </Button>
                 </div>
 
-                {workingSetTags.length > 0 ? (
+                {workingSetTags.length > 0 || presets.length > 0 ? (
                     <div className="flex gap-1.5 overflow-x-auto pb-0.5">
                         {workingSetTags.map((tag) => {
                             const info = presence.get(tag);
@@ -311,24 +267,17 @@ export function SelectionActionFooter(): JSX.Element | null {
                                 Boolean(info) &&
                                 info!.count > 0 &&
                                 info!.count < info!.total;
-                            const isStamp = stampTags.includes(tag);
                             return (
                                 <Button
                                     key={tag}
                                     type="button"
-                                    variant={
-                                        stampActive ?
-                                            (isStamp ? "secondary" : "outline") :
-                                            fullyOn ?
-                                                "secondary" :
-                                                "outline"
-                                    }
+                                    variant={fullyOn ? "secondary" : "outline"}
                                     size="sm"
                                     className={cn(
                                         "h-8 shrink-0",
-                                        partial && !stampActive && "border-dashed",
+                                        partial && "border-dashed",
                                     )}
-                                    disabled={actionsBusy && !stampActive}
+                                    disabled={actionsBusy}
                                     onClick={() => {
                                         void handleWorkingSetTap(tag);
                                     }}
@@ -338,7 +287,7 @@ export function SelectionActionFooter(): JSX.Element | null {
                                     }}
                                 >
                                     {tag}
-                                    {!stampActive && info && info.total > 1 ? (
+                                    {info && info.total > 1 ? (
                                         <span className="ml-1 tabular-nums text-muted-foreground">
                                             {info.count}/{info.total}
                                         </span>
@@ -353,15 +302,9 @@ export function SelectionActionFooter(): JSX.Element | null {
                                 variant="outline"
                                 size="sm"
                                 className="h-8 shrink-0 border-dashed"
-                                disabled={actionsBusy || stampActive || count === 0}
+                                disabled={actionsBusy}
                                 onClick={() => {
                                     void handleApplyPreset(preset.tags);
-                                }}
-                                onContextMenu={(event) => {
-                                    event.preventDefault();
-                                    if (stampActive) {
-                                        setStampTags(preset.tags);
-                                    }
                                 }}
                             >
                                 {preset.name}
@@ -370,123 +313,117 @@ export function SelectionActionFooter(): JSX.Element | null {
                     </div>
                 ) : null}
 
-                {count > 0 ? (
-                    <div className="flex flex-wrap items-center justify-end gap-1.5">
+                <div className="flex flex-wrap items-center justify-end gap-1.5">
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        disabled={actionsBusy}
+                        onClick={() => {
+                            setTagError(undefined);
+                            setTagsOpen(true);
+                        }}
+                    >
+                        {tagBusy ? (
+                            <Spinner />
+                        ) : (
+                            <Tag className="size-3.5 shrink-0" />
+                        )}
+                        Tags
+                    </Button>
+                    {count >= 2 ? (
                         <Button
                             type="button"
                             variant="outline"
                             size="sm"
                             className="gap-1.5"
                             disabled={actionsBusy}
+                            title="Copy tags from first selected onto the rest"
                             onClick={() => {
-                                setTagError(undefined);
-                                setTagsOpen(true);
+                                void handleCopyTagsFromFirst();
                             }}
                         >
-                            {tagBusy ? (
-                                <Spinner />
-                            ) : (
-                                <Tag className="size-3.5 shrink-0" />
-                            )}
-                            Tags
+                            <Copy className="size-3.5 shrink-0" />
+                            Copy tags
                         </Button>
-                        {count >= 2 ? (
-                            <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="gap-1.5"
-                                disabled={actionsBusy}
-                                title="Copy tags from first selected onto the rest"
-                                onClick={() => {
-                                    void handleCopyTagsFromFirst();
-                                }}
-                            >
-                                <Copy className="size-3.5 shrink-0" />
-                                Copy tags
-                            </Button>
-                        ) : null}
-                        <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="gap-1.5"
-                            disabled={actionsBusy}
-                            onClick={() => {
-                                void handleFavorite(true);
-                            }}
-                        >
-                            {favoriteBusy ? (
-                                <Spinner />
-                            ) : (
-                                <Heart className="size-3.5 shrink-0" />
-                            )}
-                            Favourite
-                        </Button>
-                        <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="gap-1.5"
-                            disabled={actionsBusy}
-                            onClick={() => {
-                                void handleFavorite(false);
-                            }}
-                        >
-                            {favoriteBusy ? (
-                                <Spinner />
-                            ) : (
-                                <HeartOff className="size-3.5 shrink-0" />
-                            )}
-                            Unfavourite
-                        </Button>
-                        <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="gap-1.5"
-                            disabled={actionsBusy}
-                            onClick={() => {
-                                void handleArchive();
-                            }}
-                        >
-                            {archiveBusy ? (
-                                <Spinner />
-                            ) : (
-                                <Archive className="size-3.5 shrink-0" />
-                            )}
-                            Archive
-                        </Button>
-                        <Button
-                            type="button"
-                            variant="outline"
-                            size="icon-sm"
-                            className="text-destructive hover:text-destructive"
-                            aria-label="Move to trash"
-                            disabled={actionsBusy}
-                            onClick={() => setTrashOpen(true)}
-                        >
-                            <Trash2 />
-                        </Button>
-                    </div>
-                ) : null}
+                    ) : null}
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        disabled={actionsBusy}
+                        onClick={() => {
+                            void handleFavorite(true);
+                        }}
+                    >
+                        {favoriteBusy ? (
+                            <Spinner />
+                        ) : (
+                            <Heart className="size-3.5 shrink-0" />
+                        )}
+                        Favourite
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        disabled={actionsBusy}
+                        onClick={() => {
+                            void handleFavorite(false);
+                        }}
+                    >
+                        {favoriteBusy ? (
+                            <Spinner />
+                        ) : (
+                            <HeartOff className="size-3.5 shrink-0" />
+                        )}
+                        Unfavourite
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        disabled={actionsBusy}
+                        onClick={() => {
+                            void handleArchive();
+                        }}
+                    >
+                        {archiveBusy ? (
+                            <Spinner />
+                        ) : (
+                            <Archive className="size-3.5 shrink-0" />
+                        )}
+                        Archive
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="icon-sm"
+                        className="text-destructive hover:text-destructive"
+                        aria-label="Move to trash"
+                        disabled={actionsBusy}
+                        onClick={() => setTrashOpen(true)}
+                    >
+                        <Trash2 />
+                    </Button>
+                </div>
             </footer>
 
             <TagPickerSheet
                 open={tagsOpen}
-                appliedTags={stampActive ? stampTags : unionTags}
+                appliedTags={unionTags}
                 knownTags={knownTags}
                 error={tagError}
-                tagPresence={stampActive ? undefined : presence}
+                tagPresence={presence}
                 presets={presets}
                 kitScoreFiles={selectedFiles}
-                defaultToKits={!stampActive && presets.length > 0}
+                defaultToKits={presets.length > 0}
                 pinnedTags={pinnedTags}
-                batchSelectionHint={
-                    stampActive ?
-                        "Tap a tag to include it in the stamp set. Tap photos to apply." :
-                        "Kits first — tap to apply. Numbers show how many selected photos already have the full kit."
-                }
+                batchSelectionHint="Kits first — tap to apply. Numbers show how many selected photos already have the full kit."
                 onOpenChange={(open) => {
                     if (!open && !tagBusy) {
                         setTagsOpen(false);
@@ -494,25 +431,12 @@ export function SelectionActionFooter(): JSX.Element | null {
                     }
                 }}
                 onAddTag={(name) => {
-                    if (stampActive) {
-                        toggleStampTag(name);
-                        return;
-                    }
                     void handleBatchAddTag(name);
                 }}
                 onRemoveTag={(name) => {
-                    if (stampActive) {
-                        toggleStampTag(name);
-                        return;
-                    }
                     void handleBatchRemoveTag(name);
                 }}
                 onApplyPreset={(tags) => {
-                    if (stampActive) {
-                        setStampTags(tags);
-                        setTagsOpen(false);
-                        return;
-                    }
                     void handleApplyPreset(tags);
                 }}
                 onTogglePinTag={togglePinnedTag}
