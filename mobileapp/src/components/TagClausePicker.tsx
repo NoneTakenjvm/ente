@@ -16,6 +16,12 @@ import {
     tagsForTypeView,
 } from "@/lib/tag-types";
 import {
+    countFilesMatchingKit,
+    KITS_TAB,
+    type TagPreset,
+} from "@/lib/tag-presets";
+import { kitTagsAreIncluded } from "@/lib/tag-filter-mutations";
+import {
     findClauseInGroup,
     findClauseModeForTag,
     findTagFilterGroupById,
@@ -23,12 +29,18 @@ import {
     isFlatTagFilterRoot,
     isReservedTag,
     tagFileCount,
+    type TagFilterGroup,
     type TagFilterJoin,
     type TagFilterMode,
     type TagFilterSelection,
 } from "@/lib/tags";
 import { cn } from "@/lib/utils";
+import { useLibraryStore } from "@/stores/library-store";
+import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
+
+const isTagFilterJoin = (value: unknown): value is TagFilterJoin =>
+    value === "and" || value === "or" || value === "only";
 
 interface TagClausePickerProps {
     filter: TagFilterSelection;
@@ -38,7 +50,15 @@ interface TagClausePickerProps {
         tag: string,
         mode: TagFilterMode | null,
     ) => void;
-    /** When set, show an AND/OR control for the root flat filter. */
+    /** Prefer over looping onSetTagFilterMode when applying a kit at root. */
+    onSetKitTagsMode?: (tags: string[], mode: TagFilterMode | null) => void;
+    /** Prefer over looping onSetClauseInGroup when applying a kit in a group. */
+    onSetKitTagsInGroup?: (
+        groupId: string,
+        tags: string[],
+        mode: TagFilterMode | null,
+    ) => void;
+    /** When set, show an AND/OR/ONLY control for the root flat filter. */
     onSetRootOp?: (op: TagFilterJoin) => void;
     targetGroupId?: string;
     disabled?: boolean;
@@ -50,11 +70,14 @@ interface TagClausePickerProps {
 
 /**
  * Dropdown to add include/exclude tag clauses at the root or within one group.
+ * Kits expand to their tags as include clauses.
  */
 export function TagClausePicker({
     filter,
     onSetTagFilterMode,
     onSetClauseInGroup,
+    onSetKitTagsMode,
+    onSetKitTagsInGroup,
     onSetRootOp,
     targetGroupId,
     disabled = false,
@@ -67,19 +90,35 @@ export function TagClausePicker({
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
     const tagTypes = useTagStore((s) => s.tagTypes);
     const tagTypeByName = useTagStore((s) => s.tagTypeByName);
+    const presets = useTagSpeedStore((s) => s.presets);
+    const allFiles = useLibraryStore((s) => s.allFiles);
 
+    const showKitsTab = presets.length > 0;
     const [selectedType, setSelectedType] = useState<string>(ALL_TAG_TYPES_TAB);
 
+    const isKitsTab = selectedType === KITS_TAB;
+
     const visibleTags = useMemo(
-        (): string[] =>
-            tagsForTypeView(
+        (): string[] => {
+            if (isKitsTab) {
+                return [];
+            }
+            return tagsForTypeView(
                 tags.filter((tag) => !isReservedTag(tag)),
                 tagTypeByName,
                 selectedType,
                 fileIdsByTag,
-            ),
-        [tags, tagTypeByName, selectedType, fileIdsByTag],
+            );
+        },
+        [tags, tagTypeByName, selectedType, fileIdsByTag, isKitsTab],
     );
+
+    const rankedPresets = useMemo((): TagPreset[] => {
+        if (!presets.length) {
+            return [];
+        }
+        return [...presets].sort((a, b) => a.name.localeCompare(b.name));
+    }, [presets]);
 
     const scopedGroup = useMemo(
         (): ReturnType<typeof findTagFilterGroupById> =>
@@ -88,6 +127,8 @@ export function TagClausePicker({
                 null,
         [filter.root, targetGroupId],
     );
+
+    const activeGroup: TagFilterGroup = scopedGroup ?? filter.root;
 
     const isRootPicker = targetGroupId === undefined;
     const isFlatRoot = isFlatTagFilterRoot(filter.root);
@@ -101,6 +142,7 @@ export function TagClausePicker({
         (groupedFilterBlocksRoot ? GROUPED_TAG_FILTER_DROPDOWN_HINT : undefined);
     const showRootJoinToggle =
         isRootPicker && isFlatRoot && onSetRootOp !== undefined;
+    const isOnlyMode = activeGroup.op === "only";
 
     const resolveMode = (tag: string): TagFilterMode | null => {
         if (scopedGroup) {
@@ -116,6 +158,22 @@ export function TagClausePicker({
         }
         if (onSetTagFilterMode) {
             onSetTagFilterMode(tag, mode);
+        }
+    };
+
+    const handleKitInclude = (kitTags: string[]): void => {
+        const included = kitTagsAreIncluded(activeGroup, kitTags);
+        const nextMode: TagFilterMode | null = included ? null : "include";
+        if (scopedGroup && onSetKitTagsInGroup) {
+            onSetKitTagsInGroup(scopedGroup.id, kitTags, nextMode);
+            return;
+        }
+        if (!scopedGroup && onSetKitTagsMode) {
+            onSetKitTagsMode(kitTags, nextMode);
+            return;
+        }
+        for (const tag of kitTags) {
+            handleModeChange(tag, nextMode);
         }
     };
 
@@ -144,7 +202,7 @@ export function TagClausePicker({
             >
                 <DropdownMenuGroup className="flex min-h-0 flex-1 flex-col gap-2">
                     <DropdownMenuLabel className="shrink-0 px-0">
-                        Has / not has
+                        Has / not has / only
                     </DropdownMenuLabel>
                     {showRootJoinToggle ? (
                         <div className="flex shrink-0 items-center justify-between gap-2 px-0">
@@ -159,7 +217,7 @@ export function TagClausePicker({
                                     const value = Array.isArray(next) ?
                                         next[0] :
                                         next;
-                                    if (value === "and" || value === "or") {
+                                    if (isTagFilterJoin(value)) {
                                         onSetRootOp(value);
                                     }
                                 }}
@@ -178,6 +236,14 @@ export function TagClausePicker({
                                 >
                                     OR
                                 </ToggleGroupItem>
+                                <ToggleGroupItem
+                                    value="only"
+                                    size="sm"
+                                    className="h-7 px-2.5 text-xs"
+                                    title="Photos whose tags are exactly the selected Has tags"
+                                >
+                                    ONLY
+                                </ToggleGroupItem>
                             </ToggleGroup>
                         </div>
                     ) : null}
@@ -186,8 +252,75 @@ export function TagClausePicker({
                         types={tagTypes}
                         selected={selectedType}
                         onSelect={setSelectedType}
+                        leadingTabs={showKitsTab ? [KITS_TAB] : undefined}
                     />
-                    {visibleTags.length === 0 ? (
+                    {isKitsTab ? (
+                        rankedPresets.length === 0 ? (
+                            <p className="shrink-0 px-1 py-2 text-xs text-muted-foreground">
+                                No kits yet. Create them in Manage → Tags.
+                            </p>
+                        ) : (
+                            <ul className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overscroll-contain">
+                                {rankedPresets.map((preset) => {
+                                    const included = kitTagsAreIncluded(
+                                        activeGroup,
+                                        preset.tags,
+                                    );
+                                    const count = countFilesMatchingKit(
+                                        allFiles,
+                                        preset.tags,
+                                    );
+                                    return (
+                                        <li
+                                            key={preset.id}
+                                            className="flex shrink-0 items-center gap-2 rounded-md px-1 py-0.5"
+                                        >
+                                            <span className="min-w-0 flex-1 truncate text-sm">
+                                                <span className="font-medium">
+                                                    {preset.name}
+                                                </span>
+                                                <span className="block truncate text-xs text-muted-foreground">
+                                                    {preset.tags.join(", ")}
+                                                </span>
+                                            </span>
+                                            <Badge
+                                                variant="secondary"
+                                                className="tabular-nums"
+                                            >
+                                                {count}
+                                            </Badge>
+                                            <Button
+                                                type="button"
+                                                size="xs"
+                                                variant={
+                                                    included ?
+                                                        "default" :
+                                                        "outline"
+                                                }
+                                                className="h-7 px-2"
+                                                disabled={
+                                                    filter.tagScope === "tagged"
+                                                }
+                                                title={
+                                                    filter.tagScope ===
+                                                    "tagged" ?
+                                                        "Already limited to tagged photos" :
+                                                        "Include every tag in this kit"
+                                                }
+                                                onClick={() => {
+                                                    handleKitInclude(
+                                                        preset.tags,
+                                                    );
+                                                }}
+                                            >
+                                                Has
+                                            </Button>
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        )
+                    ) : visibleTags.length === 0 ? (
                         <p className="shrink-0 px-1 py-2 text-xs text-muted-foreground">
                             No tags in this group.
                         </p>
@@ -224,7 +357,8 @@ export function TagClausePicker({
                                                     filter.tagScope === "tagged"
                                                 }
                                                 title={
-                                                    filter.tagScope === "tagged" ?
+                                                    filter.tagScope ===
+                                                    "tagged" ?
                                                         "Already limited to tagged photos" :
                                                         undefined
                                                 }
@@ -252,6 +386,12 @@ export function TagClausePicker({
                                                     mode === "exclude" &&
                                                         "text-destructive-foreground",
                                                 )}
+                                                disabled={isOnlyMode}
+                                                title={
+                                                    isOnlyMode ?
+                                                        "Not is unavailable in ONLY mode — exact tag set only" :
+                                                        undefined
+                                                }
                                                 onClick={() => {
                                                     handleModeChange(
                                                         tag,

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+    kitTagsAreIncluded,
     setClauseInGroupOnFilter,
     setClauseModeOnFilter,
+    setKitTagsModeOnFilter,
 } from "@/lib/tag-filter-mutations";
 import {
     createEmptyTagFilterRoot,
@@ -80,5 +82,15 @@ describe("tag-filter-mutations", () => {
         filter = setClauseModeOnFilter(filter, clause.id, "exclude");
         const updated = filter.root.children[0] as TagFilterClauseNode;
         expect(updated.mode).toBe("exclude");
+    });
+
+    it("setKitTagsModeOnFilter includes or clears every kit tag", () => {
+        let filter = emptyTagFilter();
+        filter = setKitTagsModeOnFilter(filter, ["a", "b"], "include");
+        expect(kitTagsAreIncluded(filter.root, ["a", "b"])).toBe(true);
+        expect(filter.root.children).toHaveLength(2);
+        filter = setKitTagsModeOnFilter(filter, ["a", "b"], null);
+        expect(kitTagsAreIncluded(filter.root, ["a", "b"])).toBe(false);
+        expect(filter.root.children).toHaveLength(0);
     });
 });

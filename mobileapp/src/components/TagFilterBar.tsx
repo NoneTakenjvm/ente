@@ -59,6 +59,7 @@ export function TagFilterBar({
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
     const tagFilter = useTagStore((s) => s.tagFilter);
     const setTagFilterMode = useTagStore((s) => s.setTagFilterMode);
+    const setKitTagsMode = useTagStore((s) => s.setKitTagsMode);
     const setGroupOp = useTagStore((s) => s.setGroupOp);
     const clearFilters = useTagStore((s) => s.clearFilters);
     const knownTags = useTagStore((s) => s.tags);
@@ -239,6 +240,7 @@ export function TagFilterBar({
                     <TagClausePicker
                         filter={tagFilter}
                         onSetTagFilterMode={setTagFilterMode}
+                        onSetKitTagsMode={setKitTagsMode}
                         onSetRootOp={(op) => {
                             setGroupOp(tagFilter.root.id, op);
                         }}

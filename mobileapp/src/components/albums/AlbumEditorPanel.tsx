@@ -228,6 +228,10 @@ export function AlbumEditorPanel({
                     <TagClausePicker
                         filter={filter}
                         onSetTagFilterMode={actions.setTagFilterMode}
+                        onSetKitTagsMode={actions.setKitTagsMode}
+                        onSetRootOp={(op) => {
+                            actions.setGroupOp(filter.root.id, op);
+                        }}
                         disabled={!isFlatTagFilterRoot(filter.root)}
                     />
                     <span className="text-xs text-muted-foreground">

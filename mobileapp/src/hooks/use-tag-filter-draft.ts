@@ -3,6 +3,8 @@ import {
     removeTagFilterNode,
     setClauseInGroupOnFilter,
     setClauseModeOnFilter,
+    setKitTagsInGroupOnFilter,
+    setKitTagsModeOnFilter,
     setTagFilterFavoritesScope,
     setTagFilterMediaScope,
     setTagFilterCroppedScope,
@@ -26,6 +28,7 @@ import type { TagQueryEditorActions } from "@/components/TagQueryEditor";
 
 export type TagFilterDraftActions = TagQueryEditorActions & {
     setTagFilterMode: (tag: string, mode: TagFilterMode | null) => void;
+    setKitTagsMode: (tags: string[], mode: TagFilterMode | null) => void;
 };
 
 export interface TagFilterDraft {
@@ -90,6 +93,17 @@ export const useTagFilterDraft: (
         [],
     );
 
+    const setKitTagsMode: (
+        tags: string[],
+        mode: TagFilterMode | null,
+    ) => void = useCallback(
+        (tags: string[], mode: TagFilterMode | null): void => {
+            setFilter((current: TagFilterSelection): TagFilterSelection =>
+                setKitTagsModeOnFilter(current, tags, mode));
+        },
+        [],
+    );
+
     const setGroupOp: (groupId: string, op: TagFilterJoin) => void = useCallback(
         (groupId: string, op: TagFilterJoin): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
@@ -143,6 +157,18 @@ export const useTagFilterDraft: (
         [],
     );
 
+    const setKitTagsInGroup: (
+        groupId: string,
+        tags: string[],
+        mode: TagFilterMode | null,
+    ) => void = useCallback(
+        (groupId: string, tags: string[], mode: TagFilterMode | null): void => {
+            setFilter((current: TagFilterSelection): TagFilterSelection =>
+                setKitTagsInGroupOnFilter(current, groupId, tags, mode));
+        },
+        [],
+    );
+
     const actions: TagFilterDraftActions = useMemo(
         (): TagFilterDraftActions => ({
             setTagScope,
@@ -154,8 +180,10 @@ export const useTagFilterDraft: (
             ungroup,
             removeNode,
             setTagFilterMode,
+            setKitTagsMode,
             setClauseMode,
             setClauseInGroup,
+            setKitTagsInGroup,
         }),
         [
             setTagScope,
@@ -167,8 +195,10 @@ export const useTagFilterDraft: (
             ungroup,
             removeNode,
             setTagFilterMode,
+            setKitTagsMode,
             setClauseMode,
             setClauseInGroup,
+            setKitTagsInGroup,
         ],
     );
     return { filter, setFilter, actions };

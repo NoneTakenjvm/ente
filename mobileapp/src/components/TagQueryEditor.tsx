@@ -20,6 +20,9 @@ import {
 } from "@/lib/tags";
 import { cn } from "@/lib/utils";
 
+const isTagFilterJoin = (value: unknown): value is TagFilterJoin =>
+    value === "and" || value === "or" || value === "only";
+
 export interface TagQueryEditorActions {
     setTagScope: (scope: TagScope) => void;
     setFavoritesScope: (scope: FavoritesScope) => void;
@@ -33,6 +36,11 @@ export interface TagQueryEditorActions {
     setClauseInGroup: (
         groupId: string,
         tag: string,
+        mode: TagFilterMode | null,
+    ) => void;
+    setKitTagsInGroup: (
+        groupId: string,
+        tags: string[],
         mode: TagFilterMode | null,
     ) => void;
 }
@@ -64,8 +72,58 @@ interface NodeRowProps {
         tag: string,
         mode: TagFilterMode | null,
     ) => void;
+    onSetKitTagsInGroup: (
+        groupId: string,
+        tags: string[],
+        mode: TagFilterMode | null,
+    ) => void;
     onSetGroupOp: (groupId: string, op: TagFilterJoin) => void;
     onUngroup: (groupId: string) => void;
+}
+
+function MatchJoinToggle({
+    value,
+    onChange,
+}: {
+    value: TagFilterJoin;
+    onChange: (op: TagFilterJoin) => void;
+}): JSX.Element {
+    return (
+        <ToggleGroup
+            value={[value]}
+            spacing={0}
+            className="shrink-0"
+            onValueChange={(next) => {
+                const nextValue = Array.isArray(next) ? next[0] : next;
+                if (isTagFilterJoin(nextValue)) {
+                    onChange(nextValue);
+                }
+            }}
+        >
+            <ToggleGroupItem
+                value="and"
+                size="sm"
+                className="h-7 px-2 text-xs"
+            >
+                AND
+            </ToggleGroupItem>
+            <ToggleGroupItem
+                value="or"
+                size="sm"
+                className="h-7 px-2 text-xs"
+            >
+                OR
+            </ToggleGroupItem>
+            <ToggleGroupItem
+                value="only"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                title="Photos whose tags are exactly the selected Has tags"
+            >
+                ONLY
+            </ToggleGroupItem>
+        </ToggleGroup>
+    );
 }
 
 function FilterNodeRow({
@@ -77,6 +135,7 @@ function FilterNodeRow({
     onRemove,
     onSetClauseMode,
     onSetClauseInGroup,
+    onSetKitTagsInGroup,
     onSetGroupOp,
     onUngroup,
 }: NodeRowProps): JSX.Element {
@@ -160,36 +219,17 @@ function FilterNodeRow({
                 <span className="text-xs font-medium text-muted-foreground">
                     Group
                 </span>
-                <ToggleGroup
-                    value={[node.op]}
-                    spacing={0}
-                    className="shrink-0"
-                    onValueChange={(next) => {
-                        const value = Array.isArray(next) ? next[0] : next;
-                        if (value === "and" || value === "or") {
-                            onSetGroupOp(node.id, value);
-                        }
+                <MatchJoinToggle
+                    value={node.op}
+                    onChange={(op) => {
+                        onSetGroupOp(node.id, op);
                     }}
-                >
-                    <ToggleGroupItem
-                        value="and"
-                        size="sm"
-                        className="h-7 px-2 text-xs"
-                    >
-                        AND
-                    </ToggleGroupItem>
-                    <ToggleGroupItem
-                        value="or"
-                        size="sm"
-                        className="h-7 px-2 text-xs"
-                    >
-                        OR
-                    </ToggleGroupItem>
-                </ToggleGroup>
+                />
                 <TagClausePicker
                     filter={filter}
                     targetGroupId={node.id}
                     onSetClauseInGroup={onSetClauseInGroup}
+                    onSetKitTagsInGroup={onSetKitTagsInGroup}
                     triggerLabel="Add tag"
                     triggerVariant="ghost"
                     triggerSize="xs"
@@ -218,6 +258,7 @@ function FilterNodeRow({
                         onRemove={onRemove}
                         onSetClauseMode={onSetClauseMode}
                         onSetClauseInGroup={onSetClauseInGroup}
+                        onSetKitTagsInGroup={onSetKitTagsInGroup}
                         onSetGroupOp={onSetGroupOp}
                         onUngroup={onUngroup}
                     />
@@ -236,6 +277,7 @@ function RootGroupSection({
     onRemove,
     onSetClauseMode,
     onSetClauseInGroup,
+    onSetKitTagsInGroup,
     onSetGroupOp,
     onUngroup,
 }: {
@@ -251,6 +293,11 @@ function RootGroupSection({
         tag: string,
         mode: TagFilterMode | null,
     ) => void;
+    onSetKitTagsInGroup: (
+        groupId: string,
+        tags: string[],
+        mode: TagFilterMode | null,
+    ) => void;
     onSetGroupOp: (groupId: string, op: TagFilterJoin) => void;
     onUngroup: (groupId: string) => void;
 }): JSX.Element {
@@ -264,6 +311,7 @@ function RootGroupSection({
                     filter={filter}
                     targetGroupId={group.id}
                     onSetClauseInGroup={onSetClauseInGroup}
+                    onSetKitTagsInGroup={onSetKitTagsInGroup}
                     triggerLabel="Add tag"
                     triggerSize="sm"
                 />
@@ -277,36 +325,17 @@ function RootGroupSection({
                 <span className="text-xs font-medium text-muted-foreground">
                     Match
                 </span>
-                <ToggleGroup
-                    value={[group.op]}
-                    spacing={0}
-                    className="shrink-0"
-                    onValueChange={(next) => {
-                        const value = Array.isArray(next) ? next[0] : next;
-                        if (value === "and" || value === "or") {
-                            onSetGroupOp(group.id, value);
-                        }
+                <MatchJoinToggle
+                    value={group.op}
+                    onChange={(op) => {
+                        onSetGroupOp(group.id, op);
                     }}
-                >
-                    <ToggleGroupItem
-                        value="and"
-                        size="sm"
-                        className="h-7 px-2 text-xs"
-                    >
-                        AND
-                    </ToggleGroupItem>
-                    <ToggleGroupItem
-                        value="or"
-                        size="sm"
-                        className="h-7 px-2 text-xs"
-                    >
-                        OR
-                    </ToggleGroupItem>
-                </ToggleGroup>
+                />
                 <TagClausePicker
                     filter={filter}
                     targetGroupId={group.id}
                     onSetClauseInGroup={onSetClauseInGroup}
+                    onSetKitTagsInGroup={onSetKitTagsInGroup}
                     triggerLabel="Add tag"
                     triggerVariant="ghost"
                     triggerSize="xs"
@@ -324,6 +353,7 @@ function RootGroupSection({
                         onRemove={onRemove}
                         onSetClauseMode={onSetClauseMode}
                         onSetClauseInGroup={onSetClauseInGroup}
+                        onSetKitTagsInGroup={onSetKitTagsInGroup}
                         onSetGroupOp={onSetGroupOp}
                         onUngroup={onUngroup}
                     />
@@ -334,7 +364,7 @@ function RootGroupSection({
 }
 
 /**
- * Controlled tag query tree editor (scope, favourites, AND/OR grouping).
+ * Controlled tag query tree editor (scope, favourites, AND/OR/ONLY grouping).
  */
 export function TagQueryEditor({
     filter,
@@ -347,7 +377,7 @@ export function TagQueryEditor({
     videoCount,
     croppedCount,
     notCroppedCount,
-    emptyHint = "No tag steps yet. Add tags below, then group steps with AND or OR.",
+    emptyHint = "No tag steps yet. Add tags below, then group steps with AND, OR, or ONLY.",
 }: TagQueryEditorProps): JSX.Element {
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [wrapGroupOp, setWrapGroupOp] = useState<TagFilterJoin>("and");
@@ -406,37 +436,17 @@ export function TagQueryEditor({
                 onRemove={actions.removeNode}
                 onSetClauseMode={actions.setClauseMode}
                 onSetClauseInGroup={actions.setClauseInGroup}
+                onSetKitTagsInGroup={actions.setKitTagsInGroup}
                 onSetGroupOp={actions.setGroupOp}
                 onUngroup={actions.ungroup}
             />
 
             {selectedList.length >= 2 ? (
                 <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border/60 pt-2">
-                    <ToggleGroup
-                        value={[wrapGroupOp]}
-                        spacing={0}
-                        onValueChange={(next) => {
-                            const value = Array.isArray(next) ? next[0] : next;
-                            if (value === "and" || value === "or") {
-                                setWrapGroupOp(value);
-                            }
-                        }}
-                    >
-                        <ToggleGroupItem
-                            value="and"
-                            size="sm"
-                            className="h-7 px-2 text-xs"
-                        >
-                            AND
-                        </ToggleGroupItem>
-                        <ToggleGroupItem
-                            value="or"
-                            size="sm"
-                            className="h-7 px-2 text-xs"
-                        >
-                            OR
-                        </ToggleGroupItem>
-                    </ToggleGroup>
+                    <MatchJoinToggle
+                        value={wrapGroupOp}
+                        onChange={setWrapGroupOp}
+                    />
                     <Button
                         type="button"
                         size="sm"
