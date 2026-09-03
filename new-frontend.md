@@ -7,13 +7,19 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-03 |
-| **Last agent / session** | Tag kit suggestions from common mixes. |
+| **Last agent / session** | Thumbnail RAM/disk LRU + heap-pressure eviction. |
 | **Current milestone** | Post-M8 UX / stability batch |
-| **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy; unbounded thumbnail RAM cache is the main gallery-scroll OOM suspect |
-| **Next recommended action** | Phone QA: Manage → Tags → View suggestions. Footer `NTPhotos 0.3.10`. Consider thumbnail LRU next. |
+| **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
+| **Next recommended action** | Phone QA: long gallery scroll for OOM + kit suggestions exact sets. Footer `NTPhotos 0.3.13`. |
 
 **This session shipped:**
-1. **Kit suggestions** — Manage → Tags → Tag presets → **View suggestions** lists common 2+ tag mixes (pairs + recurring 3+ exact sets, ≥2 photos), named `tag + tag`. Add creates a preset; existing kits are hidden. `APP_VERSION` → `0.3.10`.
+1. **Thumbnail memory efficiency** — session RAM LRU (64 MB) with `revokeObjectURL` (never evicts subscribed cells); emergency 25% evict under JS heap pressure; IDB thumb store LRU (200 MB); `invalidateThumbnailCache` on trash/sync-content-change/replace; hashing no longer re-fetches blob URLs. `APP_VERSION` → `0.3.13`. Tests + production build green.
+
+**Previous session shipped:**
+1. **Kit suggestions = exact tag sets only** — no pairwise co-occurrence; a photo with A+B+C only counts toward `A + B + C`, not `A + B`. `APP_VERSION` → `0.3.12`.
+
+**Previous session shipped:**
+1. **Kit suggestions (initial)** — Manage → Tags → View suggestions (later tightened to exact sets). `APP_VERSION` → `0.3.10`.
 
 **Previous session shipped:**
 1. **Memory audit (no code changes)** — ranked findings on runtime cache; primary risk is unbounded in-memory thumbnail blob URLs in `thumbnail-cache.ts` after long gallery scrolls.

@@ -702,9 +702,8 @@ export function ManageTagsPanel(): JSX.Element {
                     <DialogHeader>
                         <DialogTitle>Suggested kits</DialogTitle>
                         <DialogDescription>
-                            Common mixes of 2+ tags that appear together on
-                            photos (at least twice). Already-saved kits are
-                            hidden.
+                            Exact tag sets shared by at least two photos (same
+                            tags, nothing extra). Already-saved kits are hidden.
                         </DialogDescription>
                     </DialogHeader>
                     {kitSuggestions.length === 0 ? (

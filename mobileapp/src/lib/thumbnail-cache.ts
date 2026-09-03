@@ -2,9 +2,12 @@ import { getEnteCore } from "@/core";
 import { decryptThumbnailCiphertext } from "@/core/download";
 import { generateImageThumbnail } from "@/core/upload/thumbnail";
 import {
+    deleteThumbnailCiphertext,
     getThumbnailCiphertext,
     putThumbnailCiphertext,
 } from "@/db/thumbnails";
+import { blobFromUint8Array } from "@/lib/bytes-blob";
+import { isJsHeapUnderPressure } from "@/lib/memory-probe";
 import type { EnteFile } from "ente-media/file";
 
 type ThumbnailStatus = "idle" | "loading" | "ready" | "error";
@@ -12,7 +15,16 @@ type ThumbnailStatus = "idle" | "loading" | "ready" | "error";
 interface ThumbnailEntry {
     status: ThumbnailStatus;
     url?: string;
+    byteSize?: number;
+    lastAccess?: number;
 }
+
+/**
+ * Soft cap on decrypted thumbnail blob URLs retained in RAM this session.
+ * Thumbs are ≤~100KB JPEG; ~64MB holds hundreds of decoded URLs without
+ * unbounded growth after long gallery scrolls.
+ */
+const SESSION_BUDGET_BYTES = 64 * 1024 * 1024;
 
 const idleEntry: ThumbnailEntry = { status: "idle" };
 const loadingEntry: ThumbnailEntry = { status: "loading" };
@@ -43,6 +55,90 @@ const notify = (fileId: number): void => {
     listeners.get(fileId)?.forEach((listener: () => void) => listener());
 };
 
+const hasSubscribers = (fileId: number): boolean =>
+    (listeners.get(fileId)?.size ?? 0) > 0;
+
+const sessionBytesUsed = (): number => {
+    let total = 0;
+    for (const entry of cache.values()) {
+        if (entry.status === "ready" && entry.byteSize) {
+            total += entry.byteSize;
+        }
+    }
+    return total;
+};
+
+const revokeEntryUrl = (entry: ThumbnailEntry): void => {
+    if (entry.url) {
+        URL.revokeObjectURL(entry.url);
+    }
+};
+
+/**
+ * Drop oldest ready thumbs that nothing is currently subscribed to.
+ * Visible (subscribed) cells are never evicted — virtualization bounds that set.
+ */
+const evictSessionUntilFit = (incomingBytes: number): void => {
+    if (incomingBytes > SESSION_BUDGET_BYTES) {
+        for (const [fileId, entry] of cache) {
+            if (entry.status !== "ready" || hasSubscribers(fileId)) {
+                continue;
+            }
+            revokeEntryUrl(entry);
+            cache.delete(fileId);
+        }
+        return;
+    }
+
+    const ranked = [...cache.entries()]
+        .filter(
+            ([fileId, entry]) =>
+                entry.status === "ready" &&
+                entry.url !== undefined &&
+                !hasSubscribers(fileId),
+        )
+        .sort(
+            (a, b) => (a[1].lastAccess ?? 0) - (b[1].lastAccess ?? 0),
+        );
+
+    let used = sessionBytesUsed();
+    for (const [fileId, entry] of ranked) {
+        if (used + incomingBytes <= SESSION_BUDGET_BYTES) {
+            break;
+        }
+        revokeEntryUrl(entry);
+        cache.delete(fileId);
+        used -= entry.byteSize ?? 0;
+    }
+};
+
+/** Evict ~25% of unsubscribed ready thumbs (oldest first). */
+const emergencyEvict = (): void => {
+    const ranked = [...cache.entries()]
+        .filter(
+            ([fileId, entry]) =>
+                entry.status === "ready" &&
+                entry.url !== undefined &&
+                !hasSubscribers(fileId),
+        )
+        .sort(
+            (a, b) => (a[1].lastAccess ?? 0) - (b[1].lastAccess ?? 0),
+        );
+    const dropCount = Math.max(1, Math.ceil(ranked.length * 0.25));
+    for (let i = 0; i < dropCount && i < ranked.length; i++) {
+        const [fileId, entry] = ranked[i]!;
+        revokeEntryUrl(entry);
+        cache.delete(fileId);
+    }
+};
+
+const relieveHeapPressureIfNeeded = (): void => {
+    if (!isJsHeapUnderPressure()) {
+        return;
+    }
+    emergencyEvict();
+};
+
 export const subscribeThumbnail = (
     fileId: number,
     listener: () => void,
@@ -61,33 +157,35 @@ export const subscribeThumbnail = (
     };
 };
 
-export const getThumbnailEntry = (fileId: number): ThumbnailEntry =>
-    cache.get(fileId) ?? idleEntry;
-
-/**
- * Return decrypted thumbnail bytes when the in-memory cache is ready.
- */
-export const getCachedThumbnailBytes = async (
-    fileId: number,
-): Promise<Uint8Array | undefined> => {
+export const getThumbnailEntry = (fileId: number): ThumbnailEntry => {
     const entry = cache.get(fileId);
-    if (entry?.status !== "ready" || !entry.url) {
-        return undefined;
+    if (!entry) {
+        return idleEntry;
     }
-    try {
-        const response = await fetch(entry.url);
-        return new Uint8Array(await response.arrayBuffer());
-    } catch {
-        return undefined;
+    if (entry.status === "ready") {
+        entry.lastAccess = Date.now();
     }
+    return entry;
 };
 
 const setReady = (fileId: number, bytes: Uint8Array): void => {
-    const blob: Blob = new Blob([Uint8Array.from(bytes)], {
-        type: "image/jpeg",
+    relieveHeapPressureIfNeeded();
+    const byteSize = bytes.byteLength;
+    evictSessionUntilFit(byteSize);
+
+    const existing = cache.get(fileId);
+    if (existing?.url) {
+        URL.revokeObjectURL(existing.url);
+    }
+
+    const blob = blobFromUint8Array(bytes, "image/jpeg");
+    const url = URL.createObjectURL(blob);
+    cache.set(fileId, {
+        status: "ready",
+        url,
+        byteSize,
+        lastAccess: Date.now(),
     });
-    const url: string = URL.createObjectURL(blob);
-    cache.set(fileId, { status: "ready", url });
     notify(fileId);
 };
 
@@ -103,6 +201,8 @@ const loadThumbnail = (file: EnteFile): void => {
     const task = (): void => {
         void (async (): Promise<void> => {
             try {
+                relieveHeapPressureIfNeeded();
+
                 const cached = await getThumbnailCiphertext(file.id);
                 if (cached) {
                     const bytes = await decryptThumbnailCiphertext(
@@ -226,11 +326,24 @@ export const primeVideoThumbnailFromBytes = (
     })();
 };
 
+/**
+ * Drop session blob URL + IDB ciphertext for a file (trash, sync delete, replace).
+ */
+export const invalidateThumbnailCache = async (
+    fileId: number,
+): Promise<void> => {
+    const entry = cache.get(fileId);
+    if (entry) {
+        revokeEntryUrl(entry);
+        cache.delete(fileId);
+        notify(fileId);
+    }
+    await deleteThumbnailCiphertext(fileId);
+};
+
 export const clearThumbnailCache = (): void => {
     for (const entry of cache.values()) {
-        if (entry.url) {
-            URL.revokeObjectURL(entry.url);
-        }
+        revokeEntryUrl(entry);
     }
     cache.clear();
     listeners.clear();

@@ -24,6 +24,10 @@ export interface ThumbnailRecord {
     fileId: number;
     encryptedData: string;
     decryptionHeader: string;
+    /** Ciphertext byte length (missing on legacy rows). */
+    byteSize?: number;
+    /** LRU touch time (missing on legacy rows). */
+    lastAccess?: number;
 }
 
 /**

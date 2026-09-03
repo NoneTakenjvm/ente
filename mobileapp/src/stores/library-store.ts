@@ -74,8 +74,12 @@ import {
     getLocalMediaOverride,
     setLocalMediaOverride,
 } from "@/lib/local-media-overrides";
-import { deleteThumbnailCiphertext } from "@/db/thumbnails";
-import { primeThumbnailFromBytes, primeVideoThumbnailFromBytes, requestThumbnail } from "@/lib/thumbnail-cache";
+import {
+    invalidateThumbnailCache,
+    primeThumbnailFromBytes,
+    primeVideoThumbnailFromBytes,
+    requestThumbnail,
+} from "@/lib/thumbnail-cache";
 import {
     useFavoritesStore,
 } from "./favorites-store";
@@ -322,7 +326,7 @@ const replaceSourceWithCompressed = async (
     await saveEncryptedFiles(nextFiles, getSessionCacheKey());
     useTagStore.getState().rebuildFromFiles(nextFiles);
     useFavoritesStore.getState().removeTrashedFileIds([sourceId]);
-    await deleteThumbnailCiphertext(sourceId);
+    await invalidateThumbnailCache(sourceId);
     const {
         clearVideoDiskCache,
         transferSessionVideoUrl,

@@ -59,31 +59,32 @@ describe("tag-presets", () => {
         expect(countFilesMatchingKit(files, ["people", "vietnam"])).toBe(2);
     });
 
-    it("suggestTagKits ranks common pairs and skips existing presets", () => {
+    it("suggestTagKits ranks exact tag sets only, not pairs", () => {
         const files = [
             stubFile(1, ["people", "vietnam"]),
             stubFile(2, ["people", "vietnam", "travel"]),
             stubFile(3, ["people", "vietnam"]),
             stubFile(4, ["solo"]),
         ];
-        const suggestions = suggestTagKits(files, {
-            minCount: 1,
-            existingPresets: [
-                { id: "x", name: "Skip", tags: ["people", "vietnam"] },
-            ],
-        });
-        expect(suggestions.map((s) => s.name)).toEqual([
-            "people + travel",
-            "travel + vietnam",
-            "people + travel + vietnam",
-        ]);
-        expect(suggestions[0]!.count).toBe(1);
+        // File 2's extra tag makes a different exact set — it must not inflate
+        // the people+vietnam pair count.
         const frequent = suggestTagKits(files, {
             minCount: 2,
             existingPresets: [],
         });
         expect(frequent.map((s) => s.name)).toEqual(["people + vietnam"]);
-        expect(frequent[0]!.count).toBe(3);
+        expect(frequent[0]!.count).toBe(2);
+
+        const withSingles = suggestTagKits(files, {
+            minCount: 1,
+            existingPresets: [
+                { id: "x", name: "Skip", tags: ["people", "vietnam"] },
+            ],
+        });
+        expect(withSingles.map((s) => s.name)).toEqual([
+            "people + travel + vietnam",
+        ]);
+        expect(withSingles[0]!.count).toBe(1);
     });
 
     it("formatKitSuggestionName sorts tags", () => {
