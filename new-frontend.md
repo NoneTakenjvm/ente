@@ -6,13 +6,25 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-09-03 |
-| **Last agent / session** | Tag filter kits + ONLY exact-set match |
-| **Current milestone** | Post-M8 UX / stability batch |
+| **Last updated** | 2026-09-04 |
+| **Last agent / session** | Soften thumbnail LRU — build verified |
+| **Current milestone** | Post-M8 UX / similar accuracy |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Phone QA gallery Tags dropdown: Kits tab + AND/OR/ONLY. Footer `NTPhotos 0.3.27`. |
+| **Next recommended action** | Phone QA gallery fling + scroll-back (thumbs). Footer shows `0.3.29` (includes softer thumb caps from `0.3.28`). |
 
 **This session shipped:**
+1. **Softer thumbnail memory caps (verified)** — session 160 MB; disk 400 MB; heap emergency at 85%/10%; cheaper IDB; priority queue + cancel off-screen network; grid overscan 6 / masonry 800 px. Lint + production build green.
+
+**Previous session shipped:**
+1. **Similar accuracy** — Stage-2 photometric residual (gain+bias), bidirectional crop check, soft color gate, Hamming-ordered candidates (6/file), low-texture penalty. Expanded Picsum pool (16 seeds): crop 62/64, shading 69/80, offset 40/64, cross FP **0/120**. `APP_VERSION` → `0.3.29`. Served on :3080.
+
+**Previous session shipped:**
+1. **Softer thumbnail memory caps** — session budget 64→160 MB; disk 200→400 MB; heap emergency only at 85% and drops 10% (was 70%/25%); IDB `getAll` only when over budget (running byte counter); debounce `lastAccess` touches (5 min); priority load queue + cancel off-screen network fetches; grid `overscanCount={6}` / masonry 800 px. `APP_VERSION` → `0.3.28`.
+
+**Previous session (analysis):**
+1. **Gallery thumb scroll regression** — `a2e41bc167` (`0.3.13`) memory LRU caused missing thumbs / slow fill during scroll.
+
+**Previous session shipped:**
 1. **Tag filter kits + ONLY** — Gallery Tags picker and query builder include a Kits tab (Has expands kit tags). Match mode gains **ONLY**: photos whose user tags are exactly the selected Has set (system tags ignored). Persists in smart albums. `APP_VERSION` → `0.3.27`.
 
 **Previous session shipped:**
