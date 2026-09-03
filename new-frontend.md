@@ -7,12 +7,15 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-03 |
-| **Last agent / session** | Stage-2 crop-match speedups (finished after parallel interference). |
+| **Last agent / session** | Similar-photos stability (2509 groups / freeze / crop OOM). |
 | **Current milestone** | Post-M8 UX / stability batch |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Phone QA Find similar crop phase + stamp tool. Footer `NTPhotos 0.3.24`. Lint/tests/build green. |
+| **Next recommended action** | Phone QA Find similar on ~7k library. Footer `NTPhotos 0.3.25`. Expect ≪2509 groups, crop total ≤2000, UI stays responsive during scan. |
 
 **This session shipped:**
+1. **Similar stability** — Stage-2: 3-hex color buckets, color Hamming prefilter, `MAX_TOTAL_CROP_CANDIDATES=2000`, size-capped `tryUnion` (stops mega-component → trim → thousands of cards). UI: progress-only during hash/crop (no mid-scan group thumbs). Crop-verdict cache capped at 4k; cleared on leave Similar. Served at `http://192.168.0.182:3080` as `NTPhotos 0.3.25`.
+
+**Previous session shipped:**
 1. **Faster Stage-2 crop checks** — decode-once luminance grids + WeakMap orientation cache; packed color Hamming; batched `crop-check-batch` worker messages (unique grids per chunk); throttled group rebuilds (~300ms). Works with session crop-verdict cache. `APP_VERSION` → `0.3.24`.
 
 **Previous session shipped:**

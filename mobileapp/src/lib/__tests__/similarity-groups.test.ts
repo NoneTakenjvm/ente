@@ -214,16 +214,16 @@ describe("mergeCropMatches size cap", () => {
         Array.from({ length: count }, (_, i) => [i + 1, stubFile(i + 1, 1, 1)]),
     );
 
-    /** Distinct dHash so Stage-1 leaves everything as singletons; shared color
-     *  prefix so Stage-2 proposes a long chain of crop candidates. */
+    /** Distinct dHash so Stage-1 leaves everything as singletons; shared 3-hex
+     *  color prefix so Stage-2 proposes a long chain of crop candidates. */
     const cropChainEntries = (): Map<number, PhashEntry> => {
         const entries = new Map<number, PhashEntry>();
         for (let i = 0; i < count; i++) {
             // Far-apart dHash values (unique 3-hex buckets, high Hamming distance)
-            // so Stage-1 leaves everything as singletons. Shared color prefix `aa`
-            // puts them all in one Stage-2 color bucket.
+            // so Stage-1 leaves everything as singletons. Shared color prefix
+            // `aaa` puts them all in one Stage-2 color bucket.
             const hashPrefix = (i * 17).toString(16).padStart(3, "0").slice(-3);
-            const color = `aa${i.toString(16).padStart(14, "0")}`;
+            const color = `aaa${i.toString(16).padStart(13, "0")}`;
             entries.set(i + 1, {
                 hashes: [`${hashPrefix}${"f".repeat(13)}`],
                 color,
@@ -234,7 +234,7 @@ describe("mergeCropMatches size cap", () => {
         return entries;
     };
 
-    it("returns uncapped clusters; onGroups receives display-trimmed cards", async () => {
+    it("keeps crop-merged groups ≤ maxGroupSize (no mega-component trim storm)", async () => {
         const { clearSimilarityMatchCache } = await import(
             "@/lib/similarity-match-cache"
         );
@@ -258,21 +258,15 @@ describe("mergeCropMatches size cap", () => {
         });
 
         expect(merged.length).toBeGreaterThan(0);
-        const covered = merged.reduce((sum, group) => sum + group.items.length, 0);
-        expect(covered).toBe(count);
-        // Full return may contain one large chain (UF is uncapped).
-        expect(
-            merged.some((group) => group.items.length > MAX_GROUP_SIZE),
-        ).toBe(true);
-
+        for (const group of merged) {
+            expect(group.items.length).toBeLessThanOrEqual(MAX_GROUP_SIZE);
+        }
         for (const group of lastEmitted) {
             expect(group.items.length).toBeLessThanOrEqual(MAX_GROUP_SIZE);
         }
-        const emittedCovered = lastEmitted.reduce(
-            (sum, group) => sum + group.items.length,
-            0,
-        );
-        expect(emittedCovered).toBe(count);
+        // Path-shaped candidates still cover every file in bounded chunks.
+        const covered = merged.reduce((sum, group) => sum + group.items.length, 0);
+        expect(covered).toBe(count);
     });
 
     it("aborts when the signal is already aborted", async () => {

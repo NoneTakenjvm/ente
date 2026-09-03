@@ -2,6 +2,7 @@ import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
 import { FileType } from "ente-media/file-type";
 import type { PhashEntry } from "@/lib/crop-match";
+import { COLOR_PALETTE_THRESHOLD, hammingDistance } from "@/lib/crop-match";
 import { variantHammingDistanceHex } from "@/lib/phash";
 import { checkCropMatchBatchInWorkers } from "@/lib/similarity-job";
 import {
@@ -32,10 +33,17 @@ export interface SimilarityGroup {
 
 export const defaultSimilarityThreshold = 8;
 
-const colorBucketKey = (color: string): string => color.slice(0, 2);
+/** 12-bit color prefix (was 8-bit / 2 hex — too coarse for 7k libraries). */
+const colorBucketKey = (color: string): string => color.slice(0, 3);
 
-/** Hard cap on crop checks paid per file, so the async pass stays bounded. */
+/** Hard cap on crop checks paid per file within a color bucket. */
 export const MAX_CROP_CHECKS_PER_FILE = 4;
+
+/**
+ * Hard cap on total Stage-2 crop pairs. Library-wide color buckets otherwise
+ * produce ~O(n) candidates (~15k on a 7k library) and OOM the phone.
+ */
+export const MAX_TOTAL_CROP_CANDIDATES = 2000;
 
 export {
     MAX_GROUP_SIZE,
@@ -65,6 +73,10 @@ class UnionFind {
         return this.parent[index]!;
     }
 
+    componentSize(index: number): number {
+        return this.sizes[this.find(index)]!;
+    }
+
     union(left: number, right: number): void {
         const rootLeft = this.find(left);
         const rootRight = this.find(right);
@@ -78,6 +90,23 @@ class UnionFind {
             this.parent[rootRight] = rootLeft;
             this.sizes[rootLeft]! += this.sizes[rootRight]!;
         }
+    }
+
+    /**
+     * Merge only when the combined component stays ≤ {@link maxSize}.
+     * Prevents transitive crop false-positives from chaining the whole library.
+     */
+    tryUnion(left: number, right: number, maxSize: number): boolean {
+        const rootLeft = this.find(left);
+        const rootRight = this.find(right);
+        if (rootLeft === rootRight) {
+            return true;
+        }
+        if (this.sizes[rootLeft]! + this.sizes[rootRight]! > maxSize) {
+            return false;
+        }
+        this.union(left, right);
+        return true;
     }
 }
 
@@ -229,6 +258,7 @@ const assembleGroup = (
     filesById: Map<number, EnteFile>,
     collections: Collection[],
     userId: number,
+    computeMaxDistance = true,
 ): SimilarityGroup | undefined => {
     const ownedCollections = normalOwnedCollections(collections, userId);
     const names = collectionNameByID(ownedCollections);
@@ -259,12 +289,14 @@ const assembleGroup = (
         return undefined;
     }
 
-    for (let i = 0; i < memberHashes.length; i++) {
-        for (let j = i + 1; j < memberHashes.length; j++) {
-            maxDistance = Math.max(
-                maxDistance,
-                variantDistance(memberHashes[i]!, memberHashes[j]!),
-            );
+    if (computeMaxDistance) {
+        for (let i = 0; i < memberHashes.length; i++) {
+            for (let j = i + 1; j < memberHashes.length; j++) {
+                maxDistance = Math.max(
+                    maxDistance,
+                    variantDistance(memberHashes[i]!, memberHashes[j]!),
+                );
+            }
         }
     }
 
@@ -290,10 +322,16 @@ export interface CropMergeOptions {
 }
 
 /** Soft throttle for provisional group rebuilds during crop merge (ms). */
-const CROP_GROUP_PROGRESS_INTERVAL_MS = 300;
+const CROP_GROUP_PROGRESS_INTERVAL_MS = 800;
 
 /**
  * Stage-2: refine Stage-1 groups by linking crop matches via the worker pool.
+ *
+ * Candidates are color-bucketed with a Hamming pre-filter and a hard total cap
+ * so large libraries cannot enqueue tens of thousands of template matches.
+ * Crop unions are size-capped so transitive false positives cannot chain the
+ * whole library into one mega-component (which trim would then slice into
+ * thousands of cards).
  */
 export const mergeCropMatches = async (
     groups: SimilarityGroup[],
@@ -332,6 +370,7 @@ export const mergeCropMatches = async (
     const indexById = new Map(fileIds.map((fileId, i) => [fileId, i]));
     const uf = new UnionFind(fileIds.length);
 
+    const stage1MemberIndexes = new Set<number>();
     for (const group of groups) {
         const memberIndexes = group.items
             .map((item) => indexById.get(item.file.id))
@@ -340,6 +379,9 @@ export const mergeCropMatches = async (
             continue;
         }
         const first = memberIndexes[0]!;
+        for (const index of memberIndexes) {
+            stage1MemberIndexes.add(index);
+        }
         for (const index of memberIndexes.slice(1)) {
             uf.union(first, index);
         }
@@ -361,12 +403,14 @@ export const mergeCropMatches = async (
             indexed[a]!.entry.color!.localeCompare(indexed[b]!.entry.color!));
     }
 
-    const candidates: Array<[number, number]> = [];
+    const preferred: Array<[number, number]> = [];
+    const other: Array<[number, number]> = [];
     for (const bucketIndexes of buckets.values()) {
         for (let p = 0; p < bucketIndexes.length; p++) {
             for (
                 let offset = 1;
-                offset <= MAX_CROP_CHECKS_PER_FILE && p + offset < bucketIndexes.length;
+                offset <= MAX_CROP_CHECKS_PER_FILE &&
+                p + offset < bucketIndexes.length;
                 offset++
             ) {
                 const a = bucketIndexes[p]!;
@@ -374,12 +418,34 @@ export const mergeCropMatches = async (
                 if (uf.find(a) === uf.find(b)) {
                     continue;
                 }
-                candidates.push([a, b]);
+                if (
+                    uf.componentSize(a) + uf.componentSize(b) > maxGroupSize
+                ) {
+                    continue;
+                }
+                const colorA = indexed[a]!.entry.color!;
+                const colorB = indexed[b]!.entry.color!;
+                if (hammingDistance(colorA, colorB) > COLOR_PALETTE_THRESHOLD) {
+                    continue;
+                }
+                const pair: [number, number] = [a, b];
+                if (
+                    stage1MemberIndexes.has(a) ||
+                    stage1MemberIndexes.has(b)
+                ) {
+                    preferred.push(pair);
+                } else {
+                    other.push(pair);
+                }
             }
         }
     }
+    const candidates = [...preferred, ...other].slice(
+        0,
+        MAX_TOTAL_CROP_CANDIDATES,
+    );
 
-    const rebuildGroups = (): SimilarityGroup[] => {
+    const rebuildGroups = (computeMaxDistance: boolean): SimilarityGroup[] => {
         const groupsByRoot = new Map<number, number[]>();
         for (let i = 0; i < indexed.length; i++) {
             const root = uf.find(i);
@@ -401,6 +467,7 @@ export const mergeCropMatches = async (
                 filesById,
                 collections,
                 userId,
+                computeMaxDistance,
             );
             if (group) {
                 rebuilt.push(group);
@@ -409,14 +476,24 @@ export const mergeCropMatches = async (
         return rebuilt.sort((a, b) => b.items.length - a.items.length);
     };
 
-    const emitGroups = (): SimilarityGroup[] => {
-        const full = rebuildGroups();
+    const emitGroups = (computeMaxDistance: boolean): SimilarityGroup[] => {
+        const full = rebuildGroups(computeMaxDistance);
         onGroups?.(trimSimilarityGroups(full, maxGroupSize));
         return full;
     };
 
+    const applyCachedUnion = (a: number, b: number): boolean => {
+        if (
+            getCachedCropVerdict(indexed[a]!.fileId, indexed[b]!.fileId) &&
+            uf.find(a) !== uf.find(b)
+        ) {
+            return uf.tryUnion(a, b, maxGroupSize);
+        }
+        return false;
+    };
+
     // All pairs already verified this session — apply sync (threshold changes).
-    let allCached = true;
+    let allCached = candidates.length > 0;
     for (const [a, b] of candidates) {
         if (
             getCachedCropVerdict(indexed[a]!.fileId, indexed[b]!.fileId) ===
@@ -428,14 +505,13 @@ export const mergeCropMatches = async (
     }
     if (allCached) {
         for (const [a, b] of candidates) {
-            if (
-                getCachedCropVerdict(indexed[a]!.fileId, indexed[b]!.fileId) &&
-                uf.find(a) !== uf.find(b)
-            ) {
-                uf.union(a, b);
-            }
+            applyCachedUnion(a, b);
         }
-        return emitGroups();
+        return emitGroups(true);
+    }
+
+    if (candidates.length === 0) {
+        return emitGroups(true);
     }
 
     let lastGroupsAt = 0;
@@ -447,6 +523,9 @@ export const mergeCropMatches = async (
         const activePairs: Array<[number, number]> = [];
         for (const [a, b] of batch) {
             if (uf.find(a) === uf.find(b)) {
+                continue;
+            }
+            if (uf.componentSize(a) + uf.componentSize(b) > maxGroupSize) {
                 continue;
             }
             activePairs.push([a, b]);
@@ -515,8 +594,9 @@ export const mergeCropMatches = async (
                 if (!cachedMatches[slot]) {
                     return;
                 }
-                uf.union(a, b);
-                groupsDirty = true;
+                if (uf.tryUnion(a, b, maxGroupSize)) {
+                    groupsDirty = true;
+                }
             });
         }
 
@@ -525,6 +605,7 @@ export const mergeCropMatches = async (
             typeof performance !== "undefined" ? performance.now() : Date.now();
         const isLast = completed >= candidates.length;
         const dueForGroups =
+            Boolean(onGroups) &&
             groupsDirty &&
             (isLast || now - lastGroupsAt >= CROP_GROUP_PROGRESS_INTERVAL_MS);
 
@@ -533,8 +614,9 @@ export const mergeCropMatches = async (
             completed,
             total: Math.max(candidates.length, 1),
         });
-        if (dueForGroups && onGroups) {
-            emitGroups();
+        if (dueForGroups) {
+            // Skip O(k²) distance during progress; final emit computes it.
+            emitGroups(false);
             lastGroupsAt = now;
             groupsDirty = false;
         }
@@ -542,7 +624,7 @@ export const mergeCropMatches = async (
     }
 
     throwIfAborted();
-    return emitGroups();
+    return emitGroups(true);
 };
 
 export const similarityGroupToSelection = (
