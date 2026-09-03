@@ -2,8 +2,12 @@ import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
 import { FileType } from "ente-media/file-type";
 import type { PhashEntry } from "@/lib/crop-match";
-import { hammingDistance } from "@/lib/phash";
-import { checkCropMatchInWorkers } from "@/lib/similarity-job";
+import { variantHammingDistanceHex } from "@/lib/phash";
+import { checkCropMatchBatchInWorkers } from "@/lib/similarity-job";
+import {
+    getCachedCropVerdict,
+    setCachedCropVerdict,
+} from "@/lib/similarity-match-cache";
 import {
     MAX_GROUP_SIZE,
     runStage1ClusteringSync,
@@ -61,10 +65,6 @@ class UnionFind {
         return this.parent[index]!;
     }
 
-    componentSize(index: number): number {
-        return this.sizes[this.find(index)]!;
-    }
-
     union(left: number, right: number): void {
         const rootLeft = this.find(left);
         const rootRight = this.find(right);
@@ -79,33 +79,10 @@ class UnionFind {
             this.sizes[rootLeft]! += this.sizes[rootRight]!;
         }
     }
-
-    tryUnion(left: number, right: number, maxSize: number): boolean {
-        const rootLeft = this.find(left);
-        const rootRight = this.find(right);
-        if (rootLeft === rootRight) {
-            return true;
-        }
-        if (this.sizes[rootLeft]! + this.sizes[rootRight]! > maxSize) {
-            return false;
-        }
-        this.union(left, right);
-        return true;
-    }
 }
 
-const variantDistance = (left: string[], right: string[]): number => {
-    let best = Number.MAX_SAFE_INTEGER;
-    for (const leftHash of left) {
-        for (const rightHash of right) {
-            const distance = hammingDistance(leftHash, rightHash);
-            if (distance < best) {
-                best = distance;
-            }
-        }
-    }
-    return best;
-};
+const variantDistance = (left: string[], right: string[]): number =>
+    variantHammingDistanceHex(left, right);
 
 /** Only the owned, allowed-collection, image files that have a phash entry. */
 export const indexableFiles = (
@@ -192,6 +169,38 @@ export const clustersToSimilarityGroups = (
 };
 
 /**
+ * Slice oversized groups for display after clustering. Does not change which
+ * photos are considered similar — only how large each presented card can be.
+ */
+export const trimSimilarityGroups = (
+    groups: SimilarityGroup[],
+    maxGroupSize: number,
+): SimilarityGroup[] => {
+    if (maxGroupSize < 2) {
+        return [];
+    }
+    const trimmed: SimilarityGroup[] = [];
+    for (const group of groups) {
+        if (group.items.length <= maxGroupSize) {
+            trimmed.push(group);
+            continue;
+        }
+        for (let i = 0; i < group.items.length; i += maxGroupSize) {
+            const slice = group.items.slice(i, i + maxGroupSize);
+            if (slice.length < 2) {
+                continue;
+            }
+            trimmed.push({
+                id: `similar-${slice.map((item) => item.file.id).sort((a, b) => a - b).join("-")}`,
+                items: slice,
+                maxDistance: group.maxDistance,
+            });
+        }
+    }
+    return trimmed.sort((a, b) => b.items.length - a.items.length);
+};
+
+/**
  * Stage-1 (sync): for tests. Production UI uses {@link runStage1InWorker} from
  * `@/lib/similarity-job`.
  */
@@ -207,12 +216,11 @@ export const buildSimilarityGroups = (
     if (indexed.length < 2) {
         return [];
     }
-    const clusters = runStage1ClusteringSync(
-        toStage1Items(indexed),
-        threshold,
+    const clusters = runStage1ClusteringSync(toStage1Items(indexed), threshold);
+    return trimSimilarityGroups(
+        clustersToSimilarityGroups(clusters, filesById, collections, userId),
         maxGroupSize,
     );
-    return clustersToSimilarityGroups(clusters, filesById, collections, userId);
 };
 
 const assembleGroup = (
@@ -280,6 +288,9 @@ export interface CropMergeOptions {
     onGroups?: (groups: SimilarityGroup[]) => void;
     maxGroupSize?: number;
 }
+
+/** Soft throttle for provisional group rebuilds during crop merge (ms). */
+const CROP_GROUP_PROGRESS_INTERVAL_MS = 300;
 
 /**
  * Stage-2: refine Stage-1 groups by linking crop matches via the worker pool.
@@ -363,9 +374,6 @@ export const mergeCropMatches = async (
                 if (uf.find(a) === uf.find(b)) {
                     continue;
                 }
-                if (uf.componentSize(a) + uf.componentSize(b) > maxGroupSize) {
-                    continue;
-                }
                 candidates.push([a, b]);
             }
         }
@@ -387,22 +395,6 @@ export const mergeCropMatches = async (
             if (memberIndices.length < 2) {
                 continue;
             }
-            if (memberIndices.length > maxGroupSize) {
-                for (let i = 0; i < memberIndices.length; i += maxGroupSize) {
-                    const slice = memberIndices.slice(i, i + maxGroupSize);
-                    const group = assembleGroup(
-                        slice,
-                        indexed,
-                        filesById,
-                        collections,
-                        userId,
-                    );
-                    if (group) {
-                        rebuilt.push(group);
-                    }
-                }
-                continue;
-            }
             const group = assembleGroup(
                 memberIndices,
                 indexed,
@@ -417,48 +409,140 @@ export const mergeCropMatches = async (
         return rebuilt.sort((a, b) => b.items.length - a.items.length);
     };
 
+    const emitGroups = (): SimilarityGroup[] => {
+        const full = rebuildGroups();
+        onGroups?.(trimSimilarityGroups(full, maxGroupSize));
+        return full;
+    };
+
+    // All pairs already verified this session — apply sync (threshold changes).
+    let allCached = true;
+    for (const [a, b] of candidates) {
+        if (
+            getCachedCropVerdict(indexed[a]!.fileId, indexed[b]!.fileId) ===
+            undefined
+        ) {
+            allCached = false;
+            break;
+        }
+    }
+    if (allCached) {
+        for (const [a, b] of candidates) {
+            if (
+                getCachedCropVerdict(indexed[a]!.fileId, indexed[b]!.fileId) &&
+                uf.find(a) !== uf.find(b)
+            ) {
+                uf.union(a, b);
+            }
+        }
+        return emitGroups();
+    }
+
+    let lastGroupsAt = 0;
+    let groupsDirty = false;
+
     for (let start = 0; start < candidates.length; start += batchSize) {
         throwIfAborted();
         const batch = candidates.slice(start, start + batchSize);
-        const verdicts = await Promise.all(
-            batch.map(([a, b]) => {
-                if (uf.find(a) === uf.find(b)) {
-                    return Promise.resolve(false);
-                }
-                if (uf.componentSize(a) + uf.componentSize(b) > maxGroupSize) {
-                    return Promise.resolve(false);
-                }
-                const left = indexed[a]!.entry;
-                const right = indexed[b]!.entry;
-                return checkCropMatchInWorkers(
-                    left.color!,
-                    left.grid!,
-                    right.color!,
-                    right.grid!,
-                );
-            }),
-        );
-        throwIfAborted();
-        verdicts.forEach((match, index) => {
-            if (!match) {
-                return;
+        const activePairs: Array<[number, number]> = [];
+        for (const [a, b] of batch) {
+            if (uf.find(a) === uf.find(b)) {
+                continue;
             }
-            const [a, b] = batch[index]!;
-            uf.tryUnion(a, b, maxGroupSize);
-        });
+            activePairs.push([a, b]);
+        }
+
+        if (activePairs.length > 0) {
+            const cachedMatches: boolean[] = [];
+            const uncachedPairs: Array<[number, number]> = [];
+            const uncachedSlots: number[] = [];
+            activePairs.forEach(([a, b], slot) => {
+                const cached = getCachedCropVerdict(
+                    indexed[a]!.fileId,
+                    indexed[b]!.fileId,
+                );
+                if (cached !== undefined) {
+                    cachedMatches[slot] = cached;
+                    return;
+                }
+                uncachedSlots.push(slot);
+                uncachedPairs.push([a, b]);
+            });
+
+            if (uncachedPairs.length > 0) {
+                const batchEntries: Record<
+                    string,
+                    { color: string; grid: string }
+                > = {};
+                const keyPairs: Array<[string, string]> = [];
+                for (const [a, b] of uncachedPairs) {
+                    const aKey = String(a);
+                    const bKey = String(b);
+                    if (!batchEntries[aKey]) {
+                        const left = indexed[a]!.entry;
+                        batchEntries[aKey] = {
+                            color: left.color!,
+                            grid: left.grid!,
+                        };
+                    }
+                    if (!batchEntries[bKey]) {
+                        const right = indexed[b]!.entry;
+                        batchEntries[bKey] = {
+                            color: right.color!,
+                            grid: right.grid!,
+                        };
+                    }
+                    keyPairs.push([aKey, bKey]);
+                }
+
+                const verdicts = await checkCropMatchBatchInWorkers(
+                    batchEntries,
+                    keyPairs,
+                );
+                throwIfAborted();
+                verdicts.forEach((match, index) => {
+                    const [a, b] = uncachedPairs[index]!;
+                    setCachedCropVerdict(
+                        indexed[a]!.fileId,
+                        indexed[b]!.fileId,
+                        match,
+                    );
+                    cachedMatches[uncachedSlots[index]!] = match;
+                });
+            }
+
+            activePairs.forEach(([a, b], slot) => {
+                if (!cachedMatches[slot]) {
+                    return;
+                }
+                uf.union(a, b);
+                groupsDirty = true;
+            });
+        }
 
         const completed = Math.min(start + batch.length, candidates.length);
+        const now =
+            typeof performance !== "undefined" ? performance.now() : Date.now();
+        const isLast = completed >= candidates.length;
+        const dueForGroups =
+            groupsDirty &&
+            (isLast || now - lastGroupsAt >= CROP_GROUP_PROGRESS_INTERVAL_MS);
+
         onProgress?.({
             stepDescription: "Checking crops",
             completed,
             total: Math.max(candidates.length, 1),
         });
-        onGroups?.(rebuildGroups());
+        if (dueForGroups && onGroups) {
+            emitGroups();
+            lastGroupsAt = now;
+            groupsDirty = false;
+        }
         await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
     throwIfAborted();
-    return rebuildGroups();
+    return emitGroups();
 };
 
 export const similarityGroupToSelection = (

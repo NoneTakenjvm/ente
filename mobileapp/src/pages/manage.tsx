@@ -56,6 +56,7 @@ import {
     mergeCropMatches,
     similarityGroupToSelection,
     toStage1Items,
+    trimSimilarityGroups,
     type SimilarMatchProgress,
     type SimilarityGroup,
 } from "@/lib/similarity-groups";
@@ -65,6 +66,15 @@ import {
     runStage1InWorker,
     terminatePhashWorker,
 } from "@/lib/similarity-job";
+import {
+    EDGE_COLLECT_THRESHOLD,
+    clusterFromFileEdges,
+} from "@/lib/similarity-stage1-core";
+import {
+    getCachedStage1Edges,
+    setCachedStage1Edges,
+    similarityIndexKey,
+} from "@/lib/similarity-match-cache";
 import { APP_VERSION } from "@/lib/app-version";
 import {
     isSessionAuthenticated,
@@ -127,6 +137,8 @@ export default function ManagePage(): JSX.Element {
     const dedupDryRun = useUIStore((s) => s.dedupDryRun);
     const setDedupDryRun = useUIStore((s) => s.setDedupDryRun);
     const similarMaxGroupSize = useSettingsStore((s) => s.similarMaxGroupSize);
+    const similarMaxGroupSizeRef = useRef(similarMaxGroupSize);
+    similarMaxGroupSizeRef.current = similarMaxGroupSize;
 
     const [section, setSection] = useState<ManageSection>("hub");
     const [selections, setSelections] = useState<DedupGroupSelection[]>([]);
@@ -155,6 +167,8 @@ export default function ManagePage(): JSX.Element {
     const jobAbort = useRef<AbortController | undefined>(undefined);
     const jobPaused = useRef<boolean>(false);
     const cropMergeAbort = useRef<AbortController | undefined>(undefined);
+    /** Uncapped groups from the last similar find (trim for display / max-size). */
+    const lastFullSimilarGroups = useRef<SimilarityGroup[]>([]);
 
     useEffect(() => {
         reconcileSessionWithCore();
@@ -193,7 +207,7 @@ export default function ManagePage(): JSX.Element {
     }, [dedupMode, allFiles, collections, userId]);
 
     // Similar: Stage-1 then async crop merge — only after the user taps Find
-    // similar (so they can hash new photos first). Abort on leave / param change.
+    // similar. Edge + crop verdict caches make later threshold changes cheap.
     useEffect(() => {
         cropMergeAbort.current?.abort();
         cropMergeAbort.current = undefined;
@@ -203,6 +217,7 @@ export default function ManagePage(): JSX.Element {
             setSimilarGroups([]);
             setSimilarBusy(false);
             setSimilarProgress(undefined);
+            lastFullSimilarGroups.current = [];
             return;
         }
 
@@ -210,79 +225,129 @@ export default function ManagePage(): JSX.Element {
             setSimilarGroups([]);
             setSimilarBusy(false);
             setSimilarProgress(undefined);
+            lastFullSimilarGroups.current = [];
             return;
         }
 
         const abort = new AbortController();
         cropMergeAbort.current = abort;
         let cancelled = false;
+
+        const filesById = new Map(allFiles.map((file) => [file.id, file]));
+        const indexed = indexableFiles(
+            phashEntries,
+            filesById,
+            collections,
+            userId,
+        );
+        const stage1Items = toStage1Items(indexed);
+        const indexKey = similarityIndexKey(stage1Items);
+        const cachedEdges = getCachedStage1Edges(
+            indexKey,
+            EDGE_COLLECT_THRESHOLD,
+        );
+        const fromCache = Boolean(cachedEdges);
+
+        // Cache hit: keep current groups visible while reclustering (no flash).
         setSimilarBusy(true);
-        setSimilarProgress(undefined);
-        setSimilarGroups([]);
+        setSimilarProgress(
+            fromCache ?
+                {
+                    stepDescription: "Grouping from cache",
+                    completed: 1,
+                    total: 1,
+                } :
+                undefined,
+        );
+        if (!fromCache) {
+            setSimilarGroups([]);
+        }
 
         const run = async (): Promise<void> => {
-            // Let the Similar chrome paint before any heavy grouping work.
-            await new Promise((resolve) => setTimeout(resolve, 0));
+            if (!fromCache) {
+                await new Promise((resolve) => setTimeout(resolve, 0));
+            }
             if (abort.signal.aborted || cancelled) {
                 return;
             }
 
             try {
-                const filesById = new Map(allFiles.map((file) => [file.id, file]));
-                const indexed = indexableFiles(
-                    phashEntries,
-                    filesById,
-                    collections,
-                    userId,
-                );
+                const showTrimmed = (full: SimilarityGroup[]): void => {
+                    lastFullSimilarGroups.current = full;
+                    startTransition(() => {
+                        setSimilarGroups(
+                            trimSimilarityGroups(
+                                full,
+                                similarMaxGroupSizeRef.current,
+                            ),
+                        );
+                    });
+                };
+
                 const applyClusters = (
                     clusters: Parameters<typeof clustersToSimilarityGroups>[0],
                 ): SimilarityGroup[] => {
-                    const groups = clustersToSimilarityGroups(
+                    const full = clustersToSimilarityGroups(
                         clusters,
                         filesById,
                         collections,
                         userId,
                     );
-                    startTransition(() => {
-                        setSimilarGroups(groups);
-                    });
-                    return groups;
+                    showTrimmed(full);
+                    return full;
                 };
 
-                setSimilarProgress({
-                    stepDescription: "Comparing hashes",
-                    completed: 0,
-                    total: Math.max(indexed.length, 1),
-                });
-
-                const stage1Clusters = await runStage1InWorker(
-                    toStage1Items(indexed),
-                    debouncedThreshold,
-                    {
-                        signal: abort.signal,
-                        maxGroupSize: similarMaxGroupSize,
-                        onProgress: (update) => {
-                            if (abort.signal.aborted || cancelled) {
-                                return;
-                            }
-                            const stepDescription =
-                                update.phase === "comparing" ?
-                                    "Comparing hashes" :
-                                    update.phase === "finalizing" ?
-                                        "Finalizing groups" :
-                                        "Hash grouping done";
-                            setSimilarProgress({
-                                stepDescription,
-                                completed: update.completed,
-                                total: Math.max(update.total, 1),
-                            });
-                            if (update.clusters !== undefined) {
-                                applyClusters(update.clusters);
-                            }
+                let stage1Clusters: Parameters<
+                    typeof clustersToSimilarityGroups
+                >[0];
+                if (cachedEdges) {
+                    stage1Clusters = clusterFromFileEdges(
+                        stage1Items,
+                        cachedEdges,
+                        debouncedThreshold,
+                    );
+                } else {
+                    setSimilarProgress({
+                        stepDescription: "Comparing hashes",
+                        completed: 0,
+                        total: Math.max(indexed.length, 1),
+                    });
+                    const stage1Result = await runStage1InWorker(
+                        stage1Items,
+                        debouncedThreshold,
+                        {
+                            signal: abort.signal,
+                            onProgress: (update) => {
+                                if (abort.signal.aborted || cancelled) {
+                                    return;
+                                }
+                                const stepDescription =
+                                    update.phase === "comparing" ?
+                                        "Comparing hashes" :
+                                        update.phase === "finalizing" ?
+                                            "Finalizing groups" :
+                                            "Hash grouping done";
+                                setSimilarProgress({
+                                    stepDescription,
+                                    completed: update.completed,
+                                    total: Math.max(update.total, 1),
+                                });
+                                if (update.clusters !== undefined) {
+                                    applyClusters(update.clusters);
+                                }
+                            },
                         },
-                    },
-                );
+                    );
+                    if (abort.signal.aborted || cancelled) {
+                        return;
+                    }
+                    setCachedStage1Edges(
+                        indexKey,
+                        EDGE_COLLECT_THRESHOLD,
+                        stage1Result.edges,
+                    );
+                    stage1Clusters = stage1Result.clusters;
+                }
                 if (abort.signal.aborted || cancelled) {
                     return;
                 }
@@ -294,7 +359,7 @@ export default function ManagePage(): JSX.Element {
                     collections,
                     userId,
                     signal: abort.signal,
-                    maxGroupSize: similarMaxGroupSize,
+                    maxGroupSize: similarMaxGroupSizeRef.current,
                     onProgress: (progress) => {
                         if (abort.signal.aborted || cancelled) {
                             return;
@@ -313,7 +378,13 @@ export default function ManagePage(): JSX.Element {
                 if (abort.signal.aborted || cancelled) {
                     return;
                 }
-                setSimilarGroups(merged);
+                lastFullSimilarGroups.current = merged;
+                setSimilarGroups(
+                    trimSimilarityGroups(
+                        merged,
+                        similarMaxGroupSizeRef.current,
+                    ),
+                );
                 setSimilarProgress(undefined);
             } catch (mergeError: unknown) {
                 if (
@@ -351,10 +422,25 @@ export default function ManagePage(): JSX.Element {
         collections,
         phashEntries,
         debouncedThreshold,
-        similarMaxGroupSize,
         similarFindGeneration,
         userId,
     ]);
+
+    // Max group size only re-slices the last uncapped result — no rematch.
+    useEffect(() => {
+        if (dedupMode !== "similar" || similarFindGeneration === 0) {
+            return;
+        }
+        if (lastFullSimilarGroups.current.length === 0) {
+            return;
+        }
+        setSimilarGroups(
+            trimSimilarityGroups(
+                lastFullSimilarGroups.current,
+                similarMaxGroupSize,
+            ),
+        );
+    }, [dedupMode, similarFindGeneration, similarMaxGroupSize]);
 
     useEffect(() => {
         if (dedupMode === "exact") {

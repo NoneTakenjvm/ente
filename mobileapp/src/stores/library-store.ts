@@ -95,6 +95,7 @@ import {
 } from "@/lib/compress";
 import { buildCroppedOrganizerTags, croppedReplaceTitle } from "@/lib/crop";
 import { isFileFavorited } from "@/lib/favorites";
+import type { CompressMediaResult } from "@/lib/transcode/compress-media";
 import type { RotationDegrees } from "@/lib/rotate";
 import type { CroppedVideoResult, VideoCropRect } from "@/lib/video-edit";
 import { mimeTypeForFile } from "@/lib/media-kind";
@@ -144,8 +145,8 @@ interface LibraryState {
             optimisticFile: EnteFile;
             bytes: Uint8Array;
             finalize: Promise<EnteFile>;
-        }
-        | undefined;
+        } |
+        undefined;
     pruneDuplicateGroups: (
         groups: DedupGroupSelection[],
         options?: {
@@ -161,11 +162,11 @@ interface LibraryState {
     compressAndUploadMedia: (
         fileId: number,
         options?: { quality?: number; videoCrf?: number },
-        precomputed?: import("@/lib/transcode/compress-media").CompressMediaResult,
+        precomputed?: CompressMediaResult,
     ) => Promise<EnteFile>;
     compressAndReplaceMediaOptimistic: (
         fileId: number,
-        result: import("@/lib/transcode/compress-media").CompressMediaResult,
+        result: CompressMediaResult,
         originalByteLength: number,
     ) => { optimisticFile: EnteFile; finalize: Promise<EnteFile> };
     rotateAndUploadFile: (
@@ -794,8 +795,8 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             optimisticFile: EnteFile;
             bytes: Uint8Array;
             finalize: Promise<EnteFile>;
-        }
-        | undefined => {
+        } |
+        undefined => {
         const history = getEditHistory(fileId);
         if (!history) {
             return undefined;
@@ -892,7 +893,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
     compressAndUploadMedia: async (
         fileId: number,
         options?: { quality?: number; videoCrf?: number },
-        precomputed?: import("@/lib/transcode/compress-media").CompressMediaResult,
+        precomputed?: CompressMediaResult,
     ): Promise<EnteFile> => {
         const { allFiles } = get();
         const file = allFiles.find((entry) => entry.id === fileId);
@@ -931,7 +932,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
 
     compressAndReplaceMediaOptimistic: (
         fileId: number,
-        result: import("@/lib/transcode/compress-media").CompressMediaResult,
+        result: CompressMediaResult,
         originalByteLength: number,
     ): { optimisticFile: EnteFile; finalize: Promise<EnteFile> } => {
         const { allFiles, collections } = get();

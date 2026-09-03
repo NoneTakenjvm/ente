@@ -98,8 +98,7 @@ export function TagPickerSheet({
 
     const showKitsTab = Boolean(presets?.length && onApplyPreset);
     const [selectedType, setSelectedType] = useState<string>(() =>
-        defaultToKits && showKitsTab ? KITS_TAB : DEFAULT_TAG_TYPE,
-    );
+        defaultToKits && showKitsTab ? KITS_TAB : DEFAULT_TAG_TYPE);
     const [newTag, setNewTag] = useState<string>("");
     const [newType, setNewType] = useState<string>("");
     const [dragPx, setDragPx] = useState<number>(0);
@@ -163,25 +162,20 @@ export function TagPickerSheet({
         selectedType !== DEFAULT_TAG_TYPE &&
         selectedType !== KITS_TAB;
 
-    const wasOpenRef = useRef(false);
-    useEffect(() => {
-        if (open && !wasOpenRef.current) {
-            setSelectedType(
-                defaultToKits && showKitsTab ? KITS_TAB : DEFAULT_TAG_TYPE,
-            );
-            setNewTag("");
-            setNewType("");
-        }
-        wasOpenRef.current = open;
-    }, [open, defaultToKits, showKitsTab]);
-
-    useEffect(() => {
-        setNewType(isSpecificTypeTab ? selectedType : "");
-    }, [isSpecificTypeTab, selectedType]);
+    // Open-reset runs in handleOpenChange (not an effect) to avoid setState-in-effect.
 
     const clearCreateForm = (): void => {
         setNewTag("");
         setNewType(isSpecificTypeTab ? selectedType : "");
+    };
+
+    const selectTypeTab = (type: string): void => {
+        setSelectedType(type);
+        const specific =
+            type !== ALL_TAG_TYPES_TAB &&
+            type !== DEFAULT_TAG_TYPE &&
+            type !== KITS_TAB;
+        setNewType(specific ? type : "");
     };
 
     const resetDragState = (): void => {
@@ -194,7 +188,13 @@ export function TagPickerSheet({
     };
 
     const handleOpenChange = (nextOpen: boolean): void => {
-        if (!nextOpen) {
+        if (nextOpen) {
+            const initialType =
+                defaultToKits && showKitsTab ? KITS_TAB : DEFAULT_TAG_TYPE;
+            setSelectedType(initialType);
+            setNewTag("");
+            setNewType("");
+        } else {
             setNewTag("");
             setNewType("");
             resetDragState();
@@ -294,7 +294,7 @@ export function TagPickerSheet({
             document.removeEventListener("pointerup", onPointerEnd);
             document.removeEventListener("pointercancel", onPointerEnd);
         };
-    }, [open]);
+    }, [open, defaultToKits, showKitsTab]);
 
     const handleDismissPointerDown = (
         event: ReactPointerEvent<HTMLElement>,
@@ -392,7 +392,7 @@ export function TagPickerSheet({
                         <TagTypeTabBar
                             types={tagTypes}
                             selected={selectedType}
-                            onSelect={setSelectedType}
+                            onSelect={selectTypeTab}
                             leadingTabs={showKitsTab ? [KITS_TAB] : undefined}
                         />
                     </SheetHeader>
@@ -442,14 +442,14 @@ export function TagPickerSheet({
                                                         </span>
                                                         {matchCount !==
                                                         undefined ? (
-                                                            <Badge
-                                                                variant="secondary"
-                                                                className="shrink-0 tabular-nums"
-                                                            >
-                                                                {matchCount}/
-                                                                {kitScoreTotal}
-                                                            </Badge>
-                                                        ) : null}
+                                                                <Badge
+                                                                    variant="secondary"
+                                                                    className="shrink-0 tabular-nums"
+                                                                >
+                                                                    {matchCount}/
+                                                                    {kitScoreTotal}
+                                                                </Badge>
+                                                            ) : null}
                                                     </Button>
                                                 </li>
                                             );

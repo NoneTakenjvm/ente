@@ -2,8 +2,8 @@ import type { Crop } from "react-image-crop";
 import type { EnteFile } from "ente-media/file";
 import { fileAspectRatio } from "@/lib/file-aspect-ratio";
 
-/** Gallery reorder modes that surface images poorly matched to the viewer. */
-export type ViewportFitSort = "none" | "blank-space" | "too-large";
+/** Gallery reorder by how well each file matches the viewer aspect. */
+export type ViewportFitSort = "none" | "best" | "worst";
 
 /**
  * Aspect ratio (width / height) of the photo viewer media area on this device.
@@ -82,15 +82,14 @@ export const viewportCropFraction = (
 ): number => viewportBlankFraction(imageAspect, viewportAspect);
 
 /**
- * Reorder files by how poorly they fit the viewer viewport.
+ * Reorder files by how well they fit the viewer viewport.
  *
- * - `blank-space`: most object-contain blank (letterbox or pillarbox) first.
- * - `too-large`: most object-cover crop first (content lost to fill the frame).
+ * - `best`: closest aspect match first (least blank / crop).
+ * - `worst`: farthest aspect match first (most blank / crop).
  * - `none`: returns a shallow copy unchanged.
  *
- * Blank-space and too-large share the same mismatch magnitude (contain blank ≡
- * cover crop for a given aspect pair); both are offered so the Filter menu
- * matches the blank-vs-cropped mental model while curating.
+ * Mismatch uses {@link viewportBlankFraction} (equal to cover-crop fraction for
+ * a given aspect pair).
  */
 export const sortFilesByViewportFit = (
     files: EnteFile[],
@@ -100,13 +99,18 @@ export const sortFilesByViewportFit = (
     if (mode === "none") {
         return [...files];
     }
-    const scoreFor =
-        mode === "blank-space" ? viewportBlankFraction : viewportCropFraction;
+    const ascending = mode === "best";
     return [...files].sort((a, b) => {
-        const scoreA = scoreFor(fileAspectRatio(a), viewportAspect);
-        const scoreB = scoreFor(fileAspectRatio(b), viewportAspect);
-        if (scoreB !== scoreA) {
-            return scoreB - scoreA;
+        const scoreA = viewportBlankFraction(
+            fileAspectRatio(a),
+            viewportAspect,
+        );
+        const scoreB = viewportBlankFraction(
+            fileAspectRatio(b),
+            viewportAspect,
+        );
+        if (scoreA !== scoreB) {
+            return ascending ? scoreA - scoreB : scoreB - scoreA;
         }
         return a.id - b.id;
     });

@@ -2,13 +2,17 @@
 
 import {
     areCropMatches,
+    areCropMatchesGrids,
     colorHashFromImageData,
+    decodeLuminanceGrid,
     encodeLuminanceGrid,
     luminanceGridFromImageData,
 } from "@/lib/crop-match";
 import { computeDHashFromImageData } from "@/lib/phash";
-import { runStage1Clustering, MAX_GROUP_SIZE } from "@/lib/similarity-stage1-core";
+import { runStage1Clustering } from "@/lib/similarity-stage1-core";
 import type {
+    CropCheckBatchMessage,
+    CropCheckBatchResult,
     CropCheckMessage,
     CropCheckResult,
     PhashWorkerInbound,
@@ -51,7 +55,7 @@ const hashVariant = (
 const handleStage1 = async (message: Stage1Message): Promise<void> => {
     abortedStage1Ids.delete(message.id);
     try {
-        const clusters = await runStage1Clustering(
+        const { clusters, edges } = await runStage1Clustering(
             message.items,
             message.threshold,
             (update) => {
@@ -63,7 +67,6 @@ const handleStage1 = async (message: Stage1Message): Promise<void> => {
                 self.postMessage(progress);
             },
             () => abortedStage1Ids.has(message.id),
-            message.maxGroupSize ?? MAX_GROUP_SIZE,
         );
         if (abortedStage1Ids.has(message.id)) {
             abortedStage1Ids.delete(message.id);
@@ -73,6 +76,7 @@ const handleStage1 = async (message: Stage1Message): Promise<void> => {
             kind: "stage1-result",
             id: message.id,
             clusters,
+            edges,
         };
         self.postMessage(result);
     } catch (error: unknown) {
@@ -121,6 +125,51 @@ self.onmessage = async (
                 id,
                 match: false,
                 error: error instanceof Error ? error.message : "Crop check failed",
+            };
+            self.postMessage(response);
+        }
+        return;
+    }
+
+    if (message.kind === "crop-check-batch") {
+        const batch = message as CropCheckBatchMessage;
+        try {
+            const decoded = new Map<
+                string,
+                { color: string; grid: Uint8Array }
+            >();
+            for (const [key, entry] of Object.entries(batch.entries)) {
+                decoded.set(key, {
+                    color: entry.color,
+                    grid: decodeLuminanceGrid(entry.grid),
+                });
+            }
+            const matches = batch.pairs.map(([aKey, bKey]) => {
+                const left = decoded.get(aKey);
+                const right = decoded.get(bKey);
+                if (!left || !right) {
+                    return false;
+                }
+                return areCropMatchesGrids(
+                    left.color,
+                    left.grid,
+                    right.color,
+                    right.grid,
+                );
+            });
+            const response: CropCheckBatchResult = {
+                kind: "crop-check-batch",
+                id: batch.id,
+                matches,
+            };
+            self.postMessage(response);
+        } catch (error: unknown) {
+            const response: CropCheckBatchResult = {
+                kind: "crop-check-batch",
+                id: batch.id,
+                matches: batch.pairs.map(() => false),
+                error:
+                    error instanceof Error ? error.message : "Crop batch failed",
             };
             self.postMessage(response);
         }

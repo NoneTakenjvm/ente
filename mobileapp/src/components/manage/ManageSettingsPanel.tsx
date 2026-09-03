@@ -170,8 +170,9 @@ export function ManageSettingsPanel(): JSX.Element {
                 <CardHeader>
                     <CardTitle>Similar photos</CardTitle>
                     <CardDescription>
-                        Caps how many images can land in one similar group.
-                        Real duplicates are almost never more than a handful.
+                        Caps how many images appear in one similar-group card
+                        after matching. Matching itself is uncapped — oversized
+                        piles are split only for display.
                     </CardDescription>
                 </CardHeader>
                 <CardContent>

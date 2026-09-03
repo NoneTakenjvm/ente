@@ -10,7 +10,12 @@ import {
 } from "@/lib/similarity-groups";
 
 vi.mock("@/lib/similarity-job", () => ({
-    checkCropMatchInWorkers: vi.fn(async () => true),
+    checkCropMatchBatchInWorkers: vi.fn(
+        async (
+            _entries: unknown,
+            pairs: Array<[string, string]>,
+        ): Promise<boolean[]> => pairs.map(() => true),
+    ),
 }));
 
 const stubFile = (
@@ -170,8 +175,8 @@ describe("buildSimilarityGroups oversized-component cap", () => {
 
     it("never emits a group larger than MAX_GROUP_SIZE even when loose links chain", () => {
         // A chain of hashes: each adjacent pair differs by 1 bit (dist 1 <= 10),
-        // so the plain union-find would collapse all ~60 into one component.
-        // The cap must split it into bounded clusters.
+        // so union-find collapses them into one component; display trim then
+        // slices that component into bounded cards.
         const entries = new Map<number, string[]>();
         for (let i = 0; i < MAX_GROUP_SIZE + 20; i++) {
             entries.set(i + 1, [
@@ -182,8 +187,6 @@ describe("buildSimilarityGroups oversized-component cap", () => {
         for (const group of groups) {
             expect(group.length).toBeLessThanOrEqual(MAX_GROUP_SIZE);
         }
-        // The chain is real adjacency, so we should still get multiple groups
-        // covering the files — not a single cap-sized dump plus stragglers.
         expect(groups.length).toBeGreaterThan(1);
     });
 
@@ -231,26 +234,45 @@ describe("mergeCropMatches size cap", () => {
         return entries;
     };
 
-    it("never emits a group larger than MAX_GROUP_SIZE when every crop check matches", async () => {
+    it("returns uncapped clusters; onGroups receives display-trimmed cards", async () => {
+        const { clearSimilarityMatchCache } = await import(
+            "@/lib/similarity-match-cache"
+        );
+        clearSimilarityMatchCache();
+
         const entries = cropChainEntries();
         const stage1 = buildSimilarityGroups(entries, filesById, collections, 1, 10);
         expect(stage1).toEqual([]);
 
+        let lastEmitted: Awaited<ReturnType<typeof mergeCropMatches>> = [];
         const merged = await mergeCropMatches(stage1, {
             entries,
             filesById,
             collections,
             userId: 1,
             batchSize: 16,
+            maxGroupSize: MAX_GROUP_SIZE,
+            onGroups: (groups) => {
+                lastEmitted = groups;
+            },
         });
 
         expect(merged.length).toBeGreaterThan(0);
-        for (const group of merged) {
+        const covered = merged.reduce((sum, group) => sum + group.items.length, 0);
+        expect(covered).toBe(count);
+        // Full return may contain one large chain (UF is uncapped).
+        expect(
+            merged.some((group) => group.items.length > MAX_GROUP_SIZE),
+        ).toBe(true);
+
+        for (const group of lastEmitted) {
             expect(group.items.length).toBeLessThanOrEqual(MAX_GROUP_SIZE);
         }
-        const covered = merged.reduce((sum, group) => sum + group.items.length, 0);
-        // Every file should land in some capped group when all pairs match.
-        expect(covered).toBe(count);
+        const emittedCovered = lastEmitted.reduce(
+            (sum, group) => sum + group.items.length,
+            0,
+        );
+        expect(emittedCovered).toBe(count);
     });
 
     it("aborts when the signal is already aborted", async () => {

@@ -1,4 +1,5 @@
 import type {
+    Stage1FileEdge,
     Stage1Item,
     Stage1ProgressUpdate,
 } from "@/lib/similarity-stage1-core";
@@ -44,14 +45,32 @@ export interface CropCheckResult {
     error?: string;
 }
 
+/**
+ * Batched crop checks: unique grids are decoded once, then each pair is verified.
+ * Prefer this over repeated {@link CropCheckMessage} for Stage-2.
+ */
+export interface CropCheckBatchMessage {
+    kind: "crop-check-batch";
+    id: number;
+    /** Opaque key → color + base64 grid for each unique file in this batch. */
+    entries: Record<string, { color: string; grid: string }>;
+    /** Ordered pairs of entry keys; result `matches[i]` corresponds to `pairs[i]`. */
+    pairs: Array<[string, string]>;
+}
+
+export interface CropCheckBatchResult {
+    kind: "crop-check-batch";
+    id: number;
+    matches: boolean[];
+    error?: string;
+}
+
 /** Stage-1 clustering request — runs entirely off the UI thread. */
 export interface Stage1Message {
     kind: "stage1";
     id: number;
     items: Stage1Item[];
     threshold: number;
-    /** Cap on images per group (defaults to 5 in the worker). */
-    maxGroupSize?: number;
 }
 
 export interface Stage1AbortMessage {
@@ -69,17 +88,20 @@ export interface Stage1ResultMessage {
     kind: "stage1-result";
     id: number;
     clusters?: Stage1ProgressUpdate["clusters"];
+    edges?: Stage1FileEdge[];
     error?: string;
 }
 
 export type PhashWorkerInbound =
     PhashWorkerRequest |
     CropCheckMessage |
+    CropCheckBatchMessage |
     Stage1Message |
     Stage1AbortMessage;
 
 export type PhashWorkerOutbound =
     PhashWorkerResponse |
     CropCheckResult |
+    CropCheckBatchResult |
     Stage1ProgressMessage |
     Stage1ResultMessage;

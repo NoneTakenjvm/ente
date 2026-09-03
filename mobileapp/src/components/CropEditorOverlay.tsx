@@ -8,6 +8,7 @@ import {
 } from "react";
 import ReactCrop, {
     convertToPixelCrop,
+    makeAspectCrop,
     type Crop,
     type PixelCrop,
 } from "react-image-crop";
@@ -15,6 +16,7 @@ import "react-image-crop/dist/ReactCrop.css";
 import { RotateCcw, RotateCw } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Spinner } from "@/components/ui/spinner";
 import { getEnteCore } from "@/core";
 import {
@@ -58,6 +60,8 @@ export function CropEditorOverlay({
     const [workingUrl, setWorkingUrl] = useState<string | undefined>();
     const [crop, setCrop] = useState<Crop>();
     const [completedCrop, setCompletedCrop] = useState<PixelCrop>();
+    const [lockAspect, setLockAspect] = useState<boolean>(true);
+    const [cropAspect, setCropAspect] = useState<number | undefined>();
     const [loading, setLoading] = useState<boolean>(true);
     const [rotating, setRotating] = useState<boolean>(false);
     const [saving, setSaving] = useState<boolean>(false);
@@ -167,11 +171,13 @@ export function CropEditorOverlay({
             workspaceSize.width,
             workspaceSize.height,
         );
+        const aspect = deviceViewerAspectRatio();
         const nextCrop = maxAspectRatioCrop(
             layout.width,
             layout.height,
-            deviceViewerAspectRatio(),
+            aspect,
         );
+        setCropAspect(aspect);
         setDisplayLayout(layout);
         setCrop(nextCrop);
         setCompletedCrop(convertToPixelCrop(nextCrop, layout.width, layout.height));
@@ -278,6 +284,42 @@ export function CropEditorOverlay({
 
     const isBusy = loading || rotating || saving;
 
+    const handleLockAspectChange = useCallback(
+        (checked: boolean): void => {
+            setLockAspect(checked);
+            if (!checked) {
+                return;
+            }
+            const image = imageRef.current;
+            const aspect = cropAspect ?? deviceViewerAspectRatio();
+            if (!image || !crop || aspect <= 0) {
+                return;
+            }
+            const nextCrop = makeAspectCrop(
+                {
+                    unit: "px",
+                    x: crop.x,
+                    y: crop.y,
+                    width: crop.width,
+                    height: crop.height,
+                },
+                aspect,
+                image.clientWidth,
+                image.clientHeight,
+            );
+            setCropAspect(aspect);
+            setCrop(nextCrop);
+            setCompletedCrop(
+                convertToPixelCrop(
+                    nextCrop,
+                    image.clientWidth,
+                    image.clientHeight,
+                ),
+            );
+        },
+        [crop, cropAspect],
+    );
+
     return (
         <div
             className="fixed inset-0 z-[60] flex select-none flex-col bg-black/90 [-webkit-touch-callout:none]"
@@ -342,6 +384,11 @@ export function CropEditorOverlay({
                                 <ReactCrop
                                     crop={crop}
                                     keepSelection
+                                    aspect={
+                                        lockAspect && cropAspect ?
+                                            cropAspect :
+                                            undefined
+                                    }
                                     disabled={isBusy || !imageReady}
                                     onChange={(nextCrop) => {
                                         setCrop(nextCrop);
@@ -388,27 +435,39 @@ export function CropEditorOverlay({
                     </div>
                 )}
 
-                <div className="relative z-10 flex shrink-0 items-center justify-center gap-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={() => handleRotate(270)}
-                        disabled={isBusy || !workingBytes}
-                        aria-label="Rotate left"
-                    >
-                        {rotating ? <Spinner /> : <RotateCcw />}
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={() => handleRotate(90)}
-                        disabled={isBusy || !workingBytes}
-                        aria-label="Rotate right"
-                    >
-                        {rotating ? <Spinner /> : <RotateCw />}
-                    </Button>
+                <div className="relative z-10 flex shrink-0 flex-col items-center gap-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+                    <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+                        <Checkbox
+                            checked={lockAspect}
+                            disabled={isBusy || !imageReady}
+                            onCheckedChange={(checked) => {
+                                handleLockAspectChange(checked === true);
+                            }}
+                        />
+                        Lock aspect ratio
+                    </label>
+                    <div className="flex items-center justify-center gap-2">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            onClick={() => handleRotate(270)}
+                            disabled={isBusy || !workingBytes}
+                            aria-label="Rotate left"
+                        >
+                            {rotating ? <Spinner /> : <RotateCcw />}
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            onClick={() => handleRotate(90)}
+                            disabled={isBusy || !workingBytes}
+                            aria-label="Rotate right"
+                        >
+                            {rotating ? <Spinner /> : <RotateCw />}
+                        </Button>
+                    </div>
                 </div>
             </div>
         </div>

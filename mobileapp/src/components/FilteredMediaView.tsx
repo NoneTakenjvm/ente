@@ -7,13 +7,12 @@ import {
     type JSX,
 } from "react";
 import { PageLoader } from "@/components/PageLoader";
+import { ThumbnailGrid } from "@/components/ThumbnailGrid";
 import {
-    ThumbnailGrid,
-    type ThumbnailGridSelection,
-} from "@/components/ThumbnailGrid";
-import { SELECTION_FOOTER_INSET_PX } from "@/lib/selection";
+    SELECTION_FOOTER_INSET_PX,
+    buildMediaGridSelection,
+} from "@/lib/selection";
 import { reconcileShuffledIds } from "@/lib/shuffle-files";
-import { bulkAddTags } from "@/lib/tag-bulk-actions";
 import { useSelectionStore } from "@/stores/selection-store";
 import type { EnteFile } from "ente-media/file";
 
@@ -122,46 +121,34 @@ export function FilteredMediaView({
         pruneToVisible(visibleFileIds);
     }, [pruneToVisible, visibleFileIds]);
 
-    const gridSelection = useMemo((): ThumbnailGridSelection | undefined => {
-        if (!selectionEnabled) {
-            return undefined;
-        }
-        if (stampActive && stampTags.length > 0) {
-            return {
-                selectedIds: new Set(selectedIds),
-                onToggle: (file) => {
-                    toggleSelection(file.id);
-                    void bulkAddTags([file.id], stampTags);
-                },
-                onSelectMany: (fileIds, mode) => {
-                    selectMany(fileIds, mode);
-                    if (mode === "add") {
-                        void bulkAddTags(fileIds, stampTags);
-                    }
-                },
-            };
-        }
-        return {
-            selectedIds: new Set(selectedIds),
-            onToggle: (file) => toggleSelection(file.id),
-            onSelectMany: selectMany,
-        };
-    }, [
-        selectionEnabled,
-        selectedIds,
-        selectMany,
-        stampActive,
-        stampTags,
-        toggleSelection,
-    ]);
+    const gridSelection = useMemo(
+        () =>
+            buildMediaGridSelection({
+                selectionEnabled,
+                selectedIds,
+                stampActive,
+                stampTags,
+                toggleSelection,
+                selectMany,
+            }),
+        [
+            selectMany,
+            selectedIds,
+            selectionEnabled,
+            stampActive,
+            stampTags,
+            toggleSelection,
+        ],
+    );
 
     const footerInsetPx =
-        selectionEnabled && (selectedIds.length > 0 || stampActive) ?
+        stampActive || (selectionEnabled && selectedIds.length > 0) ?
             SELECTION_FOOTER_INSET_PX :
             0;
 
     const handleOpenFile = useCallback((file: EnteFile): void => {
-        if (useSelectionStore.getState().enabled) {
+        const { enabled, stampActive: stamping } = useSelectionStore.getState();
+        if (enabled || stamping) {
             return;
         }
         setViewerFileId(file.id);
@@ -184,7 +171,11 @@ export function FilteredMediaView({
         <>
             <ThumbnailGrid
                 files={displayFiles}
-                onOpenFile={selectionEnabled ? undefined : handleOpenFile}
+                onOpenFile={
+                    selectionEnabled || stampActive ?
+                        undefined :
+                        handleOpenFile
+                }
                 selection={gridSelection}
                 footerInsetPx={footerInsetPx}
             />

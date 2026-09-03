@@ -17,6 +17,7 @@ import type {
     TagScope,
 } from "@/lib/tags";
 import type { ViewportFitSort } from "@/lib/viewport-fit";
+import type { ImageSizeSort } from "@/lib/image-size-sort";
 import { useTagStore } from "@/stores/tag-store";
 
 interface TagScopeFilterDropdownProps {
@@ -39,6 +40,9 @@ interface TagScopeFilterDropdownProps {
     /** Gallery-only: reorder by viewer viewport fit (not a hide-filter). */
     viewportFitSort?: ViewportFitSort;
     onViewportFitSortChange?: (mode: ViewportFitSort) => void;
+    /** Gallery-only: reorder by pixel area (not a hide-filter). */
+    imageSizeSort?: ImageSizeSort;
+    onImageSizeSortChange?: (mode: ImageSizeSort) => void;
 }
 
 const isTagScope = (value: unknown): value is TagScope =>
@@ -54,7 +58,10 @@ const isCroppedScope = (value: unknown): value is CroppedScope =>
     value === "all" || value === "cropped" || value === "not-cropped";
 
 const isViewportFitSort = (value: unknown): value is ViewportFitSort =>
-    value === "none" || value === "blank-space" || value === "too-large";
+    value === "none" || value === "best" || value === "worst";
+
+const isImageSizeSort = (value: unknown): value is ImageSizeSort =>
+    value === "none" || value === "largest" || value === "smallest";
 
 export function TagScopeFilterDropdown({
     taggedCount,
@@ -75,6 +82,8 @@ export function TagScopeFilterDropdown({
     onCroppedScopeChange,
     viewportFitSort,
     onViewportFitSortChange,
+    imageSizeSort,
+    onImageSizeSortChange,
 }: TagScopeFilterDropdownProps): JSX.Element {
     const storeFilter = useTagStore((s) => s.tagFilter);
     const setTagScope = useTagStore((s) => s.setTagScope);
@@ -87,6 +96,8 @@ export function TagScopeFilterDropdown({
     const croppedScope = controlledCroppedScope ?? storeFilter.croppedScope;
     const showViewportFit = onViewportFitSortChange !== undefined;
     const fitSort = viewportFitSort ?? "none";
+    const showImageSize = onImageSizeSortChange !== undefined;
+    const sizeSort = imageSizeSort ?? "none";
 
     const handleScopeChange = (value: TagScope): void => {
         if (onTagScopeChange) {
@@ -125,7 +136,8 @@ export function TagScopeFilterDropdown({
         favoritesScope !== "all" ||
         mediaScope !== "all" ||
         croppedScope !== "all" ||
-        fitSort !== "none";
+        fitSort !== "none" ||
+        sizeSort !== "none";
 
     return (
         <DropdownMenu>
@@ -136,7 +148,7 @@ export function TagScopeFilterDropdown({
                         variant={filterActive ? "secondary" : "outline"}
                         size="sm"
                         className="shrink-0 gap-1.5"
-                        aria-label="Filter by tag presence, favourites, media type, crop, and viewport fit"
+                        aria-label="Filter by tag presence, favourites, media type, crop, viewport fit, and image size"
                     >
                         <Filter className="size-3.5 shrink-0" />
                         Filter
@@ -248,11 +260,35 @@ export function TagScopeFilterDropdown({
                             <DropdownMenuRadioItem value="none" closeOnClick>
                                 None
                             </DropdownMenuRadioItem>
-                            <DropdownMenuRadioItem value="blank-space" closeOnClick>
-                                Blank Space
+                            <DropdownMenuRadioItem value="best" closeOnClick>
+                                Best Fit
                             </DropdownMenuRadioItem>
-                            <DropdownMenuRadioItem value="too-large" closeOnClick>
-                                Too Large
+                            <DropdownMenuRadioItem value="worst" closeOnClick>
+                                Worst Fit
+                            </DropdownMenuRadioItem>
+                        </DropdownMenuRadioGroup>
+                    </>
+                ) : null}
+                {showImageSize ? (
+                    <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuRadioGroup
+                            value={sizeSort}
+                            onValueChange={(value) => {
+                                if (isImageSizeSort(value)) {
+                                    onImageSizeSortChange(value);
+                                }
+                            }}
+                        >
+                            <DropdownMenuLabel>Image size</DropdownMenuLabel>
+                            <DropdownMenuRadioItem value="none" closeOnClick>
+                                None
+                            </DropdownMenuRadioItem>
+                            <DropdownMenuRadioItem value="largest" closeOnClick>
+                                Largest
+                            </DropdownMenuRadioItem>
+                            <DropdownMenuRadioItem value="smallest" closeOnClick>
+                                Smallest
                             </DropdownMenuRadioItem>
                         </DropdownMenuRadioGroup>
                     </>

@@ -18,8 +18,7 @@ const Subscription = z.object({
     period: z
         .string()
         .transform((period) =>
-            period === "month" || period === "year" ? period : undefined,
-        ),
+            period === "month" || period === "year" ? period : undefined),
     attributes: z
         .object({
             isCancelled: z

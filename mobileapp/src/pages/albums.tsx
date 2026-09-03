@@ -18,6 +18,8 @@ import {
 import { PageLoader } from "@/components/PageLoader";
 import { SelectionActionFooter } from "@/components/SelectionActionFooter";
 import { SelectionModeToggle } from "@/components/SelectionModeToggle";
+import { StampModeToggle } from "@/components/StampModeToggle";
+import { StampToolFooter } from "@/components/StampToolFooter";
 import { SyncBanner } from "@/components/SyncBanner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -338,6 +340,7 @@ export default function AlbumsPage(): JSX.Element {
                         >
                             Select all
                         </Button>
+                        <StampModeToggle />
                         <SelectionModeToggle />
                         <Button
                             type="button"
@@ -447,6 +450,7 @@ export default function AlbumsPage(): JSX.Element {
             ) : null}
 
             <SelectionActionFooter />
+            <StampToolFooter />
         </AppShell>
     );
 }

@@ -7,7 +7,7 @@ const stubFile = (id: number): EnteFile =>
 
 describe("tag-save-queue", () => {
     it("coalesces rapid saves for the same file into one remote write", async () => {
-        const save = vi.fn(async (tags: string[]) => {
+        const save = vi.fn(async (_tags: string[]) => {
             await new Promise((resolve) => setTimeout(resolve, 20));
             return stubFile(1);
         });

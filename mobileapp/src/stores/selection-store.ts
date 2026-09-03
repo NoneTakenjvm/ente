@@ -3,9 +3,14 @@ import { create } from "zustand";
 interface SelectionState {
     enabled: boolean;
     selectedIds: number[];
-    /** When true, grid taps apply {@link stampTags} instead of only toggling selection. */
+    /**
+     * Stamp tool: pick tags/kits, then tap photos to apply.
+     * Mutually exclusive with selection mode.
+     */
     stampActive: boolean;
     stampTags: string[];
+    /** Tag picker sheet for the stamp tool (opened on enter when empty). */
+    stampSheetOpen: boolean;
     setEnabled: (enabled: boolean) => void;
     toggle: (fileId: number) => void;
     selectMany: (fileIds: number[], mode: "add" | "toggle") => void;
@@ -15,6 +20,7 @@ interface SelectionState {
     setStampActive: (active: boolean) => void;
     setStampTags: (tags: string[]) => void;
     toggleStampTag: (tag: string) => void;
+    setStampSheetOpen: (open: boolean) => void;
     clearStamp: () => void;
     reset: () => void;
 }
@@ -24,6 +30,7 @@ const initialState = {
     selectedIds: [] as number[],
     stampActive: false,
     stampTags: [] as string[],
+    stampSheetOpen: false,
 };
 
 export const useSelectionStore = create<SelectionState>((set, get) => ({
@@ -35,11 +42,16 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
                 enabled: false,
                 selectedIds: [],
                 stampActive: false,
-                stampTags: [],
+                stampSheetOpen: false,
             });
             return;
         }
-        set({ enabled: true });
+        set({
+            enabled: true,
+            stampActive: false,
+            stampSheetOpen: false,
+            selectedIds: get().selectedIds,
+        });
     },
 
     toggle: (fileId: number): void => {
@@ -73,6 +85,8 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
     selectAll: (fileIds: number[]): void => {
         set({
             enabled: true,
+            stampActive: false,
+            stampSheetOpen: false,
             selectedIds: [...new Set(fileIds)],
         });
     },
@@ -93,10 +107,16 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
 
     setStampActive: (active: boolean): void => {
         if (active) {
-            set({ enabled: true, stampActive: true });
+            const { stampTags } = get();
+            set({
+                stampActive: true,
+                enabled: false,
+                selectedIds: [],
+                stampSheetOpen: stampTags.length === 0,
+            });
             return;
         }
-        set({ stampActive: false });
+        set({ stampActive: false, stampSheetOpen: false });
     },
 
     setStampTags: (tags: string[]): void => {
@@ -110,11 +130,7 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
             seen.add(trimmed);
             stampTags.push(trimmed);
         }
-        set({
-            stampTags,
-            stampActive: stampTags.length > 0 ? true : get().stampActive,
-            enabled: stampTags.length > 0 ? true : get().enabled,
-        });
+        set({ stampTags });
     },
 
     toggleStampTag: (tag: string): void => {
@@ -126,15 +142,15 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
         const next = stampTags.includes(trimmed) ?
             stampTags.filter((entry) => entry !== trimmed) :
             [...stampTags, trimmed];
-        set({
-            stampTags: next,
-            stampActive: next.length > 0,
-            enabled: true,
-        });
+        set({ stampTags: next });
+    },
+
+    setStampSheetOpen: (open: boolean): void => {
+        set({ stampSheetOpen: open });
     },
 
     clearStamp: (): void => {
-        set({ stampActive: false, stampTags: [] });
+        set({ stampActive: false, stampTags: [], stampSheetOpen: false });
     },
 
     reset: (): void => {

@@ -49,12 +49,12 @@ export interface EncodeJpegResult {
 }
 
 export type DetectedImageFormat =
-    | "jpeg"
-    | "png"
-    | "webp"
-    | "gif"
-    | "heic"
-    | "unknown";
+    | "jpeg" |
+    "png" |
+    "webp" |
+    "gif" |
+    "heic" |
+    "unknown";
 
 /**
  * Detect container format from magic bytes (for encode strategy and diagnostics).
