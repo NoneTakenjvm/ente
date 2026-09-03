@@ -6,11 +6,11 @@ import {
     loadEncryptedTrashItems,
     saveEncryptedTrashItems,
 } from "@/db/kv";
-import { deleteThumbnailCiphertext } from "@/db/thumbnails";
 import { getSessionCacheKey } from "@/lib/cache-key";
 import { clearEditHistory } from "@/lib/edit-history";
 import { clearLocalMediaOverride } from "@/lib/local-media-overrides";
 import { pullTrash, type TrashItem } from "@/lib/sync/pull-trash";
+import { invalidateThumbnailCache } from "@/lib/thumbnail-cache";
 import { invalidateVideoCache } from "@/lib/video-media-cache";
 import { fileCreationTime } from "ente-media/file-metadata";
 import type { Collection } from "ente-media/collection";
@@ -38,7 +38,7 @@ const pruneLocalCachesForFileIds = async (
             invalidateVideoCache(fileId);
             clearLocalMediaOverride(fileId);
             clearEditHistory(fileId);
-            await deleteThumbnailCiphertext(fileId);
+            await invalidateThumbnailCache(fileId);
         }),
     );
 };

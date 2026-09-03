@@ -112,11 +112,10 @@ export interface SuggestTagKitsOptions {
 }
 
 /**
- * Rank common multi-tag mixes from the library for kit suggestions.
+ * Rank recurring exact multi-tag sets from the library for kit suggestions.
  *
- * Counts every unordered pair that co-occurs on a file, plus each file's full
- * tag set when it has 3+ tags (so recurring exact kits surface too).
- * Reserved/system tags are ignored via {@link extractUserTags}.
+ * Each file with 2+ user tags contributes only its full tag set (not subsets
+ * or pairs). Reserved/system tags are ignored via {@link extractUserTags}.
  */
 export const suggestTagKits = (
     files: EnteFile[],
@@ -129,35 +128,24 @@ export const suggestTagKits = (
     );
 
     const counts = new Map<string, { tags: string[]; count: number }>();
-    const bump = (tags: string[]): void => {
-        const key = tagSetKey(tags);
-        if (excluded.has(key)) {
-            return;
-        }
-        const existing = counts.get(key);
-        if (existing) {
-            existing.count += 1;
-            return;
-        }
-        counts.set(key, {
-            tags: [...tags].sort((a, b) => a.localeCompare(b)),
-            count: 1,
-        });
-    };
-
     for (const file of files) {
         const tags = normalizePresetTags(extractUserTags(file));
         if (tags.length < 2) {
             continue;
         }
-        if (tags.length >= 3) {
-            bump(tags);
+        const key = tagSetKey(tags);
+        if (excluded.has(key)) {
+            continue;
         }
-        for (let i = 0; i < tags.length; i++) {
-            for (let j = i + 1; j < tags.length; j++) {
-                bump([tags[i]!, tags[j]!]);
-            }
+        const existing = counts.get(key);
+        if (existing) {
+            existing.count += 1;
+            continue;
         }
+        counts.set(key, {
+            tags: [...tags].sort((a, b) => a.localeCompare(b)),
+            count: 1,
+        });
     }
 
     return [...counts.values()]

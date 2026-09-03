@@ -8,7 +8,7 @@ import {
     saveCollectionSyncTime,
 } from "@/db/cursors";
 import { saveEncryptedFiles } from "@/db/kv";
-import { deleteThumbnailCiphertext } from "@/db/thumbnails";
+import { invalidateThumbnailCache } from "@/lib/thumbnail-cache";
 import { getSessionCacheKey } from "@/lib/cache-key";
 import {
     dedupeFilesById,
@@ -87,7 +87,7 @@ export const pullFiles = async (
                             if (
                                 didFileContentChange(existing, change.file)
                             ) {
-                                await deleteThumbnailCiphertext(change.id);
+                                await invalidateThumbnailCache(change.id);
                                 await removePhashEntry(change.id);
                                 void import("@/stores/phash-index-store").then(
                                     ({ usePhashIndexStore }) => {
