@@ -482,9 +482,14 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         const organizerCollection = (collections ?? []).find((collection) =>
             isOrganizerConfigCollection(collection));
         if (organizerCollection) {
-            useSettingsStore.getState().hydrateFromOrganizerConfig(
-                organizerAppConfigFromCollection(organizerCollection),
-            );
+            const config = organizerAppConfigFromCollection(organizerCollection);
+            useSettingsStore.getState().hydrateFromOrganizerConfig(config);
+            void import("@/stores/tag-speed-store").then(({ useTagSpeedStore }) => {
+                useTagSpeedStore.getState().hydrateFromOrganizerConfig({
+                    tagPresets: config.tagPresets,
+                    pinnedTags: config.pinnedTags,
+                });
+            });
         }
 
         void import("@/stores/trash-store").then(({ useTrashStore }) => {
@@ -530,6 +535,12 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             useTagStore.getState().hydrateRegisteredTags(
                 organizerBootstrap.config.registeredTags,
             );
+            void import("@/stores/tag-speed-store").then(({ useTagSpeedStore }) => {
+                useTagSpeedStore.getState().hydrateFromOrganizerConfig({
+                    tagPresets: organizerBootstrap.config.tagPresets,
+                    pinnedTags: organizerBootstrap.config.pinnedTags,
+                });
+            });
             useAlbumStore.getState().hydrateFromOrganizerConfig(
                 organizerBootstrap.config.queryAlbums,
             );

@@ -8,6 +8,8 @@ interface TagTypeTabBarProps {
     types: string[];
     selected: string;
     onSelect: (type: string) => void;
+    /** Tabs shown before All / type tabs (e.g. Kits). */
+    leadingTabs?: string[];
     className?: string;
 }
 
@@ -15,9 +17,10 @@ export function TagTypeTabBar({
     types,
     selected,
     onSelect,
+    leadingTabs,
     className,
 }: TagTypeTabBarProps): JSX.Element {
-    const tabs = [ALL_TAG_TYPES_TAB, ...types];
+    const tabs = [...(leadingTabs ?? []), ALL_TAG_TYPES_TAB, ...types];
 
     return (
         <ScrollArea className={cn("w-full whitespace-nowrap", className)}>

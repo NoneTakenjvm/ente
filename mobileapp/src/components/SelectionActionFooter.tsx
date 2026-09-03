@@ -6,8 +6,10 @@ import {
 } from "react";
 import {
     Archive,
+    Copy,
     Heart,
     HeartOff,
+    Stamp,
     Tag,
     Trash2,
 } from "lucide-react";
@@ -15,10 +17,16 @@ import { ConfirmBatchTrashModal } from "@/components/ConfirmBatchTrashModal";
 import { TagPickerSheet } from "@/components/TagPickerSheet";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import {
+    bulkAddTags,
+    bulkRemoveTags,
+} from "@/lib/tag-bulk-actions";
+import { tagPresenceAcrossFiles } from "@/lib/tag-bulk";
 import { extractUserTags } from "@/lib/tags";
-import { addTagNames, removeTagNames } from "@/lib/tag-writes";
+import { cn } from "@/lib/utils";
 import { useLibraryStore } from "@/stores/library-store";
 import { useSelectionStore } from "@/stores/selection-store";
+import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
 import { toast } from "sonner";
 
@@ -26,13 +34,22 @@ export function SelectionActionFooter(): JSX.Element | null {
     const enabled = useSelectionStore((s) => s.enabled);
     const selectedIds = useSelectionStore((s) => s.selectedIds);
     const setEnabled = useSelectionStore((s) => s.setEnabled);
+    const stampActive = useSelectionStore((s) => s.stampActive);
+    const stampTags = useSelectionStore((s) => s.stampTags);
+    const setStampActive = useSelectionStore((s) => s.setStampActive);
+    const setStampTags = useSelectionStore((s) => s.setStampTags);
+    const toggleStampTag = useSelectionStore((s) => s.toggleStampTag);
 
     const allFiles = useLibraryStore((s) => s.allFiles);
-    const batchUpdateTagsOnFiles = useLibraryStore((s) => s.batchUpdateTagsOnFiles);
     const batchSetFavorite = useLibraryStore((s) => s.batchSetFavorite);
     const batchSetArchived = useLibraryStore((s) => s.batchSetArchived);
     const moveFilesToTrash = useLibraryStore((s) => s.moveFilesToTrash);
     const knownTags = useTagStore((s) => s.tags);
+
+    const presets = useTagSpeedStore((s) => s.presets);
+    const pinnedTags = useTagSpeedStore((s) => s.pinnedTags);
+    const recentTags = useTagSpeedStore((s) => s.recentTags);
+    const togglePinnedTag = useTagSpeedStore((s) => s.togglePinnedTag);
 
     const [tagsOpen, setTagsOpen] = useState<boolean>(false);
     const [tagBusy, setTagBusy] = useState<boolean>(false);
@@ -47,44 +64,34 @@ export function SelectionActionFooter(): JSX.Element | null {
         [allFiles, selectedIds],
     );
 
-    const unionTags = useMemo((): string[] => {
+    const { unionTags, presence } = useMemo(
+        () => tagPresenceAcrossFiles(selectedFiles),
+        [selectedFiles],
+    );
+
+    const workingSetTags = useMemo((): string[] => {
         const seen = new Set<string>();
         const result: string[] = [];
-        for (const file of selectedFiles) {
-            for (const tag of extractUserTags(file)) {
-                if (!seen.has(tag)) {
-                    seen.add(tag);
-                    result.push(tag);
-                }
+        for (const tag of [...pinnedTags, ...recentTags, ...stampTags]) {
+            if (seen.has(tag)) {
+                continue;
             }
+            seen.add(tag);
+            result.push(tag);
         }
-        return result;
-    }, [selectedFiles]);
+        return result.slice(0, 16);
+    }, [pinnedTags, recentTags, stampTags]);
 
     const exitSelection = useCallback((): void => {
         setEnabled(false);
     }, [setEnabled]);
 
-    const handleBatchAddTag = useCallback(
-        async (tagName: string): Promise<void> => {
-            if (!selectedIds.length) {
-                return;
-            }
+    const runTagBusy = useCallback(
+        async (task: () => Promise<{ failed: number }>): Promise<void> => {
             setTagBusy(true);
             setTagError(undefined);
             try {
-                const result = await batchUpdateTagsOnFiles(
-                    selectedIds,
-                    (tags) => addTagNames(tags, tagName),
-                );
-                if (result.failed > 0) {
-                    toast.error(
-                        `Tagged ${result.succeeded}, ${result.failed} failed`,
-                    );
-                } else {
-                    setTagsOpen(false);
-                    exitSelection();
-                }
+                await task();
             } catch (error) {
                 setTagError(
                     error instanceof Error ?
@@ -95,7 +102,17 @@ export function SelectionActionFooter(): JSX.Element | null {
                 setTagBusy(false);
             }
         },
-        [batchUpdateTagsOnFiles, exitSelection, selectedIds],
+        [],
+    );
+
+    const handleBatchAddTag = useCallback(
+        async (tagName: string): Promise<void> => {
+            if (!selectedIds.length) {
+                return;
+            }
+            await runTagBusy(() => bulkAddTags(selectedIds, [tagName]));
+        },
+        [runTagBusy, selectedIds],
     );
 
     const handleBatchRemoveTag = useCallback(
@@ -103,33 +120,82 @@ export function SelectionActionFooter(): JSX.Element | null {
             if (!selectedIds.length) {
                 return;
             }
-            setTagBusy(true);
-            setTagError(undefined);
-            try {
-                const result = await batchUpdateTagsOnFiles(
-                    selectedIds,
-                    (tags) => removeTagNames(tags, tagName),
-                );
-                if (result.failed > 0) {
-                    toast.error(
-                        `Updated ${result.succeeded}, ${result.failed} failed`,
-                    );
-                } else {
-                    setTagsOpen(false);
-                    exitSelection();
-                }
-            } catch (error) {
-                setTagError(
-                    error instanceof Error ?
-                        error.message :
-                        "Could not update tags",
-                );
-            } finally {
-                setTagBusy(false);
+            await runTagBusy(() => bulkRemoveTags(selectedIds, [tagName]));
+        },
+        [runTagBusy, selectedIds],
+    );
+
+    const handleApplyPreset = useCallback(
+        async (tags: string[]): Promise<void> => {
+            if (!selectedIds.length || !tags.length) {
+                return;
+            }
+            await runTagBusy(() => bulkAddTags(selectedIds, tags));
+            setTagsOpen(false);
+        },
+        [runTagBusy, selectedIds],
+    );
+
+    const handleWorkingSetTap = useCallback(
+        async (tag: string): Promise<void> => {
+            if (stampActive) {
+                toggleStampTag(tag);
+                return;
+            }
+            if (!selectedIds.length) {
+                return;
+            }
+            const info = presence.get(tag);
+            if (info && info.count === info.total && info.total > 0) {
+                await handleBatchRemoveTag(tag);
+            } else {
+                await handleBatchAddTag(tag);
             }
         },
-        [batchUpdateTagsOnFiles, exitSelection, selectedIds],
+        [
+            handleBatchAddTag,
+            handleBatchRemoveTag,
+            presence,
+            selectedIds.length,
+            stampActive,
+            toggleStampTag,
+        ],
     );
+
+    const handleCopyTagsFromFirst = useCallback(async (): Promise<void> => {
+        if (selectedFiles.length < 2) {
+            toast.message("Select at least two photos");
+            return;
+        }
+        const source = selectedFiles[0];
+        if (!source) {
+            return;
+        }
+        const tags = extractUserTags(source);
+        if (!tags.length) {
+            toast.message("First selected photo has no tags");
+            return;
+        }
+        const targets = selectedFiles.slice(1).map((file) => file.id);
+        await runTagBusy(() => bulkAddTags(targets, tags));
+    }, [runTagBusy, selectedFiles]);
+
+    const handleToggleStamp = useCallback((): void => {
+        if (stampActive) {
+            setStampActive(false);
+            return;
+        }
+        if (stampTags.length > 0) {
+            setStampActive(true);
+            return;
+        }
+        if (workingSetTags[0]) {
+            setStampTags([workingSetTags[0]]);
+            return;
+        }
+        toast.message("Pick a tag first, then tap Stamp");
+        setTagsOpen(true);
+    }, [setStampActive, setStampTags, stampActive, stampTags.length, workingSetTags]);
 
     const handleFavorite = useCallback(
         async (isFavorite: boolean): Promise<void> => {
@@ -198,105 +264,229 @@ export function SelectionActionFooter(): JSX.Element | null {
         }
     }, [exitSelection, moveFilesToTrash, selectedIds]);
 
-    if (!enabled || selectedIds.length === 0) {
+    if (!enabled) {
         return null;
     }
 
     const count = selectedIds.length;
     const actionsBusy = tagBusy || favoriteBusy || archiveBusy || trashBusy;
+    const showActions = count > 0 || stampActive;
+
+    if (!showActions) {
+        return null;
+    }
 
     return (
         <>
-            <footer className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-30 flex flex-col gap-2 border-t border-border bg-background/95 px-3 py-3 backdrop-blur">
-                <p className="shrink-0 text-sm text-muted-foreground">
-                    {count} selected
-                </p>
-                <div className="flex flex-wrap items-center justify-end gap-1.5">
+            <footer className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-30 flex flex-col gap-2 border-t border-border bg-background/95 px-3 py-2.5 backdrop-blur">
+                <div className="flex items-center justify-between gap-2">
+                    <p className="min-w-0 truncate text-sm text-muted-foreground">
+                        {stampActive ?
+                            `Stamp: ${stampTags.length ? stampTags.join(", ") : "pick tags"}` :
+                            `${count} selected`}
+                    </p>
                     <Button
                         type="button"
-                        variant="outline"
+                        variant={stampActive ? "secondary" : "outline"}
                         size="sm"
-                        className="gap-1.5"
+                        className="gap-1.5 shrink-0"
                         disabled={actionsBusy}
-                        onClick={() => {
-                            setTagError(undefined);
-                            setTagsOpen(true);
-                        }}
+                        aria-pressed={stampActive}
+                        onClick={handleToggleStamp}
                     >
-                        <Tag className="size-3.5 shrink-0" />
-                        Tags
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="gap-1.5"
-                        disabled={actionsBusy}
-                        onClick={() => {
-                            void handleFavorite(true);
-                        }}
-                    >
-                        {favoriteBusy ? (
-                            <Spinner />
-                        ) : (
-                            <Heart className="size-3.5 shrink-0" />
-                        )}
-                        Favourite
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="gap-1.5"
-                        disabled={actionsBusy}
-                        onClick={() => {
-                            void handleFavorite(false);
-                        }}
-                    >
-                        {favoriteBusy ? (
-                            <Spinner />
-                        ) : (
-                            <HeartOff className="size-3.5 shrink-0" />
-                        )}
-                        Unfavourite
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="gap-1.5"
-                        disabled={actionsBusy}
-                        onClick={() => {
-                            void handleArchive();
-                        }}
-                    >
-                        {archiveBusy ? (
-                            <Spinner />
-                        ) : (
-                            <Archive className="size-3.5 shrink-0" />
-                        )}
-                        Archive
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="icon-sm"
-                        className="text-destructive hover:text-destructive"
-                        aria-label="Move to trash"
-                        disabled={actionsBusy}
-                        onClick={() => setTrashOpen(true)}
-                    >
-                        <Trash2 />
+                        <Stamp className="size-3.5 shrink-0" />
+                        Stamp
                     </Button>
                 </div>
+
+                {workingSetTags.length > 0 ? (
+                    <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+                        {workingSetTags.map((tag) => {
+                            const info = presence.get(tag);
+                            const fullyOn =
+                                Boolean(info) &&
+                                info!.count === info!.total &&
+                                info!.total > 0;
+                            const partial =
+                                Boolean(info) &&
+                                info!.count > 0 &&
+                                info!.count < info!.total;
+                            const isStamp = stampTags.includes(tag);
+                            return (
+                                <Button
+                                    key={tag}
+                                    type="button"
+                                    variant={
+                                        stampActive ?
+                                            (isStamp ? "secondary" : "outline") :
+                                            fullyOn ?
+                                                "secondary" :
+                                                "outline"
+                                    }
+                                    size="sm"
+                                    className={cn(
+                                        "h-8 shrink-0",
+                                        partial && !stampActive && "border-dashed",
+                                    )}
+                                    disabled={actionsBusy && !stampActive}
+                                    onClick={() => {
+                                        void handleWorkingSetTap(tag);
+                                    }}
+                                    onContextMenu={(event) => {
+                                        event.preventDefault();
+                                        togglePinnedTag(tag);
+                                    }}
+                                >
+                                    {tag}
+                                    {!stampActive && info && info.total > 1 ? (
+                                        <span className="ml-1 tabular-nums text-muted-foreground">
+                                            {info.count}/{info.total}
+                                        </span>
+                                    ) : null}
+                                </Button>
+                            );
+                        })}
+                        {presets.slice(0, 4).map((preset) => (
+                            <Button
+                                key={preset.id}
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-8 shrink-0 border-dashed"
+                                disabled={actionsBusy || stampActive || count === 0}
+                                onClick={() => {
+                                    void handleApplyPreset(preset.tags);
+                                }}
+                                onContextMenu={(event) => {
+                                    event.preventDefault();
+                                    if (stampActive) {
+                                        setStampTags(preset.tags);
+                                    }
+                                }}
+                            >
+                                {preset.name}
+                            </Button>
+                        ))}
+                    </div>
+                ) : null}
+
+                {count > 0 ? (
+                    <div className="flex flex-wrap items-center justify-end gap-1.5">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="gap-1.5"
+                            disabled={actionsBusy}
+                            onClick={() => {
+                                setTagError(undefined);
+                                setTagsOpen(true);
+                            }}
+                        >
+                            {tagBusy ? (
+                                <Spinner />
+                            ) : (
+                                <Tag className="size-3.5 shrink-0" />
+                            )}
+                            Tags
+                        </Button>
+                        {count >= 2 ? (
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="gap-1.5"
+                                disabled={actionsBusy}
+                                title="Copy tags from first selected onto the rest"
+                                onClick={() => {
+                                    void handleCopyTagsFromFirst();
+                                }}
+                            >
+                                <Copy className="size-3.5 shrink-0" />
+                                Copy tags
+                            </Button>
+                        ) : null}
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="gap-1.5"
+                            disabled={actionsBusy}
+                            onClick={() => {
+                                void handleFavorite(true);
+                            }}
+                        >
+                            {favoriteBusy ? (
+                                <Spinner />
+                            ) : (
+                                <Heart className="size-3.5 shrink-0" />
+                            )}
+                            Favourite
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="gap-1.5"
+                            disabled={actionsBusy}
+                            onClick={() => {
+                                void handleFavorite(false);
+                            }}
+                        >
+                            {favoriteBusy ? (
+                                <Spinner />
+                            ) : (
+                                <HeartOff className="size-3.5 shrink-0" />
+                            )}
+                            Unfavourite
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="gap-1.5"
+                            disabled={actionsBusy}
+                            onClick={() => {
+                                void handleArchive();
+                            }}
+                        >
+                            {archiveBusy ? (
+                                <Spinner />
+                            ) : (
+                                <Archive className="size-3.5 shrink-0" />
+                            )}
+                            Archive
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="icon-sm"
+                            className="text-destructive hover:text-destructive"
+                            aria-label="Move to trash"
+                            disabled={actionsBusy}
+                            onClick={() => setTrashOpen(true)}
+                        >
+                            <Trash2 />
+                        </Button>
+                    </div>
+                ) : null}
             </footer>
 
             <TagPickerSheet
                 open={tagsOpen}
-                appliedTags={unionTags}
+                appliedTags={stampActive ? stampTags : unionTags}
                 knownTags={knownTags}
                 error={tagError}
-                batchSelectionHint="Highlighted tags appear on at least one selected item. Tap to add to all selected, or remove from all selected."
+                tagPresence={stampActive ? undefined : presence}
+                presets={presets}
+                kitScoreFiles={selectedFiles}
+                defaultToKits={!stampActive && presets.length > 0}
+                pinnedTags={pinnedTags}
+                batchSelectionHint={
+                    stampActive ?
+                        "Tap a tag to include it in the stamp set. Tap photos to apply." :
+                        "Kits first — tap to apply. Numbers show how many selected photos already have the full kit."
+                }
                 onOpenChange={(open) => {
                     if (!open && !tagBusy) {
                         setTagsOpen(false);
@@ -304,11 +494,28 @@ export function SelectionActionFooter(): JSX.Element | null {
                     }
                 }}
                 onAddTag={(name) => {
+                    if (stampActive) {
+                        toggleStampTag(name);
+                        return;
+                    }
                     void handleBatchAddTag(name);
                 }}
                 onRemoveTag={(name) => {
+                    if (stampActive) {
+                        toggleStampTag(name);
+                        return;
+                    }
                     void handleBatchRemoveTag(name);
                 }}
+                onApplyPreset={(tags) => {
+                    if (stampActive) {
+                        setStampTags(tags);
+                        setTagsOpen(false);
+                        return;
+                    }
+                    void handleApplyPreset(tags);
+                }}
+                onTogglePinTag={togglePinnedTag}
             />
 
             <ConfirmBatchTrashModal

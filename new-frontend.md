@@ -7,12 +7,40 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-03 |
-| **Last agent / session** | Similar groups list scroll/layout fix (cards were flex-shrinking). |
+| **Last agent / session** | Tag kit suggestions from common mixes. |
 | **Current milestone** | Post-M8 UX / stability batch |
-| **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Device QA: Manage → Similar — groups scroll at full thumb size; footer `NTPhotos 0.3.1`. |
+| **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy; unbounded thumbnail RAM cache is the main gallery-scroll OOM suspect |
+| **Next recommended action** | Phone QA: Manage → Tags → View suggestions. Footer `NTPhotos 0.3.10`. Consider thumbnail LRU next. |
 
 **This session shipped:**
+1. **Kit suggestions** — Manage → Tags → Tag presets → **View suggestions** lists common 2+ tag mixes (pairs + recurring 3+ exact sets, ≥2 photos), named `tag + tag`. Add creates a preset; existing kits are hidden. `APP_VERSION` → `0.3.10`.
+
+**Previous session shipped:**
+1. **Memory audit (no code changes)** — ranked findings on runtime cache; primary risk is unbounded in-memory thumbnail blob URLs in `thumbnail-cache.ts` after long gallery scrolls.
+
+**Previous session shipped:**
+1. **Preset tags via dropdown** — Manage → Tags kits pick from existing tags (chips + select), not free-typed lists. Existing kits editable the same way.
+2. **Selection Tags → Kits tab** — defaults to Kits, sorted by how many selected photos already have the full kit (`N/total`). `APP_VERSION` → `0.3.9`.
+
+**Previous session shipped:**
+1. **Fast tagging toolkit** — select-all-matching + “Tag matching…” (query→bulk, confirm when >25), tag presets (Manage → Tags, organizer config sync), sticky working-set bar (pinned/recent/presets), stamp mode, selection difference counts (`N/total`), bulk undo toast, copy tags from first selected, album Select all. `APP_VERSION` → `0.3.8`.
+
+**Previous session shipped:**
+1. **Similar max group size control** — replaced the slider with explicit **1 / 2 / 3 / 4 / 5** toggles (range was already 1–5 in code; slider UX was confusing / easy to mistake for old step-5 behavior). `APP_VERSION` → `0.3.7`.
+2. **Similar grouping is manual** — Scan library then Find similar. `APP_VERSION` → `0.3.6`.
+
+**Previous session shipped:**
+1. **Similar max group size** — slider range tightened to **1–5** (default 5). Old persisted values >5 clamp down. Core default `MAX_GROUP_SIZE` matched. `APP_VERSION` → `0.3.5`.
+
+**Previous session shipped:**
+1. **Crop default = device viewer aspect** — opening crop (image/video) seeds a centered max-fit crop box matching the current device viewport aspect ratio (replaces content-bounds as the initial selection).
+2. **Gallery Filter → Viewport fit** — None / Blank Space / Too Large. Reorders (does not hide) by aspect mismatch vs the live viewer viewport; session-only. Shuffle clears when a fit mode is active.
+3. `APP_VERSION` → `0.3.4`.
+
+**Previous session shipped:**
+1. **Similar max group size setting** — Manage → Settings → “Similar photos” slider (later tightened to 1–5). Persisted as `similarMaxGroupSize`; threaded through Stage-1 worker + crop merge.
+
+**Previous session shipped:**
 1. **Similar/Exact group list scroll** — list was a flex column so cards shrunk as groups grew; now block flow + scroll, cards `shrink-0`, thumb row `min-h-20`. `APP_VERSION` → `0.3.1`.
 2. **Stage-1 runs in a dedicated phash worker** (`runStage1InWorker`) — full mutual-kNN + Kruskal, no pair skipping; main thread only paints progress/groups.
 3. **Live Similar UX** — determinate progress for hash compare + crop check; provisional tight-match groups stream in as they are found (`onProgress` / `onGroups`).

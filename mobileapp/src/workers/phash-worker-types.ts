@@ -50,6 +50,8 @@ export interface Stage1Message {
     id: number;
     items: Stage1Item[];
     threshold: number;
+    /** Cap on images per group (defaults to 5 in the worker). */
+    maxGroupSize?: number;
 }
 
 export interface Stage1AbortMessage {

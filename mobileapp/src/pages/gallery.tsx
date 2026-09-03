@@ -20,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useLibraryBootstrap } from "@/hooks/use-library-bootstrap";
 import { SELECTION_FOOTER_INSET_PX } from "@/lib/selection";
+import { bulkAddTags } from "@/lib/tag-bulk-actions";
 import {
     isSessionAuthenticated,
     reconcileSessionWithCore,
@@ -33,6 +34,10 @@ import {
 } from "@/lib/tags";
 import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 import { sortFilesByEdit, sortFilesByUpload } from "@/lib/sort-files";
+import {
+    deviceViewerAspectRatio,
+    sortFilesByViewportFit,
+} from "@/lib/viewport-fit";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
@@ -61,10 +66,28 @@ export default function GalleryPage(): JSX.Element {
     const mediaShuffleSeed = useUIStore((s) => s.mediaShuffleSeed);
     const mediaShuffledFileIds = useUIStore((s) => s.mediaShuffledFileIds);
     const reconcileMediaShuffle = useUIStore((s) => s.reconcileMediaShuffle);
+    const viewportFitSort = useUIStore((s) => s.viewportFitSort);
     const setUploadPanelOpen = useUploadJobStore((s) => s.setPanelOpen);
     const syncStatus = useLibraryStore((s) => s.syncStatus);
     const initialLoadDone = useLibraryBootstrap();
     const gallerySortBy = useSettingsStore((s) => s.gallerySortBy);
+
+    const [viewerAspect, setViewerAspect] = useState<number>(
+        () => (typeof window === "undefined" ? 1 : deviceViewerAspectRatio()),
+    );
+
+    useEffect(() => {
+        const updateAspect = (): void => {
+            setViewerAspect(deviceViewerAspectRatio());
+        };
+        updateAspect();
+        window.addEventListener("resize", updateAspect);
+        window.visualViewport?.addEventListener("resize", updateAspect);
+        return (): void => {
+            window.removeEventListener("resize", updateAspect);
+            window.visualViewport?.removeEventListener("resize", updateAspect);
+        };
+    }, []);
 
     const sortLibraryFiles = useCallback(
         (files: EnteFile[]): EnteFile[] =>
@@ -93,13 +116,20 @@ export default function GalleryPage(): JSX.Element {
     );
 
     useEffect(() => {
-        if (mediaViewOrder !== "shuffled") {
+        if (mediaViewOrder !== "shuffled" || viewportFitSort !== "none") {
             return;
         }
         reconcileMediaShuffle(filteredFiles.map((file) => file.id));
-    }, [filteredFiles, mediaViewOrder, reconcileMediaShuffle]);
+    }, [filteredFiles, mediaViewOrder, reconcileMediaShuffle, viewportFitSort]);
 
     const files = useMemo(() => {
+        if (viewportFitSort !== "none") {
+            return sortFilesByViewportFit(
+                filteredFiles,
+                viewportFitSort,
+                viewerAspect,
+            );
+        }
         if (mediaViewOrder !== "shuffled") {
             return filteredFiles;
         }
@@ -121,6 +151,8 @@ export default function GalleryPage(): JSX.Element {
         mediaShuffledFileIds,
         mediaShuffleSeed,
         mediaViewOrder,
+        viewportFitSort,
+        viewerAspect,
     ]);
 
     const matchCount = useMemo(() => {
@@ -134,6 +166,11 @@ export default function GalleryPage(): JSX.Element {
         );
     }, [libraryFiles, tagFilter, fileIdsByTag, favoriteFileIds]);
 
+    const matchingFileIds = useMemo(
+        () => filteredFiles.map((file) => file.id),
+        [filteredFiles],
+    );
+
     const [viewerFileId, setViewerFileId] = useState<number | undefined>();
 
     const selectionEnabled = useSelectionStore((s) => s.enabled);
@@ -142,6 +179,8 @@ export default function GalleryPage(): JSX.Element {
     const selectMany = useSelectionStore((s) => s.selectMany);
     const pruneToVisible = useSelectionStore((s) => s.pruneToVisible);
     const resetSelection = useSelectionStore((s) => s.reset);
+    const stampActive = useSelectionStore((s) => s.stampActive);
+    const stampTags = useSelectionStore((s) => s.stampTags);
 
     const visibleFileIds = useMemo(
         () => new Set(files.map((file) => file.id)),
@@ -162,15 +201,37 @@ export default function GalleryPage(): JSX.Element {
         if (!selectionEnabled) {
             return undefined;
         }
+        if (stampActive && stampTags.length > 0) {
+            return {
+                selectedIds: new Set(selectedIds),
+                onToggle: (file) => {
+                    toggleSelection(file.id);
+                    void bulkAddTags([file.id], stampTags);
+                },
+                onSelectMany: (fileIds, mode) => {
+                    selectMany(fileIds, mode);
+                    if (mode === "add") {
+                        void bulkAddTags(fileIds, stampTags);
+                    }
+                },
+            };
+        }
         return {
             selectedIds: new Set(selectedIds),
             onToggle: (file) => toggleSelection(file.id),
             onSelectMany: selectMany,
         };
-    }, [selectionEnabled, selectedIds, selectMany, toggleSelection]);
+    }, [
+        selectionEnabled,
+        selectedIds,
+        selectMany,
+        stampActive,
+        stampTags,
+        toggleSelection,
+    ]);
 
     const footerInsetPx =
-        selectionEnabled && selectedIds.length > 0 ?
+        selectionEnabled && (selectedIds.length > 0 || stampActive) ?
             SELECTION_FOOTER_INSET_PX :
             0;
 
@@ -252,7 +313,10 @@ export default function GalleryPage(): JSX.Element {
             }
         >
             <SyncBanner />
-            <TagFilterBar matchCount={matchCount} />
+            <TagFilterBar
+                matchCount={matchCount}
+                matchingFileIds={matchingFileIds}
+            />
 
             {showFullPageLoader ? (
                 <PageLoader message="Loading your library…" />

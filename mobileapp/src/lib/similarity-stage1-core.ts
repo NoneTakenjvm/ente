@@ -10,7 +10,8 @@
  */
 import { hammingDistance } from "@/lib/phash";
 
-export const MAX_GROUP_SIZE = 40;
+/** Default cap when callers omit {@link maxGroupSize}. */
+export const MAX_GROUP_SIZE = 5;
 export const MUTUAL_RANK_K = 8;
 export const TIGHT_MATCH_DISTANCE = 2;
 
@@ -124,6 +125,7 @@ const clustersFromUnionFind = (
     uf: UnionFind,
     items: Stage1Item[],
     edgeDistanceByPair: Map<string, number>,
+    maxGroupSize: number,
 ): Stage1Cluster[] => {
     const membersByRoot = new Map<number, number[]>();
     for (let i = 0; i < items.length; i++) {
@@ -153,8 +155,8 @@ const clustersFromUnionFind = (
             }
         }
         // Hard-slice oversized components (safety net; tryUnion should prevent most).
-        for (let start = 0; start < memberIndices.length; start += MAX_GROUP_SIZE) {
-            const slice = memberIndices.slice(start, start + MAX_GROUP_SIZE);
+        for (let start = 0; start < memberIndices.length; start += maxGroupSize) {
+            const slice = memberIndices.slice(start, start + maxGroupSize);
             if (slice.length < 2) {
                 continue;
             }
@@ -223,6 +225,7 @@ const compareFileAgainstLaterBucketMates = (
     threshold: number,
     edgeByKey: Map<string, CandidateEdge>,
     provisionalUf: UnionFind,
+    maxGroupSize: number,
 ): boolean => {
     const seenPartners = new Set<number>();
     let mergedTight = false;
@@ -246,7 +249,7 @@ const compareFileAgainstLaterBucketMates = (
         }
         edgeByKey.set(key, { left, right, distance });
         if (distance <= TIGHT_MATCH_DISTANCE) {
-            if (provisionalUf.tryUnion(left, right, MAX_GROUP_SIZE)) {
+            if (provisionalUf.tryUnion(left, right, maxGroupSize)) {
                 mergedTight = true;
             }
         }
@@ -278,6 +281,7 @@ const compareFileAgainstLaterBucketMates = (
 export const runStage1ClusteringSync = (
     items: Stage1Item[],
     threshold: number,
+    maxGroupSize: number = MAX_GROUP_SIZE,
 ): Stage1Cluster[] => {
     if (items.length < 2) {
         return [];
@@ -293,16 +297,17 @@ export const runStage1ClusteringSync = (
             threshold,
             edgeByKey,
             provisionalUf,
+            maxGroupSize,
         );
     }
     const mutual = filterMutualNearestEdges(edgeByKey);
     const uf = new UnionFind(items.length);
     const edgeDistanceByPair = new Map<string, number>();
     for (const edge of mutual) {
-        uf.tryUnion(edge.left, edge.right, MAX_GROUP_SIZE);
+        uf.tryUnion(edge.left, edge.right, maxGroupSize);
         edgeDistanceByPair.set(`${edge.left}:${edge.right}`, edge.distance);
     }
-    return clustersFromUnionFind(uf, items, edgeDistanceByPair);
+    return clustersFromUnionFind(uf, items, edgeDistanceByPair, maxGroupSize);
 };
 
 /**
@@ -314,6 +319,7 @@ export const runStage1Clustering = async (
     threshold: number,
     onProgress: (update: Stage1ProgressUpdate) => void,
     shouldAbort?: () => boolean,
+    maxGroupSize: number = MAX_GROUP_SIZE,
 ): Promise<Stage1Cluster[]> => {
     if (items.length < 2) {
         onProgress({
@@ -345,6 +351,7 @@ export const runStage1Clustering = async (
             threshold,
             edgeByKey,
             provisionalUf,
+            maxGroupSize,
         );
         if (edgeByKey.size > beforeSize) {
             for (const [key, edge] of edgeByKey.entries()) {
@@ -366,6 +373,7 @@ export const runStage1Clustering = async (
                     provisionalUf,
                     items,
                     provisionalDistances,
+                    maxGroupSize,
                 ) :
                 undefined,
         });
@@ -388,6 +396,7 @@ export const runStage1Clustering = async (
             provisionalUf,
             items,
             provisionalDistances,
+            maxGroupSize,
         ),
     });
     await new Promise<void>((resolve) => {
@@ -398,10 +407,15 @@ export const runStage1Clustering = async (
     const uf = new UnionFind(items.length);
     const edgeDistanceByPair = new Map<string, number>();
     for (const edge of mutual) {
-        uf.tryUnion(edge.left, edge.right, MAX_GROUP_SIZE);
+        uf.tryUnion(edge.left, edge.right, maxGroupSize);
         edgeDistanceByPair.set(`${edge.left}:${edge.right}`, edge.distance);
     }
-    const finalClusters = clustersFromUnionFind(uf, items, edgeDistanceByPair);
+    const finalClusters = clustersFromUnionFind(
+        uf,
+        items,
+        edgeDistanceByPair,
+        maxGroupSize,
+    );
     onProgress({
         phase: "done",
         completed: total,

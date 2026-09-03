@@ -1,1 +1,1 @@
-export const SELECTION_FOOTER_INSET_PX = 96;
+export const SELECTION_FOOTER_INSET_PX = 168;

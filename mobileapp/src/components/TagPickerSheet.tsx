@@ -7,7 +7,7 @@ import {
     type JSX,
     type PointerEvent as ReactPointerEvent,
 } from "react";
-import { Check, Plus } from "lucide-react";
+import { Check, Minus, Pin, Plus } from "lucide-react";
 import { TagTypeTabBar } from "@/components/TagTypeTabBar";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -26,11 +26,19 @@ import {
     normalizeTagTypeName,
     tagsForTypeView,
 } from "@/lib/tag-types";
+import type { TagPresence } from "@/lib/tag-bulk";
+import {
+    countFilesMatchingKit,
+    KITS_TAB,
+    sortPresetsByMatchCount,
+    type TagPreset,
+} from "@/lib/tag-presets";
 import { normalizeTagName } from "@/lib/tag-writes";
 import { isReservedTag, tagFileCount } from "@/lib/tags";
 import { cn } from "@/lib/utils";
 import { useVisualViewportSheetLayout } from "@/hooks/use-visual-viewport-sheet-layout";
 import { useTagStore } from "@/stores/tag-store";
+import type { EnteFile } from "ente-media/file";
 
 const SWIPE_DISMISS_THRESHOLD_MIN_PX = 50;
 const SWIPE_DISMISS_THRESHOLD_RATIO = 0.12;
@@ -50,9 +58,19 @@ interface TagPickerSheetProps {
     knownTags: string[];
     error?: string;
     batchSelectionHint?: string;
+    /** When set, show N/total presence and partial-state actions. */
+    tagPresence?: Map<string, TagPresence>;
+    presets?: TagPreset[];
+    /** Files used to rank kits (selected / matching). */
+    kitScoreFiles?: EnteFile[];
+    /** Open on the Kits tab when presets are available. */
+    defaultToKits?: boolean;
+    pinnedTags?: string[];
     onOpenChange: (open: boolean) => void;
     onAddTag: (name: string) => void;
     onRemoveTag: (name: string) => void;
+    onApplyPreset?: (tags: string[]) => void;
+    onTogglePinTag?: (tag: string) => void;
 }
 
 export function TagPickerSheet({
@@ -61,9 +79,16 @@ export function TagPickerSheet({
     knownTags,
     error,
     batchSelectionHint,
+    tagPresence,
+    presets,
+    kitScoreFiles,
+    defaultToKits = false,
+    pinnedTags,
     onOpenChange,
     onAddTag,
     onRemoveTag,
+    onApplyPreset,
+    onTogglePinTag,
 }: TagPickerSheetProps): JSX.Element {
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
     const tagTypes = useTagStore((s) => s.tagTypes);
@@ -71,7 +96,10 @@ export function TagPickerSheet({
     const ensureTagType = useTagStore((s) => s.ensureTagType);
     const setTagType = useTagStore((s) => s.setTagType);
 
-    const [selectedType, setSelectedType] = useState<string>(DEFAULT_TAG_TYPE);
+    const showKitsTab = Boolean(presets?.length && onApplyPreset);
+    const [selectedType, setSelectedType] = useState<string>(() =>
+        defaultToKits && showKitsTab ? KITS_TAB : DEFAULT_TAG_TYPE,
+    );
     const [newTag, setNewTag] = useState<string>("");
     const [newType, setNewType] = useState<string>("");
     const [dragPx, setDragPx] = useState<number>(0);
@@ -94,19 +122,37 @@ export function TagPickerSheet({
         0.75,
     );
 
-    const libraryTags = useMemo(
-        (): string[] =>
-            tagsForTypeView(
-                knownTags.filter((tag) => !isReservedTag(tag)),
-                tagTypeByName,
-                selectedType,
-                fileIdsByTag,
-            ),
-        [knownTags, tagTypeByName, selectedType, fileIdsByTag],
-    );
+    const isKitsTab = selectedType === KITS_TAB;
+
+    const libraryTags = useMemo((): string[] => {
+        if (isKitsTab) {
+            return [];
+        }
+        return tagsForTypeView(
+            knownTags.filter((tag) => !isReservedTag(tag)),
+            tagTypeByName,
+            selectedType,
+            fileIdsByTag,
+        );
+    }, [knownTags, tagTypeByName, selectedType, fileIdsByTag, isKitsTab]);
+
+    const rankedPresets = useMemo((): TagPreset[] => {
+        if (!presets?.length) {
+            return [];
+        }
+        if (kitScoreFiles?.length) {
+            return sortPresetsByMatchCount(presets, kitScoreFiles);
+        }
+        return [...presets].sort((a, b) => a.name.localeCompare(b.name));
+    }, [presets, kitScoreFiles]);
+
+    const kitScoreTotal = kitScoreFiles?.length ?? 0;
 
     const defaultCreateType = useMemo((): string => {
-        if (selectedType !== ALL_TAG_TYPES_TAB) {
+        if (
+            selectedType !== ALL_TAG_TYPES_TAB &&
+            selectedType !== KITS_TAB
+        ) {
             return selectedType;
         }
         return DEFAULT_TAG_TYPE;
@@ -114,7 +160,20 @@ export function TagPickerSheet({
 
     const isSpecificTypeTab =
         selectedType !== ALL_TAG_TYPES_TAB &&
-        selectedType !== DEFAULT_TAG_TYPE;
+        selectedType !== DEFAULT_TAG_TYPE &&
+        selectedType !== KITS_TAB;
+
+    const wasOpenRef = useRef(false);
+    useEffect(() => {
+        if (open && !wasOpenRef.current) {
+            setSelectedType(
+                defaultToKits && showKitsTab ? KITS_TAB : DEFAULT_TAG_TYPE,
+            );
+            setNewTag("");
+            setNewType("");
+        }
+        wasOpenRef.current = open;
+    }, [open, defaultToKits, showKitsTab]);
 
     useEffect(() => {
         setNewType(isSpecificTypeTab ? selectedType : "");
@@ -138,7 +197,6 @@ export function TagPickerSheet({
         if (!nextOpen) {
             setNewTag("");
             setNewType("");
-            setSelectedType(DEFAULT_TAG_TYPE);
             resetDragState();
         }
         onOpenChangeRef.current(nextOpen);
@@ -159,7 +217,9 @@ export function TagPickerSheet({
                 resetDragState();
                 setNewTag("");
                 setNewType("");
-                setSelectedType(DEFAULT_TAG_TYPE);
+                setSelectedType(
+                    defaultToKits && showKitsTab ? KITS_TAB : DEFAULT_TAG_TYPE,
+                );
                 onOpenChangeRef.current(false);
                 return;
             }
@@ -333,6 +393,7 @@ export function TagPickerSheet({
                             types={tagTypes}
                             selected={selectedType}
                             onSelect={setSelectedType}
+                            leadingTabs={showKitsTab ? [KITS_TAB] : undefined}
                         />
                     </SheetHeader>
 
@@ -341,56 +402,171 @@ export function TagPickerSheet({
                             ref={scrollRef}
                             className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-2"
                         >
-                            {libraryTags.length === 0 ? (
+                            {isKitsTab ? (
+                                rankedPresets.length === 0 ? (
+                                    <p className="px-2 py-4 text-sm text-muted-foreground">
+                                        No kits yet. Create them in Manage →
+                                        Tags.
+                                    </p>
+                                ) : (
+                                    <ul className="flex flex-col gap-0.5">
+                                        {rankedPresets.map((preset) => {
+                                            const matchCount =
+                                                kitScoreFiles?.length ?
+                                                    countFilesMatchingKit(
+                                                        kitScoreFiles,
+                                                        preset.tags,
+                                                    ) :
+                                                    undefined;
+                                            return (
+                                                <li key={preset.id}>
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        className="h-auto min-h-10 w-full justify-between gap-2 px-3 py-2"
+                                                        onClick={() => {
+                                                            onApplyPreset?.(
+                                                                preset.tags,
+                                                            );
+                                                        }}
+                                                    >
+                                                        <span className="flex min-w-0 flex-col items-start gap-0.5 text-left">
+                                                            <span className="truncate font-medium">
+                                                                {preset.name}
+                                                            </span>
+                                                            <span className="truncate text-xs text-muted-foreground">
+                                                                {preset.tags.join(
+                                                                    ", ",
+                                                                )}
+                                                            </span>
+                                                        </span>
+                                                        {matchCount !==
+                                                        undefined ? (
+                                                            <Badge
+                                                                variant="secondary"
+                                                                className="shrink-0 tabular-nums"
+                                                            >
+                                                                {matchCount}/
+                                                                {kitScoreTotal}
+                                                            </Badge>
+                                                        ) : null}
+                                                    </Button>
+                                                </li>
+                                            );
+                                        })}
+                                    </ul>
+                                )
+                            ) : libraryTags.length === 0 ? (
                                 <p className="px-2 py-4 text-sm text-muted-foreground">
                                     No tags in this group yet. Create one below.
                                 </p>
                             ) : (
                                 <ul className="flex flex-col gap-0.5">
                                     {libraryTags.map((tag) => {
-                                        const applied = appliedTags.includes(tag);
-                                        const count = tagFileCount(
+                                        const presence = tagPresence?.get(tag);
+                                        const applied = presence ?
+                                            presence.count === presence.total &&
+                                            presence.total > 0 :
+                                            appliedTags.includes(tag);
+                                        const partial = Boolean(
+                                            presence &&
+                                            presence.count > 0 &&
+                                            presence.count < presence.total,
+                                        );
+                                        const libraryCount = tagFileCount(
                                             tag,
                                             fileIdsByTag,
                                         );
+                                        const pinned = pinnedTags?.includes(tag);
                                         return (
                                             <li key={tag}>
-                                                <Button
-                                                    type="button"
-                                                    variant="ghost"
-                                                    className={cn(
-                                                        "h-10 w-full justify-between gap-2 px-3",
-                                                        applied && "bg-secondary/80",
-                                                    )}
-                                                    onClick={() => {
-                                                        if (applied) {
-                                                            onRemoveTag(tag);
-                                                        } else {
-                                                            onAddTag(tag);
-                                                        }
-                                                    }}
-                                                >
-                                                    <span className="flex min-w-0 items-center gap-2">
-                                                        <Check
-                                                            className={cn(
-                                                                "size-4 shrink-0",
-                                                                applied ?
-                                                                    "opacity-100" :
-                                                                    "opacity-0",
-                                                            )}
-                                                            aria-hidden={!applied}
-                                                        />
-                                                        <span className="truncate">
-                                                            {tag}
-                                                        </span>
-                                                    </span>
-                                                    <Badge
-                                                        variant="secondary"
-                                                        className="tabular-nums"
+                                                <div className="flex items-center gap-0.5">
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        className={cn(
+                                                            "h-10 min-w-0 flex-1 justify-between gap-2 px-3",
+                                                            (applied || partial) &&
+                                                                "bg-secondary/80",
+                                                        )}
+                                                        onClick={() => {
+                                                            if (applied) {
+                                                                onRemoveTag(tag);
+                                                            } else {
+                                                                onAddTag(tag);
+                                                            }
+                                                        }}
                                                     >
-                                                        {count}
-                                                    </Badge>
-                                                </Button>
+                                                        <span className="flex min-w-0 items-center gap-2">
+                                                            {partial ? (
+                                                                <Minus
+                                                                    className="size-4 shrink-0 opacity-70"
+                                                                    aria-hidden
+                                                                />
+                                                            ) : (
+                                                                <Check
+                                                                    className={cn(
+                                                                        "size-4 shrink-0",
+                                                                        applied ?
+                                                                            "opacity-100" :
+                                                                            "opacity-0",
+                                                                    )}
+                                                                    aria-hidden={!applied}
+                                                                />
+                                                            )}
+                                                            <span className="truncate">
+                                                                {tag}
+                                                            </span>
+                                                        </span>
+                                                        <Badge
+                                                            variant="secondary"
+                                                            className="tabular-nums"
+                                                        >
+                                                            {presence ?
+                                                                `${presence.count}/${presence.total}` :
+                                                                libraryCount}
+                                                        </Badge>
+                                                    </Button>
+                                                    {partial ? (
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            size="icon-sm"
+                                                            className="shrink-0"
+                                                            aria-label={`Remove ${tag} from all selected`}
+                                                            onClick={() => {
+                                                                onRemoveTag(tag);
+                                                            }}
+                                                        >
+                                                            <Minus />
+                                                        </Button>
+                                                    ) : null}
+                                                    {onTogglePinTag ? (
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            size="icon-sm"
+                                                            className="shrink-0"
+                                                            aria-label={
+                                                                pinned ?
+                                                                    `Unpin ${tag}` :
+                                                                    `Pin ${tag}`
+                                                            }
+                                                            aria-pressed={pinned}
+                                                            onClick={() => {
+                                                                onTogglePinTag(tag);
+                                                            }}
+                                                        >
+                                                            <Pin
+                                                                className={cn(
+                                                                    "size-3.5",
+                                                                    pinned &&
+                                                                        "fill-current",
+                                                                )}
+                                                            />
+                                                        </Button>
+                                                    ) : null}
+                                                </div>
                                             </li>
                                         );
                                     })}
@@ -399,52 +575,61 @@ export function TagPickerSheet({
                         </div>
                     </div>
 
-                    <SheetFooter className="shrink-0 gap-3 border-t border-border p-4">
-                        <form
-                            className="flex w-full flex-col gap-2"
-                            onSubmit={handleCreateTag}
-                        >
-                            <div className="flex w-full items-center gap-2">
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="icon-sm"
-                                    disabled={!newTag.trim()}
-                                    aria-label="Create tag"
-                                    onClick={submitNewTag}
-                                >
-                                    <Plus />
-                                </Button>
-                                <Input
-                                    placeholder="Create new tag"
-                                    value={newTag}
-                                    className="min-w-0 flex-1"
-                                    onChange={(event) => {
-                                        setNewTag(event.target.value);
-                                    }}
-                                    onBlur={handleInputBlur}
-                                />
-                                <Input
-                                    placeholder="Type (optional)"
-                                    value={newType}
-                                    className="min-w-0 w-28 shrink-0"
-                                    onChange={(event) => {
-                                        setNewType(event.target.value);
-                                    }}
-                                    onBlur={handleInputBlur}
-                                />
-                            </div>
-                        </form>
-                        <p className="text-xs text-muted-foreground">
-                            Tap a tag to add or remove it. The type field fills
-                            from the selected tab when you pick a custom type.
-                        </p>
-                        {error ? (
+                    {!isKitsTab ? (
+                        <SheetFooter className="shrink-0 gap-3 border-t border-border p-4">
+                            <form
+                                className="flex w-full flex-col gap-2"
+                                onSubmit={handleCreateTag}
+                            >
+                                <div className="flex w-full items-center gap-2">
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="icon-sm"
+                                        disabled={!newTag.trim()}
+                                        aria-label="Create tag"
+                                        onClick={submitNewTag}
+                                    >
+                                        <Plus />
+                                    </Button>
+                                    <Input
+                                        placeholder="Create new tag"
+                                        value={newTag}
+                                        className="min-w-0 flex-1"
+                                        onChange={(event) => {
+                                            setNewTag(event.target.value);
+                                        }}
+                                        onBlur={handleInputBlur}
+                                    />
+                                    <Input
+                                        placeholder="Type (optional)"
+                                        value={newType}
+                                        className="min-w-0 w-28 shrink-0"
+                                        onChange={(event) => {
+                                            setNewType(event.target.value);
+                                        }}
+                                        onBlur={handleInputBlur}
+                                    />
+                                </div>
+                            </form>
+                            <p className="text-xs text-muted-foreground">
+                                Tap a tag to add or remove it. The type field
+                                fills from the selected tab when you pick a
+                                custom type.
+                            </p>
+                            {error ? (
+                                <Alert variant="destructive" className="py-2">
+                                    <AlertDescription>{error}</AlertDescription>
+                                </Alert>
+                            ) : null}
+                        </SheetFooter>
+                    ) : error ? (
+                        <div className="shrink-0 border-t border-border p-4">
                             <Alert variant="destructive" className="py-2">
                                 <AlertDescription>{error}</AlertDescription>
                             </Alert>
-                        ) : null}
-                    </SheetFooter>
+                        </div>
+                    ) : null}
                 </div>
             </SheetContent>
         </Sheet>

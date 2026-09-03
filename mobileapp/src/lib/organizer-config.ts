@@ -9,6 +9,7 @@ import {
     emptyTagTypeConfig,
     type PersistedTagTypeConfig,
 } from "@/lib/tag-types";
+import type { PersistedTagPresets } from "@/lib/tag-presets";
 
 export const ORGANIZER_COLLECTION_NAME = ".organizer";
 
@@ -28,6 +29,10 @@ export interface OrganizerAppConfig {
     tagTypes?: PersistedTagTypeConfig;
     /** Tag names registered before any photo uses them. */
     registeredTags?: string[];
+    /** Named tag bundles (kits) for one-tap apply. */
+    tagPresets?: PersistedTagPresets;
+    /** Tags pinned to the selection working-set bar. */
+    pinnedTags?: string[];
     queryAlbums?: PersistedQueryAlbums;
     appSettings?: PersistedAppSettings;
 }

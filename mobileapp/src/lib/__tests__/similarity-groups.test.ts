@@ -52,12 +52,20 @@ const describeGroups = (
     hashes: Map<number, string[]>,
     filesById: Map<number, EnteFile>,
     collections: Collection[],
+    maxGroupSize: number = MAX_GROUP_SIZE,
 ): number[][] => {
     const entries = new Map<number, PhashEntry>();
     for (const [fileId, hashesArr] of hashes.entries()) {
         entries.set(fileId, { hashes: hashesArr });
     }
-    const groups = buildSimilarityGroups(entries, filesById, collections, 1, 10);
+    const groups = buildSimilarityGroups(
+        entries,
+        filesById,
+        collections,
+        1,
+        10,
+        maxGroupSize,
+    );
     return groups.map((group) =>
         group.items.map((item) => item.file.id).sort((a, b) => a - b));
 };
@@ -144,7 +152,7 @@ describe("buildSimilarityGroups mutual nearest-neighbour", () => {
         for (let i = 2; i <= 11; i++) {
             entries.set(i, ["a1000000000000ff"]);
         }
-        const groups = describeGroups(entries, filesById, collections);
+        const groups = describeGroups(entries, filesById, collections, 20);
         expect(groups).toHaveLength(1);
         expect(groups[0]).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
         expect(groups[0]!.includes(1)).toBe(false);

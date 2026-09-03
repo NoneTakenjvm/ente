@@ -21,11 +21,13 @@ import { Spinner } from "@/components/ui/spinner";
 import {
     containedDisplaySize,
     cropRectForVideoSave,
-    detectContentBoundsFromVideo,
-    initialCropForDisplay,
     trimRangeChanged,
     videoCropChanged,
 } from "@/lib/crop-editor";
+import {
+    deviceViewerAspectRatio,
+    maxAspectRatioCrop,
+} from "@/lib/viewport-fit";
 import { mimeTypeForFile } from "@/lib/media-kind";
 import { loadMediaBytesForEdit } from "@/lib/load-media-bytes";
 import { logJsHeap } from "@/lib/memory-probe";
@@ -100,7 +102,6 @@ export function VideoEditorOverlay({
     const videoRef = useRef<HTMLVideoElement>(null);
     const workingUrlRef = useRef<string | undefined>(undefined);
     const workspaceRef = useRef<HTMLDivElement>(null);
-    const layoutGenerationRef = useRef<number>(0);
     const mimeType = mimeTypeForFile(file);
 
     useEffect(() => {
@@ -185,9 +186,9 @@ export function VideoEditorOverlay({
         setVideoReady(false);
     }, []);
 
-    const applyDisplayLayout = useCallback(async (
+    const applyDisplayLayout = useCallback((
         video: HTMLVideoElement,
-    ): Promise<void> => {
+    ): void => {
         if (
             !workspaceSize ||
             video.videoWidth <= 0 ||
@@ -195,23 +196,16 @@ export function VideoEditorOverlay({
         ) {
             return;
         }
-        const generation = ++layoutGenerationRef.current;
         const layout = containedDisplaySize(
             video.videoWidth,
             video.videoHeight,
             workspaceSize.width,
             workspaceSize.height,
         );
-        const contentBounds = await detectContentBoundsFromVideo(video);
-        if (generation !== layoutGenerationRef.current) {
-            return;
-        }
-        const nextCrop = initialCropForDisplay(
+        const nextCrop = maxAspectRatioCrop(
             layout.width,
             layout.height,
-            video.videoWidth,
-            video.videoHeight,
-            contentBounds,
+            deviceViewerAspectRatio(),
         );
         setDisplayLayout(layout);
         setCrop(nextCrop);
@@ -224,7 +218,7 @@ export function VideoEditorOverlay({
         if (!video || video.videoWidth <= 0) {
             return;
         }
-        void applyDisplayLayout(video);
+        applyDisplayLayout(video);
     }, [applyDisplayLayout, workspaceSize]);
 
     const handleVideoLoaded = useCallback(
@@ -243,7 +237,7 @@ export function VideoEditorOverlay({
                 setTrimEndSec(video.duration);
             }
             requestAnimationFrame(() => {
-                void applyDisplayLayout(video);
+                applyDisplayLayout(video);
             });
         },
         [applyDisplayLayout],

@@ -26,6 +26,13 @@ import {
     CardTitle,
 } from "@/components/ui/card";
 import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
+import {
     Empty,
     EmptyDescription,
     EmptyHeader,
@@ -43,9 +50,14 @@ import {
     tagsGroupedByType,
     typeForTag,
 } from "@/lib/tag-types";
+import {
+    suggestTagKits,
+    type TagKitSuggestion,
+} from "@/lib/tag-presets";
 import { normalizeTagName } from "@/lib/tag-writes";
 import { isReservedTag } from "@/lib/tags";
 import { useLibraryStore } from "@/stores/library-store";
+import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
 import { Tags, Plus } from "lucide-react";
 
@@ -57,9 +69,15 @@ export function ManageTagsPanel(): JSX.Element {
     const setTagType = useTagStore((s) => s.setTagType);
     const ensureTagType = useTagStore((s) => s.ensureTagType);
     const registerTag = useTagStore((s) => s.registerTag);
+    const allFiles = useLibraryStore((s) => s.allFiles);
     const renameTag = useLibraryStore((s) => s.renameTag);
     const deleteTag = useLibraryStore((s) => s.deleteTag);
     const mergeTags = useLibraryStore((s) => s.mergeTags);
+
+    const presets = useTagSpeedStore((s) => s.presets);
+    const addPreset = useTagSpeedStore((s) => s.addPreset);
+    const updatePreset = useTagSpeedStore((s) => s.updatePreset);
+    const deletePreset = useTagSpeedStore((s) => s.deletePreset);
 
     const [renameTarget, setRenameTarget] = useState<string | undefined>();
     const [renameValue, setRenameValue] = useState<string>("");
@@ -71,6 +89,12 @@ export function ManageTagsPanel(): JSX.Element {
     const [newTypeName, setNewTypeName] = useState<string>("");
     const [newTagName, setNewTagName] = useState<string>("");
     const [newTagType, setNewTagType] = useState<string>("");
+    const [presetName, setPresetName] = useState<string>("");
+    const [presetTags, setPresetTags] = useState<string[]>([]);
+    const [suggestionsOpen, setSuggestionsOpen] = useState<boolean>(false);
+    const [kitSuggestions, setKitSuggestions] = useState<TagKitSuggestion[]>(
+        [],
+    );
 
     const userTags = useMemo(
         (): string[] => tags.filter((tag) => !isReservedTag(tag)),
@@ -272,6 +296,46 @@ export function ManageTagsPanel(): JSX.Element {
         });
     };
 
+    const handleCreatePreset = (event: FormEvent): void => {
+        event.preventDefault();
+        setError(undefined);
+        const created = addPreset(presetName, presetTags);
+        if (!created) {
+            setError("Preset needs a name and at least one tag.");
+            return;
+        }
+        setPresetName("");
+        setPresetTags([]);
+    };
+
+    const handleOpenSuggestions = (): void => {
+        setError(undefined);
+        setKitSuggestions(
+            suggestTagKits(allFiles, { existingPresets: presets }),
+        );
+        setSuggestionsOpen(true);
+    };
+
+    const handleAddSuggestion = (suggestion: TagKitSuggestion): void => {
+        const created = addPreset(suggestion.name, suggestion.tags);
+        if (!created) {
+            setError("Could not add that kit.");
+            return;
+        }
+        setKitSuggestions((current) =>
+            current.filter(
+                (entry) =>
+                    entry.tags.join("\0") !== suggestion.tags.join("\0"),
+            ),
+        );
+    };
+
+    const presetTagChoices = useMemo(
+        (): string[] =>
+            userTags.filter((tag) => !presetTags.includes(tag)),
+        [userTags, presetTags],
+    );
+
     return (
         <div className="flex flex-col gap-4 px-4 py-4">
             {progress ? (
@@ -376,6 +440,207 @@ export function ManageTagsPanel(): JSX.Element {
 
             <Card>
                 <CardHeader>
+                    <CardTitle>Tag presets</CardTitle>
+                    <CardDescription>
+                        Named kits you can apply in one tap from selection or
+                        “Tag matching…”.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-4">
+                    <form
+                        className="flex flex-col gap-2"
+                        onSubmit={handleCreatePreset}
+                    >
+                        <Input
+                            placeholder="Preset name (e.g. Vietnam trip)"
+                            value={presetName}
+                            onChange={(event) => {
+                                setPresetName(event.target.value);
+                            }}
+                        />
+                        {presetTags.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                                {presetTags.map((tag) => (
+                                    <Badge
+                                        key={tag}
+                                        variant="secondary"
+                                        className="gap-1"
+                                    >
+                                        {tag}
+                                        <button
+                                            type="button"
+                                            className="text-muted-foreground hover:text-foreground"
+                                            aria-label={`Remove ${tag}`}
+                                            onClick={() => {
+                                                setPresetTags((current) =>
+                                                    current.filter(
+                                                        (entry) => entry !== tag,
+                                                    ),
+                                                );
+                                            }}
+                                        >
+                                            ×
+                                        </button>
+                                    </Badge>
+                                ))}
+                            </div>
+                        ) : null}
+                        <select
+                            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                            value=""
+                            disabled={presetTagChoices.length === 0}
+                            aria-label="Add tag to preset"
+                            onChange={(event) => {
+                                const tag = event.target.value;
+                                if (!tag) {
+                                    return;
+                                }
+                                setPresetTags((current) =>
+                                    current.includes(tag) ?
+                                        current :
+                                        [...current, tag],
+                                );
+                            }}
+                        >
+                            <option value="">
+                                {presetTagChoices.length === 0 ?
+                                    (userTags.length === 0 ?
+                                        "Create tags first" :
+                                        "All tags already added") :
+                                    "Add a tag…"}
+                            </option>
+                            {presetTagChoices.map((tag) => (
+                                <option key={tag} value={tag}>
+                                    {tag}
+                                </option>
+                            ))}
+                        </select>
+                        <div className="flex flex-wrap gap-2">
+                            <Button
+                                type="submit"
+                                variant="outline"
+                                size="sm"
+                                disabled={!presetName.trim() || presetTags.length === 0}
+                            >
+                                Add preset
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                onClick={handleOpenSuggestions}
+                            >
+                                View suggestions
+                            </Button>
+                        </div>
+                    </form>
+                    {presets.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                            No presets yet.
+                        </p>
+                    ) : (
+                        <ul className="flex flex-col gap-2">
+                            {presets.map((preset) => {
+                                const addable = userTags.filter(
+                                    (tag) => !preset.tags.includes(tag),
+                                );
+                                return (
+                                    <li
+                                        key={preset.id}
+                                        className="flex flex-col gap-2 rounded-lg border border-border/60 p-3"
+                                    >
+                                        <div className="flex items-start justify-between gap-2">
+                                            <p className="min-w-0 font-medium">
+                                                {preset.name}
+                                            </p>
+                                            <Button
+                                                type="button"
+                                                variant="destructive"
+                                                size="sm"
+                                                onClick={() => {
+                                                    deletePreset(preset.id);
+                                                }}
+                                            >
+                                                Delete
+                                            </Button>
+                                        </div>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {preset.tags.map((tag) => (
+                                                <Badge
+                                                    key={tag}
+                                                    variant="secondary"
+                                                    className="gap-1"
+                                                >
+                                                    {tag}
+                                                    <button
+                                                        type="button"
+                                                        className="text-muted-foreground hover:text-foreground"
+                                                        aria-label={`Remove ${tag} from ${preset.name}`}
+                                                        onClick={() => {
+                                                            const next =
+                                                                preset.tags.filter(
+                                                                    (entry) =>
+                                                                        entry !==
+                                                                        tag,
+                                                                );
+                                                            if (
+                                                                next.length === 0
+                                                            ) {
+                                                                deletePreset(
+                                                                    preset.id,
+                                                                );
+                                                                return;
+                                                            }
+                                                            updatePreset(
+                                                                preset.id,
+                                                                { tags: next },
+                                                            );
+                                                        }}
+                                                    >
+                                                        ×
+                                                    </button>
+                                                </Badge>
+                                            ))}
+                                        </div>
+                                        <select
+                                            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                                            value=""
+                                            disabled={addable.length === 0}
+                                            aria-label={`Add tag to ${preset.name}`}
+                                            onChange={(event) => {
+                                                const tag = event.target.value;
+                                                if (!tag) {
+                                                    return;
+                                                }
+                                                updatePreset(preset.id, {
+                                                    tags: [
+                                                        ...preset.tags,
+                                                        tag,
+                                                    ],
+                                                });
+                                            }}
+                                        >
+                                            <option value="">
+                                                {addable.length === 0 ?
+                                                    "No more tags to add" :
+                                                    "Add a tag…"}
+                                            </option>
+                                            {addable.map((tag) => (
+                                                <option key={tag} value={tag}>
+                                                    {tag}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                    )}
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader>
                     <CardTitle>Merge tags</CardTitle>
                     <CardDescription>
                         Select two or more tags, then combine them under one
@@ -431,6 +696,54 @@ export function ManageTagsPanel(): JSX.Element {
                     </form>
                 </CardContent>
             </Card>
+
+            <Dialog open={suggestionsOpen} onOpenChange={setSuggestionsOpen}>
+                <DialogContent className="flex max-h-[85dvh] flex-col gap-3 sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Suggested kits</DialogTitle>
+                        <DialogDescription>
+                            Common mixes of 2+ tags that appear together on
+                            photos (at least twice). Already-saved kits are
+                            hidden.
+                        </DialogDescription>
+                    </DialogHeader>
+                    {kitSuggestions.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                            No suggestions yet. Tag more photos with overlapping
+                            mixes, or your common kits are already saved.
+                        </p>
+                    ) : (
+                        <ul className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain pr-1">
+                            {kitSuggestions.map((suggestion) => (
+                                <li
+                                    key={suggestion.tags.join("\0")}
+                                    className="flex items-start justify-between gap-2 rounded-lg border border-border/60 p-3"
+                                >
+                                    <div className="min-w-0 flex-1">
+                                        <p className="font-medium">
+                                            {suggestion.name}
+                                        </p>
+                                        <p className="text-xs text-muted-foreground">
+                                            On {suggestion.count} photo
+                                            {suggestion.count === 1 ? "" : "s"}
+                                        </p>
+                                    </div>
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => {
+                                            handleAddSuggestion(suggestion);
+                                        }}
+                                    >
+                                        Add
+                                    </Button>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </DialogContent>
+            </Dialog>
 
             <AlertDialog
                 open={deleteTarget !== undefined}

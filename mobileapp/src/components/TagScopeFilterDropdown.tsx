@@ -16,6 +16,7 @@ import type {
     MediaScope,
     TagScope,
 } from "@/lib/tags";
+import type { ViewportFitSort } from "@/lib/viewport-fit";
 import { useTagStore } from "@/stores/tag-store";
 
 interface TagScopeFilterDropdownProps {
@@ -35,6 +36,9 @@ interface TagScopeFilterDropdownProps {
     onMediaScopeChange?: (scope: MediaScope) => void;
     croppedScope?: CroppedScope;
     onCroppedScopeChange?: (scope: CroppedScope) => void;
+    /** Gallery-only: reorder by viewer viewport fit (not a hide-filter). */
+    viewportFitSort?: ViewportFitSort;
+    onViewportFitSortChange?: (mode: ViewportFitSort) => void;
 }
 
 const isTagScope = (value: unknown): value is TagScope =>
@@ -48,6 +52,9 @@ const isMediaScope = (value: unknown): value is MediaScope =>
 
 const isCroppedScope = (value: unknown): value is CroppedScope =>
     value === "all" || value === "cropped" || value === "not-cropped";
+
+const isViewportFitSort = (value: unknown): value is ViewportFitSort =>
+    value === "none" || value === "blank-space" || value === "too-large";
 
 export function TagScopeFilterDropdown({
     taggedCount,
@@ -66,6 +73,8 @@ export function TagScopeFilterDropdown({
     onMediaScopeChange,
     croppedScope: controlledCroppedScope,
     onCroppedScopeChange,
+    viewportFitSort,
+    onViewportFitSortChange,
 }: TagScopeFilterDropdownProps): JSX.Element {
     const storeFilter = useTagStore((s) => s.tagFilter);
     const setTagScope = useTagStore((s) => s.setTagScope);
@@ -76,6 +85,8 @@ export function TagScopeFilterDropdown({
     const favoritesScope = controlledFavoritesScope ?? storeFilter.favoritesScope;
     const mediaScope = controlledMediaScope ?? storeFilter.mediaScope;
     const croppedScope = controlledCroppedScope ?? storeFilter.croppedScope;
+    const showViewportFit = onViewportFitSortChange !== undefined;
+    const fitSort = viewportFitSort ?? "none";
 
     const handleScopeChange = (value: TagScope): void => {
         if (onTagScopeChange) {
@@ -113,7 +124,8 @@ export function TagScopeFilterDropdown({
         tagScope !== "all" ||
         favoritesScope !== "all" ||
         mediaScope !== "all" ||
-        croppedScope !== "all";
+        croppedScope !== "all" ||
+        fitSort !== "none";
 
     return (
         <DropdownMenu>
@@ -124,7 +136,7 @@ export function TagScopeFilterDropdown({
                         variant={filterActive ? "secondary" : "outline"}
                         size="sm"
                         className="shrink-0 gap-1.5"
-                        aria-label="Filter by tag presence, favourites, media type, and crop"
+                        aria-label="Filter by tag presence, favourites, media type, crop, and viewport fit"
                     >
                         <Filter className="size-3.5 shrink-0" />
                         Filter
@@ -221,6 +233,30 @@ export function TagScopeFilterDropdown({
                         </span>
                     </DropdownMenuRadioItem>
                 </DropdownMenuRadioGroup>
+                {showViewportFit ? (
+                    <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuRadioGroup
+                            value={fitSort}
+                            onValueChange={(value) => {
+                                if (isViewportFitSort(value)) {
+                                    onViewportFitSortChange(value);
+                                }
+                            }}
+                        >
+                            <DropdownMenuLabel>Viewport fit</DropdownMenuLabel>
+                            <DropdownMenuRadioItem value="none" closeOnClick>
+                                None
+                            </DropdownMenuRadioItem>
+                            <DropdownMenuRadioItem value="blank-space" closeOnClick>
+                                Blank Space
+                            </DropdownMenuRadioItem>
+                            <DropdownMenuRadioItem value="too-large" closeOnClick>
+                                Too Large
+                            </DropdownMenuRadioItem>
+                        </DropdownMenuRadioGroup>
+                    </>
+                ) : null}
                 <DropdownMenuSeparator />
                 <DropdownMenuRadioGroup
                     value={mediaScope}

@@ -339,6 +339,7 @@ export const terminatePhashWorker = (): void => {
 export interface Stage1WorkerOptions {
     onProgress?: (update: Stage1ProgressUpdate) => void;
     signal?: AbortSignal;
+    maxGroupSize?: number;
 }
 
 /**
@@ -429,6 +430,7 @@ export const runStage1InWorker = (
             id: requestId,
             items,
             threshold,
+            maxGroupSize: options.maxGroupSize,
         };
         worker.postMessage(message);
     });

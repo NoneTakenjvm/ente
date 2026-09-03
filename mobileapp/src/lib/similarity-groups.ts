@@ -201,12 +201,17 @@ export const buildSimilarityGroups = (
     collections: Collection[],
     userId: number,
     threshold: number,
+    maxGroupSize: number = MAX_GROUP_SIZE,
 ): SimilarityGroup[] => {
     const indexed = indexableFiles(entries, filesById, collections, userId);
     if (indexed.length < 2) {
         return [];
     }
-    const clusters = runStage1ClusteringSync(toStage1Items(indexed), threshold);
+    const clusters = runStage1ClusteringSync(
+        toStage1Items(indexed),
+        threshold,
+        maxGroupSize,
+    );
     return clustersToSimilarityGroups(clusters, filesById, collections, userId);
 };
 
@@ -273,6 +278,7 @@ export interface CropMergeOptions {
     signal?: AbortSignal;
     onProgress?: (progress: SimilarMatchProgress) => void;
     onGroups?: (groups: SimilarityGroup[]) => void;
+    maxGroupSize?: number;
 }
 
 /**
@@ -291,6 +297,7 @@ export const mergeCropMatches = async (
         signal,
         onProgress,
         onGroups,
+        maxGroupSize = MAX_GROUP_SIZE,
     } = options;
 
     const throwIfAborted = (): void => {
@@ -356,7 +363,7 @@ export const mergeCropMatches = async (
                 if (uf.find(a) === uf.find(b)) {
                     continue;
                 }
-                if (uf.componentSize(a) + uf.componentSize(b) > MAX_GROUP_SIZE) {
+                if (uf.componentSize(a) + uf.componentSize(b) > maxGroupSize) {
                     continue;
                 }
                 candidates.push([a, b]);
@@ -380,9 +387,9 @@ export const mergeCropMatches = async (
             if (memberIndices.length < 2) {
                 continue;
             }
-            if (memberIndices.length > MAX_GROUP_SIZE) {
-                for (let i = 0; i < memberIndices.length; i += MAX_GROUP_SIZE) {
-                    const slice = memberIndices.slice(i, i + MAX_GROUP_SIZE);
+            if (memberIndices.length > maxGroupSize) {
+                for (let i = 0; i < memberIndices.length; i += maxGroupSize) {
+                    const slice = memberIndices.slice(i, i + maxGroupSize);
                     const group = assembleGroup(
                         slice,
                         indexed,
@@ -418,7 +425,7 @@ export const mergeCropMatches = async (
                 if (uf.find(a) === uf.find(b)) {
                     return Promise.resolve(false);
                 }
-                if (uf.componentSize(a) + uf.componentSize(b) > MAX_GROUP_SIZE) {
+                if (uf.componentSize(a) + uf.componentSize(b) > maxGroupSize) {
                     return Promise.resolve(false);
                 }
                 const left = indexed[a]!.entry;
@@ -437,7 +444,7 @@ export const mergeCropMatches = async (
                 return;
             }
             const [a, b] = batch[index]!;
-            uf.tryUnion(a, b, MAX_GROUP_SIZE);
+            uf.tryUnion(a, b, maxGroupSize);
         });
 
         const completed = Math.min(start + batch.length, candidates.length);

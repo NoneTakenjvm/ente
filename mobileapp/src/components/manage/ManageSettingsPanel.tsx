@@ -17,9 +17,18 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { GalleryColumnCount } from "@/lib/app-settings";
+import {
+    MAX_SIMILAR_MAX_GROUP_SIZE,
+    MIN_SIMILAR_MAX_GROUP_SIZE,
+} from "@/lib/app-settings";
 import { useSettingsStore } from "@/stores/settings-store";
 
 const columnOptions: GalleryColumnCount[] = [2, 3, 4, 5, 6];
+
+const similarMaxGroupSizeOptions: number[] = Array.from(
+    { length: MAX_SIMILAR_MAX_GROUP_SIZE - MIN_SIMILAR_MAX_GROUP_SIZE + 1 },
+    (_, i) => MIN_SIMILAR_MAX_GROUP_SIZE + i,
+);
 
 export function ManageSettingsPanel(): JSX.Element {
     const videoAutoPlay = useSettingsStore((s) => s.videoAutoPlay);
@@ -27,6 +36,7 @@ export function ManageSettingsPanel(): JSX.Element {
     const videoDefaultMuted = useSettingsStore((s) => s.videoDefaultMuted);
     const galleryColumns = useSettingsStore((s) => s.galleryColumns);
     const galleryThumbnailMode = useSettingsStore((s) => s.galleryThumbnailMode);
+    const similarMaxGroupSize = useSettingsStore((s) => s.similarMaxGroupSize);
     const patchSettings = useSettingsStore((s) => s.patchSettings);
 
     return (
@@ -151,6 +161,57 @@ export function ManageSettingsPanel(): JSX.Element {
                                     Fit
                                 </ToggleGroupItem>
                             </ToggleGroup>
+                        </Field>
+                    </FieldGroup>
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>Similar photos</CardTitle>
+                    <CardDescription>
+                        Caps how many images can land in one similar group.
+                        Real duplicates are almost never more than a handful.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <FieldGroup>
+                        <Field>
+                            <FieldLabel>Max group size</FieldLabel>
+                            <ToggleGroup
+                                variant="outline"
+                                value={[String(similarMaxGroupSize)]}
+                                onValueChange={(next) => {
+                                    const raw = Array.isArray(next) ?
+                                        next[0] :
+                                        next;
+                                    if (raw === undefined || raw === "") {
+                                        return;
+                                    }
+                                    const parsed = Number.parseInt(raw, 10);
+                                    if (!Number.isFinite(parsed)) {
+                                        return;
+                                    }
+                                    patchSettings({
+                                        similarMaxGroupSize: parsed,
+                                    });
+                                }}
+                                className="w-full"
+                            >
+                                {similarMaxGroupSizeOptions.map((size) => (
+                                    <ToggleGroupItem
+                                        key={size}
+                                        value={String(size)}
+                                        className="flex-1"
+                                    >
+                                        {size}
+                                    </ToggleGroupItem>
+                                ))}
+                            </ToggleGroup>
+                            <p className="text-xs text-muted-foreground">
+                                Images per group (larger piles are almost always
+                                false positives)
+                            </p>
                         </Field>
                     </FieldGroup>
                 </CardContent>

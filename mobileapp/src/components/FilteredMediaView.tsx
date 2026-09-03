@@ -13,6 +13,7 @@ import {
 } from "@/components/ThumbnailGrid";
 import { SELECTION_FOOTER_INSET_PX } from "@/lib/selection";
 import { reconcileShuffledIds } from "@/lib/shuffle-files";
+import { bulkAddTags } from "@/lib/tag-bulk-actions";
 import { useSelectionStore } from "@/stores/selection-store";
 import type { EnteFile } from "ente-media/file";
 
@@ -65,6 +66,8 @@ export function FilteredMediaView({
     const toggleSelection = useSelectionStore((s) => s.toggle);
     const selectMany = useSelectionStore((s) => s.selectMany);
     const pruneToVisible = useSelectionStore((s) => s.pruneToVisible);
+    const stampActive = useSelectionStore((s) => s.stampActive);
+    const stampTags = useSelectionStore((s) => s.stampTags);
 
     const fileIds = useMemo(
         () => files.map((file) => file.id),
@@ -123,15 +126,37 @@ export function FilteredMediaView({
         if (!selectionEnabled) {
             return undefined;
         }
+        if (stampActive && stampTags.length > 0) {
+            return {
+                selectedIds: new Set(selectedIds),
+                onToggle: (file) => {
+                    toggleSelection(file.id);
+                    void bulkAddTags([file.id], stampTags);
+                },
+                onSelectMany: (fileIds, mode) => {
+                    selectMany(fileIds, mode);
+                    if (mode === "add") {
+                        void bulkAddTags(fileIds, stampTags);
+                    }
+                },
+            };
+        }
         return {
             selectedIds: new Set(selectedIds),
             onToggle: (file) => toggleSelection(file.id),
             onSelectMany: selectMany,
         };
-    }, [selectionEnabled, selectedIds, selectMany, toggleSelection]);
+    }, [
+        selectionEnabled,
+        selectedIds,
+        selectMany,
+        stampActive,
+        stampTags,
+        toggleSelection,
+    ]);
 
     const footerInsetPx =
-        selectionEnabled && selectedIds.length > 0 ?
+        selectionEnabled && (selectedIds.length > 0 || stampActive) ?
             SELECTION_FOOTER_INSET_PX :
             0;
 
