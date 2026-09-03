@@ -35,6 +35,8 @@ import { normalizeTagName } from "@/lib/tag-writes";
 import {
     setClauseInGroupOnFilter,
     setClauseModeOnFilter,
+    setKitTagsInGroupOnFilter,
+    setKitTagsModeOnFilter,
 } from "@/lib/tag-filter-mutations";
 
 import type { EnteFile } from "ente-media/file";
@@ -59,6 +61,12 @@ interface TagState {
     setClauseInGroup: (
         groupId: string,
         tag: string,
+        mode: TagFilterMode | null,
+    ) => void;
+    setKitTagsMode: (tags: string[], mode: TagFilterMode | null) => void;
+    setKitTagsInGroup: (
+        groupId: string,
+        tags: string[],
         mode: TagFilterMode | null,
     ) => void;
     setGroupOp: (groupId: string, op: TagFilterJoin) => void;
@@ -512,6 +520,27 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
                 get().tagFilter,
                 groupId,
                 tag,
+                mode,
+            ),
+        });
+    },
+
+    setKitTagsMode: (tags: string[], mode: TagFilterMode | null): void => {
+        set({
+            tagFilter: setKitTagsModeOnFilter(get().tagFilter, tags, mode),
+        });
+    },
+
+    setKitTagsInGroup: (
+        groupId: string,
+        tags: string[],
+        mode: TagFilterMode | null,
+    ): void => {
+        set({
+            tagFilter: setKitTagsInGroupOnFilter(
+                get().tagFilter,
+                groupId,
+                tags,
                 mode,
             ),
         });

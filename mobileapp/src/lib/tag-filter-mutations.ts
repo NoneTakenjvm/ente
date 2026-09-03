@@ -362,3 +362,58 @@ export const setClauseInGroupOnFilter = (
         root: updatedRoot,
     };
 };
+
+/**
+ * Include or clear every tag in a kit at the root (Has kit = all includes).
+ */
+export const setKitTagsModeOnFilter = (
+    filter: TagFilterSelection,
+    tags: string[],
+    mode: TagFilterMode | null,
+): TagFilterSelection => {
+    let next = filter;
+    for (const tag of tags) {
+        next = setTagFilterModeOnFilter(next, tag, mode);
+    }
+    return next;
+};
+
+/**
+ * Include or clear every tag in a kit inside one group.
+ */
+export const setKitTagsInGroupOnFilter = (
+    filter: TagFilterSelection,
+    groupId: string,
+    tags: string[],
+    mode: TagFilterMode | null,
+): TagFilterSelection => {
+    let next = filter;
+    for (const tag of tags) {
+        next = setClauseInGroupOnFilter(next, groupId, tag, mode);
+    }
+    return next;
+};
+
+/**
+ * Whether every kit tag is currently an include clause in the given group/root.
+ */
+export const kitTagsAreIncluded = (
+    group: TagFilterGroup,
+    tags: string[],
+): boolean => {
+    if (tags.length === 0) {
+        return false;
+    }
+    return tags.every((tag) => {
+        for (const child of group.children) {
+            if (
+                isTagFilterClause(child) &&
+                child.tag === tag &&
+                child.mode === "include"
+            ) {
+                return true;
+            }
+        }
+        return false;
+    });
+};

@@ -65,6 +65,13 @@ const orRoot = (...children: TagFilterGroup["children"]): TagFilterGroup => ({
     children,
 });
 
+const onlyRoot = (...children: TagFilterGroup["children"]): TagFilterGroup => ({
+    kind: "group",
+    id: newTagFilterNodeId(),
+    op: "only",
+    children,
+});
+
 const filterWithRoot = (
     root: TagFilterGroup,
     overrides: Partial<TagFilterSelection> = {},
@@ -143,6 +150,36 @@ describe("tags", () => {
             fileIdsByTag,
         );
         expect(filtered.map((file) => file.id)).toEqual([1, 2]);
+    });
+
+    it("filterFilesByTags ONLY matches the exact user-tag set", () => {
+        const files = [
+            fileWithTags(1, ["selfie"]),
+            fileWithTags(2, ["selfie", "vietnam"]),
+            fileWithTags(3, ["selfie", "vietnam", "beach"]),
+            fileWithTags(4, ["selfie", "vietnam", "compressed"]),
+        ];
+        const index = buildTagIndex(files);
+        const { fileIdsByTag } = tagIndexToMaps(index);
+        const filtered = filterFilesByTags(
+            files,
+            filterWithRoot(
+                onlyRoot(includeClause("selfie"), includeClause("vietnam")),
+            ),
+            fileIdsByTag,
+        );
+        // File 4 still matches: compressed is a system tag and ignored.
+        expect(filtered.map((file) => file.id).sort()).toEqual([2, 4]);
+    });
+
+    it("describeTagFilter formats ONLY joins", () => {
+        expect(
+            describeTagFilter(
+                filterWithRoot(
+                    onlyRoot(includeClause("selfie"), includeClause("vietnam")),
+                ),
+            ),
+        ).toBe("only [selfie + vietnam]");
     });
 
     it("filterFilesByTags supports include and exclude together", () => {

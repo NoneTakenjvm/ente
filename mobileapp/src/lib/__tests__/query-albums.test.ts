@@ -66,6 +66,34 @@ describe("serializeTagFilter / hydrateTagFilter", () => {
             expect(group.children).toHaveLength(2);
         }
     });
+
+    it("round-trips ONLY join", () => {
+        const original: TagFilterSelection = {
+            ...emptyTagFilter(),
+            root: {
+                kind: "group",
+                id: newTagFilterNodeId(),
+                op: "only",
+                children: [
+                    {
+                        kind: "clause",
+                        id: newTagFilterNodeId(),
+                        tag: "selfie",
+                        mode: "include",
+                    },
+                    {
+                        kind: "clause",
+                        id: newTagFilterNodeId(),
+                        tag: "vietnam",
+                        mode: "include",
+                    },
+                ],
+            },
+        };
+        const restored = hydrateTagFilter(serializeTagFilter(original));
+        expect(restored.root.op).toBe("only");
+        expect(restored.root.children).toHaveLength(2);
+    });
 });
 
 describe("createQueryAlbum", () => {

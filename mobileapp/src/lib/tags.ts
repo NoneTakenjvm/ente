@@ -41,7 +41,8 @@ export const NOT_MANUALLY_CROPPED_FILTER = "not-manually-cropped";
 
 export type TagFilterMode = "include" | "exclude";
 
-export type TagFilterJoin = "and" | "or";
+/** How sibling clauses combine. `only` = exact user-tag set (includes only). */
+export type TagFilterJoin = "and" | "or" | "only";
 
 export type TagScope = "all" | "tagged" | "untagged";
 
@@ -203,6 +204,32 @@ const describeGroupNode = (group: TagFilterGroup): string => {
         const inner = describeGroupNode(child);
         return inner ? `(${inner})` : "";
     }).filter((part) => part.length > 0);
+    if (group.op === "only") {
+        const includeParts = group.children
+            .filter(
+                (child): child is TagFilterClauseNode =>
+                    isTagFilterClause(child) && child.mode === "include",
+            )
+            .map((child) => child.tag);
+        const excludeParts = group.children
+            .filter(
+                (child): child is TagFilterClauseNode =>
+                    isTagFilterClause(child) && child.mode === "exclude",
+            )
+            .map((child) => `not ${child.tag}`);
+        const nested = group.children
+            .filter(isTagFilterGroup)
+            .map((child) => {
+                const inner = describeGroupNode(child);
+                return inner ? `(${inner})` : "";
+            })
+            .filter((part) => part.length > 0);
+        const onlyCore =
+            includeParts.length > 0 ?
+                `only [${includeParts.join(" + ")}]` :
+                "only []";
+        return [onlyCore, ...excludeParts, ...nested].join(" AND ");
+    }
     return parts.join(` ${group.op.toUpperCase()} `);
 };
 
@@ -408,6 +435,40 @@ const evaluateClauseNode = (
 };
 
 /**
+ * True when two tag lists are the same set (order-independent).
+ */
+const tagSetsEqual = (left: string[], right: string[]): boolean => {
+    if (left.length !== right.length) {
+        return false;
+    }
+    const rightSet = new Set(right);
+    return left.every((tag) => rightSet.has(tag));
+};
+
+/**
+ * File ids whose user tags match `includeTags` exactly (no extras).
+ */
+const exactUserTagSetIds = (
+    candidateIds: Set<number>,
+    files: EnteFile[],
+    includeTags: string[],
+): Set<number> => {
+    const required = [...new Set(includeTags)];
+    const fileById = new Map(files.map((file) => [file.id, file] as const));
+    const matched = new Set<number>();
+    for (const id of candidateIds) {
+        const file = fileById.get(id);
+        if (!file) {
+            continue;
+        }
+        if (tagSetsEqual(extractUserTags(file), required)) {
+            matched.add(id);
+        }
+    }
+    return matched;
+};
+
+/**
  * Evaluate a tag filter expression tree against a candidate file id set.
  */
 export const evaluateTagFilterNode = (
@@ -422,6 +483,52 @@ export const evaluateTagFilterNode = (
 
     if (node.children.length === 0) {
         return candidateIds;
+    }
+
+    if (node.op === "only") {
+        const includeTags: string[] = [];
+        const excludeClauses: TagFilterClauseNode[] = [];
+        const nestedGroups: TagFilterGroup[] = [];
+        for (const child of node.children) {
+            if (isTagFilterClause(child)) {
+                if (child.mode === "include") {
+                    includeTags.push(child.tag);
+                } else {
+                    excludeClauses.push(child);
+                }
+            } else {
+                nestedGroups.push(child);
+            }
+        }
+
+        let matchingIds = exactUserTagSetIds(
+            candidateIds,
+            files,
+            includeTags,
+        );
+
+        for (const clause of excludeClauses) {
+            matchingIds = evaluateClauseNode(
+                clause,
+                matchingIds,
+                files,
+                fileIdsByTag,
+            );
+        }
+
+        for (const group of nestedGroups) {
+            matchingIds = intersectIds(
+                matchingIds,
+                evaluateTagFilterNode(
+                    group,
+                    matchingIds,
+                    files,
+                    fileIdsByTag,
+                ),
+            );
+        }
+
+        return matchingIds;
     }
 
     const childSets = node.children.map((child) => evaluateTagFilterNode(
