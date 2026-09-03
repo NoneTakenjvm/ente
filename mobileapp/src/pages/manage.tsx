@@ -1,4 +1,5 @@
 import {
+    startTransition,
     useCallback,
     useEffect,
     useMemo,
@@ -49,17 +50,22 @@ import {
     type DedupGroupSelection,
 } from "@/lib/dedup-prune";
 import {
-    buildSimilarityGroupsAsync,
+    clustersToSimilarityGroups,
     defaultSimilarityThreshold,
+    indexableFiles,
     mergeCropMatches,
     similarityGroupToSelection,
+    toStage1Items,
+    type SimilarMatchProgress,
     type SimilarityGroup,
 } from "@/lib/similarity-groups";
 import {
     imageFilesForPhash,
     runPhashJob,
+    runStage1InWorker,
     terminatePhashWorker,
 } from "@/lib/similarity-job";
+import { APP_VERSION } from "@/lib/app-version";
 import {
     isSessionAuthenticated,
     reconcileSessionWithCore,
@@ -137,6 +143,9 @@ export default function ManagePage(): JSX.Element {
     const [error, setError] = useState<string | undefined>();
     const [similarGroups, setSimilarGroups] = useState<SimilarityGroup[]>([]);
     const [similarBusy, setSimilarBusy] = useState<boolean>(false);
+    const [similarProgress, setSimilarProgress] = useState<
+        SimilarMatchProgress | undefined
+    >(undefined);
     const initialLoadDone = useLibraryBootstrap({ afterSync: hydratePhash });
 
     const jobAbort = useRef<AbortController | undefined>(undefined);
@@ -188,6 +197,7 @@ export default function ManagePage(): JSX.Element {
         if (dedupMode !== "similar") {
             setSimilarGroups([]);
             setSimilarBusy(false);
+            setSimilarProgress(undefined);
             return;
         }
 
@@ -195,6 +205,8 @@ export default function ManagePage(): JSX.Element {
         cropMergeAbort.current = abort;
         let cancelled = false;
         setSimilarBusy(true);
+        setSimilarProgress(undefined);
+        setSimilarGroups([]);
 
         const run = async (): Promise<void> => {
             // Let the Similar chrome paint before any heavy grouping work.
@@ -205,18 +217,63 @@ export default function ManagePage(): JSX.Element {
 
             try {
                 const filesById = new Map(allFiles.map((file) => [file.id, file]));
-                const stage1 = await buildSimilarityGroupsAsync(
+                const indexed = indexableFiles(
                     phashEntries,
                     filesById,
                     collections,
                     userId,
+                );
+                const applyClusters = (
+                    clusters: Parameters<typeof clustersToSimilarityGroups>[0],
+                ): SimilarityGroup[] => {
+                    const groups = clustersToSimilarityGroups(
+                        clusters,
+                        filesById,
+                        collections,
+                        userId,
+                    );
+                    startTransition(() => {
+                        setSimilarGroups(groups);
+                    });
+                    return groups;
+                };
+
+                setSimilarProgress({
+                    stepDescription: "Comparing hashes",
+                    completed: 0,
+                    total: Math.max(indexed.length, 1),
+                });
+
+                const stage1Clusters = await runStage1InWorker(
+                    toStage1Items(indexed),
                     debouncedThreshold,
-                    abort.signal,
+                    {
+                        signal: abort.signal,
+                        onProgress: (update) => {
+                            if (abort.signal.aborted || cancelled) {
+                                return;
+                            }
+                            const stepDescription =
+                                update.phase === "comparing" ?
+                                    "Comparing hashes" :
+                                    update.phase === "finalizing" ?
+                                        "Finalizing groups" :
+                                        "Hash grouping done";
+                            setSimilarProgress({
+                                stepDescription,
+                                completed: update.completed,
+                                total: Math.max(update.total, 1),
+                            });
+                            if (update.clusters !== undefined) {
+                                applyClusters(update.clusters);
+                            }
+                        },
+                    },
                 );
                 if (abort.signal.aborted || cancelled) {
                     return;
                 }
-                setSimilarGroups(stage1);
+                const stage1 = applyClusters(stage1Clusters);
 
                 const merged = await mergeCropMatches(stage1, {
                     entries: phashEntries,
@@ -224,11 +281,26 @@ export default function ManagePage(): JSX.Element {
                     collections,
                     userId,
                     signal: abort.signal,
+                    onProgress: (progress) => {
+                        if (abort.signal.aborted || cancelled) {
+                            return;
+                        }
+                        setSimilarProgress(progress);
+                    },
+                    onGroups: (groups) => {
+                        if (abort.signal.aborted || cancelled) {
+                            return;
+                        }
+                        startTransition(() => {
+                            setSimilarGroups(groups);
+                        });
+                    },
                 });
                 if (abort.signal.aborted || cancelled) {
                     return;
                 }
                 setSimilarGroups(merged);
+                setSimilarProgress(undefined);
             } catch (mergeError: unknown) {
                 if (
                     mergeError instanceof DOMException &&
@@ -413,6 +485,13 @@ export default function ManagePage(): JSX.Element {
             Math.round((phashProgress.current / phashProgress.total) * 100) :
             0;
 
+    const similarProgressPercent =
+        similarProgress && similarProgress.total > 0 ?
+            Math.round(
+                (similarProgress.completed / similarProgress.total) * 100,
+            ) :
+            0;
+
     const showCompressLoader =
         section === "compress" &&
         !initialLoadDone &&
@@ -470,7 +549,7 @@ export default function ManagePage(): JSX.Element {
 
             {dedupMode ? (
                 <div className="flex min-h-0 flex-1 flex-col">
-                    <div className="flex flex-col gap-3 px-4 pt-3">
+                    <div className="flex shrink-0 flex-col gap-3 px-4 pt-3">
                         {dedupMode === "exact" ? (
                             <p className="text-xs text-muted-foreground">
                                 {exactGroups.length} duplicate group
@@ -537,7 +616,11 @@ export default function ManagePage(): JSX.Element {
                                     Indexed {phashIndexedCount} / {phashCandidateCount} images
                                     · {similarGroups.length} similar group
                                     {similarGroups.length === 1 ? "" : "s"}
-                                    {similarBusy ? " · refining…" : ""}
+                                    {similarBusy && similarProgress ?
+                                        ` · ${similarProgress.stepDescription}` :
+                                        similarBusy ?
+                                            " · matching…" :
+                                            ""}
                                 </p>
                                 {phashJobStatus === "running" ? (
                                     <div className="flex flex-col gap-1">
@@ -545,6 +628,19 @@ export default function ManagePage(): JSX.Element {
                                         <span className="text-xs text-muted-foreground">
                                             Scanning {phashProgress.current} /{" "}
                                             {phashProgress.total}
+                                        </span>
+                                    </div>
+                                ) : null}
+                                {similarBusy && similarProgress ? (
+                                    <div className="flex flex-col gap-1">
+                                        <Progress
+                                            value={similarProgressPercent}
+                                            className="h-1"
+                                        />
+                                        <span className="text-xs text-muted-foreground">
+                                            {similarProgress.stepDescription}{" "}
+                                            {similarProgress.completed} /{" "}
+                                            {similarProgress.total}
                                         </span>
                                     </div>
                                 ) : null}
@@ -588,7 +684,7 @@ export default function ManagePage(): JSX.Element {
                                     {dedupMode === "exact" ?
                                         "No exact duplicates found in your library." :
                                         similarBusy ?
-                                            "Matching rotations and crops in the background." :
+                                            "Comparing photos — groups appear as matches are found." :
                                             phashIndexedCount < 2 ?
                                                 "Scan your library to find similar photos." :
                                                 "No similar groups at this threshold."}
@@ -598,7 +694,7 @@ export default function ManagePage(): JSX.Element {
                     ) : null}
 
                     {!showFullPageLoader && selections.length > 0 ? (
-                        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3 pb-24">
+                        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-3 pb-24">
                             {selections.map((group) => (
                                 <DedupGroupCard
                                     key={group.id}
@@ -659,6 +755,10 @@ export default function ManagePage(): JSX.Element {
                     void handleConfirmPrune();
                 }}
             />
+
+            <p className="px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] text-center text-[11px] text-muted-foreground/70">
+                NTPhotos {APP_VERSION}
+            </p>
         </AppShell>
     );
 }

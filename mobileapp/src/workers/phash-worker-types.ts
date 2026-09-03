@@ -1,3 +1,8 @@
+import type {
+    Stage1Item,
+    Stage1ProgressUpdate,
+} from "@/lib/similarity-stage1-core";
+
 export interface PhashWorkerRequest {
     kind: "hash";
     id: number;
@@ -38,3 +43,41 @@ export interface CropCheckResult {
     match: boolean;
     error?: string;
 }
+
+/** Stage-1 clustering request — runs entirely off the UI thread. */
+export interface Stage1Message {
+    kind: "stage1";
+    id: number;
+    items: Stage1Item[];
+    threshold: number;
+}
+
+export interface Stage1AbortMessage {
+    kind: "stage1-abort";
+    id: number;
+}
+
+export interface Stage1ProgressMessage {
+    kind: "stage1-progress";
+    id: number;
+    update: Stage1ProgressUpdate;
+}
+
+export interface Stage1ResultMessage {
+    kind: "stage1-result";
+    id: number;
+    clusters?: Stage1ProgressUpdate["clusters"];
+    error?: string;
+}
+
+export type PhashWorkerInbound =
+    PhashWorkerRequest |
+    CropCheckMessage |
+    Stage1Message |
+    Stage1AbortMessage;
+
+export type PhashWorkerOutbound =
+    PhashWorkerResponse |
+    CropCheckResult |
+    Stage1ProgressMessage |
+    Stage1ResultMessage;

@@ -79,7 +79,7 @@ export function DedupGroupCard({
     onSelectKeeper,
 }: DedupGroupCardProps): JSX.Element {
     return (
-        <Card className="gap-0 py-0">
+        <Card className="shrink-0 gap-0 overflow-visible py-0">
             <CardHeader className="px-4 py-3">
                 <label className="flex cursor-pointer items-center gap-2 text-sm">
                     <Checkbox
@@ -93,7 +93,7 @@ export function DedupGroupCard({
                 </label>
             </CardHeader>
             <CardContent className="px-4 pb-4">
-                <div className="flex gap-2 overflow-x-auto pb-1">
+                <div className="flex min-h-20 gap-2 overflow-x-auto pb-1">
                     {items.map((file) => (
                         <DedupThumb
                             key={file.id}
