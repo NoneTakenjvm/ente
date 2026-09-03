@@ -6,13 +6,18 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-09-02 |
-| **Last agent / session** | Port similar-images quality/freeze fixes into PWA (`mobileapp/`) so Deploy (NTPhotos) runs. Prior session wrongly shipped Flutter-only changes. |
+| **Last updated** | 2026-09-03 |
+| **Last agent / session** | Similar groups list scroll/layout fix (cards were flex-shrinking). |
 | **Current milestone** | Post-M8 UX / stability batch |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Device QA on Cloudflare deploy: Manage → Similar — groups should be small true duplicates, UI stays responsive. |
+| **Next recommended action** | Device QA: Manage → Similar — groups scroll at full thumb size; footer `NTPhotos 0.3.1`. |
 
 **This session shipped:**
+1. **Similar/Exact group list scroll** — list was a flex column so cards shrunk as groups grew; now block flow + scroll, cards `shrink-0`, thumb row `min-h-20`. `APP_VERSION` → `0.3.1`.
+2. **Stage-1 runs in a dedicated phash worker** (`runStage1InWorker`) — full mutual-kNN + Kruskal, no pair skipping; main thread only paints progress/groups.
+3. **Live Similar UX** — determinate progress for hash compare + crop check; provisional tight-match groups stream in as they are found (`onProgress` / `onGroups`).
+
+**Previous session shipped:**
 1. **PWA Similar Stage-1 rewrite** — mutual nearest-neighbour + Kruskal/`tryUnion` (size-capped), async yielding so the tab stays live; default threshold 8. Near-exact matches (≤2) skip mutual filter so identical piles still group. Tests + production build green. Push to `ntphotos` triggers Deploy (NTPhotos) via `mobileapp/**` paths.
 
 **Previous session shipped:**

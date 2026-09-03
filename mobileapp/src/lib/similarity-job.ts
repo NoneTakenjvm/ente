@@ -13,9 +13,16 @@ import {
     isThumbnailCachedLocally,
 } from "@/lib/thumbnail-bytes";
 import type {
+    Stage1Cluster,
+    Stage1Item,
+    Stage1ProgressUpdate,
+} from "@/lib/similarity-stage1-core";
+import type {
     CropCheckResult,
+    PhashWorkerOutbound,
     PhashWorkerRequest,
     PhashWorkerResponse,
+    Stage1Message,
 } from "@/workers/phash-worker-types";
 
 export interface PhashJobOptions {
@@ -70,19 +77,21 @@ const hashBytesInWorker = (
         const phashWorker = nextWorker();
         const requestId = ++requestCounter;
 
-        const handleMessage = (event: MessageEvent<PhashWorkerResponse>): void => {
-            if (event.data.id !== requestId) {
+        const handleMessage = (event: MessageEvent<PhashWorkerOutbound>): void => {
+            const data = event.data;
+            if (!("fileId" in data) || data.id !== requestId) {
                 return;
             }
+            const response = data as PhashWorkerResponse;
             phashWorker.removeEventListener("message", handleMessage);
-            if (event.data.error || !event.data.hashes || !event.data.color || !event.data.grid) {
-                reject(new Error(event.data.error ?? "Hash failed"));
+            if (response.error || !response.hashes || !response.color || !response.grid) {
+                reject(new Error(response.error ?? "Hash failed"));
                 return;
             }
             resolve({
-                hashes: event.data.hashes,
-                color: event.data.color,
-                grid: event.data.grid,
+                hashes: response.hashes,
+                color: response.color,
+                grid: response.grid,
             });
         };
 
@@ -119,16 +128,22 @@ export const checkCropMatchInWorkers = (
         const worker = nextWorker();
         const requestId = ++requestCounter;
 
-        const handleMessage = (event: MessageEvent<CropCheckResult>): void => {
-            if (event.data.id !== requestId) {
+        const handleMessage = (event: MessageEvent<PhashWorkerOutbound>): void => {
+            const data = event.data;
+            if (
+                !("kind" in data) ||
+                data.kind !== "crop-check" ||
+                data.id !== requestId
+            ) {
                 return;
             }
+            const response = data as CropCheckResult;
             worker.removeEventListener("message", handleMessage);
-            if (event.data.error) {
+            if (response.error) {
                 resolve(false);
                 return;
             }
-            resolve(event.data.match);
+            resolve(response.match);
         };
 
         worker.addEventListener("message", handleMessage);
@@ -320,3 +335,100 @@ export const terminatePhashWorker = (): void => {
     workers = undefined;
     workerRoundRobin = 0;
 };
+
+export interface Stage1WorkerOptions {
+    onProgress?: (update: Stage1ProgressUpdate) => void;
+    signal?: AbortSignal;
+}
+
+/**
+ * Run Stage-1 clustering on a dedicated worker so the UI thread stays free.
+ * Progress (and provisional tight-match groups) stream back via {@link onProgress}.
+ */
+export const runStage1InWorker = (
+    items: Stage1Item[],
+    threshold: number,
+    options: Stage1WorkerOptions = {},
+): Promise<Stage1Cluster[]> =>
+    new Promise((resolve, reject) => {
+        if (items.length < 2) {
+            options.onProgress?.({
+                phase: "done",
+                completed: 0,
+                total: 0,
+                clusters: [],
+            });
+            resolve([]);
+            return;
+        }
+
+        const requestId = ++requestCounter;
+        const worker = new Worker(
+            new URL("../workers/phash.worker.ts", import.meta.url),
+        );
+        let settled = false;
+
+        const cleanup = (): void => {
+            options.signal?.removeEventListener("abort", onAbort);
+            worker.terminate();
+        };
+
+        const fail = (error: unknown): void => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            cleanup();
+            reject(error);
+        };
+
+        const succeed = (clusters: Stage1Cluster[]): void => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            cleanup();
+            resolve(clusters);
+        };
+
+        const onAbort = (): void => {
+            worker.postMessage({ kind: "stage1-abort", id: requestId });
+            fail(new DOMException("Similarity grouping aborted", "AbortError"));
+        };
+
+        if (options.signal?.aborted) {
+            fail(new DOMException("Similarity grouping aborted", "AbortError"));
+            return;
+        }
+        options.signal?.addEventListener("abort", onAbort);
+
+        worker.onmessage = (event: MessageEvent<PhashWorkerOutbound>): void => {
+            const data = event.data;
+            if (!("kind" in data) || data.id !== requestId) {
+                return;
+            }
+            if (data.kind === "stage1-progress") {
+                options.onProgress?.(data.update);
+                return;
+            }
+            if (data.kind === "stage1-result") {
+                if (data.error) {
+                    fail(new Error(data.error));
+                    return;
+                }
+                succeed(data.clusters ?? []);
+            }
+        };
+
+        worker.onerror = (event: ErrorEvent): void => {
+            fail(new Error(event.message || "Stage-1 worker failed"));
+        };
+
+        const message: Stage1Message = {
+            kind: "stage1",
+            id: requestId,
+            items,
+            threshold,
+        };
+        worker.postMessage(message);
+    });

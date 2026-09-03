@@ -6,6 +6,8 @@ This repo is the [Ente](https://ente.com) monorepo. The active work here is a **
 
 **Default scope:** Unless a prompt specifies another path or area, treat all user requests as targeting `mobileapp/` — search, edit, and verify there by default.
 
+**PWA build version:** Every shippable batch of `mobileapp/` changes must bump `APP_VERSION` in `mobileapp/src/lib/app-version.ts` (shown at the bottom of Manage). One bump per batch is enough; do this before finishing so phone QA can confirm which build is live.
+
 **End-to-end encryption is load-bearing.** All decryption happens client-side. Never log, persist, or transmit keys, passwords, mnemonics, decrypted blobs, or raw metadata outside the user's device. When changing crypto or metadata writes, run the crypto test suite and preserve Ente's merge semantics on `pubMagicMetadata`.
 
 ---

@@ -7,12 +7,20 @@ import {
     luminanceGridFromImageData,
 } from "@/lib/crop-match";
 import { computeDHashFromImageData } from "@/lib/phash";
+import { runStage1Clustering } from "@/lib/similarity-stage1-core";
 import type {
     CropCheckMessage,
     CropCheckResult,
+    PhashWorkerInbound,
     PhashWorkerRequest,
     PhashWorkerResponse,
+    Stage1AbortMessage,
+    Stage1Message,
+    Stage1ProgressMessage,
+    Stage1ResultMessage,
 } from "@/workers/phash-worker-types";
+
+const abortedStage1Ids = new Set<number>();
 
 /**
  * Draw the decoded image into an OffscreenCanvas at the given rotation and
@@ -40,12 +48,68 @@ const hashVariant = (
     return computeDHashFromImageData(imageData.data, canvasWidth, canvasHeight);
 };
 
-self.onmessage = async (event: MessageEvent<CropCheckMessage | PhashWorkerRequest>): Promise<void> => {
+const handleStage1 = async (message: Stage1Message): Promise<void> => {
+    abortedStage1Ids.delete(message.id);
+    try {
+        const clusters = await runStage1Clustering(
+            message.items,
+            message.threshold,
+            (update) => {
+                const progress: Stage1ProgressMessage = {
+                    kind: "stage1-progress",
+                    id: message.id,
+                    update,
+                };
+                self.postMessage(progress);
+            },
+            () => abortedStage1Ids.has(message.id),
+        );
+        if (abortedStage1Ids.has(message.id)) {
+            abortedStage1Ids.delete(message.id);
+            return;
+        }
+        const result: Stage1ResultMessage = {
+            kind: "stage1-result",
+            id: message.id,
+            clusters,
+        };
+        self.postMessage(result);
+    } catch (error: unknown) {
+        if (
+            error instanceof DOMException &&
+            error.name === "AbortError"
+        ) {
+            abortedStage1Ids.delete(message.id);
+            return;
+        }
+        const result: Stage1ResultMessage = {
+            kind: "stage1-result",
+            id: message.id,
+            error: error instanceof Error ? error.message : "Stage-1 failed",
+        };
+        self.postMessage(result);
+    }
+};
+
+self.onmessage = async (
+    event: MessageEvent<PhashWorkerInbound>,
+): Promise<void> => {
     const message = event.data;
+
+    if (message.kind === "stage1-abort") {
+        const abort = message as Stage1AbortMessage;
+        abortedStage1Ids.add(abort.id);
+        return;
+    }
+
+    if (message.kind === "stage1") {
+        await handleStage1(message);
+        return;
+    }
 
     // Crop verification: pure string decode + template match, off the UI thread.
     if (message.kind === "crop-check") {
-        const { id, aColor, aGrid, bColor, bGrid } = message;
+        const { id, aColor, aGrid, bColor, bGrid } = message as CropCheckMessage;
         try {
             const match = areCropMatches(aColor, aGrid, bColor, bGrid);
             const response: CropCheckResult = { kind: "crop-check", id, match };
@@ -69,8 +133,6 @@ self.onmessage = async (event: MessageEvent<CropCheckMessage | PhashWorkerReques
         });
         const bitmap: ImageBitmap = await createImageBitmap(blob);
 
-        // Upright render once — the color and grid are orientation-neutral and
-        // come from the natural image, not a rotated variant.
         const uprightCanvas = new OffscreenCanvas(bitmap.width, bitmap.height);
         const uprightContext = uprightCanvas.getContext("2d");
         if (!uprightContext) {
