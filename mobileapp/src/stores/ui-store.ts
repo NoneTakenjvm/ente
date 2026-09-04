@@ -151,6 +151,19 @@ interface UIState {
     /** Gallery reorder by pixel area (session-only). */
     imageSizeSort: ImageSizeSort;
     setImageSizeSort: (mode: ImageSizeSort) => void;
+    /**
+     * Gallery reorder by visual nearness to a tag kit (preset id).
+     * `undefined` = off. Session-only; mutually exclusive with fit/size/shuffle.
+     */
+    kitNearnessPresetId: string | undefined;
+    /**
+     * Bumped whenever kit nearness is (re)applied so the gallery can snapshot
+     * medoids once — tagging more kit members must not rebuild until reapply.
+     */
+    kitNearnessEpoch: number;
+    setKitNearnessPresetId: (presetId: string | undefined) => void;
+    /** Rebuild kit nearness medoids from the current library (same kit). */
+    reapplyKitNearness: () => void;
     setMediaShuffled: (seed: number) => void;
     setMediaDefaultOrder: () => void;
     reshuffleMedia: () => void;
@@ -173,6 +186,7 @@ export const useUIStore = create<UIState>((set) => ({
             ...(mode !== "none" ?
                 {
                     imageSizeSort: "none" as const,
+                    kitNearnessPresetId: undefined,
                     ...(state.mediaViewOrder === "shuffled" ?
                         {
                             mediaViewOrder: "default" as const,
@@ -190,6 +204,7 @@ export const useUIStore = create<UIState>((set) => ({
             ...(mode !== "none" ?
                 {
                     viewportFitSort: "none" as const,
+                    kitNearnessPresetId: undefined,
                     ...(state.mediaViewOrder === "shuffled" ?
                         {
                             mediaViewOrder: "default" as const,
@@ -200,6 +215,34 @@ export const useUIStore = create<UIState>((set) => ({
                 {}),
         }));
     },
+    kitNearnessPresetId: undefined,
+    kitNearnessEpoch: 0,
+    setKitNearnessPresetId: (presetId: string | undefined): void => {
+        set((state) => ({
+            kitNearnessPresetId: presetId,
+            ...(presetId !== undefined ?
+                {
+                    kitNearnessEpoch: state.kitNearnessEpoch + 1,
+                    viewportFitSort: "none" as const,
+                    imageSizeSort: "none" as const,
+                    ...(state.mediaViewOrder === "shuffled" ?
+                        {
+                            mediaViewOrder: "default" as const,
+                            mediaShuffledFileIds: [] as number[],
+                        } :
+                        {}),
+                } :
+                {}),
+        }));
+    },
+    reapplyKitNearness: (): void => {
+        set((state) => {
+            if (!state.kitNearnessPresetId) {
+                return state;
+            }
+            return { kitNearnessEpoch: state.kitNearnessEpoch + 1 };
+        });
+    },
     setMediaShuffled: (seed: number): void => {
         set({
             mediaViewOrder: "shuffled",
@@ -207,6 +250,7 @@ export const useUIStore = create<UIState>((set) => ({
             mediaShuffledFileIds: [],
             viewportFitSort: "none",
             imageSizeSort: "none",
+            kitNearnessPresetId: undefined,
         });
     },
     setMediaDefaultOrder: (): void => {
@@ -219,6 +263,7 @@ export const useUIStore = create<UIState>((set) => ({
             mediaShuffledFileIds: [],
             viewportFitSort: "none",
             imageSizeSort: "none",
+            kitNearnessPresetId: undefined,
         });
     },
     reconcileMediaShuffle: (fileIds: readonly number[]): void => {

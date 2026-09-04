@@ -78,6 +78,35 @@ export function TagFilterBar({
     const setViewportFitSort = useUIStore((s) => s.setViewportFitSort);
     const imageSizeSort = useUIStore((s) => s.imageSizeSort);
     const setImageSizeSort = useUIStore((s) => s.setImageSizeSort);
+    const kitNearnessPresetId = useUIStore((s) => s.kitNearnessPresetId);
+    const setKitNearnessPresetId = useUIStore((s) => s.setKitNearnessPresetId);
+    const reapplyKitNearness = useUIStore((s) => s.reapplyKitNearness);
+    const setStampActive = useSelectionStore((s) => s.setStampActive);
+    const setStampTags = useSelectionStore((s) => s.setStampTags);
+    const setStampSheetOpen = useSelectionStore((s) => s.setStampSheetOpen);
+
+    const handleKitNearnessPresetIdChange = useCallback(
+        (presetId: string | undefined): void => {
+            setKitNearnessPresetId(presetId);
+            if (!presetId) {
+                return;
+            }
+            const preset = presets.find((entry) => entry.id === presetId);
+            if (!preset?.tags.length) {
+                return;
+            }
+            setStampTags(preset.tags);
+            setStampActive(true);
+            setStampSheetOpen(false);
+        },
+        [
+            presets,
+            setKitNearnessPresetId,
+            setStampActive,
+            setStampSheetOpen,
+            setStampTags,
+        ],
+    );
 
     const [bulkTagOpen, setBulkTagOpen] = useState<boolean>(false);
     const [confirmBulkOpen, setConfirmBulkOpen] = useState<boolean>(false);
@@ -236,6 +265,10 @@ export function TagFilterBar({
                         onViewportFitSortChange={setViewportFitSort}
                         imageSizeSort={imageSizeSort}
                         onImageSizeSortChange={setImageSizeSort}
+                        kitNearnessPresets={presets}
+                        kitNearnessPresetId={kitNearnessPresetId}
+                        onKitNearnessPresetIdChange={handleKitNearnessPresetIdChange}
+                        onKitNearnessReapply={reapplyKitNearness}
                     />
                     <TagClausePicker
                         filter={tagFilter}

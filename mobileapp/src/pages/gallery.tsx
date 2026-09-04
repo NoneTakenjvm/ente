@@ -39,13 +39,49 @@ import {
     sortFilesByViewportFit,
 } from "@/lib/viewport-fit";
 import { sortFilesByImageSize } from "@/lib/image-size-sort";
+import {
+    listKitSeedFiles,
+    pickKitMedoids,
+    sortFilesByKitNearnessCompetitive,
+} from "@/lib/kit-nearness-sort";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
+import { usePhashIndexStore } from "@/stores/phash-index-store";
 import { useSelectionStore } from "@/stores/selection-store";
+import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
 import { useUIStore, useUploadJobStore } from "@/stores/ui-store";
 import type { EnteFile } from "ente-media/file";
+
+/**
+ * Keep a frozen id order; drop gone ids; append newcomers at the end.
+ */
+const reconcileFrozenFileOrder = (
+    files: EnteFile[],
+    orderIds: readonly number[],
+): EnteFile[] => {
+    if (!orderIds.length) {
+        return files;
+    }
+    const byId = new Map(files.map((file) => [file.id, file]));
+    const ordered: EnteFile[] = [];
+    const seen = new Set<number>();
+    for (const id of orderIds) {
+        const file = byId.get(id);
+        if (!file) {
+            continue;
+        }
+        ordered.push(file);
+        seen.add(id);
+    }
+    for (const file of files) {
+        if (!seen.has(file.id)) {
+            ordered.push(file);
+        }
+    }
+    return ordered;
+};
 
 const PhotoViewer = dynamic(
     () =>
@@ -69,10 +105,23 @@ export default function GalleryPage(): JSX.Element {
     const reconcileMediaShuffle = useUIStore((s) => s.reconcileMediaShuffle);
     const viewportFitSort = useUIStore((s) => s.viewportFitSort);
     const imageSizeSort = useUIStore((s) => s.imageSizeSort);
+    const kitNearnessPresetId = useUIStore((s) => s.kitNearnessPresetId);
+    const kitNearnessEpoch = useUIStore((s) => s.kitNearnessEpoch);
+    const setKitNearnessPresetId = useUIStore((s) => s.setKitNearnessPresetId);
     const setUploadPanelOpen = useUploadJobStore((s) => s.setPanelOpen);
     const syncStatus = useLibraryStore((s) => s.syncStatus);
     const initialLoadDone = useLibraryBootstrap();
     const gallerySortBy = useSettingsStore((s) => s.gallerySortBy);
+    const tagPresets = useTagSpeedStore((s) => s.presets);
+    const phashHydrated = usePhashIndexStore((s) => s.isHydrated);
+    const hydratePhash = usePhashIndexStore((s) => s.hydrate);
+
+    const kitNearnessPreset = useMemo(() => {
+        if (!kitNearnessPresetId) {
+            return undefined;
+        }
+        return tagPresets.find((preset) => preset.id === kitNearnessPresetId);
+    }, [kitNearnessPresetId, tagPresets]);
 
     const [viewerAspect, setViewerAspect] = useState<number>(
         () => (typeof window === "undefined" ? 1 : deviceViewerAspectRatio()),
@@ -91,6 +140,20 @@ export default function GalleryPage(): JSX.Element {
         };
     }, []);
 
+    useEffect(() => {
+        if (!kitNearnessPresetId || kitNearnessPreset) {
+            return;
+        }
+        setKitNearnessPresetId(undefined);
+    }, [kitNearnessPreset, kitNearnessPresetId, setKitNearnessPresetId]);
+
+    useEffect(() => {
+        if (!kitNearnessPreset || phashHydrated) {
+            return;
+        }
+        void hydratePhash();
+    }, [hydratePhash, kitNearnessPreset, phashHydrated]);
+
     const sortLibraryFiles = useCallback(
         (files: EnteFile[]): EnteFile[] =>
             gallerySortBy === "edited" ?
@@ -98,6 +161,64 @@ export default function GalleryPage(): JSX.Element {
                 sortFilesByUpload(files),
         [gallerySortBy],
     );
+
+    /**
+     * Kit nearness order snapshotted at apply/reapply (epoch bump).
+     * Reads library via getState so stamping does not rebuild.
+     */
+    const frozenKitOrderIds = useMemo((): number[] => {
+        if (!kitNearnessPresetId || !phashHydrated) {
+            return [];
+        }
+        const preset = useTagSpeedStore
+            .getState()
+            .presets.find((entry) => entry.id === kitNearnessPresetId);
+        if (!preset?.tags.length) {
+            return [];
+        }
+        const library = sortLibraryFiles(
+            dedupeFilesById(useLibraryStore.getState().allFiles).filter(
+                (file) => !isFileArchivedLocally(file),
+            ),
+        );
+        const entries = usePhashIndexStore.getState().entries;
+        const allPresets = useTagSpeedStore.getState().presets;
+        const selectedMedoids = pickKitMedoids(
+            listKitSeedFiles(library, preset.tags).map((file) => file.id),
+            entries,
+        );
+        const rivalMedoids = allPresets
+            .filter((entry) => entry.id !== preset.id && entry.tags.length > 0)
+            .map((entry) =>
+                pickKitMedoids(
+                    listKitSeedFiles(library, entry.tags).map(
+                        (file) => file.id,
+                    ),
+                    entries,
+                ),
+            )
+            .filter((medoids) => medoids.length > 0);
+        const tagState = useTagStore.getState();
+        const filtered = filterFilesByTags(
+            library,
+            tagState.tagFilter,
+            tagState.fileIdsByTag,
+            { favoriteFileIds: useFavoritesStore.getState().favoriteFileIds },
+        );
+        return sortFilesByKitNearnessCompetitive(
+            filtered,
+            selectedMedoids,
+            rivalMedoids,
+            entries,
+        ).map((file) => file.id);
+        // kitNearnessEpoch is the intentional rebuild trigger.
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- snapshot only on apply
+    }, [
+        kitNearnessEpoch,
+        kitNearnessPresetId,
+        phashHydrated,
+        sortLibraryFiles,
+    ]);
 
     const libraryFiles = useMemo(() => {
         const deduped = dedupeFilesById(allFiles).filter(
@@ -121,13 +242,15 @@ export default function GalleryPage(): JSX.Element {
         if (
             mediaViewOrder !== "shuffled" ||
             viewportFitSort !== "none" ||
-            imageSizeSort !== "none"
+            imageSizeSort !== "none" ||
+            kitNearnessPresetId !== undefined
         ) {
             return;
         }
         reconcileMediaShuffle(filteredFiles.map((file) => file.id));
     }, [
         filteredFiles,
+        kitNearnessPresetId,
         mediaViewOrder,
         reconcileMediaShuffle,
         viewportFitSort,
@@ -135,6 +258,9 @@ export default function GalleryPage(): JSX.Element {
     ]);
 
     const files = useMemo(() => {
+        if (kitNearnessPreset) {
+            return reconcileFrozenFileOrder(filteredFiles, frozenKitOrderIds);
+        }
         if (imageSizeSort !== "none") {
             return sortFilesByImageSize(filteredFiles, imageSizeSort);
         }
@@ -163,7 +289,9 @@ export default function GalleryPage(): JSX.Element {
         });
     }, [
         filteredFiles,
+        frozenKitOrderIds,
         imageSizeSort,
+        kitNearnessPreset,
         mediaShuffledFileIds,
         mediaShuffleSeed,
         mediaViewOrder,
