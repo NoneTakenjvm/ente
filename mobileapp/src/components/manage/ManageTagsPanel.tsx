@@ -91,6 +91,10 @@ export function ManageTagsPanel(): JSX.Element {
     const [newTagType, setNewTagType] = useState<string>("");
     const [presetName, setPresetName] = useState<string>("");
     const [presetTags, setPresetTags] = useState<string[]>([]);
+    const [renamingPresetId, setRenamingPresetId] = useState<string | undefined>(
+        undefined,
+    );
+    const [renameDraft, setRenameDraft] = useState<string>("");
     const [suggestionsOpen, setSuggestionsOpen] = useState<boolean>(false);
     const [kitSuggestions, setKitSuggestions] = useState<TagKitSuggestion[]>(
         [],
@@ -306,6 +310,28 @@ export function ManageTagsPanel(): JSX.Element {
         }
         setPresetName("");
         setPresetTags([]);
+    };
+
+    const beginRenamePreset = (id: string, currentName: string): void => {
+        setRenamingPresetId(id);
+        setRenameDraft(currentName);
+    };
+
+    const commitRenamePreset = (): void => {
+        if (!renamingPresetId) {
+            return;
+        }
+        const next = renameDraft.trim();
+        if (next) {
+            updatePreset(renamingPresetId, { name: next });
+        }
+        setRenamingPresetId(undefined);
+        setRenameDraft("");
+    };
+
+    const cancelRenamePreset = (): void => {
+        setRenamingPresetId(undefined);
+        setRenameDraft("");
     };
 
     const handleOpenSuggestions = (): void => {
@@ -547,9 +573,51 @@ export function ManageTagsPanel(): JSX.Element {
                                         className="flex flex-col gap-2 rounded-lg border border-border/60 p-3"
                                     >
                                         <div className="flex items-start justify-between gap-2">
-                                            <p className="min-w-0 font-medium">
-                                                {preset.name}
-                                            </p>
+                                            {renamingPresetId === preset.id ? (
+                                                <Input
+                                                    className="min-w-0 flex-1"
+                                                    value={renameDraft}
+                                                    autoFocus
+                                                    aria-label={`Rename ${preset.name}`}
+                                                    onChange={(event) => {
+                                                        setRenameDraft(
+                                                            event.target.value,
+                                                        );
+                                                    }}
+                                                    onBlur={() => {
+                                                        commitRenamePreset();
+                                                    }}
+                                                    onKeyDown={(event) => {
+                                                        if (
+                                                            event.key ===
+                                                            "Enter"
+                                                        ) {
+                                                            event.preventDefault();
+                                                            commitRenamePreset();
+                                                        } else if (
+                                                            event.key ===
+                                                            "Escape"
+                                                        ) {
+                                                            event.preventDefault();
+                                                            cancelRenamePreset();
+                                                        }
+                                                    }}
+                                                />
+                                            ) : (
+                                                <button
+                                                    type="button"
+                                                    className="min-w-0 flex-1 truncate text-left font-medium hover:underline"
+                                                    title="Rename kit"
+                                                    onClick={() => {
+                                                        beginRenamePreset(
+                                                            preset.id,
+                                                            preset.name,
+                                                        );
+                                                    }}
+                                                >
+                                                    {preset.name}
+                                                </button>
+                                            )}
                                             <Button
                                                 type="button"
                                                 variant="destructive"

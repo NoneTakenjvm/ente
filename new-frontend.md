@@ -7,12 +7,27 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-04 |
-| **Last agent / session** | Soften thumbnail LRU — build verified |
-| **Current milestone** | Post-M8 UX / similar accuracy |
+| **Last agent / session** | Rename kits in Manage Tags |
+| **Current milestone** | Post-M8 UX / kit nearness accuracy |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Phone QA gallery fling + scroll-back (thumbs). Footer shows `0.3.29` (includes softer thumb caps from `0.3.28`). |
+| **Next recommended action** | Phone QA: rename kit in Manage → Tags; footer `0.3.38`. |
 
 **This session shipped:**
+1. **Rename kits** — Manage → Tags: tap a kit name to edit (Enter/blur saves, Esc cancels). Uses existing `updatePreset`. `APP_VERSION` → `0.3.38`.
+2. **Competitive kit nearness** — soft exclusive-affinity vs other kits. `0.3.37`.
+3. **Kit nearness FP-stress refine** — `0.3.36`.
+
+**Previous session shipped:**
+1. **Kit nearness frozen until reapply** — gallery order snapshotted on apply/epoch; stamping does not rebuild medoids or reshuffle. **Reapply** (or re-pick kit) refreshes. `APP_VERSION` → `0.3.32`. Served on :3080.
+2. **Options menu** — Sort/Filter tabs; kit picker; stamp auto-arm. `0.3.31`.
+
+**Previous session shipped:**
+1. **Kit nearness gallery sort** — Filter → Kit nearness → pick a kit. Seeds = library files with the full kit; up to 6 dHash medoids (farthest-first); gallery ordered by min Hamming (best first). Mutually exclusive with viewport fit / image size / shuffle. Main gallery only. `APP_VERSION` → `0.3.30`. Served on :3080.
+
+**Previous session shipped:**
+1. **Kit nearness gallery sort** — Filter → Kit nearness → pick a kit. Seeds = library files with the full kit; up to 6 dHash medoids (farthest-first); gallery ordered by min Hamming (best first). Mutually exclusive with viewport fit / image size / shuffle. Main gallery only. `APP_VERSION` → `0.3.30`. Served on :3080.
+
+**Previous session shipped:**
 1. **Softer thumbnail memory caps (verified)** — session 160 MB; disk 400 MB; heap emergency at 85%/10%; cheaper IDB; priority queue + cancel off-screen network; grid overscan 6 / masonry 800 px. Lint + production build green.
 
 **Previous session shipped:**
