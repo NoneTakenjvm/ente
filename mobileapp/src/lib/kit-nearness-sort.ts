@@ -512,8 +512,7 @@ export const sortFilesByKitNearnessCompetitive = (
     const rivalWeights = rivals.map((rival) =>
         rival.length ?
             kitDistinctiveness(kitDistance(selected, rival), tau) :
-            0,
-    );
+            0);
     const scoreOptions = { ...options, rivalWeights };
     return [...files].sort((a, b) => {
         const scoreA = kitNearnessDistanceCompetitive(

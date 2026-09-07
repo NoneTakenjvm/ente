@@ -44,6 +44,10 @@ import {
     pickKitMedoids,
     sortFilesByKitNearnessCompetitive,
 } from "@/lib/kit-nearness-sort";
+import {
+    imageFilesForPhash,
+    runPhashJob,
+} from "@/lib/similarity-job";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
@@ -53,6 +57,7 @@ import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
 import { useUIStore, useUploadJobStore } from "@/stores/ui-store";
 import type { EnteFile } from "ente-media/file";
+import { toast } from "sonner";
 
 /**
  * Keep a frozen id order; drop gone ids; append newcomers at the end.
@@ -163,6 +168,93 @@ export default function GalleryPage(): JSX.Element {
     );
 
     /**
+     * Kit nearness needs dHash medoids from seed photos. If those seeds were
+     * never hashed (common when Similar → Scan library was skipped), sorting
+     * is a silent no-op — hash seeds here, then reapply.
+     */
+    useEffect(() => {
+        if (!kitNearnessPreset || !phashHydrated || !initialLoadDone) {
+            return;
+        }
+        let cancelled = false;
+        const presetTags = kitNearnessPreset.tags;
+        if (!presetTags.length) {
+            return;
+        }
+
+        void (async (): Promise<void> => {
+            const userId = useSessionStore.getState().userID ?? 0;
+            const library = sortLibraryFiles(
+                dedupeFilesById(useLibraryStore.getState().allFiles).filter(
+                    (file) => !isFileArchivedLocally(file),
+                ),
+            );
+            const seeds = imageFilesForPhash(
+                listKitSeedFiles(library, presetTags),
+                userId,
+            );
+            if (seeds.length === 0) {
+                toast.message(
+                    "No photos fully match this kit. Tag photos with every kit tag first.",
+                );
+                return;
+            }
+
+            let entries = usePhashIndexStore.getState().entries;
+            const missing = seeds.filter((file) => !entries.has(file.id));
+            if (missing.length > 0) {
+                const toastId = toast.loading(
+                    `Hashing ${missing.length} kit photo${missing.length === 1 ? "" : "s"}…`,
+                );
+                try {
+                    entries = await runPhashJob({
+                        files: missing,
+                        entries: new Map(entries),
+                    });
+                } catch (error) {
+                    if (!cancelled) {
+                        toast.dismiss(toastId);
+                        toast.error(
+                            error instanceof Error ?
+                                error.message :
+                                "Could not hash kit photos",
+                        );
+                    }
+                    return;
+                }
+                if (cancelled) {
+                    toast.dismiss(toastId);
+                    return;
+                }
+                usePhashIndexStore.getState().setEntries(entries);
+                toast.dismiss(toastId);
+                useUIStore.getState().reapplyKitNearness();
+                return;
+            }
+
+            const medoids = pickKitMedoids(
+                seeds.map((file) => file.id),
+                entries,
+            );
+            if (medoids.length === 0) {
+                toast.message(
+                    "Could not build kit nearness. Try Manage → Similar → Scan library.",
+                );
+            }
+        })();
+
+        return (): void => {
+            cancelled = true;
+        };
+    }, [
+        initialLoadDone,
+        kitNearnessEpoch,
+        kitNearnessPreset,
+        phashHydrated,
+        sortLibraryFiles,
+    ]);
+
+    /**
      * Kit nearness order snapshotted at apply/reapply (epoch bump).
      * Reads library via getState so stamping does not rebuild.
      */
@@ -187,6 +279,9 @@ export default function GalleryPage(): JSX.Element {
             listKitSeedFiles(library, preset.tags).map((file) => file.id),
             entries,
         );
+        if (!selectedMedoids.length) {
+            return [];
+        }
         const rivalMedoids = allPresets
             .filter((entry) => entry.id !== preset.id && entry.tags.length > 0)
             .map((entry) =>
@@ -195,8 +290,7 @@ export default function GalleryPage(): JSX.Element {
                         (file) => file.id,
                     ),
                     entries,
-                ),
-            )
+                ))
             .filter((medoids) => medoids.length > 0);
         const tagState = useTagStore.getState();
         const filtered = filterFilesByTags(

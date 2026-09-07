@@ -6,16 +6,19 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-09-04 |
-| **Last agent / session** | Rename kits in Manage Tags |
-| **Current milestone** | Post-M8 UX / kit nearness accuracy |
+| **Last updated** | 2026-09-07 |
+| **Last agent / session** | Stamp Kit / Tag modes |
+| **Current milestone** | Post-M8 UX / stamp tagging |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Phone QA: rename kit in Manage → Tags; footer `0.3.38`. |
+| **Next recommended action** | Phone QA: enter stamp → Kit shows kits by population; Tag picks individual tags. Footer `0.3.40`. |
 
 **This session shipped:**
-1. **Rename kits** — Manage → Tags: tap a kit name to edit (Enter/blur saves, Esc cancels). Uses existing `updatePreset`. `APP_VERSION` → `0.3.38`.
-2. **Competitive kit nearness** — soft exclusive-affinity vs other kits. `0.3.37`.
-3. **Kit nearness FP-stress refine** — `0.3.36`.
+1. **Stamp Kit / Tag modes** — stamp footer toggles Kit vs Tag. Kit lists all presets sorted by library population (count badge); Tag keeps working-set chips + tag sheet (no kits tab). Kit nearness auto-arm sets Kit mode. `APP_VERSION` → `0.3.40`.
+
+**Previous session shipped:**
+1. **Kit nearness no-op fix** — selecting a kit with unhashed seeds previously did nothing (empty medoids → sort identity). Gallery now auto-hashes kit seed thumbnails, reapplies order, and toasts when no full-kit matches exist. `APP_VERSION` → `0.3.39`.
+2. **Rename kits** — Manage → Tags: tap a kit name to edit. `0.3.38`.
+3. **Competitive kit nearness** — soft exclusive-affinity vs other kits. `0.3.37`.
 
 **Previous session shipped:**
 1. **Kit nearness frozen until reapply** — gallery order snapshotted on apply/epoch; stamping does not rebuild medoids or reshuffle. **Reapply** (or re-pick kit) refreshes. `APP_VERSION` → `0.3.32`. Served on :3080.
