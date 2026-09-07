@@ -1,5 +1,8 @@
 import { create } from "zustand";
 
+/** How the stamp tool picks what to apply: a whole kit, or individual tags. */
+export type StampPickMode = "kit" | "tag";
+
 interface SelectionState {
     enabled: boolean;
     selectedIds: number[];
@@ -9,7 +12,9 @@ interface SelectionState {
      */
     stampActive: boolean;
     stampTags: string[];
-    /** Tag picker sheet for the stamp tool (opened on enter when empty). */
+    /** Kit list vs individual tag picker in the stamp footer. */
+    stampPickMode: StampPickMode;
+    /** Tag picker sheet for the stamp tool (opened on enter when empty in tag mode). */
     stampSheetOpen: boolean;
     setEnabled: (enabled: boolean) => void;
     toggle: (fileId: number) => void;
@@ -20,6 +25,7 @@ interface SelectionState {
     setStampActive: (active: boolean) => void;
     setStampTags: (tags: string[]) => void;
     toggleStampTag: (tag: string) => void;
+    setStampPickMode: (mode: StampPickMode) => void;
     setStampSheetOpen: (open: boolean) => void;
     clearStamp: () => void;
     reset: () => void;
@@ -30,6 +36,7 @@ const initialState = {
     selectedIds: [] as number[],
     stampActive: false,
     stampTags: [] as string[],
+    stampPickMode: "kit" as StampPickMode,
     stampSheetOpen: false,
 };
 
@@ -107,12 +114,13 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
 
     setStampActive: (active: boolean): void => {
         if (active) {
-            const { stampTags } = get();
+            const { stampTags, stampPickMode } = get();
             set({
                 stampActive: true,
                 enabled: false,
                 selectedIds: [],
-                stampSheetOpen: stampTags.length === 0,
+                stampSheetOpen:
+                    stampTags.length === 0 && stampPickMode === "tag",
             });
             return;
         }
@@ -145,12 +153,24 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
         set({ stampTags: next });
     },
 
+    setStampPickMode: (mode: StampPickMode): void => {
+        set({
+            stampPickMode: mode,
+            stampSheetOpen: false,
+        });
+    },
+
     setStampSheetOpen: (open: boolean): void => {
         set({ stampSheetOpen: open });
     },
 
     clearStamp: (): void => {
-        set({ stampActive: false, stampTags: [], stampSheetOpen: false });
+        set({
+            stampActive: false,
+            stampTags: [],
+            stampPickMode: "kit",
+            stampSheetOpen: false,
+        });
     },
 
     reset: (): void => {

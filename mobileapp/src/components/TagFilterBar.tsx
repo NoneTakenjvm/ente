@@ -83,6 +83,7 @@ export function TagFilterBar({
     const reapplyKitNearness = useUIStore((s) => s.reapplyKitNearness);
     const setStampActive = useSelectionStore((s) => s.setStampActive);
     const setStampTags = useSelectionStore((s) => s.setStampTags);
+    const setStampPickMode = useSelectionStore((s) => s.setStampPickMode);
     const setStampSheetOpen = useSelectionStore((s) => s.setStampSheetOpen);
 
     const handleKitNearnessPresetIdChange = useCallback(
@@ -95,6 +96,7 @@ export function TagFilterBar({
             if (!preset?.tags.length) {
                 return;
             }
+            setStampPickMode("kit");
             setStampTags(preset.tags);
             setStampActive(true);
             setStampSheetOpen(false);
@@ -103,6 +105,7 @@ export function TagFilterBar({
             presets,
             setKitNearnessPresetId,
             setStampActive,
+            setStampPickMode,
             setStampSheetOpen,
             setStampTags,
         ],

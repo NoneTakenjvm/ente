@@ -5,29 +5,80 @@ import {
 } from "react";
 import { Stamp, Tag } from "lucide-react";
 import { TagPickerSheet } from "@/components/TagPickerSheet";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
-import { useSelectionStore } from "@/stores/selection-store";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+    countFilesMatchingKit,
+    type TagPreset,
+} from "@/lib/tag-presets";
+import { useLibraryStore } from "@/stores/library-store";
+import {
+    useSelectionStore,
+    type StampPickMode,
+} from "@/stores/selection-store";
 import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
 
+interface RankedKit {
+    preset: TagPreset;
+    count: number;
+}
+
 /**
- * Footer for the stamp tool: choose tags/kits, then tap photos to apply.
+ * True when `tags` is exactly the preset's tag set (order-independent).
+ */
+const tagsMatchPreset = (tags: string[], preset: TagPreset): boolean => {
+    if (tags.length === 0 || tags.length !== preset.tags.length) {
+        return false;
+    }
+    return preset.tags.every((tag) => tags.includes(tag));
+};
+
+/**
+ * Footer for the stamp tool: Kit or Tag pick mode, then tap photos to apply.
  */
 export function StampToolFooter(): JSX.Element | null {
     const stampActive = useSelectionStore((s) => s.stampActive);
     const stampTags = useSelectionStore((s) => s.stampTags);
+    const stampPickMode = useSelectionStore((s) => s.stampPickMode);
     const stampSheetOpen = useSelectionStore((s) => s.stampSheetOpen);
     const setStampActive = useSelectionStore((s) => s.setStampActive);
     const setStampTags = useSelectionStore((s) => s.setStampTags);
     const toggleStampTag = useSelectionStore((s) => s.toggleStampTag);
+    const setStampPickMode = useSelectionStore((s) => s.setStampPickMode);
     const setStampSheetOpen = useSelectionStore((s) => s.setStampSheetOpen);
 
+    const allFiles = useLibraryStore((s) => s.allFiles);
     const knownTags = useTagStore((s) => s.tags);
     const presets = useTagSpeedStore((s) => s.presets);
     const pinnedTags = useTagSpeedStore((s) => s.pinnedTags);
     const recentTags = useTagSpeedStore((s) => s.recentTags);
     const togglePinnedTag = useTagSpeedStore((s) => s.togglePinnedTag);
+
+    const rankedKits = useMemo((): RankedKit[] => {
+        if (!presets.length) {
+            return [];
+        }
+        const scored = presets.map((preset) => ({
+            preset,
+            count: countFilesMatchingKit(allFiles, preset.tags),
+        }));
+        scored.sort((a, b) => {
+            if (b.count !== a.count) {
+                return b.count - a.count;
+            }
+            return a.preset.name.localeCompare(b.preset.name);
+        });
+        return scored;
+    }, [allFiles, presets]);
+
+    const activeKit = useMemo((): TagPreset | undefined => {
+        if (!stampTags.length) {
+            return undefined;
+        }
+        return presets.find((preset) => tagsMatchPreset(stampTags, preset));
+    }, [presets, stampTags]);
 
     const workingSetTags = useMemo((): string[] => {
         const seen = new Set<string>();
@@ -46,16 +97,42 @@ export function StampToolFooter(): JSX.Element | null {
         setStampActive(false);
     }, [setStampActive]);
 
+    const handlePickModeChange = useCallback(
+        (next: unknown): void => {
+            const value = Array.isArray(next) ? next[0] : next;
+            if (value === "kit" || value === "tag") {
+                setStampPickMode(value as StampPickMode);
+            }
+        },
+        [setStampPickMode],
+    );
+
+    const selectKit = useCallback(
+        (preset: TagPreset): void => {
+            if (tagsMatchPreset(stampTags, preset)) {
+                setStampTags([]);
+                return;
+            }
+            setStampTags(preset.tags);
+        },
+        [setStampTags, stampTags],
+    );
+
     if (!stampActive) {
         return null;
     }
 
     const stampLabel =
-        stampTags.length > 0 ? stampTags.join(", ") : "pick tags or a kit";
+        activeKit?.name ??
+        (stampTags.length > 0 ?
+            stampTags.join(", ") :
+            stampPickMode === "kit" ?
+                "pick a kit" :
+                "pick tags");
 
     return (
         <>
-            <footer className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-30 flex flex-col gap-2 border-t border-border bg-background/95 px-3 py-2.5 backdrop-blur">
+            <footer className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-30 flex max-h-[45dvh] flex-col gap-2 border-t border-border bg-background/95 px-3 py-2.5 backdrop-blur">
                 <div className="flex items-center justify-between gap-2">
                     <p className="flex min-w-0 items-center gap-1.5 truncate text-sm text-muted-foreground">
                         <Stamp className="size-3.5 shrink-0" />
@@ -72,72 +149,108 @@ export function StampToolFooter(): JSX.Element | null {
                     </Button>
                 </div>
 
-                <div className="flex gap-1.5 overflow-x-auto pb-0.5">
-                    {workingSetTags.map((tag) => {
-                        const isStamp = stampTags.includes(tag);
-                        return (
-                            <Button
-                                key={tag}
-                                type="button"
-                                variant={isStamp ? "secondary" : "outline"}
-                                size="sm"
-                                className="h-8 shrink-0"
-                                onClick={() => {
-                                    toggleStampTag(tag);
-                                }}
-                                onContextMenu={(event) => {
-                                    event.preventDefault();
-                                    togglePinnedTag(tag);
-                                }}
-                            >
-                                {tag}
-                            </Button>
-                        );
-                    })}
-                    {presets.slice(0, 6).map((preset) => {
-                        const isActive =
-                            preset.tags.length > 0 &&
-                            preset.tags.length === stampTags.length &&
-                            preset.tags.every((tag) => stampTags.includes(tag));
-                        return (
-                            <Button
-                                key={preset.id}
-                                type="button"
-                                variant={isActive ? "secondary" : "outline"}
-                                size="sm"
-                                className={cn(
-                                    "h-8 shrink-0",
-                                    !isActive && "border-dashed",
-                                )}
-                                onClick={() => {
-                                    setStampTags(preset.tags);
-                                }}
-                            >
-                                {preset.name}
-                            </Button>
-                        );
-                    })}
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-8 shrink-0 gap-1.5"
-                        onClick={() => setStampSheetOpen(true)}
-                    >
-                        <Tag className="size-3.5 shrink-0" />
-                        Tags
-                    </Button>
-                </div>
+                <ToggleGroup
+                    variant="outline"
+                    size="sm"
+                    value={[stampPickMode]}
+                    onValueChange={handlePickModeChange}
+                    className="w-full"
+                >
+                    <ToggleGroupItem value="kit" className="flex-1">
+                        Kit
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="tag" className="flex-1">
+                        Tag
+                    </ToggleGroupItem>
+                </ToggleGroup>
+
+                {stampPickMode === "kit" ? (
+                    rankedKits.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">
+                            No kits yet. Create them in Manage → Tags.
+                        </p>
+                    ) : (
+                        <ul className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain">
+                            {rankedKits.map(({ preset, count }) => {
+                                const selected = tagsMatchPreset(
+                                    stampTags,
+                                    preset,
+                                );
+                                return (
+                                    <li key={preset.id}>
+                                        <Button
+                                            type="button"
+                                            variant={
+                                                selected ? "secondary" : "ghost"
+                                            }
+                                            className="h-auto min-h-9 w-full justify-between gap-2 px-2 py-1.5"
+                                            onClick={() => {
+                                                selectKit(preset);
+                                            }}
+                                        >
+                                            <span className="flex min-w-0 flex-col items-start gap-0.5 text-left">
+                                                <span className="truncate text-sm font-medium">
+                                                    {preset.name}
+                                                </span>
+                                                <span className="truncate text-xs text-muted-foreground">
+                                                    {preset.tags.join(", ")}
+                                                </span>
+                                            </span>
+                                            <Badge
+                                                variant="secondary"
+                                                className="shrink-0 tabular-nums"
+                                            >
+                                                {count}
+                                            </Badge>
+                                        </Button>
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                    )
+                ) : (
+                    <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+                        {workingSetTags.map((tag) => {
+                            const isStamp = stampTags.includes(tag);
+                            return (
+                                <Button
+                                    key={tag}
+                                    type="button"
+                                    variant={isStamp ? "secondary" : "outline"}
+                                    size="sm"
+                                    className="h-8 shrink-0"
+                                    onClick={() => {
+                                        toggleStampTag(tag);
+                                    }}
+                                    onContextMenu={(event) => {
+                                        event.preventDefault();
+                                        togglePinnedTag(tag);
+                                    }}
+                                >
+                                    {tag}
+                                </Button>
+                            );
+                        })}
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 shrink-0 gap-1.5"
+                            onClick={() => setStampSheetOpen(true)}
+                        >
+                            <Tag className="size-3.5 shrink-0" />
+                            Tags
+                        </Button>
+                    </div>
+                )}
             </footer>
 
             <TagPickerSheet
                 open={stampSheetOpen}
                 appliedTags={stampTags}
                 knownTags={knownTags}
-                presets={presets}
-                defaultToKits={presets.length > 0}
                 pinnedTags={pinnedTags}
-                batchSelectionHint="Choose tags or a kit, then tap photos to stamp them on."
+                batchSelectionHint="Choose tags, then tap photos to stamp them on."
                 onOpenChange={(open) => {
                     setStampSheetOpen(open);
                 }}
@@ -146,10 +259,6 @@ export function StampToolFooter(): JSX.Element | null {
                 }}
                 onRemoveTag={(name) => {
                     setStampTags(stampTags.filter((tag) => tag !== name));
-                }}
-                onApplyPreset={(tags) => {
-                    setStampTags(tags);
-                    setStampSheetOpen(false);
                 }}
                 onTogglePinTag={togglePinnedTag}
             />
