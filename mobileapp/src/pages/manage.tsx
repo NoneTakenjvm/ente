@@ -84,6 +84,7 @@ import {
 } from "@/stores/session-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { usePhashIndexStore } from "@/stores/phash-index-store";
+import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { usePhashJobStore, useUIStore } from "@/stores/ui-store";
 
@@ -129,6 +130,10 @@ export default function ManagePage(): JSX.Element {
     const hydratePhash = usePhashIndexStore((s) => s.hydrate);
     const setPhashEntries = usePhashIndexStore((s) => s.setEntries);
 
+    const embeddingEntries = useEmbeddingIndexStore((s) => s.entries);
+    const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
+    const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.hydrate);
+
     const phashJobStatus = usePhashJobStore((s) => s.status);
     const phashProgress = usePhashJobStore((s) => s.progress);
     const setPhashJobStatus = usePhashJobStore((s) => s.setStatus);
@@ -163,7 +168,19 @@ export default function ManagePage(): JSX.Element {
     >(undefined);
     /** >0 means the user asked to find similar groups; 0 = idle until they tap Find. */
     const [similarFindGeneration, setSimilarFindGeneration] = useState<number>(0);
-    const initialLoadDone = useLibraryBootstrap({ afterSync: hydratePhash });
+    const initialLoadDone = useLibraryBootstrap({
+        afterSync: async (): Promise<void> => {
+            await hydratePhash();
+            await hydrateEmbeddings();
+        },
+    });
+
+    useEffect(() => {
+        if (embeddingHydrated) {
+            return;
+        }
+        void hydrateEmbeddings();
+    }, [embeddingHydrated, hydrateEmbeddings]);
 
     const jobAbort = useRef<AbortController | undefined>(undefined);
     const jobPaused = useRef<boolean>(false);
@@ -291,15 +308,23 @@ export default function ManagePage(): JSX.Element {
                 // Progress bar only during the scan — mounting thousands of
                 // DedupGroupCards (and their thumbs) mid-pass freezes the UI.
                 let stage1Clusters: Stage1Cluster[];
+                const clip =
+                    embeddingEntries.size > 0 ?
+                        { embeddings: embeddingEntries } :
+                        undefined;
                 if (cachedEdges) {
                     stage1Clusters = clusterFromFileEdges(
                         stage1Items,
                         cachedEdges,
                         debouncedThreshold,
+                        clip,
                     );
                 } else {
                     setSimilarProgress({
-                        stepDescription: "Comparing hashes",
+                        stepDescription:
+                            clip ?
+                                "Comparing hashes + CLIP" :
+                                "Comparing hashes",
                         completed: 0,
                         total: Math.max(indexed.length, 1),
                     });
@@ -308,13 +333,16 @@ export default function ManagePage(): JSX.Element {
                         debouncedThreshold,
                         {
                             signal: abort.signal,
+                            embeddings: clip?.embeddings,
                             onProgress: (update) => {
                                 if (abort.signal.aborted || cancelled) {
                                     return;
                                 }
                                 const stepDescription =
                                     update.phase === "comparing" ?
-                                        "Comparing hashes" :
+                                        clip ?
+                                            "Comparing hashes + CLIP" :
+                                            "Comparing hashes" :
                                         update.phase === "finalizing" ?
                                             "Finalizing groups" :
                                             "Hash grouping done";
@@ -396,6 +424,7 @@ export default function ManagePage(): JSX.Element {
         allFiles,
         collections,
         phashEntries,
+        embeddingEntries,
         debouncedThreshold,
         similarFindGeneration,
         userId,
@@ -448,8 +477,19 @@ export default function ManagePage(): JSX.Element {
         () => imageFilesForPhash(allFiles, userId).length,
         [allFiles, userId],
     );
-
     const phashIndexedCount = phashEntries.size;
+    const clipCoverageOnIndexed = useMemo(() => {
+        if (phashEntries.size === 0) {
+            return 0;
+        }
+        let n = 0;
+        for (const id of phashEntries.keys()) {
+            if (embeddingEntries.has(id)) {
+                n += 1;
+            }
+        }
+        return n;
+    }, [phashEntries, embeddingEntries]);
 
     const updateSelection = useCallback(
         (groupId: string, updater: (group: DedupGroupSelection) => DedupGroupSelection): void => {
@@ -723,7 +763,11 @@ export default function ManagePage(): JSX.Element {
                                     />
                                 </Field>
                                 <p className="text-xs text-muted-foreground">
-                                    Indexed {phashIndexedCount} / {phashCandidateCount} images
+                                    Indexed {phashIndexedCount} / {phashCandidateCount}{" "}
+                                    images
+                                    {phashIndexedCount > 0 ?
+                                        ` · CLIP ${clipCoverageOnIndexed}/${phashIndexedCount}` :
+                                        ""}
                                     · {similarGroups.length} similar group
                                     {similarGroups.length === 1 ? "" : "s"}
                                     {similarBusy && similarProgress ?
@@ -732,6 +776,13 @@ export default function ManagePage(): JSX.Element {
                                             " · matching…" :
                                             ""}
                                 </p>
+                                {phashIndexedCount > 0 &&
+                                    clipCoverageOnIndexed < phashIndexedCount ? (
+                                        <p className="text-xs text-muted-foreground">
+                                            Scan CLIP embeddings in Settings for
+                                            better Similar matching (gate + rescue).
+                                        </p>
+                                    ) : null}
                                 {phashJobStatus === "running" ? (
                                     <div className="flex flex-col gap-1">
                                         <Progress value={progressPercent} className="h-1" />

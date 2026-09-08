@@ -10,6 +10,7 @@ import {
 } from "@/lib/crop-match";
 import { computeDHashFromImageData } from "@/lib/phash";
 import { runStage1Clustering } from "@/lib/similarity-stage1-core";
+import type { Stage1ClipOptions } from "@/lib/similarity-stage1-core";
 import type {
     CropCheckBatchMessage,
     CropCheckBatchResult,
@@ -55,6 +56,18 @@ const hashVariant = (
 const handleStage1 = async (message: Stage1Message): Promise<void> => {
     abortedStage1Ids.delete(message.id);
     try {
+        let clip: Stage1ClipOptions | undefined;
+        if (message.embeddingsByFileId) {
+            const embeddings = new Map<number, number[]>();
+            for (const [id, vector] of Object.entries(
+                message.embeddingsByFileId,
+            )) {
+                embeddings.set(Number(id), vector);
+            }
+            if (embeddings.size > 0) {
+                clip = { embeddings };
+            }
+        }
         const { clusters, edges } = await runStage1Clustering(
             message.items,
             message.threshold,
@@ -67,6 +80,8 @@ const handleStage1 = async (message: Stage1Message): Promise<void> => {
                 self.postMessage(progress);
             },
             () => abortedStage1Ids.has(message.id),
+            undefined,
+            clip,
         );
         if (abortedStage1Ids.has(message.id)) {
             abortedStage1Ids.delete(message.id);

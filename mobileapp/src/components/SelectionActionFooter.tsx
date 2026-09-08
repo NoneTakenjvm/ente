@@ -18,9 +18,19 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import {
     bulkAddTags,
+    bulkApplyTagDraft,
     bulkRemoveTags,
 } from "@/lib/tag-bulk-actions";
-import { tagPresenceAcrossFiles } from "@/lib/tag-bulk";
+import {
+    draftAddTag,
+    draftAddTags,
+    draftRemoveTag,
+    emptyTagDraft,
+    overlayTagDraftPresence,
+    tagDraftHasChanges,
+    tagPresenceAcrossFiles,
+    type TagDraft,
+} from "@/lib/tag-bulk";
 import { extractUserTags } from "@/lib/tags";
 import { cn } from "@/lib/utils";
 import { useLibraryStore } from "@/stores/library-store";
@@ -46,6 +56,7 @@ export function SelectionActionFooter(): JSX.Element | null {
     const togglePinnedTag = useTagSpeedStore((s) => s.togglePinnedTag);
 
     const [tagsOpen, setTagsOpen] = useState<boolean>(false);
+    const [tagDraft, setTagDraft] = useState<TagDraft>(emptyTagDraft);
     const [tagBusy, setTagBusy] = useState<boolean>(false);
     const [tagError, setTagError] = useState<string | undefined>();
     const [favoriteBusy, setFavoriteBusy] = useState<boolean>(false);
@@ -58,10 +69,36 @@ export function SelectionActionFooter(): JSX.Element | null {
         [allFiles, selectedIds],
     );
 
-    const { unionTags, presence } = useMemo(
+    const livePresence = useMemo(
         () => tagPresenceAcrossFiles(selectedFiles),
         [selectedFiles],
     );
+
+    /** Footer chips still reflect live library state (immediate writes). */
+    const { presence } = livePresence;
+
+    const draftView = useMemo(
+        () =>
+            overlayTagDraftPresence(
+                livePresence,
+                tagDraft,
+                selectedFiles.length,
+            ),
+        [livePresence, selectedFiles.length, tagDraft],
+    );
+
+    const sheetKnownTags = useMemo((): string[] => {
+        const seen = new Set(knownTags);
+        const extra: string[] = [];
+        for (const tag of [...draftView.unionTags, ...tagDraft.adds]) {
+            if (seen.has(tag)) {
+                continue;
+            }
+            seen.add(tag);
+            extra.push(tag);
+        }
+        return extra.length ? [...knownTags, ...extra] : knownTags;
+    }, [draftView.unionTags, knownTags, tagDraft.adds]);
 
     const workingSetTags = useMemo((): string[] => {
         const seen = new Set<string>();
@@ -99,6 +136,82 @@ export function SelectionActionFooter(): JSX.Element | null {
         [],
     );
 
+    const flushTagDraft = useCallback(async (): Promise<boolean> => {
+        if (!tagDraftHasChanges(tagDraft) || !selectedIds.length) {
+            setTagDraft(emptyTagDraft());
+            return true;
+        }
+        setTagBusy(true);
+        setTagError(undefined);
+        try {
+            await bulkApplyTagDraft(selectedIds, tagDraft);
+            setTagDraft(emptyTagDraft());
+            return true;
+        } catch (error) {
+            setTagError(
+                error instanceof Error ?
+                    error.message :
+                    "Could not update tags",
+            );
+            return false;
+        } finally {
+            setTagBusy(false);
+        }
+    }, [selectedIds, tagDraft]);
+
+    const openTagSheet = useCallback((): void => {
+        setTagError(undefined);
+        setTagDraft(emptyTagDraft());
+        setTagsOpen(true);
+    }, []);
+
+    const handleTagSheetOpenChange = useCallback(
+        (open: boolean): void => {
+            if (open) {
+                openTagSheet();
+                return;
+            }
+            if (tagBusy) {
+                return;
+            }
+            void (async () => {
+                const ok = await flushTagDraft();
+                if (ok) {
+                    setTagsOpen(false);
+                    setTagError(undefined);
+                }
+            })();
+        },
+        [flushTagDraft, openTagSheet, tagBusy],
+    );
+
+    const handleApplyTagDraft = useCallback((): void => {
+        if (tagBusy) {
+            return;
+        }
+        void (async () => {
+            await flushTagDraft();
+        })();
+    }, [flushTagDraft, tagBusy]);
+
+    const handleDraftAddTag = useCallback((tagName: string): void => {
+        setTagDraft((current) => draftAddTag(current, tagName));
+        setTagError(undefined);
+    }, []);
+
+    const handleDraftRemoveTag = useCallback((tagName: string): void => {
+        setTagDraft((current) => draftRemoveTag(current, tagName));
+        setTagError(undefined);
+    }, []);
+
+    const handleDraftApplyPreset = useCallback((tags: string[]): void => {
+        if (!tags.length) {
+            return;
+        }
+        setTagDraft((current) => draftAddTags(current, tags));
+        setTagError(undefined);
+    }, []);
+
     const handleBatchAddTag = useCallback(
         async (tagName: string): Promise<void> => {
             if (!selectedIds.length) {
@@ -115,17 +228,6 @@ export function SelectionActionFooter(): JSX.Element | null {
                 return;
             }
             await runTagBusy(() => bulkRemoveTags(selectedIds, [tagName]));
-        },
-        [runTagBusy, selectedIds],
-    );
-
-    const handleApplyPreset = useCallback(
-        async (tags: string[]): Promise<void> => {
-            if (!selectedIds.length || !tags.length) {
-                return;
-            }
-            await runTagBusy(() => bulkAddTags(selectedIds, tags));
-            setTagsOpen(false);
         },
         [runTagBusy, selectedIds],
     );
@@ -241,6 +343,7 @@ export function SelectionActionFooter(): JSX.Element | null {
 
     const count = selectedIds.length;
     const actionsBusy = tagBusy || favoriteBusy || archiveBusy || trashBusy;
+    const draftPending = tagDraftHasChanges(tagDraft);
 
     if (count === 0) {
         return null;
@@ -304,7 +407,8 @@ export function SelectionActionFooter(): JSX.Element | null {
                                 className="h-8 shrink-0 border-dashed"
                                 disabled={actionsBusy}
                                 onClick={() => {
-                                    void handleApplyPreset(preset.tags);
+                                    void runTagBusy(() =>
+                                        bulkAddTags(selectedIds, preset.tags));
                                 }}
                             >
                                 {preset.name}
@@ -320,10 +424,7 @@ export function SelectionActionFooter(): JSX.Element | null {
                         size="sm"
                         className="gap-1.5"
                         disabled={actionsBusy}
-                        onClick={() => {
-                            setTagError(undefined);
-                            setTagsOpen(true);
-                        }}
+                        onClick={openTagSheet}
                     >
                         {tagBusy ? (
                             <Spinner />
@@ -415,30 +516,22 @@ export function SelectionActionFooter(): JSX.Element | null {
 
             <TagPickerSheet
                 open={tagsOpen}
-                appliedTags={unionTags}
-                knownTags={knownTags}
+                appliedTags={draftView.appliedTags}
+                knownTags={sheetKnownTags}
                 error={tagError}
-                tagPresence={presence}
+                tagPresence={draftView.presence}
                 presets={presets}
                 kitScoreFiles={selectedFiles}
                 defaultToKits={presets.length > 0}
                 pinnedTags={pinnedTags}
-                batchSelectionHint="Kits first — tap to apply. Numbers show how many selected photos already have the full kit."
-                onOpenChange={(open) => {
-                    if (!open && !tagBusy) {
-                        setTagsOpen(false);
-                        setTagError(undefined);
-                    }
-                }}
-                onAddTag={(name) => {
-                    void handleBatchAddTag(name);
-                }}
-                onRemoveTag={(name) => {
-                    void handleBatchRemoveTag(name);
-                }}
-                onApplyPreset={(tags) => {
-                    void handleApplyPreset(tags);
-                }}
+                pendingChanges={draftPending}
+                applyBusy={tagBusy}
+                batchSelectionHint="Tap tags or kits to stage changes. Apply once, or close the sheet to save."
+                onOpenChange={handleTagSheetOpenChange}
+                onAddTag={handleDraftAddTag}
+                onRemoveTag={handleDraftRemoveTag}
+                onApplyPreset={handleDraftApplyPreset}
+                onApply={handleApplyTagDraft}
                 onTogglePinTag={togglePinnedTag}
             />
 

@@ -67,10 +67,15 @@ interface TagPickerSheetProps {
     /** Open on the Kits tab when presets are available. */
     defaultToKits?: boolean;
     pinnedTags?: string[];
+    /** Staged edits not yet written (selection bulk draft). */
+    pendingChanges?: boolean;
+    applyBusy?: boolean;
     onOpenChange: (open: boolean) => void;
     onAddTag: (name: string) => void;
     onRemoveTag: (name: string) => void;
     onApplyPreset?: (tags: string[]) => void;
+    /** Flush staged edits without closing the sheet. */
+    onApply?: () => void;
     onTogglePinTag?: (tag: string) => void;
 }
 
@@ -85,10 +90,13 @@ export function TagPickerSheet({
     kitScoreFiles,
     defaultToKits = false,
     pinnedTags,
+    pendingChanges = false,
+    applyBusy = false,
     onOpenChange,
     onAddTag,
     onRemoveTag,
     onApplyPreset,
+    onApply,
     onTogglePinTag,
 }: TagPickerSheetProps): JSX.Element {
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
@@ -441,6 +449,7 @@ export function TagPickerSheet({
                                                         type="button"
                                                         variant="ghost"
                                                         className="h-auto min-h-10 w-full justify-between gap-2 px-3 py-2"
+                                                        disabled={applyBusy}
                                                         onClick={() => {
                                                             onApplyPreset?.(
                                                                 preset.tags,
@@ -506,6 +515,7 @@ export function TagPickerSheet({
                                                             (applied || partial) &&
                                                                 "bg-secondary/80",
                                                         )}
+                                                        disabled={applyBusy}
                                                         onClick={() => {
                                                             if (applied) {
                                                                 onRemoveTag(tag);
@@ -551,6 +561,7 @@ export function TagPickerSheet({
                                                             size="icon-sm"
                                                             className="shrink-0"
                                                             aria-label={`Remove ${tag} from all selected`}
+                                                            disabled={applyBusy}
                                                             onClick={() => {
                                                                 onRemoveTag(tag);
                                                             }}
@@ -603,7 +614,7 @@ export function TagPickerSheet({
                                         type="button"
                                         variant="outline"
                                         size="icon-sm"
-                                        disabled={!newTag.trim()}
+                                        disabled={!newTag.trim() || applyBusy}
                                         aria-label="Create tag"
                                         onClick={submitNewTag}
                                     >
@@ -613,6 +624,7 @@ export function TagPickerSheet({
                                         placeholder="Create new tag"
                                         value={newTag}
                                         className="min-w-0 flex-1"
+                                        disabled={applyBusy}
                                         onChange={(event) => {
                                             setNewTag(event.target.value);
                                         }}
@@ -622,6 +634,7 @@ export function TagPickerSheet({
                                         placeholder="Type (optional)"
                                         value={newType}
                                         className="min-w-0 w-28 shrink-0"
+                                        disabled={applyBusy}
                                         onChange={(event) => {
                                             setNewType(event.target.value);
                                         }}
@@ -630,21 +643,51 @@ export function TagPickerSheet({
                                 </div>
                             </form>
                             <p className="text-xs text-muted-foreground">
-                                Tap a tag to add or remove it. The type field
-                                fills from the selected tab when you pick a
-                                custom type.
+                                {onApply ?
+                                    "Tap tags to stage changes. Apply saves once; closing also saves." :
+                                    "Tap a tag to add or remove it. The type field fills from the selected tab when you pick a custom type."}
                             </p>
+                            {onApply ? (
+                                <Button
+                                    type="button"
+                                    className="w-full"
+                                    disabled={!pendingChanges || applyBusy}
+                                    onClick={onApply}
+                                >
+                                    {applyBusy ?
+                                        "Saving…" :
+                                        pendingChanges ?
+                                            "Apply" :
+                                            "No changes"}
+                                </Button>
+                            ) : null}
                             {error ? (
                                 <Alert variant="destructive" className="py-2">
                                     <AlertDescription>{error}</AlertDescription>
                                 </Alert>
                             ) : null}
                         </SheetFooter>
-                    ) : error ? (
-                        <div className="shrink-0 border-t border-border p-4">
-                            <Alert variant="destructive" className="py-2">
-                                <AlertDescription>{error}</AlertDescription>
-                            </Alert>
+                    ) : onApply || error ? (
+                        <div className="shrink-0 space-y-3 border-t border-border p-4">
+                            {onApply ? (
+                                <Button
+                                    type="button"
+                                    className="w-full"
+                                    disabled={!pendingChanges || applyBusy}
+                                    onClick={onApply}
+                                >
+                                    {applyBusy ?
+                                        "Saving…" :
+                                        pendingChanges ?
+                                            "Apply" :
+                                            "No changes"}
+                                </Button>
+                            ) : null}
+                            {error ? (
+                                <Alert variant="destructive" className="py-2">
+                                    <AlertDescription>{error}</AlertDescription>
+                                </Alert>
+                            ) : null}
                         </div>
                     ) : null}
                 </div>
