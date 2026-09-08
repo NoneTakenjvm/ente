@@ -122,6 +122,9 @@ export const organizerUpdateForFile = (
 
 /**
  * Return a copy of {@link file} with organizer tags applied locally (no remote write).
+ *
+ * Preserves the existing pub-magic version when present. Ente versions start at
+ * 1 — never invent `0`, or a later PUT will 409 against a real server version.
  */
 export const fileWithOrganizerTags = (
     file: EnteFile,
@@ -135,7 +138,9 @@ export const fileWithOrganizerTags = (
     return {
         ...file,
         pubMagicMetadata: {
-            version: file.pubMagicMetadata?.version ?? 0,
+            version: file.pubMagicMetadata?.version && file.pubMagicMetadata.version > 0 ?
+                file.pubMagicMetadata.version :
+                1,
             count: file.pubMagicMetadata?.count ?? 0,
             data: mergedData as FilePublicMagicMetadataData,
         },

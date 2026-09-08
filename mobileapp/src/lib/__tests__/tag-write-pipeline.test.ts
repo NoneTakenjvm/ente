@@ -2,8 +2,9 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { EnteFile } from "ente-media/file";
 import { fileWithOrganizerTags } from "@/lib/tag-writes";
 
-const { updateFileTags, refetchFile } = vi.hoisted(() => ({
+const { updateFileTags, putFilesTags, refetchFile } = vi.hoisted(() => ({
     updateFileTags: vi.fn(),
+    putFilesTags: vi.fn(),
     refetchFile: vi.fn(),
 }));
 
@@ -20,6 +21,7 @@ vi.mock("@/core/metadata", () => ({
     },
     getPublicMetadata: (file: EnteFile) => file.pubMagicMetadata?.data ?? {},
     updateFileTags,
+    putFilesTags,
 }));
 
 vi.mock("@/core/api/files", () => ({
@@ -27,7 +29,7 @@ vi.mock("@/core/api/files", () => ({
 }));
 
 const stubFile = (id: number, tags: string[]): EnteFile =>
-    fileWithOrganizerTags({ id } as EnteFile, tags);
+    fileWithOrganizerTags({ id, key: `key-${id}` } as EnteFile, tags);
 
 describe("writeAndVerifyTags", () => {
     beforeEach(() => {
@@ -73,5 +75,72 @@ describe("writeAndVerifyTags", () => {
         expect(result.status).toBe("pending");
         expect(updateFileTags).toHaveBeenCalledTimes(2);
         expect(refetchFile).toHaveBeenCalledTimes(3);
+    });
+});
+
+describe("writeAndVerifyTagsBatch", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it("PUTs all files in one batch and marks them verified", async () => {
+        const { writeAndVerifyTagsBatch } = await import(
+            "@/lib/tag-write-pipeline"
+        );
+        const files = [stubFile(1, []), stubFile(2, [])];
+        const updated = [stubFile(1, ["a"]), stubFile(2, ["b"])];
+        putFilesTags.mockResolvedValue(updated);
+
+        const result = await writeAndVerifyTagsBatch(
+            {} as never,
+            [
+                {
+                    file: files[0]!,
+                    collectionKey: "k",
+                    intendedTags: ["a"],
+                },
+                {
+                    file: files[1]!,
+                    collectionKey: "k",
+                    intendedTags: ["b"],
+                },
+            ],
+        );
+
+        expect(putFilesTags).toHaveBeenCalledTimes(1);
+        expect(updateFileTags).not.toHaveBeenCalled();
+        expect(result.verified).toHaveLength(2);
+        expect(result.pending).toHaveLength(0);
+    });
+
+    it("falls back to per-file writes on batch version conflict", async () => {
+        const { writeAndVerifyTagsBatch } = await import(
+            "@/lib/tag-write-pipeline"
+        );
+        const { MetadataUpdateError } = await import("@/core/metadata");
+        const file = stubFile(1, []);
+        const verified = stubFile(1, ["a"]);
+
+        putFilesTags.mockRejectedValue(
+            new MetadataUpdateError("conflict", 409),
+        );
+        updateFileTags.mockResolvedValue(undefined);
+        refetchFile.mockResolvedValue(verified);
+
+        const result = await writeAndVerifyTagsBatch(
+            {} as never,
+            [
+                {
+                    file,
+                    collectionKey: "k",
+                    intendedTags: ["a"],
+                },
+            ],
+        );
+
+        expect(putFilesTags).toHaveBeenCalled();
+        expect(updateFileTags).toHaveBeenCalled();
+        expect(result.verified).toHaveLength(1);
+        expect(result.pending).toHaveLength(0);
     });
 });

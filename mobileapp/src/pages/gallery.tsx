@@ -462,9 +462,14 @@ export default function GalleryPage(): JSX.Element {
         [files],
     );
 
+    // Keep the selection while select mode is on — tag edits often drop files
+    // out of the active filter, and pruning would wipe a multi-select mid-edit.
     useEffect(() => {
+        if (selectionEnabled) {
+            return;
+        }
         pruneToVisible(visibleFileIds);
-    }, [pruneToVisible, visibleFileIds]);
+    }, [pruneToVisible, selectionEnabled, visibleFileIds]);
 
     useEffect(() => {
         return (): void => {

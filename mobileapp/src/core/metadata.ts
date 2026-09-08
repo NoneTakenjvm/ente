@@ -49,10 +49,8 @@ export const getPublicMetadata = (
 /**
  * Stamp a fresh edit timestamp into a public-metadata update.
  *
- * Every post-upload metadata write (tags, visibility, date edits, ...) records
- * when it happened under `editedAt`, so it can be used as a stable "last
- * edited" sort key. The caller merges the result into existing data, which
- * preserves any `uploadedAt` untouched.
+ * Used for user-visible edits that should affect "last edited" gallery sort
+ * (visibility is private metadata; tag-only writes intentionally skip this).
  */
 const withEditedAt = <T extends Record<string, unknown>>(
     updates: T,
@@ -61,36 +59,58 @@ const withEditedAt = <T extends Record<string, unknown>>(
     editedAt: Date.now() * 1000,
 });
 
-const putPublicMetadata = async (
-    http: HttpClient,
-    file: EnteFile,
-    data: FilePublicMagicMetadataData,
-): Promise<void> => {
-    const merged = createMagicMetadata(data, file.pubMagicMetadata?.version);
-    const magicMetadata = await encryptMagicMetadata(merged, file.key);
+type RemotePublicMagicMetadata = Awaited<
+    ReturnType<typeof encryptMagicMetadata>
+>;
 
+/**
+ * PUT one or more public-magic-metadata entries in a single request.
+ *
+ * Ente accepts up to 1000 items; the whole batch fails on any version conflict.
+ */
+export const putPublicMetadataList = async (
+    http: HttpClient,
+    metadataList: Array<{ id: number; magicMetadata: RemotePublicMagicMetadata }>,
+): Promise<void> => {
+    if (!metadataList.length) {
+        return;
+    }
     const res = await http.authFetchResponse(
         "/files/public-magic-metadata",
         undefined,
         {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                metadataList: [{ id: file.id, magicMetadata }],
-            }),
+            body: JSON.stringify({ metadataList }),
         },
     );
 
     if (!res.ok) {
         throw new MetadataUpdateError(
-            `Failed to update metadata for file ${file.id}`,
+            `Failed to update metadata for ${metadataList.length} file(s)`,
             res.status,
             parseRetryAfterMs(res.headers.get("Retry-After")),
         );
     }
+};
 
+const pubMagicVersionForPut = (file: EnteFile): number | undefined => {
+    const version = file.pubMagicMetadata?.version;
+    // Ente versions start at 1. Optimistic overlays must not send 0.
+    return version && version > 0 ? version : undefined;
+};
+
+const putPublicMetadata = async (
+    http: HttpClient,
+    file: EnteFile,
+    data: FilePublicMagicMetadataData,
+): Promise<void> => {
+    const merged = createMagicMetadata(data, pubMagicVersionForPut(file));
+    const magicMetadata = await encryptMagicMetadata(merged, file.key);
+    await putPublicMetadataList(http, [{ id: file.id, magicMetadata }]);
+    // Remote increments version after accepting the sent value.
     file.pubMagicMetadata = {
-        version: magicMetadata.version,
+        version: magicMetadata.version + 1,
         count: magicMetadata.count,
         data: merged.data as FilePublicMagicMetadataData,
     };
@@ -125,7 +145,7 @@ const putPrivateMetadata = async (
     }
 
     file.magicMetadata = {
-        version: magicMetadata.version,
+        version: magicMetadata.version + 1,
         count: magicMetadata.count,
         data: merged.data as FilePrivateMagicMetadataData,
     };
@@ -180,22 +200,97 @@ export const updateFileVisibility = async (
     throw new Error(`Failed to update visibility for file ${file.id}`);
 };
 
-const applyOrganizerTags = async (
-    http: HttpClient,
+const applyOrganizerTagsLocally = (
     file: EnteFile,
     mutator: TagMutator,
-): Promise<void> => {
+): FilePublicMagicMetadataData => {
     const tags = mutator(extractTags(file));
     const update = buildOrganizerUpdate(tags);
-    const mergedData = {
+    return {
         ...file.pubMagicMetadata?.data,
-        ...withEditedAt(update),
+        ...update,
     } as OrganizerPublicMetadata;
-    await putPublicMetadata(http, file, mergedData);
+};
+
+/**
+ * Encrypt organizer-tag updates for many files (no network).
+ *
+ * Works on shallow clones so in-flight encryption never mutates library state.
+ */
+export const prepareFilesTagMetadata = async (
+    updates: Array<{ file: EnteFile; intendedTags: string[] }>,
+): Promise<
+    Array<{
+        file: EnteFile;
+        mergedData: FilePublicMagicMetadataData;
+        magicMetadata: RemotePublicMagicMetadata;
+    }>
+> =>
+    Promise.all(
+        updates.map(async ({ file, intendedTags }) => {
+            const working: EnteFile = { ...file };
+            const mergedData = applyOrganizerTagsLocally(
+                working,
+                () => intendedTags,
+            );
+            const merged = createMagicMetadata(
+                mergedData,
+                pubMagicVersionForPut(working),
+            );
+            const magicMetadata = await encryptMagicMetadata(
+                merged,
+                working.key,
+            );
+            return {
+                file: working,
+                mergedData: merged.data as FilePublicMagicMetadataData,
+                magicMetadata,
+            };
+        }),
+    );
+
+/**
+ * Apply prepared tag metadata locally after a successful batch PUT.
+ */
+export const applyPreparedTagMetadata = (
+    prepared: Array<{
+        file: EnteFile;
+        mergedData: FilePublicMagicMetadataData;
+        magicMetadata: RemotePublicMagicMetadata;
+    }>,
+): EnteFile[] => {
+    for (const entry of prepared) {
+        entry.file.pubMagicMetadata = {
+            version: entry.magicMetadata.version + 1,
+            count: entry.magicMetadata.count,
+            data: entry.mergedData,
+        };
+    }
+    return prepared.map((entry) => entry.file);
+};
+
+/**
+ * PUT organizer tags for many files in one request (no conflict retry).
+ */
+export const putFilesTags = async (
+    http: HttpClient,
+    updates: Array<{ file: EnteFile; intendedTags: string[] }>,
+): Promise<EnteFile[]> => {
+    const prepared = await prepareFilesTagMetadata(updates);
+    await putPublicMetadataList(
+        http,
+        prepared.map((entry) => ({
+            id: entry.file.id,
+            magicMetadata: entry.magicMetadata,
+        })),
+    );
+    return applyPreparedTagMetadata(prepared);
 };
 
 /**
  * Apply a tag mutator and PUT organizer tags, refetching on version conflict.
+ *
+ * Tag-only writes do not bump `editedAt` (avoids gallery resort noise).
  */
 export const updateFileTags = async (
     http: HttpClient,
@@ -205,7 +300,8 @@ export const updateFileTags = async (
 ): Promise<EnteFile> => {
     for (let attempt = 0; attempt < maxConflictAttempts; attempt++) {
         try {
-            await applyOrganizerTags(http, file, mutator);
+            const mergedData = applyOrganizerTagsLocally(file, mutator);
+            await putPublicMetadata(http, file, mergedData);
             return file;
         } catch (error) {
             if (

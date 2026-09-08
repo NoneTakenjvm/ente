@@ -16,9 +16,10 @@ export const fileUploadSortTime = (file: EnteFile): number =>
 /**
  * Sort key by the file's last edit time, newest first.
  *
- * `editedAt` is bumped on every post-upload metadata write and derived
- * reupload. For legacy files without it, falls back to the file's
- * modification time, then its capture date.
+ * `editedAt` is bumped on non-tag public-metadata writes and derived
+ * reuploads. Tag-only updates intentionally leave it alone so gallery
+ * "edited" sort does not jump on every stamp. For legacy files without it,
+ * falls back to the file's modification time, then its capture date.
  */
 export const fileEditSortTime = (file: EnteFile): number =>
     file.pubMagicMetadata?.data.editedAt ??

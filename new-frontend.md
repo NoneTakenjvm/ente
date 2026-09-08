@@ -7,12 +7,27 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-08 |
-| **Last agent / session** | CLIP ViT-B/16 bake |
-| **Current milestone** | Post-M8 UX / kit nearness (CLIP) |
+| **Last agent / session** | Harden tag update queue |
+| **Current milestone** | Post-M8 UX |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Hard-refresh `127.0.0.1:3080`, footer `0.3.55`, full CLIP rescan (B/32 index discarded), QA kit nearness feel vs B/32. |
+| **Next recommended action** | Hard-refresh → Manage footer `0.3.58`; tag many photos one-by-one and confirm one batch PUT, no gallery jump, failures toast. |
 
 **This session shipped:**
+1. **Tag write robustness** — real `metadataList` batch PUTs (chunks of 100); single outbox writer (debounced flush + 60s retry); ack/remove outbox on verified write; failure toasts; tag-only writes no longer bump `editedAt`. Removed dual `tag-background-sync` / `tag-save-queue`. Follow-up harden: no version-0 PUTs, clone before mutate, drain try/catch. `APP_VERSION` → `0.3.58`.
+
+**Previous session (investigation):**
+1. Tag queue verdict: unreliable — one PUT/file, dual writers, outbox never acked, silent failures, editedAt gallery jumps.
+
+**Previous session shipped:**
+1. **Sync cursor / library atomicity** — `pullFiles` defers `saveCollectionSyncTime` until after `saveEncryptedFiles`. Single-flight `syncRemote`. `APP_VERSION` → `0.3.57`.
+
+**Previous session (investigation):**
+1. Partial library after sync — cursors advanced before encrypted snapshot; Force resync clears cursors.
+
+**Previous session shipped:**
+1. **Selection survives tag edits** — while select mode is on, gallery no longer prunes selection when files drop out of the active tag filter (so bulk remove/add keeps the same set). `APP_VERSION` → `0.3.56`.
+
+**Previous session shipped:**
 1. **CLIP ViT-B/16** — switch from `clip-vit-base-patch32` to `Xenova/clip-vit-base-patch16` (WebGPU `fp16`/`q4f16`, WASM `q8`). Model-id mismatch clears stored embeddings → full rescan. `APP_VERSION` → `0.3.55`.
 2. **WebGPU dtype fix** — do not load CLIP with `q8` on WebGPU (silent WASM fallback). Surface skip reason via toast + console. `0.3.54`.
 

@@ -31,6 +31,21 @@ export interface PullFilesResult {
 }
 
 /**
+ * Persist deferred per-collection cursors after the encrypted library snapshot.
+ *
+ * [Note: sync cursors after files] Advancing cursors before `saveEncryptedFiles`
+ * left albums marked fully synced while the on-disk library stayed truncated.
+ * The next open then early-skipped those albums until Force resync.
+ */
+const commitPendingSyncCursors = async (
+    pendingCursors: Map<number, number>,
+): Promise<void> => {
+    for (const [collectionId, sinceTime] of pendingCursors) {
+        await saveCollectionSyncTime(collectionId, sinceTime);
+    }
+};
+
+/**
  * Incrementally pull file changes for all collections and persist encrypted snapshots.
  */
 export const pullFiles = async (
@@ -41,6 +56,8 @@ export const pullFiles = async (
     const libraryById = new Map(
         dedupeFilesById(options.files).map((file) => [file.id, file]),
     );
+    /** Collection id → sinceTime; written only after encrypted files persist. */
+    const pendingCursors = new Map<number, number>();
 
     const targets = collections;
     const total = targets.length;
@@ -111,7 +128,7 @@ export const pullFiles = async (
                         decrypted,
                     );
 
-                    await saveCollectionSyncTime(collection.id, sinceTime);
+                    pendingCursors.set(collection.id, sinceTime);
                     didUpdate = true;
 
                     if (!hasMore) {
@@ -119,10 +136,7 @@ export const pullFiles = async (
                     }
                 }
 
-                await saveCollectionSyncTime(
-                    collection.id,
-                    collection.updationTime,
-                );
+                pendingCursors.set(collection.id, collection.updationTime);
             }),
         );
     }
@@ -131,6 +145,8 @@ export const pullFiles = async (
     if (didUpdate) {
         await saveEncryptedFiles(files, getSessionCacheKey());
     }
+    // Cursors only after a durable library snapshot (or when no file changes).
+    await commitPendingSyncCursors(pendingCursors);
 
     return {
         files,

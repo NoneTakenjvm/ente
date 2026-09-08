@@ -29,7 +29,6 @@ import {
 import type { CollectionFilesContext } from "@/core/api/collection-files";
 import { applyTagMutator, fileWithOrganizerTags, mergeTagNames, removeTagNames, replaceTagName, tagsForFile, type TagMutator } from "@/lib/tag-writes";
 import { extractTags } from "@/lib/tags";
-import { scheduleTagBackgroundSync } from "@/lib/tag-background-sync";
 import {
     applyOutboxTagsToFiles,
     ensureTagOutboxHydrated,
@@ -40,7 +39,7 @@ import {
     remapTagOutboxFileId,
     upsertTagOutboxEntry,
 } from "@/lib/tag-outbox";
-import { drainTagOutbox } from "@/lib/tag-outbox-runner";
+import { drainTagOutbox, requestTagOutboxFlush } from "@/lib/tag-outbox-runner";
 import { enqueueDerivedReplace } from "@/lib/derived-replace-queue";
 import {
     removeDerivedReplaceOutboxEntries,
@@ -234,16 +233,6 @@ const rebuildFavoritesFromLibrary = (
     useFavoritesStore.getState().rebuildFromLibrary(userId, collections, allFiles);
 };
 
-const createTagSyncContext = (
-    get: () => LibraryState,
-): Parameters<typeof scheduleTagBackgroundSync>[2] => ({
-    getHttp: () => getEnteCore().getHttpClient(),
-    getFile: (fileId: number) =>
-        get().allFiles.find((entry) => entry.id === fileId),
-    getCollections: () => get().collections,
-    patchFile: (file: EnteFile) => get().patchFile(file),
-});
-
 const applyOptimisticBatchTags = (
     set: (partial: Partial<LibraryState>) => void,
     get: () => LibraryState,
@@ -259,11 +248,11 @@ const applyOptimisticBatchTags = (
     });
     set({ allFiles: optimisticFiles });
     void saveEncryptedFiles(optimisticFiles, getSessionCacheKey());
-    for (const file of optimisticFiles) {
-        if (fileIds.has(file.id)) {
-            void upsertTagOutboxEntry(file.id, extractTags(file));
-        }
-    }
+    void Promise.all(
+        optimisticFiles
+            .filter((file) => fileIds.has(file.id))
+            .map((file) => upsertTagOutboxEntry(file.id, extractTags(file))),
+    );
 };
 
 const initialState: Pick<
@@ -446,6 +435,12 @@ const remapOutboxesAfterReplace = async (
     ]);
 };
 
+/**
+ * Single-flight remote sync. Concurrent callers share one run so overlapping
+ * bootstrap / outbox drains cannot race cursors against encrypted file writes.
+ */
+let syncRemoteInFlight: Promise<void> | undefined;
+
 const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
     ...initialState,
 
@@ -511,102 +506,123 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
     },
 
     syncRemote: async (): Promise<void> => {
-        set({
-            syncStatus: "syncing",
-            syncError: undefined,
-            syncProgress: { current: 0, total: 0 },
-        });
+        if (syncRemoteInFlight) {
+            return syncRemoteInFlight;
+        }
 
-        try {
-            let { collections, allFiles } = get();
-
-            const collectionsPull = await pullCollections(collections);
-            collections = collectionsPull.collections;
-
-            const core = getEnteCore();
-            const organizerBootstrap = await core.bootstrapOrganizerConfig(
-                collections,
-            );
-            if (organizerBootstrap.created) {
-                collections = [
-                    ...collections.filter(
-                        (collection) =>
-                            collection.id !== organizerBootstrap.collection.id,
-                    ),
-                    organizerBootstrap.collection,
-                ];
-                await saveEncryptedCollections(
-                    collections,
-                    getSessionCacheKey(),
-                );
-            }
-            useTagStore.getState().hydrateTagTypes(
-                organizerBootstrap.config.tagTypes,
-            );
-            useTagStore.getState().hydrateRegisteredTags(
-                organizerBootstrap.config.registeredTags,
-            );
-            void import("@/stores/tag-speed-store").then(({ useTagSpeedStore }) => {
-                useTagSpeedStore.getState().hydrateFromOrganizerConfig({
-                    tagPresets: organizerBootstrap.config.tagPresets,
-                    pinnedTags: organizerBootstrap.config.pinnedTags,
-                });
-            });
-            useAlbumStore.getState().hydrateFromOrganizerConfig(
-                organizerBootstrap.config.queryAlbums,
-            );
-            useSettingsStore.getState().hydrateFromOrganizerConfig(
-                organizerBootstrap.config,
-            );
-
-            const filesPull = await pullFiles({
-                collections,
-                files: allFiles,
-                onProgress: (current, total) => {
-                    set({ syncProgress: { current, total } });
-                },
-            });
-
-            allFiles = filesPull.files;
-            await ensureTagOutboxHydrated();
-            await ensureVisibilityOutboxHydrated();
-            await reconcileTagOutboxWithFiles(allFiles);
-            await reconcileVisibilityOutboxWithFiles(allFiles);
-            allFiles = applyOutboxTagsToFiles(allFiles);
-            allFiles = applyOutboxVisibilityToFiles(allFiles);
-            useTagStore.getState().rebuildFromFiles(allFiles);
-            rebuildFavoritesFromLibrary(
-                getEnteCore().getUserID(),
-                collections,
-                allFiles,
-            );
-
+        syncRemoteInFlight = (async (): Promise<void> => {
             set({
-                collections,
-                allFiles,
-                syncStatus: "success",
+                syncStatus: "syncing",
+                syncError: undefined,
                 syncProgress: { current: 0, total: 0 },
             });
-            await saveEncryptedFiles(allFiles, getSessionCacheKey());
 
-            void import("@/stores/trash-store").then(({ useTrashStore }) => {
-                void useTrashStore.getState().syncTrash(collections);
-            });
-        } catch (error) {
-            const offline =
-                typeof navigator !== "undefined" && !navigator.onLine;
-            set({
-                syncStatus: offline ? "offline" : "error",
-                syncError:
-                    error instanceof Error ? error.message : "Sync failed",
-            });
-            if (!offline) {
-                throw error;
+            try {
+                let { collections, allFiles } = get();
+
+                const collectionsPull = await pullCollections(collections);
+                collections = collectionsPull.collections;
+
+                const core = getEnteCore();
+                const organizerBootstrap = await core.bootstrapOrganizerConfig(
+                    collections,
+                );
+                if (organizerBootstrap.created) {
+                    collections = [
+                        ...collections.filter(
+                            (collection) =>
+                                collection.id !==
+                                organizerBootstrap.collection.id,
+                        ),
+                        organizerBootstrap.collection,
+                    ];
+                    await saveEncryptedCollections(
+                        collections,
+                        getSessionCacheKey(),
+                    );
+                }
+                useTagStore.getState().hydrateTagTypes(
+                    organizerBootstrap.config.tagTypes,
+                );
+                useTagStore.getState().hydrateRegisteredTags(
+                    organizerBootstrap.config.registeredTags,
+                );
+                void import("@/stores/tag-speed-store").then(
+                    ({ useTagSpeedStore }) => {
+                        useTagSpeedStore.getState().hydrateFromOrganizerConfig({
+                            tagPresets: organizerBootstrap.config.tagPresets,
+                            pinnedTags: organizerBootstrap.config.pinnedTags,
+                        });
+                    },
+                );
+                useAlbumStore.getState().hydrateFromOrganizerConfig(
+                    organizerBootstrap.config.queryAlbums,
+                );
+                useSettingsStore.getState().hydrateFromOrganizerConfig(
+                    organizerBootstrap.config,
+                );
+
+                const filesPull = await pullFiles({
+                    collections,
+                    files: allFiles,
+                    onProgress: (current, total) => {
+                        set({ syncProgress: { current, total } });
+                    },
+                });
+
+                allFiles = filesPull.files;
+                await ensureTagOutboxHydrated();
+                await ensureVisibilityOutboxHydrated();
+                await reconcileTagOutboxWithFiles(allFiles);
+                await reconcileVisibilityOutboxWithFiles(allFiles);
+                allFiles = applyOutboxTagsToFiles(allFiles);
+                allFiles = applyOutboxVisibilityToFiles(allFiles);
+                useTagStore.getState().rebuildFromFiles(allFiles);
+                rebuildFavoritesFromLibrary(
+                    getEnteCore().getUserID(),
+                    collections,
+                    allFiles,
+                );
+
+                set({
+                    collections,
+                    allFiles,
+                    syncStatus: "success",
+                    syncProgress: { current: 0, total: 0 },
+                });
+                await saveEncryptedFiles(allFiles, getSessionCacheKey());
+
+                void import("@/stores/trash-store").then(({ useTrashStore }) => {
+                    void useTrashStore.getState().syncTrash(collections);
+                });
+            } catch (error) {
+                const offline =
+                    typeof navigator !== "undefined" && !navigator.onLine;
+                set({
+                    syncStatus: offline ? "offline" : "error",
+                    syncError:
+                        error instanceof Error ? error.message : "Sync failed",
+                });
+                if (!offline) {
+                    throw error;
+                }
             }
-        }
+        })().finally(() => {
+            syncRemoteInFlight = undefined;
+        });
+
+        return syncRemoteInFlight;
     },
 
     forceResyncLibrary: async (): Promise<void> => {
+        // Wait out any in-flight sync so it cannot rewrite cursors after we clear.
+        if (syncRemoteInFlight) {
+            try {
+                await syncRemoteInFlight;
+            } catch {
+                // Ignore; Force resync will pull from scratch next.
+            }
+        }
         await clearAllSyncCursors();
         await get().syncRemote();
     },
@@ -661,11 +677,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         void saveEncryptedFiles(optimisticFiles, getSessionCacheKey());
 
         await upsertTagOutboxEntry(fileId, intendedTags);
-        scheduleTagBackgroundSync(
-            fileId,
-            intendedTags,
-            createTagSyncContext(get),
-        );
+        requestTagOutboxFlush();
     },
 
     renameTag: async (

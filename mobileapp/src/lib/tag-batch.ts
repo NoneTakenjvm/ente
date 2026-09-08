@@ -1,8 +1,7 @@
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
-import { mapBatched } from "@/lib/batched";
-import { upsertTagOutboxEntry } from "@/lib/tag-outbox";
-import { writeAndVerifyTags } from "@/lib/tag-write-pipeline";
+import { getTagOutboxEntries, upsertTagOutboxEntry } from "@/lib/tag-outbox";
+import { flushTagOutboxNow } from "@/lib/tag-outbox-runner";
 import {
     mergeTagNames,
     removeTagNames,
@@ -18,78 +17,40 @@ export interface BatchTagResult {
     errors: string[];
 }
 
-const collectionKeyFor = (
-    file: EnteFile,
-    collections: Collection[],
-): string | undefined => {
-    const collection = collections.find((entry) => entry.id === file.collectionID);
-    return collection?.key;
-};
-
-const syncFileTags = async (
-    http: HttpClient,
-    file: EnteFile,
-    collections: Collection[],
-    intendedTags: string[],
-): Promise<EnteFile | undefined> => {
-    const collectionKey = collectionKeyFor(file, collections);
-    if (!collectionKey) {
-        return undefined;
-    }
-    await upsertTagOutboxEntry(file.id, intendedTags);
-    const result = await writeAndVerifyTags(
-        http,
-        file,
-        collectionKey,
-        intendedTags,
-    );
-    if (result.status === "verified") {
-        return result.file;
-    }
-    return undefined;
-};
-
+/**
+ * Queue each file's intended tags and flush the shared outbox (batched PUTs).
+ *
+ * Library patching happens inside the outbox runner on verified writes.
+ */
 const runBatchTagUpdate = async (
-    http: HttpClient,
+    _http: HttpClient,
     files: EnteFile[],
-    collections: Collection[],
+    _collections: Collection[],
     mutator: TagMutator,
-    onFileVerified?: (file: EnteFile) => Promise<void>,
+    _onFileVerified?: (file: EnteFile) => Promise<void>,
     onProgress?: (completed: number, total: number) => void,
 ): Promise<BatchTagResult> => {
+    const targetIds = new Set(files.map((file) => file.id));
     const errors: string[] = [];
-    let succeeded = 0;
-    let failed = 0;
 
-    await mapBatched(
-        files,
-        async (file) => {
-            const intendedTags = tagsForFile(file, mutator);
-            try {
-                const verifiedFile = await syncFileTags(
-                    http,
-                    file,
-                    collections,
-                    intendedTags,
-                );
-                if (verifiedFile) {
-                    succeeded += 1;
-                    await onFileVerified?.(verifiedFile);
-                } else {
-                    failed += 1;
-                    errors.push(`${file.id}: verification pending`);
-                }
-            } catch (error) {
-                failed += 1;
-                errors.push(
-                    error instanceof Error ?
-                        `${file.id}: ${error.message}` :
-                        `${file.id}: update failed`,
-                );
-            }
-        },
-        { concurrency: 2, onProgress },
+    for (const file of files) {
+        await upsertTagOutboxEntry(file.id, tagsForFile(file, mutator));
+    }
+
+    onProgress?.(0, files.length);
+    await flushTagOutboxNow({ notify: false });
+
+    const pendingIds = new Set(
+        getTagOutboxEntries()
+            .map((entry) => entry.fileId)
+            .filter((fileId) => targetIds.has(fileId)),
     );
+    const failed = pendingIds.size;
+    const succeeded = files.length - failed;
+    for (const fileId of pendingIds) {
+        errors.push(`${fileId}: sync pending`);
+    }
+    onProgress?.(succeeded, files.length);
 
     return { succeeded, failed, errors };
 };
@@ -156,7 +117,7 @@ export const mergeTagsOnFiles = async (
 };
 
 /**
- * Apply a tag mutator to each file and sync tags to remote.
+ * Queue tag mutators on each file and flush the shared outbox (batched PUTs).
  */
 export const applyTagMutatorOnFiles = async (
     http: HttpClient,
