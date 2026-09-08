@@ -7,12 +7,18 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-08 |
-| **Last agent / session** | Harden tag update queue |
+| **Last agent / session** | ONLY kit population counts |
 | **Current milestone** | Post-M8 UX |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Hard-refresh → Manage footer `0.3.58`; tag many photos one-by-one and confirm one batch PUT, no gallery jump, failures toast. |
+| **Next recommended action** | Hard-refresh → Manage footer `0.3.60`; Gallery Tags → Kits: toggle ONLY and confirm badges/sort drop to exact tag-set populations. |
 
 **This session shipped:**
+1. **ONLY kit population** — gallery Kits picker badges and sort use exact user-tag-set counts when match mode is ONLY (AND/OR keep superset). `APP_VERSION` → `0.3.60`.
+
+**Previous session shipped:**
+1. **PC close X for tag/stamp sheets** — `useCoarsePointer`; TagPickerSheet shows Sheet close X on fine pointer and keeps drag-down dismiss on coarse. `APP_VERSION` → `0.3.59`.
+
+**Previous session shipped:**
 1. **Tag write robustness** — real `metadataList` batch PUTs (chunks of 100); single outbox writer (debounced flush + 60s retry); ack/remove outbox on verified write; failure toasts; tag-only writes no longer bump `editedAt`. Removed dual `tag-background-sync` / `tag-save-queue`. Follow-up harden: no version-0 PUTs, clone before mutate, drain try/catch. `APP_VERSION` → `0.3.58`.
 
 **Previous session (investigation):**

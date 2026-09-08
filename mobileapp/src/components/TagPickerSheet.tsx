@@ -36,6 +36,7 @@ import {
 import { normalizeTagName } from "@/lib/tag-writes";
 import { isReservedTag, tagFileCount } from "@/lib/tags";
 import { cn } from "@/lib/utils";
+import { useCoarsePointer } from "@/hooks/use-coarse-pointer";
 import { useVisualViewportSheetLayout } from "@/hooks/use-visual-viewport-sheet-layout";
 import { useTagStore } from "@/stores/tag-store";
 import type { EnteFile } from "ente-media/file";
@@ -120,6 +121,7 @@ export function TagPickerSheet({
         open,
         0.75,
     );
+    const isCoarsePointer = useCoarsePointer();
 
     const isKitsTab = selectedType === KITS_TAB;
 
@@ -203,7 +205,7 @@ export function TagPickerSheet({
     };
 
     useEffect(() => {
-        if (!open) {
+        if (!open || !isCoarsePointer) {
             return;
         }
 
@@ -294,12 +296,15 @@ export function TagPickerSheet({
             document.removeEventListener("pointerup", onPointerEnd);
             document.removeEventListener("pointercancel", onPointerEnd);
         };
-    }, [open, defaultToKits, showKitsTab]);
+    }, [open, isCoarsePointer, defaultToKits, showKitsTab]);
 
     const handleDismissPointerDown = (
         event: ReactPointerEvent<HTMLElement>,
         fromHeader: boolean,
     ): void => {
+        if (!isCoarsePointer) {
+            return;
+        }
         if (event.pointerType === "mouse" && event.button !== 0) {
             return;
         }
@@ -344,7 +349,7 @@ export function TagPickerSheet({
         <Sheet open={open} onOpenChange={handleOpenChange}>
             <SheetContent
                 side="bottom"
-                showCloseButton={false}
+                showCloseButton={!isCoarsePointer}
                 className={cn(
                     "flex flex-col gap-0 overflow-hidden rounded-t-xl p-0",
                     (isDismissDragging || dragPx > 0) && "transition-none",
@@ -373,16 +378,28 @@ export function TagPickerSheet({
                 >
                     <SheetHeader className="shrink-0 gap-2 border-b border-border px-4 pt-3 pb-3">
                         <div
-                            className="touch-none"
-                            onPointerDown={(event) => {
-                                handleDismissPointerDown(event, true);
-                            }}
+                            className={isCoarsePointer ? "touch-none" : undefined}
+                            onPointerDown={
+                                isCoarsePointer ?
+                                    (event) => {
+                                        handleDismissPointerDown(event, true);
+                                    } :
+                                    undefined
+                            }
                         >
-                            <div
-                                className="mx-auto mb-1 h-1 w-10 shrink-0 rounded-full bg-muted-foreground/30"
-                                aria-hidden="true"
-                            />
-                            <SheetTitle>Tags</SheetTitle>
+                            {isCoarsePointer ? (
+                                <div
+                                    className="mx-auto mb-1 h-1 w-10 shrink-0 rounded-full bg-muted-foreground/30"
+                                    aria-hidden="true"
+                                />
+                            ) : null}
+                            <SheetTitle
+                                className={
+                                    isCoarsePointer ? undefined : "pr-10"
+                                }
+                            >
+                                Tags
+                            </SheetTitle>
                             {batchSelectionHint ? (
                                 <p className="text-left text-xs text-muted-foreground">
                                     {batchSelectionHint}

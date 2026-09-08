@@ -48,7 +48,7 @@ export const normalizePresetTags = (tags: string[]): string[] => {
 };
 
 /**
- * How many files already have every tag in the kit.
+ * How many files already have every tag in the kit (extras allowed).
  */
 export const countFilesMatchingKit = (
     files: EnteFile[],
@@ -68,21 +68,61 @@ export const countFilesMatchingKit = (
 };
 
 /**
- * Sort kits by how many of `files` fully match, then by name.
+ * True when two tag lists are the same set (order-independent).
+ */
+const tagSetsEqual = (left: string[], right: string[]): boolean => {
+    if (left.length !== right.length) {
+        return false;
+    }
+    const rightSet = new Set(right);
+    return left.every((tag) => rightSet.has(tag));
+};
+
+/**
+ * How many files whose user tags are exactly the kit tag set (ONLY semantics).
+ */
+export const countFilesMatchingKitExact = (
+    files: EnteFile[],
+    kitTags: string[],
+): number => {
+    if (!kitTags.length || !files.length) {
+        return 0;
+    }
+    const required = [...new Set(kitTags)];
+    let matched = 0;
+    for (const file of files) {
+        if (tagSetsEqual(extractUserTags(file), required)) {
+            matched += 1;
+        }
+    }
+    return matched;
+};
+
+export interface SortPresetsByMatchCountOptions {
+    /** When true, rank by exact tag-set matches (ONLY); default is superset. */
+    exact?: boolean;
+}
+
+/**
+ * Sort kits by how many of `files` match, then by name.
  */
 export const sortPresetsByMatchCount = (
     presets: TagPreset[],
     files: EnteFile[],
-): TagPreset[] =>
-    [...presets].sort((a, b) => {
-        const scoreA = countFilesMatchingKit(files, a.tags);
-        const scoreB = countFilesMatchingKit(files, b.tags);
+    options?: SortPresetsByMatchCountOptions,
+): TagPreset[] => {
+    const score = options?.exact ?
+        countFilesMatchingKitExact :
+        countFilesMatchingKit;
+    return [...presets].sort((a, b) => {
+        const scoreA = score(files, a.tags);
+        const scoreB = score(files, b.tags);
         if (scoreB !== scoreA) {
             return scoreB - scoreA;
         }
         return a.name.localeCompare(b.name);
     });
-
+};
 /**
  * Canonical key for a tag set (order-independent).
  */

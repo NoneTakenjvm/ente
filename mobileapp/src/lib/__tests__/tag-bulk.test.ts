@@ -6,6 +6,7 @@ import {
 } from "@/lib/tag-bulk";
 import {
     countFilesMatchingKit,
+    countFilesMatchingKitExact,
     formatKitSuggestionName,
     newTagPresetId,
     normalizePresetTags,
@@ -57,6 +58,32 @@ describe("tag-presets", () => {
         );
         expect(sorted.map((preset) => preset.id)).toEqual(["2", "1", "3"]);
         expect(countFilesMatchingKit(files, ["people", "vietnam"])).toBe(2);
+    });
+
+    it("countFilesMatchingKitExact uses ONLY tag-set semantics", () => {
+        const files = [
+            stubFile(1, ["people", "vietnam"]),
+            stubFile(2, ["people"]),
+            stubFile(3, ["people", "vietnam", "travel"]),
+        ];
+        expect(countFilesMatchingKit(files, ["people", "vietnam"])).toBe(2);
+        expect(countFilesMatchingKitExact(files, ["people", "vietnam"])).toBe(
+            1,
+        );
+        const sortedExact = sortPresetsByMatchCount(
+            [
+                { id: "1", name: "Full", tags: ["people", "vietnam"] },
+                { id: "2", name: "People", tags: ["people"] },
+                { id: "3", name: "Rare", tags: ["travel", "selfie"] },
+            ],
+            files,
+            { exact: true },
+        );
+        expect(sortedExact.map((preset) => preset.id)).toEqual([
+            "1",
+            "2",
+            "3",
+        ]);
     });
 
     it("suggestTagKits ranks exact tag sets only, not pairs", () => {
