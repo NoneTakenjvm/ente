@@ -17,6 +17,7 @@ import {
 } from "@/lib/tag-types";
 import {
     countFilesMatchingKit,
+    countFilesMatchingKitExact,
     KITS_TAB,
     sortPresetsByMatchCount,
     type TagPreset,
@@ -114,13 +115,6 @@ export function TagClausePicker({
         [tags, tagTypeByName, selectedType, fileIdsByTag, isKitsTab],
     );
 
-    const rankedPresets = useMemo((): TagPreset[] => {
-        if (!presets.length) {
-            return [];
-        }
-        return sortPresetsByMatchCount(presets, allFiles);
-    }, [allFiles, presets]);
-
     const scopedGroup = useMemo(
         (): ReturnType<typeof findTagFilterGroupById> =>
             targetGroupId ?
@@ -144,6 +138,15 @@ export function TagClausePicker({
     const showRootJoinToggle =
         isRootPicker && isFlatRoot && onSetRootOp !== undefined;
     const isOnlyMode = activeGroup.op === "only";
+
+    const rankedPresets = useMemo((): TagPreset[] => {
+        if (!presets.length) {
+            return [];
+        }
+        return sortPresetsByMatchCount(presets, allFiles, {
+            exact: isOnlyMode,
+        });
+    }, [allFiles, isOnlyMode, presets]);
 
     const resolveMode = (tag: string): TagFilterMode | null => {
         if (scopedGroup) {
@@ -267,10 +270,15 @@ export function TagClausePicker({
                                         activeGroup,
                                         preset.tags,
                                     );
-                                    const count = countFilesMatchingKit(
-                                        allFiles,
-                                        preset.tags,
-                                    );
+                                    const count = isOnlyMode ?
+                                        countFilesMatchingKitExact(
+                                            allFiles,
+                                            preset.tags,
+                                        ) :
+                                        countFilesMatchingKit(
+                                            allFiles,
+                                            preset.tags,
+                                        );
                                     return (
                                         <li
                                             key={preset.id}
