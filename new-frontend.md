@@ -10,10 +10,10 @@
 | **Last agent / session** | Audit staged + commit/push + CI |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | After CI green: hard-refresh → Manage footer `0.3.84`; Kit likeness → Rival kit penalties toggle. |
+| **Next recommended action** | Hard-refresh → Manage footer `0.3.84`; Kit likeness → Rival kit penalties toggle. |
 
 **This session shipped:**
-1. AGENTS.md audit of staged nearness/relative/outbox/CLIP batch; minor doc/import tidy; commit + push; watch `mobileapp-deploy`.
+1. AGENTS.md audit of staged nearness/relative/outbox/CLIP batch; minor doc/import tidy; committed + pushed `4867b46`; Deploy (NTPhotos) run 41 **success**.
 
 **Previous session shipped:**
 1. Stopped local preview on `:3080`.
