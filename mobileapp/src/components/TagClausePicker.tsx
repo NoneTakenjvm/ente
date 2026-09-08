@@ -18,6 +18,7 @@ import {
 import {
     countFilesMatchingKit,
     KITS_TAB,
+    sortPresetsByMatchCount,
     type TagPreset,
 } from "@/lib/tag-presets";
 import { kitTagsAreIncluded } from "@/lib/tag-filter-mutations";
@@ -117,8 +118,8 @@ export function TagClausePicker({
         if (!presets.length) {
             return [];
         }
-        return [...presets].sort((a, b) => a.name.localeCompare(b.name));
-    }, [presets]);
+        return sortPresetsByMatchCount(presets, allFiles);
+    }, [allFiles, presets]);
 
     const scopedGroup = useMemo(
         (): ReturnType<typeof findTagFilterGroupById> =>

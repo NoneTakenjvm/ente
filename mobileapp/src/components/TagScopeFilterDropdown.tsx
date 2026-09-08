@@ -348,7 +348,7 @@ export function TagScopeFilterDropdown({
                         onKeyDown={(event) => event.stopPropagation()}
                         onClick={(event) => event.stopPropagation()}
                     />
-                    <div className="max-h-40 overflow-y-auto overscroll-contain">
+                    <div className="max-h-52 overflow-auto overscroll-contain">
                         {kitPresets.length === 0 ? (
                             <p className="px-1 py-2 text-xs text-muted-foreground">
                                 Create kits in Manage → Tags
@@ -366,8 +366,8 @@ export function TagScopeFilterDropdown({
                                         type="button"
                                         className={
                                             selected ?
-                                                "flex w-full items-center rounded-md bg-accent px-2 py-1.5 text-left text-sm text-accent-foreground" :
-                                                "flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/60"
+                                                "flex w-max min-w-full items-center rounded-md bg-accent px-2 py-1.5 text-left text-sm text-accent-foreground" :
+                                                "flex w-max min-w-full items-center rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/60"
                                         }
                                         onClick={() => {
                                             onKitNearnessPresetIdChange(preset.id);
@@ -375,7 +375,7 @@ export function TagScopeFilterDropdown({
                                             setKitQuery("");
                                         }}
                                     >
-                                        <span className="truncate">
+                                        <span className="whitespace-nowrap">
                                             {kitLabel(preset)}
                                         </span>
                                     </button>
@@ -400,7 +400,7 @@ export function TagScopeFilterDropdown({
                 <div className="flex flex-col gap-1.5 px-1 pb-2">
                     {selectedKit ? (
                         <>
-                            <p className="truncate px-1.5 text-sm font-medium">
+                            <p className="max-h-16 overflow-auto px-1.5 text-sm font-medium break-words">
                                 {kitLabel(selectedKit)}
                             </p>
                             <div className="flex flex-wrap gap-1.5 px-1">
@@ -533,7 +533,15 @@ export function TagScopeFilterDropdown({
                     </Button>
                 }
             />
-            <DropdownMenuContent align="start" className="w-56 p-1.5">
+            <DropdownMenuContent
+                align="start"
+                className={cn(
+                    "p-1.5",
+                    kitPickerOpen ?
+                        "w-[min(100vw-1.5rem,24rem)] max-w-[min(100vw-1.5rem,24rem)]" :
+                        "w-56",
+                )}
+            >
                 {showSort ? (
                     <div className="flex flex-col gap-2">
                         <div
