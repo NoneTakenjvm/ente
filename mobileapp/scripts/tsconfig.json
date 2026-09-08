@@ -13,5 +13,5 @@
             "ente-base/crypto": ["../src/core/crypto-shim.ts"]
         }
     },
-    "include": ["./**/*.ts", "../src/core/**/*.ts"]
+    "include": ["./**/*.ts", "../src/lib/**/*.ts", "../src/core/**/*.ts"]
 }

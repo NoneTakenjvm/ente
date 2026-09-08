@@ -44,8 +44,10 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Switch } from "@/components/ui/switch";
 import {
     DEFAULT_TAG_TYPE,
+    isTagIncludedInKitNearness,
     normalizeTagTypeName,
     tagsGroupedByType,
     typeForTag,
@@ -66,7 +68,13 @@ export function ManageTagsPanel(): JSX.Element {
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
     const tagTypes = useTagStore((s) => s.tagTypes);
     const tagTypeByName = useTagStore((s) => s.tagTypeByName);
+    const includeInKitNearnessByName = useTagStore(
+        (s) => s.includeInKitNearnessByName,
+    );
     const setTagType = useTagStore((s) => s.setTagType);
+    const setIncludeInKitNearness = useTagStore(
+        (s) => s.setIncludeInKitNearness,
+    );
     const ensureTagType = useTagStore((s) => s.ensureTagType);
     const registerTag = useTagStore((s) => s.registerTag);
     const allFiles = useLibraryStore((s) => s.allFiles);
@@ -260,6 +268,19 @@ export function ManageTagsPanel(): JSX.Element {
                                     </option>
                                 ))}
                             </select>
+                            <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                                <Switch
+                                    checked={isTagIncludedInKitNearness(
+                                        tag,
+                                        includeInKitNearnessByName,
+                                    )}
+                                    onCheckedChange={(checked) => {
+                                        setIncludeInKitNearness(tag, checked);
+                                    }}
+                                    aria-label={`Include ${tag} in kit nearness`}
+                                />
+                                Kit nearness
+                            </label>
                         </div>
                         <div className="flex gap-2">
                             <Button

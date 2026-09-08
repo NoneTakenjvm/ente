@@ -290,3 +290,32 @@ export const saveEncryptedTrashCollectionKeys = async (
         await encryptCachePayload(keys, cacheKey),
     );
 };
+
+/** CLIP vectors for kit nearness ranking (and corpus export). */
+export interface PersistedEmbeddingIndex {
+    version: 1;
+    modelId: string;
+    dims: number;
+    /** fileId → L2-normalized float embedding */
+    entries: Record<number, number[]>;
+}
+
+export const loadEncryptedEmbeddingIndex = async (
+    cacheKey: string,
+): Promise<PersistedEmbeddingIndex | undefined> => {
+    const payload = await getEncrypted("embeddingIndex");
+    if (!payload) {
+        return undefined;
+    }
+    return decryptCachePayload<PersistedEmbeddingIndex>(payload, cacheKey);
+};
+
+export const saveEncryptedEmbeddingIndex = async (
+    index: PersistedEmbeddingIndex,
+    cacheKey: string,
+): Promise<void> => {
+    await putEncrypted(
+        "embeddingIndex",
+        await encryptCachePayload(index, cacheKey),
+    );
+};

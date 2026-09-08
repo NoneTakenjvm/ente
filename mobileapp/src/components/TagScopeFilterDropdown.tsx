@@ -53,6 +53,11 @@ interface TagScopeFilterDropdownProps {
     onKitNearnessPresetIdChange?: (presetId: string | undefined) => void;
     /** Rebuild frozen kit nearness order from the current library. */
     onKitNearnessReapply?: () => void;
+    /**
+     * Best-fit share of CLIP-embedded library files per kit id (0..1). Used to
+     * order the kit picker and append `(x%)` to kit names.
+     */
+    kitNearnessFitShareById?: ReadonlyMap<string, number>;
 }
 
 const isTagScope = (value: unknown): value is TagScope =>
@@ -98,6 +103,7 @@ export function TagScopeFilterDropdown({
     kitNearnessPresetId,
     onKitNearnessPresetIdChange,
     onKitNearnessReapply,
+    kitNearnessFitShareById,
 }: TagScopeFilterDropdownProps): JSX.Element {
     const storeFilter = useTagStore((s) => s.tagFilter);
     const setTagScope = useTagStore((s) => s.setTagScope);
@@ -133,15 +139,32 @@ export function TagScopeFilterDropdown({
 
     const filteredKits = useMemo((): TagPreset[] => {
         const query = kitQuery.trim().toLowerCase();
-        if (!query) {
-            return kitPresets;
+        const matched = !query ?
+            [...kitPresets] :
+            kitPresets.filter(
+                (preset) =>
+                    preset.name.toLowerCase().includes(query) ||
+                      preset.tags.some((tag) =>
+                          tag.toLowerCase().includes(query)),
+            );
+        matched.sort((a, b) => {
+            const shareA = kitNearnessFitShareById?.get(a.id) ?? 0;
+            const shareB = kitNearnessFitShareById?.get(b.id) ?? 0;
+            if (shareB !== shareA) {
+                return shareB - shareA;
+            }
+            return a.name.localeCompare(b.name);
+        });
+        return matched;
+    }, [kitNearnessFitShareById, kitPresets, kitQuery]);
+
+    const kitLabel = (preset: TagPreset): string => {
+        const share = kitNearnessFitShareById?.get(preset.id);
+        if (share === undefined) {
+            return preset.name;
         }
-        return kitPresets.filter(
-            (preset) =>
-                preset.name.toLowerCase().includes(query) ||
-                preset.tags.some((tag) => tag.toLowerCase().includes(query)),
-        );
-    }, [kitPresets, kitQuery]);
+        return `${preset.name} (${Math.round(Math.max(0, Math.min(1, share)) * 100)}%)`;
+    };
 
     const filterActive =
         tagScope !== "all" ||
@@ -352,7 +375,9 @@ export function TagScopeFilterDropdown({
                                             setKitQuery("");
                                         }}
                                     >
-                                        <span className="truncate">{preset.name}</span>
+                                        <span className="truncate">
+                                            {kitLabel(preset)}
+                                        </span>
                                     </button>
                                 );
                             })
@@ -376,7 +401,7 @@ export function TagScopeFilterDropdown({
                     {selectedKit ? (
                         <>
                             <p className="truncate px-1.5 text-sm font-medium">
-                                {selectedKit.name}
+                                {kitLabel(selectedKit)}
                             </p>
                             <div className="flex flex-wrap gap-1.5 px-1">
                                 <Button

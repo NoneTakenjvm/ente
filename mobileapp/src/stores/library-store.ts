@@ -13,6 +13,7 @@ import {
 import { initSessionCacheKey, getSessionCacheKey } from "@/lib/cache-key";
 import { pullCollections } from "@/lib/sync/pull-collections";
 import { pullFiles } from "@/lib/sync/pull-files";
+import { clearAllSyncCursors } from "@/db/cursors";
 import {
     applyTagMutatorOnFiles,
     deleteTagOnFiles,
@@ -118,6 +119,11 @@ interface LibraryState {
     syncError: string | undefined;
     bootstrapFromCache: () => Promise<boolean>;
     syncRemote: () => Promise<void>;
+    /**
+     * Clear sync cursors and re-pull collections + files from the server.
+     * Use when the local library count looks truncated after a partial sync.
+     */
+    forceResyncLibrary: () => Promise<void>;
     setActiveCollection: (id: number | null) => void;
     patchFile: (updated: EnteFile) => Promise<void>;
     applyLocalTagsOnFile: (fileId: number, intendedTags: string[]) => void;
@@ -598,6 +604,11 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 throw error;
             }
         }
+    },
+
+    forceResyncLibrary: async (): Promise<void> => {
+        await clearAllSyncCursors();
+        await get().syncRemote();
     },
 
     setActiveCollection: (id: number | null): void => {

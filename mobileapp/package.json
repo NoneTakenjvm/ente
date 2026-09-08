@@ -22,6 +22,7 @@
         "@ffmpeg/ffmpeg": "^0.12.15",
         "@ffmpeg/util": "^0.12.2",
         "@fontsource-variable/inter": "^5.2.8",
+        "@huggingface/transformers": "^3.5.1",
         "@jsquash/jpeg": "^1.6.0",
         "@jsquash/png": "^3.1.1",
         "@jsquash/webp": "^1.5.0",

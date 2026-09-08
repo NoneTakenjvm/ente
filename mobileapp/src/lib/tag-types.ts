@@ -5,6 +5,11 @@ export const ALL_TAG_TYPES_TAB = "all";
 export interface PersistedTagTypeConfig {
     types: string[];
     tagTypeByName: Record<string, string>;
+    /**
+     * Tags opted into kit nearness. Absent or false = excluded (default).
+     * Sparse on disk: only `true` entries need be stored.
+     */
+    includeInKitNearnessByName?: Record<string, boolean>;
 }
 
 export const emptyTagTypeConfig = (): PersistedTagTypeConfig => ({
@@ -28,29 +33,70 @@ export const configFromPersisted = (
 ): {
     types: string[];
     tagTypeByName: Map<string, string>;
+    includeInKitNearnessByName: Map<string, boolean>;
 } => {
     const base = config ?? emptyTagTypeConfig();
     const types = base.types.includes(DEFAULT_TAG_TYPE) ?
         base.types :
         [DEFAULT_TAG_TYPE, ...base.types];
+    const includeInKitNearnessByName = new Map<string, boolean>();
+    for (const [name, value] of Object.entries(
+        base.includeInKitNearnessByName ?? {},
+    )) {
+        if (value) {
+            includeInKitNearnessByName.set(name, true);
+        }
+    }
     return {
         types,
         tagTypeByName: new Map(Object.entries(base.tagTypeByName)),
+        includeInKitNearnessByName,
     };
 };
 
 export const configToPersisted = (
     types: string[],
     tagTypeByName: Map<string, string>,
-): PersistedTagTypeConfig => ({
-    types,
-    tagTypeByName: Object.fromEntries(tagTypeByName),
-});
+    includeInKitNearnessByName: Map<string, boolean> = new Map(),
+): PersistedTagTypeConfig => {
+    const includeEntries: Record<string, boolean> = {};
+    for (const [name, value] of includeInKitNearnessByName) {
+        if (value) {
+            includeEntries[name] = true;
+        }
+    }
+    const persisted: PersistedTagTypeConfig = {
+        types,
+        tagTypeByName: Object.fromEntries(tagTypeByName),
+    };
+    if (Object.keys(includeEntries).length > 0) {
+        persisted.includeInKitNearnessByName = includeEntries;
+    }
+    return persisted;
+};
 
 export const typeForTag = (
     tagName: string,
     tagTypeByName: Map<string, string>,
 ): string => tagTypeByName.get(tagName) ?? DEFAULT_TAG_TYPE;
+
+/**
+ * Whether the tag participates in kit nearness (default false).
+ */
+export const isTagIncludedInKitNearness = (
+    tagName: string,
+    includeInKitNearnessByName: ReadonlyMap<string, boolean>,
+): boolean => includeInKitNearnessByName.get(tagName) === true;
+
+/**
+ * Keep only tags opted into kit nearness (order preserved).
+ */
+export const filterKitNearnessTags = (
+    tags: readonly string[],
+    includeInKitNearnessByName: ReadonlyMap<string, boolean>,
+): string[] =>
+    tags.filter((tag) =>
+        isTagIncludedInKitNearness(tag, includeInKitNearnessByName));
 
 export const orderedTypeTabs = (types: string[]): string[] => [
     ALL_TAG_TYPES_TAB,

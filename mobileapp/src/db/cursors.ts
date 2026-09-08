@@ -26,6 +26,17 @@ export const removeCollectionSyncTime = async (
     await db.delete("syncCursors", collectionId);
 };
 
+/**
+ * Drop every per-collection file cursor and the collections list cursor so the
+ * next sync re-pulls from scratch. Use when the local library looks truncated
+ * after a partial sync left cursors ahead of the cached files.
+ */
+export const clearAllSyncCursors = async (): Promise<void> => {
+    const db = await getOrganizerDB();
+    await db.clear("syncCursors");
+    await db.delete("meta", collectionsUpdationTimeKey);
+};
+
 export const getCollectionsUpdationTime = async (): Promise<number | undefined> => {
     const db = await getOrganizerDB();
     return db.get("meta", collectionsUpdationTimeKey);

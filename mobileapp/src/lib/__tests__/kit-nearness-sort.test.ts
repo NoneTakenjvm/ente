@@ -2,13 +2,17 @@ import { describe, expect, it } from "vitest";
 import type { PhashEntry } from "@/lib/crop-match";
 import {
     blendedNearnessDistance,
+    buildKitEmbeddingCentroid,
     fileMatchesKitTags,
+    formatKitFitPercent,
     kitDistance,
     kitDistinctiveness,
     kitNearnessDistance,
     kitNearnessDistanceCompetitive,
     listKitSeedFiles,
     pickKitMedoids,
+    rankKitsByBestFitShare,
+    sortFilesByKitEmbeddingCompetitive,
     sortFilesByKitNearness,
     sortFilesByKitNearnessCompetitive,
 } from "@/lib/kit-nearness-sort";
@@ -324,5 +328,95 @@ describe("competitive kit nearness", () => {
         );
         expect(ordered[0]!.id).toBe(10);
         expect(ordered[1]!.id).toBe(20);
+    });
+});
+
+describe("rankKitsByBestFitShare", () => {
+    it("ranks kits by how often each is nearest for hashed files", () => {
+        const files = [
+            fileWithTags(1, ["kit-a"]),
+            fileWithTags(2, ["kit-b"]),
+            fileWithTags(10, []),
+            fileWithTags(20, []),
+            fileWithTags(30, []),
+        ];
+        const entries = new Map<number, PhashEntry>([
+            [1, entry(ZERO)],
+            [2, entry(MANY_BITS)],
+            [10, entry(ONE_BIT)], // nearer kit-a
+            [20, entry("fffffffffffffffe")], // nearer kit-b
+            [30, entry(HALF_A)], // nearer kit-a than kit-b typically
+        ]);
+        const ranked = rankKitsByBestFitShare(
+            [
+                { id: "a", tags: ["kit-a"] },
+                { id: "b", tags: ["kit-b"] },
+            ],
+            files,
+            entries,
+        );
+        expect(ranked.map((row) => row.presetId)).toEqual(["a", "b"]);
+        expect(ranked[0]!.winCount + ranked[1]!.winCount).toBe(5);
+        expect(ranked[0]!.share).toBeGreaterThan(ranked[1]!.share);
+        expect(formatKitFitPercent(0.2)).toBe("20%");
+    });
+
+    it("returns 0 share when kits have no hashed seeds", () => {
+        const ranked = rankKitsByBestFitShare(
+            [{ id: "empty", tags: ["missing"] }],
+            [fileWithTags(1, ["other"])],
+            new Map([[1, entry(ZERO)]]),
+        );
+        expect(ranked).toEqual([
+            { presetId: "empty", winCount: 0, share: 0 },
+        ]);
+    });
+});
+
+describe("CLIP kit embedding nearness", () => {
+    const unit = (values: number[]): number[] => {
+        const n = Math.sqrt(values.reduce((s, v) => s + v * v, 0)) || 1;
+        return values.map((v) => v / n);
+    };
+
+    const pad512 = (a: number, b: number): number[] => {
+        const out = new Array(512).fill(0);
+        out[0] = a;
+        out[1] = b;
+        return unit(out);
+    };
+
+    it("ranks closer-to-centroid files first", () => {
+        const centroid = pad512(1, 0);
+        const near = pad512(0.95, 0.05);
+        const far = pad512(0, 1);
+        const embeddings = new Map<number, number[]>([
+            [1, near],
+            [2, far],
+            [3, centroid],
+        ]);
+        const files = [
+            fileWithTags(1, []),
+            fileWithTags(2, []),
+            fileWithTags(3, []),
+        ];
+        const ordered = sortFilesByKitEmbeddingCompetitive(
+            files,
+            centroid,
+            [],
+            embeddings,
+        );
+        expect(ordered.map((f) => f.id)).toEqual([3, 1, 2]);
+    });
+
+    it("buildKitEmbeddingCentroid averages seed vectors", () => {
+        const embeddings = new Map([
+            [1, pad512(1, 0)],
+            [2, pad512(0, 1)],
+        ]);
+        const c = buildKitEmbeddingCentroid([1, 2], embeddings);
+        expect(c).toBeDefined();
+        expect(c!.length).toBe(512);
+        expect(Math.abs(c![0]! - c![1]!)).toBeLessThan(1e-5);
     });
 });

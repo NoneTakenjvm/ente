@@ -1,17 +1,15 @@
 /**
  * Gallery reorder by visual nearness to a tag kit.
  *
- * Seeds are library files that already carry every kit tag. Their dHashes are
- * summarized as a small set of medoids (visual modes), then each gallery file
- * is scored by variant dHash Hamming with a color-palette match bonus — best
- * first. When rival kits are provided, a soft exclusive-affinity penalty pushes
- * down files that fit another kit better (attenuated when the kits themselves
- * look alike).
+ * Primary path: CLIP embeddings — seed photos are averaged into a centroid,
+ * then each gallery file is ranked by cosine distance (best / lowest first).
+ * Soft exclusive-affinity vs rival kit centroids mirrors the old dHash path.
  *
- * This is near-duplicate affinity, not thematic "kit vibe". Files without a
- * phash entry sort last.
+ * Legacy dHash medoid helpers remain for offline corpus GA / eval harnesses.
+ * Files without an embedding sort last.
  */
 import type { PhashEntry } from "@/lib/crop-match";
+import { KIT_EMBEDDING_DIMS } from "@/lib/kit-embedding";
 import {
     hammingDistancePacked,
     parseDHashHex,
@@ -22,7 +20,7 @@ import { extractUserTags } from "@/lib/tags";
 import type { EnteFile } from "ente-media/file";
 
 /** Cap how many visual modes we keep per kit. */
-export const MAX_KIT_MEDOIDS = 6;
+export const MAX_KIT_MEDOIDS = 2;
 
 /** Cap seed sample size so medoid picking stays cheap on large kits. */
 export const MAX_KIT_SEEDS = 150;
@@ -41,7 +39,7 @@ export const KIT_MEDOID_MIN_SEPARATION = 10;
  * {@link KIT_COLOR_STRUCTURE_GATE}. Beyond that gate color is ignored so
  * palette-similar unrelated photos cannot leapfrog real near-duplicates.
  * Brightness shifts that scramble bins still rank on dHash alone; crops that
- * keep a similar palette get a lift (tuned on the Picsum kit-nearness harness).
+ * keep a similar palette get a lift (Picsum harness; corpus GA deferred color).
  */
 export const KIT_COLOR_RADIUS = 8;
 
@@ -57,12 +55,12 @@ export const KIT_COLOR_STRUCTURE_GATE = 22;
 /**
  * Softmax-style scale for kit–kit distinctiveness: weight = δ / (δ + τ).
  * Similar kits (small δ) barely compete; distant kits compete fully.
- * Tuned on the multi-kit competitive harness (excl AUC↑, soft-tie lift≈0).
+ * Tuned on corpus GA (excl AUC↑); τ rounded from best genome.
  */
-export const KIT_RIVAL_TAU = 4;
+export const KIT_RIVAL_TAU = 5;
 
 /** Multiplier on the strongest rival steal penalty. */
-export const KIT_RIVAL_LAMBDA = 2;
+export const KIT_RIVAL_LAMBDA = 4;
 
 export type KitMedoid = {
     fileId: number;
@@ -486,6 +484,110 @@ export const kitNearnessDistanceCompetitive = (
     return dSelected + lambda * bestPenalty;
 };
 
+export type KitBestFitShare = {
+    presetId: string;
+    /** Hashed library files for which this kit is the nearest. */
+    winCount: number;
+    /**
+     * Fraction of scored (hashed) library files nearest this kit, 0..1.
+     * Shares across kits with medoids sum to 1 when every scored file has a
+     * finite distance to at least one kit.
+     */
+    share: number;
+};
+
+/**
+ * Rank kits by how often each is the nearest kit for a hashed library file.
+ *
+ * Each file with a phash picks the kit with the lowest
+ * {@link kitNearnessDistance} (ties → lower `presetId`). Kits with no medoids
+ * get `share` 0. Denominator is the number of hashed files that could be scored
+ * against at least one kit.
+ */
+export const rankKitsByBestFitShare = (
+    kits: readonly { id: string; tags: readonly string[] }[],
+    libraryFiles: readonly EnteFile[],
+    entries: ReadonlyMap<number, PhashEntry>,
+): KitBestFitShare[] => {
+    if (!kits.length) {
+        return [];
+    }
+
+    const medoidsByKit = new Map<string, KitMedoid[]>();
+    for (const kit of kits) {
+        const seeds = listKitSeedFiles(libraryFiles, kit.tags);
+        medoidsByKit.set(
+            kit.id,
+            pickKitMedoids(
+                seeds.map((file) => file.id),
+                entries,
+            ),
+        );
+    }
+
+    const winCounts = new Map<string, number>();
+    for (const kit of kits) {
+        winCounts.set(kit.id, 0);
+    }
+
+    let scored = 0;
+    for (const file of libraryFiles) {
+        if (!entries.has(file.id)) {
+            continue;
+        }
+        let bestId: string | undefined;
+        let bestDistance = Number.POSITIVE_INFINITY;
+        for (const kit of kits) {
+            const medoids = medoidsByKit.get(kit.id) ?? [];
+            if (!medoids.length) {
+                continue;
+            }
+            const distance = kitNearnessDistance(file.id, medoids, entries);
+            if (!Number.isFinite(distance)) {
+                continue;
+            }
+            if (
+                bestId === undefined ||
+                distance < bestDistance ||
+                (distance === bestDistance && kit.id < bestId)
+            ) {
+                bestDistance = distance;
+                bestId = kit.id;
+            }
+        }
+        if (bestId === undefined) {
+            continue;
+        }
+        scored++;
+        winCounts.set(bestId, (winCounts.get(bestId) ?? 0) + 1);
+    }
+
+    const ranked: KitBestFitShare[] = kits.map((kit) => {
+        const winCount = winCounts.get(kit.id) ?? 0;
+        return {
+            presetId: kit.id,
+            winCount,
+            share: scored > 0 ? winCount / scored : 0,
+        };
+    });
+    ranked.sort((a, b) => {
+        if (b.share !== a.share) {
+            return b.share - a.share;
+        }
+        if (b.winCount !== a.winCount) {
+            return b.winCount - a.winCount;
+        }
+        return a.presetId.localeCompare(b.presetId);
+    });
+    return ranked;
+};
+
+/**
+ * Format a 0..1 share as a whole-number percent for kit labels.
+ */
+export const formatKitFitPercent = (share: number): string =>
+    `${Math.round(Math.max(0, Math.min(1, share)) * 100)}%`;
+
 /**
  * Reorder by competitive kit nearness (selected + soft rival penalty).
  *
@@ -534,4 +636,271 @@ export const sortFilesByKitNearnessCompetitive = (
         }
         return a.id - b.id;
     });
+};
+
+/**
+ * Softmax-style scale for CLIP kit–kit distinctiveness (cosine distance 0..2).
+ * Tuned loosely to corpus separations (~0.05–0.3 between kit centroids).
+ */
+export const KIT_EMBEDDING_RIVAL_TAU = 0.12;
+
+/** Multiplier on the strongest rival steal penalty (CLIP path). */
+export const KIT_EMBEDDING_RIVAL_LAMBDA = 4;
+
+const embeddingDot = (a: readonly number[], b: readonly number[]): number => {
+    let sum = 0;
+    const n = Math.min(a.length, b.length);
+    for (let i = 0; i < n; i++) {
+        sum += a[i]! * b[i]!;
+    }
+    return sum;
+};
+
+/**
+ * Mean L2-normalized embedding of seed file ids (kit centroid).
+ */
+export const buildKitEmbeddingCentroid = (
+    seedIds: readonly number[],
+    embeddings: ReadonlyMap<number, number[]>,
+    maxSeeds: number = MAX_KIT_SEEDS,
+): number[] | undefined => {
+    const acc = new Array(KIT_EMBEDDING_DIMS).fill(0) as number[];
+    let count = 0;
+    for (const id of seedIds) {
+        if (count >= maxSeeds) {
+            break;
+        }
+        const vector = embeddings.get(id);
+        if (vector?.length !== KIT_EMBEDDING_DIMS) {
+            continue;
+        }
+        for (let i = 0; i < KIT_EMBEDDING_DIMS; i++) {
+            acc[i]! += vector[i]!;
+        }
+        count += 1;
+    }
+    if (count === 0) {
+        return undefined;
+    }
+    let norm = 0;
+    for (let i = 0; i < KIT_EMBEDDING_DIMS; i++) {
+        norm += acc[i]! * acc[i]!;
+    }
+    norm = Math.sqrt(norm) || 1;
+    for (let i = 0; i < KIT_EMBEDDING_DIMS; i++) {
+        acc[i]! /= norm;
+    }
+    return acc;
+};
+
+/**
+ * Cosine distance to kit centroid (0 = identical). Missing embedding → Infinity.
+ */
+export const kitEmbeddingDistance = (
+    fileId: number,
+    centroid: readonly number[] | undefined,
+    embeddings: ReadonlyMap<number, number[]>,
+): number => {
+    if (!centroid?.length) {
+        return Number.POSITIVE_INFINITY;
+    }
+    const vector = embeddings.get(fileId);
+    if (vector?.length !== centroid.length) {
+        return Number.POSITIVE_INFINITY;
+    }
+    return 1 - embeddingDot(vector, centroid);
+};
+
+/**
+ * Cosine distance between two centroids (0 = identical).
+ */
+export const kitEmbeddingCentroidDistance = (
+    left: readonly number[] | undefined,
+    right: readonly number[] | undefined,
+): number => {
+    if (!left?.length || !right?.length || left.length !== right.length) {
+        return Number.POSITIVE_INFINITY;
+    }
+    return 1 - embeddingDot(left, right);
+};
+
+/**
+ * Competitive CLIP nearness: selected distance + soft steal vs rival centroids.
+ */
+export const kitEmbeddingDistanceCompetitive = (
+    fileId: number,
+    selected: readonly number[] | undefined,
+    rivals: readonly (readonly number[] | undefined)[],
+    embeddings: ReadonlyMap<number, number[]>,
+    options?: {
+        lambda?: number;
+        tau?: number;
+        rivalWeights?: readonly number[];
+    },
+): number => {
+    const lambda = options?.lambda ?? KIT_EMBEDDING_RIVAL_LAMBDA;
+    const tau = options?.tau ?? KIT_EMBEDDING_RIVAL_TAU;
+    const dSelected = kitEmbeddingDistance(fileId, selected, embeddings);
+    if (!Number.isFinite(dSelected) || !rivals.length || lambda <= 0) {
+        return dSelected;
+    }
+
+    let bestPenalty = 0;
+    for (let i = 0; i < rivals.length; i++) {
+        const rival = rivals[i];
+        if (!rival?.length) {
+            continue;
+        }
+        const dRival = kitEmbeddingDistance(fileId, rival, embeddings);
+        if (!Number.isFinite(dRival)) {
+            continue;
+        }
+        const steal = Math.max(0, dSelected - dRival);
+        if (steal === 0) {
+            continue;
+        }
+        const weight =
+            options?.rivalWeights?.[i] ??
+            kitDistinctiveness(
+                kitEmbeddingCentroidDistance(selected, rival),
+                tau,
+            );
+        const penalty = steal * weight;
+        if (penalty > bestPenalty) {
+            bestPenalty = penalty;
+        }
+    }
+    return dSelected + lambda * bestPenalty;
+};
+
+/**
+ * Reorder gallery by CLIP competitive nearness (lowest distance first).
+ */
+export const sortFilesByKitEmbeddingCompetitive = (
+    files: EnteFile[],
+    selected: readonly number[] | undefined,
+    rivals: readonly (readonly number[] | undefined)[],
+    embeddings: ReadonlyMap<number, number[]>,
+    options?: {
+        lambda?: number;
+        tau?: number;
+    },
+): EnteFile[] => {
+    if (!selected?.length) {
+        return [...files];
+    }
+    const tau = options?.tau ?? KIT_EMBEDDING_RIVAL_TAU;
+    const rivalWeights = rivals.map((rival) =>
+        rival?.length ?
+            kitDistinctiveness(
+                kitEmbeddingCentroidDistance(selected, rival),
+                tau,
+            ) :
+            0);
+    const scoreOptions = { ...options, rivalWeights };
+    return [...files].sort((a, b) => {
+        const scoreA = kitEmbeddingDistanceCompetitive(
+            a.id,
+            selected,
+            rivals,
+            embeddings,
+            scoreOptions,
+        );
+        const scoreB = kitEmbeddingDistanceCompetitive(
+            b.id,
+            selected,
+            rivals,
+            embeddings,
+            scoreOptions,
+        );
+        if (scoreA !== scoreB) {
+            return scoreA - scoreB;
+        }
+        return a.id - b.id;
+    });
+};
+
+/**
+ * Rank kits by how often each is the nearest CLIP centroid for an embedded file.
+ */
+export const rankKitsByBestFitShareEmbedding = (
+    kits: readonly { id: string; tags: readonly string[] }[],
+    libraryFiles: readonly EnteFile[],
+    embeddings: ReadonlyMap<number, number[]>,
+): KitBestFitShare[] => {
+    if (!kits.length) {
+        return [];
+    }
+
+    const centroidByKit = new Map<string, number[] | undefined>();
+    for (const kit of kits) {
+        const seeds = listKitSeedFiles(libraryFiles, kit.tags);
+        centroidByKit.set(
+            kit.id,
+            buildKitEmbeddingCentroid(
+                seeds.map((file) => file.id),
+                embeddings,
+            ),
+        );
+    }
+
+    const winCounts = new Map<string, number>();
+    for (const kit of kits) {
+        winCounts.set(kit.id, 0);
+    }
+
+    let scored = 0;
+    for (const file of libraryFiles) {
+        if (!embeddings.has(file.id)) {
+            continue;
+        }
+        let bestId: string | undefined;
+        let bestDistance = Number.POSITIVE_INFINITY;
+        for (const kit of kits) {
+            const centroid = centroidByKit.get(kit.id);
+            if (!centroid?.length) {
+                continue;
+            }
+            const distance = kitEmbeddingDistance(
+                file.id,
+                centroid,
+                embeddings,
+            );
+            if (!Number.isFinite(distance)) {
+                continue;
+            }
+            if (
+                bestId === undefined ||
+                distance < bestDistance ||
+                (distance === bestDistance && kit.id < bestId)
+            ) {
+                bestDistance = distance;
+                bestId = kit.id;
+            }
+        }
+        if (bestId === undefined) {
+            continue;
+        }
+        scored += 1;
+        winCounts.set(bestId, (winCounts.get(bestId) ?? 0) + 1);
+    }
+
+    const ranked: KitBestFitShare[] = kits.map((kit) => {
+        const winCount = winCounts.get(kit.id) ?? 0;
+        return {
+            presetId: kit.id,
+            winCount,
+            share: scored > 0 ? winCount / scored : 0,
+        };
+    });
+    ranked.sort((a, b) => {
+        if (b.share !== a.share) {
+            return b.share - a.share;
+        }
+        if (b.winCount !== a.winCount) {
+            return b.winCount - a.winCount;
+        }
+        return a.presetId.localeCompare(b.presetId);
+    });
+    return ranked;
 };

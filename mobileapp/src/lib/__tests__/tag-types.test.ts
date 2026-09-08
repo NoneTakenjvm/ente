@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
     ALL_TAG_TYPES_TAB,
     DEFAULT_TAG_TYPE,
+    configFromPersisted,
+    configToPersisted,
+    filterKitNearnessTags,
+    isTagIncludedInKitNearness,
     normalizeTagTypeName,
     sortTagsByUsage,
     tagsForTypeView,
@@ -13,6 +17,25 @@ describe("tag-types", () => {
         const map = new Map([["selfie", "people"]]);
         expect(typeForTag("selfie", map)).toBe("people");
         expect(typeForTag("unknown", map)).toBe(DEFAULT_TAG_TYPE);
+    });
+
+    it("kit nearness include defaults to false and round-trips sparsely", () => {
+        expect(
+            isTagIncludedInKitNearness("beach", new Map()),
+        ).toBe(false);
+        const include = new Map([["beach", true]]);
+        expect(isTagIncludedInKitNearness("beach", include)).toBe(true);
+        expect(
+            filterKitNearnessTags(["beach", "junk"], include),
+        ).toEqual(["beach"]);
+        const persisted = configToPersisted(
+            [DEFAULT_TAG_TYPE],
+            new Map(),
+            include,
+        );
+        expect(persisted.includeInKitNearnessByName).toEqual({ beach: true });
+        const loaded = configFromPersisted(persisted);
+        expect(loaded.includeInKitNearnessByName.get("beach")).toBe(true);
     });
 
     it("sortTagsByUsage orders by count then name", () => {
