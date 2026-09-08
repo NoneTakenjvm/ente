@@ -47,6 +47,7 @@ interface TagState {
     registeredTagNames: string[];
     tagTypes: string[];
     tagTypeByName: Map<string, string>;
+    includeInKitNearnessByName: Map<string, boolean>;
     tagFilter: TagFilterSelection;
     hydrateFromPersisted: (index: PersistedTagIndex) => void;
     hydrateTagTypes: (config: PersistedTagTypeConfig | undefined) => void;
@@ -76,6 +77,7 @@ interface TagState {
     clearFilters: () => void;
     ensureTagType: (typeName: string) => void;
     setTagType: (tagName: string, typeName: string) => void;
+    setIncludeInKitNearness: (tagName: string, include: boolean) => void;
     registerTag: (tagName: string, typeName?: string) => string | undefined;
     applyFileTags: (fileId: number, tags: string[]) => void;
     applyTagRename: (oldName: string, newName: string) => void;
@@ -88,13 +90,20 @@ const initialTypeState = configFromPersisted(undefined);
 
 const initialTagState: Pick<
     TagState,
-    "tags" | "fileIdsByTag" | "registeredTagNames" | "tagTypes" | "tagTypeByName" | "tagFilter"
+    "tags" |
+    "fileIdsByTag" |
+    "registeredTagNames" |
+    "tagTypes" |
+    "tagTypeByName" |
+    "includeInKitNearnessByName" |
+    "tagFilter"
 > = {
     tags: [],
     fileIdsByTag: new Map(),
     registeredTagNames: [],
     tagTypes: initialTypeState.types,
     tagTypeByName: initialTypeState.tagTypeByName,
+    includeInKitNearnessByName: initialTypeState.includeInKitNearnessByName,
     tagFilter: emptyTagFilter(),
 };
 
@@ -122,9 +131,14 @@ const persistCurrentIndex = (
 const persistTagTypesConfig = (
     tagTypes: string[],
     tagTypeByName: Map<string, string>,
+    includeInKitNearnessByName: Map<string, boolean>,
 ): void => {
     enqueueOrganizerConfigPatch({
-        tagTypes: configToPersisted(tagTypes, tagTypeByName),
+        tagTypes: configToPersisted(
+            tagTypes,
+            tagTypeByName,
+            includeInKitNearnessByName,
+        ),
     });
 };
 
@@ -388,8 +402,9 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
     },
 
     hydrateTagTypes: (config: PersistedTagTypeConfig | undefined): void => {
-        const { types, tagTypeByName } = configFromPersisted(config);
-        set({ tagTypes: types, tagTypeByName });
+        const { types, tagTypeByName, includeInKitNearnessByName } =
+            configFromPersisted(config);
+        set({ tagTypes: types, tagTypeByName, includeInKitNearnessByName });
     },
 
     hydrateRegisteredTags: (names: string[] | undefined): void => {
@@ -626,7 +641,11 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         }
         const nextTypes = [...tagTypes, normalized];
         set({ tagTypes: nextTypes });
-        persistTagTypesConfig(nextTypes, get().tagTypeByName);
+        persistTagTypesConfig(
+            nextTypes,
+            get().tagTypeByName,
+            get().includeInKitNearnessByName,
+        );
     },
 
     setTagType: (tagName: string, typeName: string): void => {
@@ -639,7 +658,32 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         const tagTypeByName = new Map(get().tagTypeByName);
         tagTypeByName.set(normalizedTag, normalizedType);
         set({ tagTypeByName });
-        persistTagTypesConfig(get().tagTypes, tagTypeByName);
+        persistTagTypesConfig(
+            get().tagTypes,
+            tagTypeByName,
+            get().includeInKitNearnessByName,
+        );
+    },
+
+    setIncludeInKitNearness: (tagName: string, include: boolean): void => {
+        const normalizedTag = normalizeTagName(tagName);
+        if (!normalizedTag || isReservedTag(normalizedTag)) {
+            return;
+        }
+        const includeInKitNearnessByName = new Map(
+            get().includeInKitNearnessByName,
+        );
+        if (include) {
+            includeInKitNearnessByName.set(normalizedTag, true);
+        } else {
+            includeInKitNearnessByName.delete(normalizedTag);
+        }
+        set({ includeInKitNearnessByName });
+        persistTagTypesConfig(
+            get().tagTypes,
+            get().tagTypeByName,
+            includeInKitNearnessByName,
+        );
     },
 
     registerTag: (tagName: string, typeName?: string): string | undefined => {
@@ -709,6 +753,18 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
                 tagTypeByName.set(newName, oldType);
             }
         }
+        const includeInKitNearnessByName = new Map(
+            get().includeInKitNearnessByName,
+        );
+        const oldInclude = includeInKitNearnessByName.get(oldName);
+        if (oldInclude) {
+            includeInKitNearnessByName.delete(oldName);
+            if (!includeInKitNearnessByName.has(newName)) {
+                includeInKitNearnessByName.set(newName, true);
+            }
+        } else {
+            includeInKitNearnessByName.delete(oldName);
+        }
         const registeredTagNames = get().registeredTagNames
             .map((tag) => (tag === oldName ? newName : tag))
             .filter((tag, index, list) => list.indexOf(tag) === index)
@@ -723,6 +779,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             tags: tagList,
             fileIdsByTag,
             tagTypeByName,
+            includeInKitNearnessByName,
             registeredTagNames,
             tagFilter: isTagFilterActive(tagFilter) ?
                 {
@@ -732,7 +789,11 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
                 tagFilter,
         });
         persistCurrentIndex(tagList, fileIdsByTag);
-        persistTagTypesConfig(get().tagTypes, tagTypeByName);
+        persistTagTypesConfig(
+            get().tagTypes,
+            tagTypeByName,
+            includeInKitNearnessByName,
+        );
     },
 
     applyTagDelete: (tagName: string): void => {
@@ -748,6 +809,10 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         const tagFilter = get().tagFilter;
         const tagTypeByName = new Map(get().tagTypeByName);
         tagTypeByName.delete(tagName);
+        const includeInKitNearnessByName = new Map(
+            get().includeInKitNearnessByName,
+        );
+        includeInKitNearnessByName.delete(tagName);
         set({
             tags: tagList,
             fileIdsByTag,
@@ -757,9 +822,14 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
                 root: removeTagFromTree(tagFilter.root, tagName),
             },
             tagTypeByName,
+            includeInKitNearnessByName,
         });
         persistCurrentIndex(tagList, fileIdsByTag);
-        persistTagTypesConfig(get().tagTypes, tagTypeByName);
+        persistTagTypesConfig(
+            get().tagTypes,
+            tagTypeByName,
+            includeInKitNearnessByName,
+        );
     },
 
     applyTagMerge: (sourceNames: string[], targetName: string): void => {
@@ -780,20 +850,33 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         const tagList = [...fileIdsByTag.keys()].sort();
         let tagFilter = get().tagFilter;
         const tagTypeByName = new Map(get().tagTypeByName);
+        const includeInKitNearnessByName = new Map(
+            get().includeInKitNearnessByName,
+        );
         const mergedType = mergeTypeForTarget(
             targetName,
             sourceNames,
             tagTypeByName,
         );
+        let mergedInclude = includeInKitNearnessByName.get(targetName) === true;
         for (const source of sourceNames) {
             tagFilter = {
                 ...tagFilter,
                 root: removeTagFromTree(tagFilter.root, source),
             };
             tagTypeByName.delete(source);
+            if (includeInKitNearnessByName.get(source)) {
+                mergedInclude = true;
+            }
+            includeInKitNearnessByName.delete(source);
         }
         if (mergedType && !tagTypeByName.has(targetName)) {
             tagTypeByName.set(targetName, mergedType);
+        }
+        if (mergedInclude) {
+            includeInKitNearnessByName.set(targetName, true);
+        } else {
+            includeInKitNearnessByName.delete(targetName);
         }
         let registeredTagNames = get().registeredTagNames.filter(
             (tag) => !sourceNames.includes(tag),
@@ -825,9 +908,14 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             registeredTagNames,
             tagFilter,
             tagTypeByName,
+            includeInKitNearnessByName,
         });
         persistCurrentIndex(mergedIndex.tags, mergedIndex.fileIdsByTag);
-        persistTagTypesConfig(get().tagTypes, tagTypeByName);
+        persistTagTypesConfig(
+            get().tagTypes,
+            tagTypeByName,
+            includeInKitNearnessByName,
+        );
     },
 
     reset: (): void => {
@@ -835,6 +923,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             ...initialTagState,
             tagTypes: [DEFAULT_TAG_TYPE],
             tagTypeByName: new Map(),
+            includeInKitNearnessByName: new Map(),
             registeredTagNames: [],
         });
     },

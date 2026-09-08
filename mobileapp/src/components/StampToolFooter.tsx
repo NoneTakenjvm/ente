@@ -1,6 +1,7 @@
 import {
     useCallback,
     useMemo,
+    useState,
     type JSX,
 } from "react";
 import { Stamp, Tag } from "lucide-react";
@@ -55,6 +56,8 @@ export function StampToolFooter(): JSX.Element | null {
     const pinnedTags = useTagSpeedStore((s) => s.pinnedTags);
     const recentTags = useTagSpeedStore((s) => s.recentTags);
     const togglePinnedTag = useTagSpeedStore((s) => s.togglePinnedTag);
+    /** When equal to the current kit key, show the full kit list. */
+    const [expandedKitKey, setExpandedKitKey] = useState<string | null>(null);
 
     const rankedKits = useMemo((): RankedKit[] => {
         if (!presets.length) {
@@ -80,6 +83,10 @@ export function StampToolFooter(): JSX.Element | null {
         return presets.find((preset) => tagsMatchPreset(stampTags, preset));
     }, [presets, stampTags]);
 
+    const activeKitKey = activeKit?.id ?? null;
+    const kitListExpanded =
+        activeKitKey !== null && expandedKitKey === activeKitKey;
+
     const workingSetTags = useMemo((): string[] => {
         const seen = new Set<string>();
         const result: string[] = [];
@@ -94,6 +101,7 @@ export function StampToolFooter(): JSX.Element | null {
     }, [pinnedTags, recentTags, stampTags]);
 
     const exitStamp = useCallback((): void => {
+        setExpandedKitKey(null);
         setStampActive(false);
     }, [setStampActive]);
 
@@ -149,99 +157,123 @@ export function StampToolFooter(): JSX.Element | null {
                     </Button>
                 </div>
 
-                <ToggleGroup
-                    variant="outline"
-                    size="sm"
-                    value={[stampPickMode]}
-                    onValueChange={handlePickModeChange}
-                    className="w-full"
-                >
-                    <ToggleGroupItem value="kit" className="flex-1">
-                        Kit
-                    </ToggleGroupItem>
-                    <ToggleGroupItem value="tag" className="flex-1">
-                        Tag
-                    </ToggleGroupItem>
-                </ToggleGroup>
-
-                {stampPickMode === "kit" ? (
-                    rankedKits.length === 0 ? (
-                        <p className="text-xs text-muted-foreground">
-                            No kits yet. Create them in Manage → Tags.
-                        </p>
-                    ) : (
-                        <ul className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain">
-                            {rankedKits.map(({ preset, count }) => {
-                                const selected = tagsMatchPreset(
-                                    stampTags,
-                                    preset,
-                                );
-                                return (
-                                    <li key={preset.id}>
-                                        <Button
-                                            type="button"
-                                            variant={
-                                                selected ? "secondary" : "ghost"
-                                            }
-                                            className="h-auto min-h-9 w-full justify-between gap-2 px-2 py-1.5"
-                                            onClick={() => {
-                                                selectKit(preset);
-                                            }}
-                                        >
-                                            <span className="flex min-w-0 flex-col items-start gap-0.5 text-left">
-                                                <span className="truncate text-sm font-medium">
-                                                    {preset.name}
-                                                </span>
-                                                <span className="truncate text-xs text-muted-foreground">
-                                                    {preset.tags.join(", ")}
-                                                </span>
-                                            </span>
-                                            <Badge
-                                                variant="secondary"
-                                                className="shrink-0 tabular-nums"
-                                            >
-                                                {count}
-                                            </Badge>
-                                        </Button>
-                                    </li>
-                                );
-                            })}
-                        </ul>
-                    )
+                {activeKit && !kitListExpanded ? (
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="self-start"
+                        onClick={() => {
+                            setStampPickMode("kit");
+                            setExpandedKitKey(activeKit.id);
+                        }}
+                    >
+                        Change kit
+                    </Button>
                 ) : (
-                    <div className="flex gap-1.5 overflow-x-auto pb-0.5">
-                        {workingSetTags.map((tag) => {
-                            const isStamp = stampTags.includes(tag);
-                            return (
-                                <Button
-                                    key={tag}
-                                    type="button"
-                                    variant={isStamp ? "secondary" : "outline"}
-                                    size="sm"
-                                    className="h-8 shrink-0"
-                                    onClick={() => {
-                                        toggleStampTag(tag);
-                                    }}
-                                    onContextMenu={(event) => {
-                                        event.preventDefault();
-                                        togglePinnedTag(tag);
-                                    }}
-                                >
-                                    {tag}
-                                </Button>
-                            );
-                        })}
-                        <Button
-                            type="button"
+                    <>
+                        <ToggleGroup
                             variant="outline"
                             size="sm"
-                            className="h-8 shrink-0 gap-1.5"
-                            onClick={() => setStampSheetOpen(true)}
+                            value={[stampPickMode]}
+                            onValueChange={handlePickModeChange}
+                            className="w-full"
                         >
-                            <Tag className="size-3.5 shrink-0" />
-                            Tags
-                        </Button>
-                    </div>
+                            <ToggleGroupItem value="kit" className="flex-1">
+                                Kit
+                            </ToggleGroupItem>
+                            <ToggleGroupItem value="tag" className="flex-1">
+                                Tag
+                            </ToggleGroupItem>
+                        </ToggleGroup>
+
+                        {stampPickMode === "kit" ? (
+                            rankedKits.length === 0 ? (
+                                <p className="text-xs text-muted-foreground">
+                                    No kits yet. Create them in Manage → Tags.
+                                </p>
+                            ) : (
+                                <ul className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain">
+                                    {rankedKits.map(({ preset, count }) => {
+                                        const selected = tagsMatchPreset(
+                                            stampTags,
+                                            preset,
+                                        );
+                                        return (
+                                            <li key={preset.id}>
+                                                <Button
+                                                    type="button"
+                                                    variant={
+                                                        selected ?
+                                                            "secondary" :
+                                                            "ghost"
+                                                    }
+                                                    className="h-auto min-h-9 w-full justify-between gap-2 px-2 py-1.5"
+                                                    onClick={() => {
+                                                        selectKit(preset);
+                                                        setExpandedKitKey(null);
+                                                    }}
+                                                >
+                                                    <span className="flex min-w-0 flex-col items-start gap-0.5 text-left">
+                                                        <span className="truncate text-sm font-medium">
+                                                            {preset.name}
+                                                        </span>
+                                                        <span className="truncate text-xs text-muted-foreground">
+                                                            {preset.tags.join(
+                                                                ", ",
+                                                            )}
+                                                        </span>
+                                                    </span>
+                                                    <Badge
+                                                        variant="secondary"
+                                                        className="shrink-0 tabular-nums"
+                                                    >
+                                                        {count}
+                                                    </Badge>
+                                                </Button>
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                            )
+                        ) : (
+                            <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+                                {workingSetTags.map((tag) => {
+                                    const isStamp = stampTags.includes(tag);
+                                    return (
+                                        <Button
+                                            key={tag}
+                                            type="button"
+                                            variant={
+                                                isStamp ? "secondary" : "outline"
+                                            }
+                                            size="sm"
+                                            className="h-8 shrink-0"
+                                            onClick={() => {
+                                                toggleStampTag(tag);
+                                            }}
+                                            onContextMenu={(event) => {
+                                                event.preventDefault();
+                                                togglePinnedTag(tag);
+                                            }}
+                                        >
+                                            {tag}
+                                        </Button>
+                                    );
+                                })}
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 shrink-0 gap-1.5"
+                                    onClick={() => setStampSheetOpen(true)}
+                                >
+                                    <Tag className="size-3.5 shrink-0" />
+                                    Tags
+                                </Button>
+                            </div>
+                        )}
+                    </>
                 )}
             </footer>
 

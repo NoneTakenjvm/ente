@@ -6,13 +6,27 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-09-07 |
-| **Last agent / session** | Stamp Kit / Tag modes |
-| **Current milestone** | Post-M8 UX / stamp tagging |
+| **Last updated** | 2026-09-08 |
+| **Last agent / session** | CLIP kit-nearness cleanup (pre-commit) |
+| **Current milestone** | Post-M8 UX / kit nearness (CLIP) |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Phone QA: enter stamp → Kit shows kits by population; Tag picks individual tags. Footer `0.3.40`. |
+| **Next recommended action** | Commit/push `0.3.53` CLIP kit nearness; QA kit nearness + compact stamp; WebGPU via 127.0.0.1 if speed matters. |
 
 **This session shipped:**
+1. **Cleanup for commit** — removed unused CLIP exports / stale comments; Manage CLIP copy clarifies explicit scan (no background library scan); stamp compact footer = Change kit / Done only; corpus export reuses store imports.
+2. About to commit/push **0.3.53** CLIP kit nearness (centroid sort, explicit Manage scan, corpus v3, compact stamp).
+
+**Previous session shipped:**
+1. **Compact stamp on kit nearness** — when a kit is already armed, hide the full kit list; **Change kit** / **Done** only. `APP_VERSION` → `0.3.53`.
+2. CLIP WebGPU+concurrency `0.3.52`; explicit CLIP scan `0.3.51`; CLIP gallery `0.3.50`.
+
+**Previous session shipped:**
+1. Kit nearness tag allowlist / LAN export / resync / picker fit / dHash hybrid bake (`0.3.44`–`0.3.48`).
+
+**Previous session shipped:**
+1. **Corpus v2 + derivedKits** — exact tag-set kits in export. `APP_VERSION` → `0.3.43`.
+
+**Previous session shipped:**
 1. **Stamp Kit / Tag modes** — stamp footer toggles Kit vs Tag. Kit lists all presets sorted by library population (count badge); Tag keeps working-set chips + tag sheet (no kits tab). Kit nearness auto-arm sets Kit mode. `APP_VERSION` → `0.3.40`.
 
 **Previous session shipped:**

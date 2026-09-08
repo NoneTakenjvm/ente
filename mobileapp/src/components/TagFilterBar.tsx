@@ -1,5 +1,6 @@
 import {
     useCallback,
+    useEffect,
     useMemo,
     useState,
     type JSX,
@@ -34,15 +35,19 @@ import {
     isTagFilterActive,
 } from "@/lib/tags";
 import { bulkAddTags, bulkRemoveTags } from "@/lib/tag-bulk-actions";
+import { rankKitsByBestFitShareEmbedding } from "@/lib/kit-nearness-sort";
+import { filterKitNearnessTags } from "@/lib/tag-types";
 import { Shuffle } from "lucide-react";
 import { SelectionModeToggle } from "@/components/SelectionModeToggle";
 import { StampModeToggle } from "@/components/StampModeToggle";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
+import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
 import { useSelectionStore } from "@/stores/selection-store";
 import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
 import { useUIStore } from "@/stores/ui-store";
+import type { TagPreset } from "@/lib/tag-presets";
 
 interface TagFilterBarProps {
     matchCount: number;
@@ -68,6 +73,9 @@ export function TagFilterBar({
     const setEnabled = useSelectionStore((s) => s.setEnabled);
 
     const presets = useTagSpeedStore((s) => s.presets);
+    const includeInKitNearnessByName = useTagStore(
+        (s) => s.includeInKitNearnessByName,
+    );
     const pinnedTags = useTagSpeedStore((s) => s.pinnedTags);
     const togglePinnedTag = useTagSpeedStore((s) => s.togglePinnedTag);
 
@@ -85,6 +93,41 @@ export function TagFilterBar({
     const setStampTags = useSelectionStore((s) => s.setStampTags);
     const setStampPickMode = useSelectionStore((s) => s.setStampPickMode);
     const setStampSheetOpen = useSelectionStore((s) => s.setStampSheetOpen);
+
+    const embeddingEntries = useEmbeddingIndexStore((s) => s.entries);
+    const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
+    const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.hydrate);
+
+    useEffect(() => {
+        if (!presets.length || embeddingHydrated) {
+            return;
+        }
+        void hydrateEmbeddings();
+    }, [embeddingHydrated, hydrateEmbeddings, presets.length]);
+
+    const kitNearnessPresets = useMemo((): TagPreset[] => {
+        return presets
+            .map((preset) => ({
+                ...preset,
+                tags: filterKitNearnessTags(
+                    preset.tags,
+                    includeInKitNearnessByName,
+                ),
+            }))
+            .filter((preset) => preset.tags.length > 0);
+    }, [includeInKitNearnessByName, presets]);
+
+    const kitNearnessFitShareById = useMemo((): ReadonlyMap<string, number> => {
+        if (!kitNearnessPresets.length || !embeddingHydrated) {
+            return new Map();
+        }
+        const ranked = rankKitsByBestFitShareEmbedding(
+            kitNearnessPresets,
+            allFiles,
+            embeddingEntries,
+        );
+        return new Map(ranked.map((row) => [row.presetId, row.share]));
+    }, [allFiles, embeddingEntries, embeddingHydrated, kitNearnessPresets]);
 
     const handleKitNearnessPresetIdChange = useCallback(
         (presetId: string | undefined): void => {
@@ -268,10 +311,11 @@ export function TagFilterBar({
                         onViewportFitSortChange={setViewportFitSort}
                         imageSizeSort={imageSizeSort}
                         onImageSizeSortChange={setImageSizeSort}
-                        kitNearnessPresets={presets}
+                        kitNearnessPresets={kitNearnessPresets}
                         kitNearnessPresetId={kitNearnessPresetId}
                         onKitNearnessPresetIdChange={handleKitNearnessPresetIdChange}
                         onKitNearnessReapply={reapplyKitNearness}
+                        kitNearnessFitShareById={kitNearnessFitShareById}
                     />
                     <TagClausePicker
                         filter={tagFilter}

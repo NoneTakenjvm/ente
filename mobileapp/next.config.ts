@@ -36,10 +36,22 @@ const nextConfig: NextConfig = {
     ...(process.env.NODE_ENV === "production" ? { output: "export" as const } : {}),
     outputFileTracingRoot: path.join(__dirname, ".."),
     transpilePackages: ["ente-base", "ente-media", "ente-utils"],
-    webpack: (config: WebpackConfigSlice): WebpackConfigSlice => {
+    webpack: (config: WebpackConfigSlice & {
+        resolve?: { alias?: Record<string, string | false> };
+        externals?: unknown;
+    }): WebpackConfigSlice => {
         config.experiments = {
             ...config.experiments,
             asyncWebAssembly: true,
+        };
+        // transformers.js pulls Node-only optional deps; stub for browser bundle.
+        config.resolve = {
+            ...config.resolve,
+            alias: {
+                ...config.resolve?.alias,
+                sharp: false,
+                "onnxruntime-node": false,
+            },
         };
         return config;
     },
