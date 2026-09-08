@@ -80,6 +80,10 @@ interface TagState {
     setIncludeInKitNearness: (tagName: string, include: boolean) => void;
     registerTag: (tagName: string, typeName?: string) => string | undefined;
     applyFileTags: (fileId: number, tags: string[]) => void;
+    /** Update the tag index for many files in one store notify + persist. */
+    applyFilesTags: (
+        updates: Array<{ fileId: number; tags: string[] }>,
+    ) => void;
     applyTagRename: (oldName: string, newName: string) => void;
     applyTagDelete: (tagName: string) => void;
     applyTagMerge: (sourceNames: string[], targetName: string) => void;
@@ -182,16 +186,27 @@ const dropRegisteredTagsWithFiles = (
     return [...next].sort();
 };
 
-const removeFileFromIndex = (
+/**
+ * Drop many file ids from every tag bucket in one pass over the index.
+ */
+const removeFilesFromIndex = (
     fileIdsByTag: Map<string, Set<number>>,
-    fileId: number,
+    fileIds: Set<number>,
 ): void => {
+    if (fileIds.size === 0) {
+        return;
+    }
     for (const [tag, ids] of fileIdsByTag) {
-        if (!ids.has(fileId)) {
+        let touched = false;
+        const next = new Set(ids);
+        for (const fileId of fileIds) {
+            if (next.delete(fileId)) {
+                touched = true;
+            }
+        }
+        if (!touched) {
             continue;
         }
-        const next = new Set(ids);
-        next.delete(fileId);
         if (next.size === 0) {
             fileIdsByTag.delete(tag);
         } else {
@@ -714,18 +729,36 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
     },
 
     applyFileTags: (fileId: number, tags: string[]): void => {
+        get().applyFilesTags([{ fileId, tags }]);
+    },
+
+    applyFilesTags: (
+        updates: Array<{ fileId: number; tags: string[] }>,
+    ): void => {
+        if (!updates.length) {
+            return;
+        }
         const fileIdsByTag = new Map(get().fileIdsByTag);
-        removeFileFromIndex(fileIdsByTag, fileId);
-        for (const tag of tags) {
-            const ids = fileIdsByTag.get(tag) ?? new Set<number>();
-            ids.add(fileId);
-            fileIdsByTag.set(tag, ids);
+        const touchedFileIds = new Set<number>();
+        const touchedTagNames: string[] = [];
+        for (const { fileId, tags } of updates) {
+            touchedFileIds.add(fileId);
+            touchedTagNames.push(...tags);
+        }
+        removeFilesFromIndex(fileIdsByTag, touchedFileIds);
+        for (const { fileId, tags } of updates) {
+            for (const tag of tags) {
+                const existing = fileIdsByTag.get(tag);
+                const ids = new Set(existing);
+                ids.add(fileId);
+                fileIdsByTag.set(tag, ids);
+            }
         }
         const tagList = [...fileIdsByTag.keys()].sort();
         const registeredTagNames = dropRegisteredTagsWithFiles(
             get().registeredTagNames,
             fileIdsByTag,
-            tags,
+            touchedTagNames,
         );
         if (registeredTagNames.length !== get().registeredTagNames.length) {
             persistRegisteredTags(registeredTagNames);

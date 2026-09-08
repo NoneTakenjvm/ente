@@ -32,7 +32,7 @@ export interface SimilarityGroup {
     maxDistance: number;
 }
 
-export const defaultSimilarityThreshold = 8;
+export const defaultSimilarityThreshold = 12;
 
 /** 12-bit color prefix (was 8-bit / 2 hex — too coarse for 7k libraries). */
 const colorBucketKey = (color: string): string => color.slice(0, 3);

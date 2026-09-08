@@ -2,9 +2,15 @@ import { create } from "zustand";
 import type { StateCreator } from "zustand";
 import { reconcileShuffledIds } from "@/lib/shuffle-files";
 import type { ImageSizeSort } from "@/lib/image-size-sort";
+import type { RelativeSort } from "@/lib/relative-sort";
+import type { TagFilterFitSort } from "@/lib/tag-filter-fit-sort";
+import type { TagFilterSelection } from "@/lib/tags";
 import type { ViewportFitSort } from "@/lib/viewport-fit";
 
 export type MediaViewOrder = "default" | "shuffled";
+
+/** How the active nearness sort was entered (kit picker vs custom filter). */
+export type NearnessSource = "kit" | "filter";
 
 export type BackgroundJobStatus =
     | "idle" |
@@ -152,18 +158,49 @@ interface UIState {
     imageSizeSort: ImageSizeSort;
     setImageSizeSort: (mode: ImageSizeSort) => void;
     /**
-     * Gallery reorder by visual nearness to a tag kit (preset id).
-     * `undefined` = off. Session-only; mutually exclusive with fit/size/shuffle.
+     * Gallery reorder by CLIP fit to the active tag filter (session-only).
+     * Requires tag clauses; mutually exclusive with fit/size/nearness/relative/shuffle.
      */
-    kitNearnessPresetId: string | undefined;
+    tagFilterFitSort: TagFilterFitSort;
+    setTagFilterFitSort: (mode: TagFilterFitSort) => void;
     /**
-     * Bumped whenever kit nearness is (re)applied so the gallery can snapshot
-     * medoids once — tagging more kit members must not rebuild until reapply.
+     * Gallery reorder by greedy CLIP nearest/farthest-neighbor chain
+     * (session-only). Mutually exclusive with fit/size/tag-filter-fit/nearness/shuffle.
      */
-    kitNearnessEpoch: number;
-    setKitNearnessPresetId: (presetId: string | undefined) => void;
-    /** Rebuild kit nearness medoids from the current library (same kit). */
-    reapplyKitNearness: () => void;
+    relativeSort: RelativeSort;
+    /** Seed for the random first tip when relative sort is active. */
+    relativeSeed: number;
+    setRelativeSort: (mode: RelativeSort) => void;
+    /** Pick a new random start and rebuild the relative chain. */
+    reapplyRelativeSort: () => void;
+    /**
+     * Gallery reorder by CLIP nearness to seeds matching this filter.
+     * `undefined` = off. Session-only; independent of the main gallery filter;
+     * mutually exclusive with fit/size/tag-filter-fit/relative/shuffle.
+     */
+    nearnessFilter: TagFilterSelection | undefined;
+    /**
+     * Whether nearness was set from Kit likeness or Filter nearness.
+     * Cleared with the filter. Drives which Sort panel shows as active.
+     */
+    nearnessSource: NearnessSource | undefined;
+    /**
+     * When kit likeness is on, soft-penalize files closer to other kits.
+     * Session-only; ignored for Filter nearness. Default on.
+     */
+    kitLikenessRivalPenalty: boolean;
+    setKitLikenessRivalPenalty: (enabled: boolean) => void;
+    /**
+     * Bumped whenever nearness is (re)applied so the gallery can snapshot
+     * order once — library/tag edits must not rebuild until reapply.
+     */
+    nearnessEpoch: number;
+    setNearnessFilter: (
+        filter: TagFilterSelection | undefined,
+        source?: NearnessSource,
+    ) => void;
+    /** Rebuild nearness order from the current library (same filter). */
+    reapplyNearness: () => void;
     setMediaShuffled: (seed: number) => void;
     setMediaDefaultOrder: () => void;
     reshuffleMedia: () => void;
@@ -186,7 +223,10 @@ export const useUIStore = create<UIState>((set) => ({
             ...(mode !== "none" ?
                 {
                     imageSizeSort: "none" as const,
-                    kitNearnessPresetId: undefined,
+                    tagFilterFitSort: "none" as const,
+                    relativeSort: "none" as const,
+                    nearnessFilter: undefined,
+                    nearnessSource: undefined,
                     ...(state.mediaViewOrder === "shuffled" ?
                         {
                             mediaViewOrder: "default" as const,
@@ -204,7 +244,10 @@ export const useUIStore = create<UIState>((set) => ({
             ...(mode !== "none" ?
                 {
                     viewportFitSort: "none" as const,
-                    kitNearnessPresetId: undefined,
+                    tagFilterFitSort: "none" as const,
+                    relativeSort: "none" as const,
+                    nearnessFilter: undefined,
+                    nearnessSource: undefined,
                     ...(state.mediaViewOrder === "shuffled" ?
                         {
                             mediaViewOrder: "default" as const,
@@ -215,16 +258,17 @@ export const useUIStore = create<UIState>((set) => ({
                 {}),
         }));
     },
-    kitNearnessPresetId: undefined,
-    kitNearnessEpoch: 0,
-    setKitNearnessPresetId: (presetId: string | undefined): void => {
+    tagFilterFitSort: "none",
+    setTagFilterFitSort: (mode: TagFilterFitSort): void => {
         set((state) => ({
-            kitNearnessPresetId: presetId,
-            ...(presetId !== undefined ?
+            tagFilterFitSort: mode,
+            ...(mode !== "none" ?
                 {
-                    kitNearnessEpoch: state.kitNearnessEpoch + 1,
                     viewportFitSort: "none" as const,
                     imageSizeSort: "none" as const,
+                    relativeSort: "none" as const,
+                    nearnessFilter: undefined,
+                    nearnessSource: undefined,
                     ...(state.mediaViewOrder === "shuffled" ?
                         {
                             mediaViewOrder: "default" as const,
@@ -235,12 +279,84 @@ export const useUIStore = create<UIState>((set) => ({
                 {}),
         }));
     },
-    reapplyKitNearness: (): void => {
+    relativeSort: "none",
+    relativeSeed: 1,
+    setRelativeSort: (mode: RelativeSort): void => {
+        set((state) => ({
+            relativeSort: mode,
+            ...(mode !== "none" ?
+                {
+                    // New random tip only when turning relative on from off.
+                    relativeSeed:
+                        state.relativeSort === "none" ?
+                            Date.now() :
+                            state.relativeSeed,
+                    viewportFitSort: "none" as const,
+                    imageSizeSort: "none" as const,
+                    tagFilterFitSort: "none" as const,
+                    nearnessFilter: undefined,
+                    nearnessSource: undefined,
+                    ...(state.mediaViewOrder === "shuffled" ?
+                        {
+                            mediaViewOrder: "default" as const,
+                            mediaShuffledFileIds: [] as number[],
+                        } :
+                        {}),
+                } :
+                {}),
+        }));
+    },
+    reapplyRelativeSort: (): void => {
         set((state) => {
-            if (!state.kitNearnessPresetId) {
+            if (state.relativeSort === "none") {
                 return state;
             }
-            return { kitNearnessEpoch: state.kitNearnessEpoch + 1 };
+            return { relativeSeed: Date.now() };
+        });
+    },
+    nearnessFilter: undefined,
+    nearnessSource: undefined,
+    kitLikenessRivalPenalty: true,
+    setKitLikenessRivalPenalty: (enabled: boolean): void => {
+        set((state) => ({
+            kitLikenessRivalPenalty: enabled,
+            // Rebuild frozen kit-likeness order when the toggle changes.
+            ...(state.nearnessSource === "kit" && state.nearnessFilter ?
+                { nearnessEpoch: state.nearnessEpoch + 1 } :
+                {}),
+        }));
+    },
+    nearnessEpoch: 0,
+    setNearnessFilter: (
+        filter: TagFilterSelection | undefined,
+        source: NearnessSource = "filter",
+    ): void => {
+        set((state) => ({
+            nearnessFilter: filter,
+            nearnessSource: filter !== undefined ? source : undefined,
+            ...(filter !== undefined ?
+                {
+                    nearnessEpoch: state.nearnessEpoch + 1,
+                    viewportFitSort: "none" as const,
+                    imageSizeSort: "none" as const,
+                    tagFilterFitSort: "none" as const,
+                    relativeSort: "none" as const,
+                    ...(state.mediaViewOrder === "shuffled" ?
+                        {
+                            mediaViewOrder: "default" as const,
+                            mediaShuffledFileIds: [] as number[],
+                        } :
+                        {}),
+                } :
+                {}),
+        }));
+    },
+    reapplyNearness: (): void => {
+        set((state) => {
+            if (!state.nearnessFilter) {
+                return state;
+            }
+            return { nearnessEpoch: state.nearnessEpoch + 1 };
         });
     },
     setMediaShuffled: (seed: number): void => {
@@ -250,7 +366,10 @@ export const useUIStore = create<UIState>((set) => ({
             mediaShuffledFileIds: [],
             viewportFitSort: "none",
             imageSizeSort: "none",
-            kitNearnessPresetId: undefined,
+            tagFilterFitSort: "none",
+            relativeSort: "none",
+            nearnessFilter: undefined,
+            nearnessSource: undefined,
         });
     },
     setMediaDefaultOrder: (): void => {
@@ -263,7 +382,10 @@ export const useUIStore = create<UIState>((set) => ({
             mediaShuffledFileIds: [],
             viewportFitSort: "none",
             imageSizeSort: "none",
-            kitNearnessPresetId: undefined,
+            tagFilterFitSort: "none",
+            relativeSort: "none",
+            nearnessFilter: undefined,
+            nearnessSource: undefined,
         });
     },
     reconcileMediaShuffle: (fileIds: readonly number[]): void => {

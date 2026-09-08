@@ -10,8 +10,10 @@ import {
     kitNearnessDistance,
     kitNearnessDistanceCompetitive,
     listKitSeedFiles,
+    pickKitEmbeddingMedoids,
     pickKitMedoids,
     rankKitsByBestFitShare,
+    rankKitsByBestFitShareEmbedding,
     sortFilesByKitEmbeddingCompetitive,
     sortFilesByKitNearness,
     sortFilesByKitNearnessCompetitive,
@@ -386,14 +388,14 @@ describe("CLIP kit embedding nearness", () => {
         return unit(out);
     };
 
-    it("ranks closer-to-centroid files first", () => {
-        const centroid = pad512(1, 0);
+    it("ranks closer-to-medoid files first", () => {
+        const medoid = pad512(1, 0);
         const near = pad512(0.95, 0.05);
         const far = pad512(0, 1);
         const embeddings = new Map<number, number[]>([
             [1, near],
             [2, far],
-            [3, centroid],
+            [3, medoid],
         ]);
         const files = [
             fileWithTags(1, []),
@@ -402,11 +404,29 @@ describe("CLIP kit embedding nearness", () => {
         ];
         const ordered = sortFilesByKitEmbeddingCompetitive(
             files,
-            centroid,
+            [medoid],
             [],
             embeddings,
         );
         expect(ordered.map((f) => f.id)).toEqual([3, 1, 2]);
+    });
+
+    it("pickKitEmbeddingMedoids keeps dense modes, skips singleton outliers", () => {
+        const embeddings = new Map<number, number[]>([
+            [1, pad512(1, 0)],
+            [2, pad512(1, 0)],
+            [3, pad512(1, 0)],
+            [4, pad512(0, 1)],
+            [5, pad512(0, 1)],
+            [6, pad512(0.7, 0.7)], // isolated diagonal
+        ]);
+        const medoids = pickKitEmbeddingMedoids(
+            [1, 2, 3, 4, 5, 6],
+            embeddings,
+        );
+        expect(medoids.map((m) => m.fileId).sort((a, b) => a - b)).toEqual([
+            1, 4,
+        ]);
     });
 
     it("buildKitEmbeddingCentroid averages seed vectors", () => {
@@ -418,5 +438,38 @@ describe("CLIP kit embedding nearness", () => {
         expect(c).toBeDefined();
         expect(c!.length).toBe(512);
         expect(Math.abs(c![0]! - c![1]!)).toBeLessThan(1e-5);
+    });
+
+    it("rankKitsByBestFitShareEmbedding seeds from library, scores visible set", () => {
+        const kitSeed = pad512(1, 0);
+        const visibleNear = pad512(0.95, 0.05);
+        const visibleFar = pad512(0, 1);
+        const library = [
+            fileWithTags(1, ["beach"]),
+            fileWithTags(10, []),
+            fileWithTags(20, []),
+        ];
+        const visible = [library[1]!, library[2]!];
+        const embeddings = new Map<number, number[]>([
+            [1, kitSeed],
+            [10, visibleNear],
+            [20, visibleFar],
+        ]);
+        // Seeds only in library — visible set has no kit members.
+        const rankedEmptySeeds = rankKitsByBestFitShareEmbedding(
+            [{ id: "beach", tags: ["beach"] }],
+            visible,
+            embeddings,
+        );
+        expect(rankedEmptySeeds[0]!.share).toBe(0);
+
+        const ranked = rankKitsByBestFitShareEmbedding(
+            [{ id: "beach", tags: ["beach"] }],
+            visible,
+            embeddings,
+            library,
+        );
+        expect(ranked[0]!.share).toBe(1);
+        expect(ranked[0]!.winCount).toBe(2);
     });
 });

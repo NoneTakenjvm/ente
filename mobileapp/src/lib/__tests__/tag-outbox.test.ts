@@ -114,4 +114,39 @@ describe("tag-outbox", () => {
         expect(getTagOutboxEntries()).toEqual([]);
         expect(saveEncryptedTagOutbox).toHaveBeenCalledWith([], "test-cache-key");
     });
+
+    it("upsertTagOutboxEntries persists once for many files", async () => {
+        const {
+            upsertTagOutboxEntries,
+            getTagOutboxEntries,
+            hydrateTagOutbox,
+        } = await import("@/lib/tag-outbox");
+
+        await hydrateTagOutbox();
+        saveEncryptedTagOutbox.mockClear();
+
+        await upsertTagOutboxEntries([
+            { fileId: 1, intendedTags: ["a"] },
+            { fileId: 2, intendedTags: ["b"] },
+            { fileId: 3, intendedTags: ["c"] },
+        ]);
+
+        expect(getTagOutboxEntries().map((entry) => entry.fileId).sort()).toEqual([
+            1, 2, 3,
+        ]);
+        expect(saveEncryptedTagOutbox).toHaveBeenCalledTimes(1);
+    });
+
+    it("enqueueTagOutboxEntries updates memory without awaiting persist", async () => {
+        const {
+            enqueueTagOutboxEntries,
+            getTagOutboxEntry,
+            hydrateTagOutbox,
+        } = await import("@/lib/tag-outbox");
+
+        await hydrateTagOutbox();
+        enqueueTagOutboxEntries([{ fileId: 9, intendedTags: ["queued"] }]);
+
+        expect(getTagOutboxEntry(9)?.intendedTags).toEqual(["queued"]);
+    });
 });

@@ -1,13 +1,14 @@
 /**
- * Worker-safe Stage-1 similar-photo clustering: dHash buckets → edges →
- * optional CLIP gate/rescue → mutual nearest-neighbour → Kruskal. No DOM /
- * EnteFile imports.
+ * Worker-safe Stage-1 similar-photo clustering.
  *
- * [Note: progressive tight groups.] While comparing, near-exact edges
- * (distance ≤ {@link TIGHT_MATCH_DISTANCE}) are unioned immediately so the UI
- * can show real duplicate groups before the full mutual pass finishes. The
- * final result always re-runs mutual-kNN + Kruskal over every collected edge —
- * no pairs are skipped.
+ * When CLIP embeddings are provided: nearest-neighbour propose (top-K within
+ * collect band) → mutual/tight confirm → union-find. Edge `distance` is
+ * {@code round(clipCosine * 100)} so the UI slider (8–16) maps to CLIP 0.08–0.16.
+ *
+ * Without embeddings: dHash buckets → Hamming edges → mutual-kNN → Kruskal.
+ *
+ * [Note: progressive tight groups.] dHash path unions near-exact edges
+ * (distance ≤ {@link TIGHT_MATCH_DISTANCE}) immediately for provisional UI.
  *
  * [Note: packed hashes.] Hex strings are parsed once into {@link PackedDHash}
  * limbs before the compare loop — Hamming uses uint32 XOR + SWAR popcount.
@@ -15,15 +16,13 @@
  * [Note: group size cap.] Clustering itself is uncapped. Callers trim oversized
  * components for display after grouping; capping during union artificially
  * fragments the graph into many small groups.
- *
- * [Note: CLIP hybrid.] Embeddings are optional. When provided, mid-band dHash
- * edges far in CLIP space are dropped; CLIP-near pairs just outside the Hamming
- * threshold can still join (rescue). Missing vectors → dHash-only behaviour.
  */
 import {
-    embeddingCosineDistance,
-    shouldKeepStage1Edge,
-    type SimilarClipKnobs,
+    CLIP_CONFIRM_TOP_K,
+    CLIP_SCORE_COLLECT_MAX,
+    collectConfirmedClipEdges,
+    findClipTopNeighbours,
+    findClipTopNeighboursForIndex,
 } from "@/lib/similarity-clip";
 import {
     parseDHashHex,
@@ -35,6 +34,13 @@ import {
 export const MAX_GROUP_SIZE = 5;
 export const MUTUAL_RANK_K = 8;
 export const TIGHT_MATCH_DISTANCE = 2;
+
+export {
+    CLIP_SCORE_COLLECT_MAX,
+    CLIP_SCORE_SLIDER_MAX,
+    CLIP_SCORE_SLIDER_MIN,
+    clampClipScoreThreshold,
+} from "@/lib/similarity-clip";
 
 /** Soft throttle for provisional cluster snapshots during compare (ms). */
 const CLUSTER_PROGRESS_INTERVAL_MS = 300;
@@ -60,8 +66,7 @@ export type Stage1FileEdge = {
 export type Stage1EmbeddingMap = ReadonlyMap<number, readonly number[]>;
 
 export type Stage1ClipOptions = {
-    embeddings?: Stage1EmbeddingMap;
-    knobs?: SimilarClipKnobs;
+    embeddings: Stage1EmbeddingMap;
 };
 
 export type Stage1ClusteringResult = {
@@ -332,39 +337,12 @@ const finalizeClusters = (
     items: NumericStage1Item[],
     edgeByKey: Map<string, CandidateEdge>,
     clusterThreshold: number,
-    clip?: Stage1ClipOptions,
 ): Stage1Cluster[] => {
-    const embeddings = clip?.embeddings;
-    const knobs = clip?.knobs;
     const kept = new Map<string, CandidateEdge>();
-    /** CLIP-rescue edges (Hamming above UI threshold) — skip mutual-kNN. */
-    const forcedRescue: CandidateEdge[] = [];
     for (const [key, edge] of edgeByKey.entries()) {
-        let clipDistance: number | undefined;
-        if (embeddings && embeddings.size > 0) {
-            clipDistance = embeddingCosineDistance(
-                embeddings.get(items[edge.left]!.fileId),
-                embeddings.get(items[edge.right]!.fileId),
-            );
-            if (!Number.isFinite(clipDistance)) {
-                clipDistance = undefined;
-            }
+        if (edge.distance <= clusterThreshold) {
+            kept.set(key, edge);
         }
-        if (
-            !shouldKeepStage1Edge(
-                edge.distance,
-                clipDistance,
-                clusterThreshold,
-                knobs,
-            )
-        ) {
-            continue;
-        }
-        if (edge.distance > clusterThreshold) {
-            forcedRescue.push(edge);
-            continue;
-        }
-        kept.set(key, edge);
     }
     const mutual = filterMutualNearestEdges(kept);
     const uf = new UnionFind(items.length);
@@ -373,15 +351,26 @@ const finalizeClusters = (
         uf.union(edge.left, edge.right);
         edgeDistanceByPair.set(`${edge.left}:${edge.right}`, edge.distance);
     }
-    // Rescue pairs are CLIP-near but Hamming-far; mutual top-K would often
-    // drop them in favour of closer hash neighbours — force-union instead.
-    for (const edge of forcedRescue) {
-        uf.union(edge.left, edge.right);
-        const pairKey = `${edge.left}:${edge.right}`;
-        const prev = edgeDistanceByPair.get(pairKey);
-        if (prev === undefined || edge.distance > prev) {
-            edgeDistanceByPair.set(pairKey, edge.distance);
+    return clustersFromUnionFind(uf, items, edgeDistanceByPair);
+};
+
+/**
+ * Cluster from CLIP score edges (distance = round(cosine * 100)).
+ * No mutual-kNN here — confirm already happened when edges were collected.
+ */
+const finalizeClipScoreClusters = (
+    items: NumericStage1Item[],
+    edgeByKey: Map<string, CandidateEdge>,
+    clusterThreshold: number,
+): Stage1Cluster[] => {
+    const uf = new UnionFind(items.length);
+    const edgeDistanceByPair = new Map<string, number>();
+    for (const edge of edgeByKey.values()) {
+        if (edge.distance > clusterThreshold) {
+            continue;
         }
+        uf.union(edge.left, edge.right);
+        edgeDistanceByPair.set(`${edge.left}:${edge.right}`, edge.distance);
     }
     return clustersFromUnionFind(uf, items, edgeDistanceByPair);
 };
@@ -402,9 +391,157 @@ const edgesToFileEdges = (
 };
 
 /**
+ * CLIP-first Stage-1: each embedded file proposes its top-K CLIP neighbours
+ * within the collect band; mutual (or tight) edges are confirmed, then
+ * clustered at {@link threshold}.
+ */
+const runClipNearestClusteringCore = (
+    items: Stage1Item[],
+    embeddings: Stage1EmbeddingMap,
+    threshold: number,
+): Stage1ClusteringResult => {
+    const numericItems = toNumericItems(items);
+    const embedded: Array<{
+        itemIndex: number;
+        vector: readonly number[];
+    }> = [];
+    for (let i = 0; i < numericItems.length; i++) {
+        const vector = embeddings.get(numericItems[i]!.fileId);
+        if (vector?.length) {
+            embedded.push({ itemIndex: i, vector });
+        }
+    }
+    if (embedded.length < 2) {
+        return { clusters: [], edges: [] };
+    }
+
+    const vectors = embedded.map((entry) => entry.vector);
+    const topByIndex = findClipTopNeighbours(
+        vectors,
+        CLIP_CONFIRM_TOP_K,
+        CLIP_SCORE_COLLECT_MAX,
+    );
+    const confirmed = collectConfirmedClipEdges(topByIndex);
+
+    const edgeByKey = new Map<string, CandidateEdge>();
+    for (const edge of confirmed) {
+        const left = embedded[edge.left]!.itemIndex;
+        const right = embedded[edge.right]!.itemIndex;
+        const a = Math.min(left, right);
+        const b = Math.max(left, right);
+        edgeByKey.set(`${a}:${b}`, {
+            left: a,
+            right: b,
+            distance: edge.score,
+        });
+    }
+
+    return {
+        clusters: finalizeClipScoreClusters(
+            numericItems,
+            edgeByKey,
+            threshold,
+        ),
+        edges: edgesToFileEdges(numericItems, edgeByKey),
+    };
+};
+
+/**
+ * Async CLIP nearest-neighbour pass with progress + abort (worker-friendly).
+ */
+const runClipNearestClusteringAsync = async (
+    items: Stage1Item[],
+    embeddings: Stage1EmbeddingMap,
+    threshold: number,
+    onProgress: (update: Stage1ProgressUpdate) => void,
+    shouldAbort?: () => boolean,
+): Promise<Stage1ClusteringResult> => {
+    const numericItems = toNumericItems(items);
+    const embedded: Array<{
+        itemIndex: number;
+        vector: readonly number[];
+    }> = [];
+    for (let i = 0; i < numericItems.length; i++) {
+        const vector = embeddings.get(numericItems[i]!.fileId);
+        if (vector?.length) {
+            embedded.push({ itemIndex: i, vector });
+        }
+    }
+    const total = embedded.length;
+    if (total < 2) {
+        onProgress({ phase: "done", completed: 0, total: 0, clusters: [] });
+        return { clusters: [], edges: [] };
+    }
+
+    const vectors = embedded.map((entry) => entry.vector);
+    const topByIndex: Array<
+        ReturnType<typeof findClipTopNeighboursForIndex>
+    > = Array.from({ length: total }, () => []);
+    const yieldEvery = Math.max(1, Math.min(32, Math.floor(total / 100) || 1));
+
+    for (let i = 0; i < total; i++) {
+        if (shouldAbort?.()) {
+            throw new DOMException("Similarity grouping aborted", "AbortError");
+        }
+        topByIndex[i] = findClipTopNeighboursForIndex(
+            vectors,
+            i,
+            CLIP_CONFIRM_TOP_K,
+            CLIP_SCORE_COLLECT_MAX,
+        );
+
+        const completed = i + 1;
+        if (completed % yieldEvery === 0 || completed === total) {
+            onProgress({ phase: "comparing", completed, total });
+            await new Promise<void>((resolve) => {
+                setTimeout(resolve, 0);
+            });
+        }
+    }
+
+    if (shouldAbort?.()) {
+        throw new DOMException("Similarity grouping aborted", "AbortError");
+    }
+
+    const confirmed = collectConfirmedClipEdges(topByIndex);
+    const edgeByKey = new Map<string, CandidateEdge>();
+    for (const edge of confirmed) {
+        const left = embedded[edge.left]!.itemIndex;
+        const right = embedded[edge.right]!.itemIndex;
+        const a = Math.min(left, right);
+        const b = Math.max(left, right);
+        edgeByKey.set(`${a}:${b}`, {
+            left: a,
+            right: b,
+            distance: edge.score,
+        });
+    }
+
+    const clusters = finalizeClipScoreClusters(
+        numericItems,
+        edgeByKey,
+        threshold,
+    );
+    const edges = edgesToFileEdges(numericItems, edgeByKey);
+
+    onProgress({
+        phase: "finalizing",
+        completed: total,
+        total,
+        clusters,
+    });
+    await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0);
+    });
+    onProgress({ phase: "done", completed: total, total, clusters });
+    return { clusters, edges };
+};
+
+/**
  * Recluster from cached file-id edges at a (possibly lower) threshold.
- * Sync and cheap — no hash compares. Optional CLIP gate/rescue when embeddings
- * are provided.
+ * Sync and cheap. When {@link clip} is set, edges are CLIP scores (confirm
+ * already applied at collect time) — threshold-filter only. Without CLIP,
+ * edges are Hamming and mutual-kNN is reapplied.
  */
 export const clusterFromFileEdges = (
     items: Stage1Item[],
@@ -420,8 +557,12 @@ export const clusterFromFileEdges = (
         numericItems.map((item, index) => [item.fileId, index]),
     );
     const edgeByKey = new Map<string, CandidateEdge>();
+    const collectMax =
+        clip?.embeddings && clip.embeddings.size > 0 ?
+            CLIP_SCORE_COLLECT_MAX :
+            EDGE_COLLECT_THRESHOLD;
     for (const edge of edges) {
-        if (edge.distance > EDGE_COLLECT_THRESHOLD) {
+        if (edge.distance > collectMax) {
             continue;
         }
         const left = indexByFileId.get(edge.leftFileId);
@@ -437,7 +578,10 @@ export const clusterFromFileEdges = (
             distance: edge.distance,
         });
     }
-    return finalizeClusters(numericItems, edgeByKey, threshold, clip);
+    if (clip?.embeddings && clip.embeddings.size > 0) {
+        return finalizeClipScoreClusters(numericItems, edgeByKey, threshold);
+    }
+    return finalizeClusters(numericItems, edgeByKey, threshold);
 };
 
 /**
@@ -451,6 +595,10 @@ export const runStage1ClusteringSync = (
 ): Stage1Cluster[] => {
     if (items.length < 2) {
         return [];
+    }
+    if (clip?.embeddings && clip.embeddings.size >= 2) {
+        return runClipNearestClusteringCore(items, clip.embeddings, threshold)
+            .clusters;
     }
     const numericItems = toNumericItems(items);
     const buckets = buildHashBuckets(numericItems);
@@ -466,11 +614,12 @@ export const runStage1ClusteringSync = (
             provisionalUf,
         );
     }
-    return finalizeClusters(numericItems, edgeByKey, threshold, clip);
+    return finalizeClusters(numericItems, edgeByKey, threshold);
 };
 
 /**
- * Async Stage-1 with per-image progress. Collects edges up to
+ * Async Stage-1 with per-image progress. With CLIP embeddings, runs
+ * nearest-neighbour propose/confirm. Without, collects Hamming edges up to
  * {@link collectThreshold} (default {@link EDGE_COLLECT_THRESHOLD}) so callers
  * can recluster at lower thresholds without recomparing. Yields to the event
  * loop so worker `postMessage` progress reaches the UI thread.
@@ -491,6 +640,16 @@ export const runStage1Clustering = async (
             clusters: [],
         });
         return { clusters: [], edges: [] };
+    }
+
+    if (clip?.embeddings && clip.embeddings.size >= 2) {
+        return runClipNearestClusteringAsync(
+            items,
+            clip.embeddings,
+            threshold,
+            onProgress,
+            shouldAbort,
+        );
     }
 
     const collectAt = Math.max(threshold, collectThreshold);
@@ -573,7 +732,6 @@ export const runStage1Clustering = async (
         numericItems,
         edgeByKey,
         threshold,
-        clip,
     );
 
     onProgress({

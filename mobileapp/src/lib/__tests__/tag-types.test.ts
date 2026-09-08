@@ -5,6 +5,7 @@ import {
     configFromPersisted,
     configToPersisted,
     filterKitNearnessTags,
+    areAllTagsIncludedInKitNearness,
     isTagIncludedInKitNearness,
     normalizeTagTypeName,
     sortTagsByUsage,
@@ -28,6 +29,11 @@ describe("tag-types", () => {
         expect(
             filterKitNearnessTags(["beach", "junk"], include),
         ).toEqual(["beach"]);
+        expect(
+            areAllTagsIncludedInKitNearness(["beach", "junk"], include),
+        ).toBe(false);
+        expect(areAllTagsIncludedInKitNearness(["beach"], include)).toBe(true);
+        expect(areAllTagsIncludedInKitNearness([], include)).toBe(false);
         const persisted = configToPersisted(
             [DEFAULT_TAG_TYPE],
             new Map(),

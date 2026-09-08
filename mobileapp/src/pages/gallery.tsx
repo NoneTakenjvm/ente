@@ -2,6 +2,7 @@ import {
     useCallback,
     useEffect,
     useMemo,
+    useRef,
     useState,
     type JSX,
 } from "react";
@@ -30,7 +31,9 @@ import { dedupeFilesById } from "@/lib/sync/merge-files";
 import { reconcileShuffledIds } from "@/lib/shuffle-files";
 import {
     countFilesMatchingTagFilter,
+    countTagFilterClauses,
     filterFilesByTags,
+    isTagFilterActive,
 } from "@/lib/tags";
 import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 import { sortFilesByEdit, sortFilesByUpload } from "@/lib/sort-files";
@@ -39,12 +42,15 @@ import {
     sortFilesByViewportFit,
 } from "@/lib/viewport-fit";
 import { sortFilesByImageSize } from "@/lib/image-size-sort";
+import { sortFilesByRelative } from "@/lib/relative-sort";
+import { sortFilesByTagFilterFit } from "@/lib/tag-filter-fit-sort";
 import {
-    buildKitEmbeddingCentroid,
+    MAX_KIT_SEEDS,
     listKitSeedFiles,
+    pickKitEmbeddingMedoids,
     sortFilesByKitEmbeddingCompetitive,
 } from "@/lib/kit-nearness-sort";
-import { filterKitNearnessTags } from "@/lib/tag-types";
+import { matchNearnessFilterToKitPreset } from "@/lib/tag-presets";
 import { imageFilesForPhash } from "@/lib/similarity-job";
 import { runKitEmbeddingJob } from "@/lib/kit-embedding";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -109,26 +115,36 @@ export default function GalleryPage(): JSX.Element {
     const reconcileMediaShuffle = useUIStore((s) => s.reconcileMediaShuffle);
     const viewportFitSort = useUIStore((s) => s.viewportFitSort);
     const imageSizeSort = useUIStore((s) => s.imageSizeSort);
-    const kitNearnessPresetId = useUIStore((s) => s.kitNearnessPresetId);
-    const kitNearnessEpoch = useUIStore((s) => s.kitNearnessEpoch);
-    const setKitNearnessPresetId = useUIStore((s) => s.setKitNearnessPresetId);
+    const tagFilterFitSort = useUIStore((s) => s.tagFilterFitSort);
+    const relativeSort = useUIStore((s) => s.relativeSort);
+    const relativeSeed = useUIStore((s) => s.relativeSeed);
+    const nearnessFilter = useUIStore((s) => s.nearnessFilter);
+    const nearnessEpoch = useUIStore((s) => s.nearnessEpoch);
+    const setNearnessFilter = useUIStore((s) => s.setNearnessFilter);
     const setUploadPanelOpen = useUploadJobStore((s) => s.setPanelOpen);
     const syncStatus = useLibraryStore((s) => s.syncStatus);
     const initialLoadDone = useLibraryBootstrap();
     const gallerySortBy = useSettingsStore((s) => s.gallerySortBy);
-    const tagPresets = useTagSpeedStore((s) => s.presets);
-    const includeInKitNearnessByName = useTagStore(
-        (s) => s.includeInKitNearnessByName,
-    );
     const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
     const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.hydrate);
+    const embeddingEntries = useEmbeddingIndexStore((s) => s.entries);
 
-    const kitNearnessPreset = useMemo(() => {
-        if (!kitNearnessPresetId) {
-            return undefined;
+    const nearnessActive =
+        nearnessFilter !== undefined && isTagFilterActive(nearnessFilter);
+
+    useEffect(() => {
+        if (tagFilterFitSort === "none" || embeddingHydrated) {
+            return;
         }
-        return tagPresets.find((preset) => preset.id === kitNearnessPresetId);
-    }, [kitNearnessPresetId, tagPresets]);
+        void hydrateEmbeddings();
+    }, [embeddingHydrated, hydrateEmbeddings, tagFilterFitSort]);
+
+    useEffect(() => {
+        if (relativeSort === "none" || embeddingHydrated) {
+            return;
+        }
+        void hydrateEmbeddings();
+    }, [embeddingHydrated, hydrateEmbeddings, relativeSort]);
 
     const [viewerAspect, setViewerAspect] = useState<number>(
         () => (typeof window === "undefined" ? 1 : deviceViewerAspectRatio()),
@@ -147,26 +163,27 @@ export default function GalleryPage(): JSX.Element {
         };
     }, []);
 
+    // Drop a stale inactive filter object (e.g. empty after edits elsewhere).
     useEffect(() => {
-        if (!kitNearnessPresetId || kitNearnessPreset) {
+        if (!nearnessFilter || isTagFilterActive(nearnessFilter)) {
             return;
         }
-        setKitNearnessPresetId(undefined);
-    }, [kitNearnessPreset, kitNearnessPresetId, setKitNearnessPresetId]);
+        setNearnessFilter(undefined);
+    }, [nearnessFilter, setNearnessFilter]);
 
-    // Kit nearness is gallery-session only — clear when leaving Media.
+    // Nearness is gallery-session only — clear when leaving Media.
     useEffect(() => {
         return (): void => {
-            useUIStore.getState().setKitNearnessPresetId(undefined);
+            useUIStore.getState().setNearnessFilter(undefined);
         };
     }, []);
 
     useEffect(() => {
-        if (!kitNearnessPreset || embeddingHydrated) {
+        if (!nearnessActive || embeddingHydrated) {
             return;
         }
         void hydrateEmbeddings();
-    }, [embeddingHydrated, hydrateEmbeddings, kitNearnessPreset]);
+    }, [embeddingHydrated, hydrateEmbeddings, nearnessActive]);
 
     const sortLibraryFiles = useCallback(
         (files: EnteFile[]): EnteFile[] =>
@@ -177,28 +194,16 @@ export default function GalleryPage(): JSX.Element {
     );
 
     /**
-     * Kit nearness needs CLIP centroids from seed photos. If seeds were never
-     * embedded, embed them here (same idea as the old dHash seed hash) — then
-     * reapply. Full-library CLIP scan is explicit only (Manage → Settings);
-     * there is no background library scan.
+     * Nearness needs CLIP medoids from seed photos matching the nearness
+     * filter. Embed missing seeds on demand, then reapply. Full-library CLIP
+     * scan stays explicit (Manage → Settings).
      */
     useEffect(() => {
-        if (!kitNearnessPreset || !embeddingHydrated || !initialLoadDone) {
+        if (!nearnessActive || !nearnessFilter || !embeddingHydrated || !initialLoadDone) {
             return;
         }
         let cancelled = false;
         const abort = new AbortController();
-        const presetTags = filterKitNearnessTags(
-            kitNearnessPreset.tags,
-            includeInKitNearnessByName,
-        );
-        if (!presetTags.length) {
-            toast.message(
-                "This kit has no tags enabled for kit nearness. Enable them in Manage → Tags.",
-            );
-            setKitNearnessPresetId(undefined);
-            return;
-        }
 
         void (async (): Promise<void> => {
             const userId = useSessionStore.getState().userID ?? 0;
@@ -207,13 +212,19 @@ export default function GalleryPage(): JSX.Element {
                     (file) => !isFileArchivedLocally(file),
                 ),
             );
-            const seeds = imageFilesForPhash(
-                listKitSeedFiles(library, presetTags),
-                userId,
+            const tagState = useTagStore.getState();
+            const seedMatches = filterFilesByTags(
+                library,
+                nearnessFilter,
+                tagState.fileIdsByTag,
+                { favoriteFileIds: useFavoritesStore.getState().favoriteFileIds },
             );
+            const seeds = imageFilesForPhash(seedMatches, userId)
+                .sort((a, b) => a.id - b.id)
+                .slice(0, MAX_KIT_SEEDS);
             if (seeds.length === 0) {
                 toast.message(
-                    "No photos fully match this kit. Tag photos with every kit tag first.",
+                    "No photos match the nearness filter. Adjust tags or scopes.",
                 );
                 return;
             }
@@ -222,7 +233,7 @@ export default function GalleryPage(): JSX.Element {
             const missingSeeds = seeds.filter((file) => !entries.has(file.id));
             if (missingSeeds.length > 0) {
                 const toastId = toast.loading(
-                    `Embedding ${missingSeeds.length} kit photo${missingSeeds.length === 1 ? "" : "s"}…`,
+                    `Embedding ${missingSeeds.length} seed photo${missingSeeds.length === 1 ? "" : "s"}…`,
                 );
                 try {
                     entries = await runKitEmbeddingJob({
@@ -237,7 +248,7 @@ export default function GalleryPage(): JSX.Element {
                         toast.error(
                             error instanceof Error ?
                                 error.message :
-                                "Could not embed kit photos",
+                                "Could not embed seed photos",
                         );
                     }
                     return;
@@ -248,18 +259,18 @@ export default function GalleryPage(): JSX.Element {
                 }
                 useEmbeddingIndexStore.getState().setEntries(entries);
                 toast.dismiss(toastId);
-                useUIStore.getState().reapplyKitNearness();
+                useUIStore.getState().reapplyNearness();
                 return;
             }
 
             if (
-                !buildKitEmbeddingCentroid(
+                pickKitEmbeddingMedoids(
                     seeds.map((file) => file.id),
                     entries,
-                )
+                ).length === 0
             ) {
                 toast.message(
-                    "Could not build kit nearness. Run Manage → Settings → Scan CLIP embeddings.",
+                    "Could not build nearness. Run Manage → Settings → Scan CLIP embeddings.",
                 );
             }
         })();
@@ -270,31 +281,20 @@ export default function GalleryPage(): JSX.Element {
         };
     }, [
         embeddingHydrated,
-        includeInKitNearnessByName,
         initialLoadDone,
-        kitNearnessEpoch,
-        kitNearnessPreset,
-        setKitNearnessPresetId,
+        nearnessActive,
+        nearnessEpoch,
+        nearnessFilter,
         sortLibraryFiles,
     ]);
 
     /**
-     * Kit nearness order snapshotted at apply/reapply (epoch bump).
+     * Nearness order snapshotted at apply/reapply (epoch bump).
      * Reads library via getState so stamping does not rebuild.
      */
-    const frozenKitOrderIds = useMemo((): number[] => {
-        if (!kitNearnessPresetId || !embeddingHydrated) {
-            return [];
-        }
-        const preset = useTagSpeedStore
-            .getState()
-            .presets.find((entry) => entry.id === kitNearnessPresetId);
-        const includeMap =
-            useTagStore.getState().includeInKitNearnessByName;
-        const selectedTags = preset ?
-            filterKitNearnessTags(preset.tags, includeMap) :
-            [];
-        if (!selectedTags.length) {
+    const frozenNearnessOrderIds = useMemo((): number[] => {
+        const filter = useUIStore.getState().nearnessFilter;
+        if (!filter || !isTagFilterActive(filter) || !embeddingHydrated) {
             return [];
         }
         const library = sortLibraryFiles(
@@ -303,53 +303,94 @@ export default function GalleryPage(): JSX.Element {
             ),
         );
         const embeddings = useEmbeddingIndexStore.getState().entries;
-        const allPresets = useTagSpeedStore.getState().presets;
-        const selectedCentroid = buildKitEmbeddingCentroid(
-            listKitSeedFiles(library, selectedTags).map((file) => file.id),
+        const tagState = useTagStore.getState();
+        const favoriteIds = useFavoritesStore.getState().favoriteFileIds;
+        const seedIds = filterFilesByTags(
+            library,
+            filter,
+            tagState.fileIdsByTag,
+            { favoriteFileIds: favoriteIds },
+        ).map((file) => file.id);
+        const selectedMedoids = pickKitEmbeddingMedoids(
+            seedIds,
             embeddings,
-        );
-        if (!selectedCentroid) {
+        ).map((medoid) => medoid.vector);
+        if (!selectedMedoids.length) {
             return [];
         }
-        const rivalCentroids = allPresets
-            .filter((entry) => entry.id !== preset!.id)
-            .map((entry) => {
-                const rivalTags = filterKitNearnessTags(
-                    entry.tags,
-                    includeMap,
-                );
-                if (!rivalTags.length) {
-                    return undefined;
-                }
-                return buildKitEmbeddingCentroid(
-                    listKitSeedFiles(library, rivalTags).map(
-                        (file) => file.id,
-                    ),
-                    embeddings,
-                );
-            })
-            .filter((centroid): centroid is number[] => !!centroid?.length);
-        const tagState = useTagStore.getState();
         const filtered = filterFilesByTags(
             library,
             tagState.tagFilter,
             tagState.fileIdsByTag,
-            { favoriteFileIds: useFavoritesStore.getState().favoriteFileIds },
+            { favoriteFileIds: favoriteIds },
         );
+        // Rival penalties when nearness is exactly one kit. For Kit likeness,
+        // respect the session toggle; Filter nearness always uses rivals.
+        const ui = useUIStore.getState();
+        const matchedKit = matchNearnessFilterToKitPreset(
+            filter,
+            useTagSpeedStore.getState().presets,
+        );
+        const useRivalPenalty =
+            matchedKit !== undefined &&
+            (ui.nearnessSource !== "kit" || ui.kitLikenessRivalPenalty);
+        const rivalMedoidSets = useRivalPenalty ?
+            useTagSpeedStore
+                .getState()
+                .presets.filter((entry) => entry.id !== matchedKit.id)
+                .map((entry) => {
+                    if (!entry.tags.length) {
+                        return [];
+                    }
+                    return pickKitEmbeddingMedoids(
+                        listKitSeedFiles(library, entry.tags).map(
+                            (file) => file.id,
+                        ),
+                        embeddings,
+                    ).map((medoid) => medoid.vector);
+                })
+                .filter((medoids) => medoids.length > 0) :
+            [];
         return sortFilesByKitEmbeddingCompetitive(
             filtered,
-            selectedCentroid,
-            rivalCentroids,
+            selectedMedoids,
+            rivalMedoidSets,
             embeddings,
         ).map((file) => file.id);
-        // kitNearnessEpoch is the intentional rebuild trigger.
+        // nearnessEpoch is the intentional rebuild trigger.
         // eslint-disable-next-line react-hooks/exhaustive-deps -- snapshot only on apply
-    }, [
-        kitNearnessEpoch,
-        kitNearnessPresetId,
-        embeddingHydrated,
-        sortLibraryFiles,
-    ]);
+    }, [nearnessEpoch, nearnessFilter, embeddingHydrated, sortLibraryFiles]);
+
+    /**
+     * Relative snake snapshotted when mode/seed changes (or embeddings hydrate).
+     * Reads library via getState so tagging does not re-run O(n²) each edit.
+     */
+    const frozenRelativeOrderIds = useMemo((): number[] => {
+        if (relativeSort === "none" || !embeddingHydrated) {
+            return [];
+        }
+        const library = sortLibraryFiles(
+            dedupeFilesById(useLibraryStore.getState().allFiles).filter(
+                (file) => !isFileArchivedLocally(file),
+            ),
+        );
+        const embeddings = useEmbeddingIndexStore.getState().entries;
+        const tagState = useTagStore.getState();
+        const favoriteIds = useFavoritesStore.getState().favoriteFileIds;
+        const filtered = filterFilesByTags(
+            library,
+            tagState.tagFilter,
+            tagState.fileIdsByTag,
+            { favoriteFileIds: favoriteIds },
+        );
+        return sortFilesByRelative(
+            filtered,
+            relativeSort,
+            embeddings,
+            relativeSeed,
+        ).map((file) => file.id);
+        // Rebuild only when mode/seed/embeddings change — not on every tag edit.
+    }, [relativeSort, relativeSeed, embeddingHydrated, sortLibraryFiles]);
 
     const libraryFiles = useMemo(() => {
         const deduped = dedupeFilesById(allFiles).filter(
@@ -369,28 +410,51 @@ export default function GalleryPage(): JSX.Element {
         [libraryFiles, tagFilter, fileIdsByTag, favoriteFileIds],
     );
 
+    // Latch tag-fit mode across filter edits; only reorder while clauses exist.
+    const tagFilterFitActive =
+        tagFilterFitSort !== "none" &&
+        countTagFilterClauses(tagFilter.root) > 0;
+    const relativeActive = relativeSort !== "none";
+
     useEffect(() => {
         if (
             mediaViewOrder !== "shuffled" ||
             viewportFitSort !== "none" ||
             imageSizeSort !== "none" ||
-            kitNearnessPresetId !== undefined
+            tagFilterFitActive ||
+            relativeActive ||
+            nearnessActive
         ) {
             return;
         }
         reconcileMediaShuffle(filteredFiles.map((file) => file.id));
     }, [
         filteredFiles,
-        kitNearnessPresetId,
+        nearnessActive,
         mediaViewOrder,
         reconcileMediaShuffle,
+        relativeActive,
+        tagFilterFitActive,
         viewportFitSort,
         imageSizeSort,
     ]);
 
     const files = useMemo(() => {
-        if (kitNearnessPreset) {
-            return reconcileFrozenFileOrder(filteredFiles, frozenKitOrderIds);
+        if (nearnessActive) {
+            return reconcileFrozenFileOrder(filteredFiles, frozenNearnessOrderIds);
+        }
+        if (relativeActive) {
+            return reconcileFrozenFileOrder(
+                filteredFiles,
+                frozenRelativeOrderIds,
+            );
+        }
+        if (tagFilterFitActive) {
+            return sortFilesByTagFilterFit(
+                filteredFiles,
+                tagFilterFitSort,
+                embeddingEntries,
+            );
         }
         if (imageSizeSort !== "none") {
             return sortFilesByImageSize(filteredFiles, imageSizeSort);
@@ -419,13 +483,18 @@ export default function GalleryPage(): JSX.Element {
             return file ? [file] : [];
         });
     }, [
+        embeddingEntries,
         filteredFiles,
-        frozenKitOrderIds,
+        frozenNearnessOrderIds,
+        frozenRelativeOrderIds,
         imageSizeSort,
-        kitNearnessPreset,
+        nearnessActive,
         mediaShuffledFileIds,
         mediaShuffleSeed,
         mediaViewOrder,
+        relativeActive,
+        tagFilterFitActive,
+        tagFilterFitSort,
         viewportFitSort,
         viewerAspect,
     ]);
@@ -453,6 +522,7 @@ export default function GalleryPage(): JSX.Element {
     const toggleSelection = useSelectionStore((s) => s.toggle);
     const selectMany = useSelectionStore((s) => s.selectMany);
     const pruneToVisible = useSelectionStore((s) => s.pruneToVisible);
+    const setSelectionEnabled = useSelectionStore((s) => s.setEnabled);
     const resetSelection = useSelectionStore((s) => s.reset);
     const stampActive = useSelectionStore((s) => s.stampActive);
     const stampTags = useSelectionStore((s) => s.stampTags);
@@ -470,6 +540,19 @@ export default function GalleryPage(): JSX.Element {
         }
         pruneToVisible(visibleFileIds);
     }, [pruneToVisible, selectionEnabled, visibleFileIds]);
+
+    // Selection is one edit session for the current filter. Sort can change;
+    // filter changes end the session. Leave-gallery cleanup is the unmount reset.
+    const selectionFilterRef = useRef(tagFilter);
+    useEffect(() => {
+        if (selectionFilterRef.current === tagFilter) {
+            return;
+        }
+        selectionFilterRef.current = tagFilter;
+        if (useSelectionStore.getState().enabled) {
+            setSelectionEnabled(false);
+        }
+    }, [setSelectionEnabled, tagFilter]);
 
     useEffect(() => {
         return (): void => {

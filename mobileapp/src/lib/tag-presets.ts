@@ -1,5 +1,14 @@
 import { normalizeTagName } from "@/lib/tag-writes";
-import { extractUserTags } from "@/lib/tags";
+import { setKitTagsModeOnFilter } from "@/lib/tag-filter-mutations";
+import {
+    emptyTagFilter,
+    extractUserTags,
+    isFlatTagFilterRoot,
+    isTagFilterActive,
+    isTagFilterClause,
+    type TagFilterSelection,
+} from "@/lib/tags";
+import { areAllTagsIncludedInKitNearness } from "@/lib/tag-types";
 import type { EnteFile } from "ente-media/file";
 
 export interface TagPreset {
@@ -70,12 +79,98 @@ export const countFilesMatchingKit = (
 /**
  * True when two tag lists are the same set (order-independent).
  */
-const tagSetsEqual = (left: string[], right: string[]): boolean => {
+export const tagSetsEqual = (left: readonly string[], right: readonly string[]): boolean => {
     if (left.length !== right.length) {
         return false;
     }
     const rightSet = new Set(right);
     return left.every((tag) => rightSet.has(tag));
+};
+
+/**
+ * When a nearness filter is exactly one kit (flat AND includes, no scopes /
+ * excludes), return that preset so competitive rival ranking can apply.
+ * Otherwise `undefined` — use plain medoid min-distance (no rival penalty).
+ */
+export const matchNearnessFilterToKitPreset = (
+    filter: TagFilterSelection,
+    presets: readonly TagPreset[],
+): TagPreset | undefined => {
+    if (
+        filter.tagScope !== "all" ||
+        filter.favoritesScope !== "all" ||
+        filter.mediaScope !== "all" ||
+        filter.croppedScope !== "all"
+    ) {
+        return undefined;
+    }
+    if (!isFlatTagFilterRoot(filter.root)) {
+        return undefined;
+    }
+    // Kit pick = AND of includes (extras allowed). OR / ONLY are different.
+    if (filter.root.op !== "and") {
+        return undefined;
+    }
+    const includes: string[] = [];
+    for (const child of filter.root.children) {
+        if (!isTagFilterClause(child)) {
+            return undefined;
+        }
+        if (child.mode === "exclude") {
+            return undefined;
+        }
+        includes.push(child.tag);
+    }
+    if (!includes.length) {
+        return undefined;
+    }
+    const matches = presets.filter((preset) =>
+        tagSetsEqual(preset.tags, includes));
+    return matches.length === 1 ? matches[0] : undefined;
+};
+
+/**
+ * Build a nearness seed filter that is exactly one kit (flat AND includes).
+ */
+export const nearnessFilterFromKitTags = (
+    tags: readonly string[],
+): TagFilterSelection =>
+    setKitTagsModeOnFilter(emptyTagFilter(), [...tags], "include");
+
+export type StampTagsFromNearness = {
+    tags: string[];
+    /** Prefer kit mode when the filter matches a preset. */
+    pickMode: "kit" | "tag";
+};
+
+/**
+ * Tags (and stamp pick mode) to apply when entering stamp with nearness on.
+ * Matched kits use the full preset tag list; otherwise flat include clauses.
+ */
+export const stampTagsFromNearnessFilter = (
+    filter: TagFilterSelection,
+    presets: readonly TagPreset[],
+): StampTagsFromNearness | undefined => {
+    if (!isTagFilterActive(filter)) {
+        return undefined;
+    }
+    const matched = matchNearnessFilterToKitPreset(filter, presets);
+    if (matched) {
+        return { tags: [...matched.tags], pickMode: "kit" };
+    }
+    if (!isFlatTagFilterRoot(filter.root)) {
+        return undefined;
+    }
+    const includes: string[] = [];
+    for (const child of filter.root.children) {
+        if (isTagFilterClause(child) && child.mode === "include") {
+            includes.push(child.tag);
+        }
+    }
+    if (!includes.length) {
+        return undefined;
+    }
+    return { tags: includes, pickMode: "tag" };
 };
 
 /**
@@ -123,6 +218,7 @@ export const sortPresetsByMatchCount = (
         return a.name.localeCompare(b.name);
     });
 };
+
 /**
  * Canonical key for a tag set (order-independent).
  */
@@ -149,6 +245,10 @@ export interface SuggestTagKitsOptions {
     limit?: number;
     /** Existing presets to skip (same tag set). */
     existingPresets?: TagPreset[];
+    /**
+     * When set, only suggest kits whose every tag is opted into kit nearness.
+     */
+    includeInKitNearnessByName?: ReadonlyMap<string, boolean>;
 }
 
 /**
@@ -156,6 +256,8 @@ export interface SuggestTagKitsOptions {
  *
  * Each file with 2+ user tags contributes only its full tag set (not subsets
  * or pairs). Reserved/system tags are ignored via {@link extractUserTags}.
+ * When {@link SuggestTagKitsOptions.includeInKitNearnessByName} is set, tag
+ * sets that include any non–kit-nearness tag are skipped.
  */
 export const suggestTagKits = (
     files: EnteFile[],
@@ -163,6 +265,7 @@ export const suggestTagKits = (
 ): TagKitSuggestion[] => {
     const minCount = options.minCount ?? 2;
     const limit = options.limit ?? 40;
+    const nearnessAllowlist = options.includeInKitNearnessByName;
     const excluded = new Set(
         (options.existingPresets ?? []).map((preset) => tagSetKey(preset.tags)),
     );
@@ -171,6 +274,12 @@ export const suggestTagKits = (
     for (const file of files) {
         const tags = normalizePresetTags(extractUserTags(file));
         if (tags.length < 2) {
+            continue;
+        }
+        if (
+            nearnessAllowlist &&
+            !areAllTagsIncludedInKitNearness(tags, nearnessAllowlist)
+        ) {
             continue;
         }
         const key = tagSetKey(tags);

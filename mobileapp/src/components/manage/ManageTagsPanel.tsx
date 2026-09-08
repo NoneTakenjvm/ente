@@ -358,7 +358,10 @@ export function ManageTagsPanel(): JSX.Element {
     const handleOpenSuggestions = (): void => {
         setError(undefined);
         setKitSuggestions(
-            suggestTagKits(allFiles, { existingPresets: presets }),
+            suggestTagKits(allFiles, {
+                existingPresets: presets,
+                includeInKitNearnessByName,
+            }),
         );
         setSuggestionsOpen(true);
     };

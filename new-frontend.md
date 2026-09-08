@@ -6,13 +6,106 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-09-08 |
-| **Last agent / session** | Bulk tag draft / apply |
-| **Current milestone** | Post-M8 UX / Similar + CLIP |
+| **Last updated** | 2026-09-09 |
+| **Last agent / session** | Audit staged + commit/push + CI |
+| **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Rebuild/serve when ready for QA; confirm selection Tags sheet drafts then Apply/close. |
+| **Next recommended action** | After CI green: hard-refresh → Manage footer `0.3.84`; Kit likeness → Rival kit penalties toggle. |
 
 **This session shipped:**
+1. AGENTS.md audit of staged nearness/relative/outbox/CLIP batch; minor doc/import tidy; commit + push; watch `mobileapp-deploy`.
+
+**Previous session shipped:**
+1. Stopped local preview on `:3080`.
+
+**Previous session shipped:**
+1. Rebuilt and restarted local preview on `:3080` (`APP_VERSION` `0.3.84`).
+
+**Previous session shipped:**
+1. **Kit likeness rival toggle** — Options → Kit likeness: Switch for rival kit penalties (default on); rebuilds frozen order. Filter nearness unchanged. `APP_VERSION` → `0.3.84`.
+
+**Previous session shipped:**
+1. Rebuilt and restarted local preview on `:3080` (`APP_VERSION` `0.3.83`).
+
+**Previous session shipped:**
+1. **Kit likeness % fix** — medoids from full library, claim share over visible gallery (was 0% when the view lacked kit seed photos). `APP_VERSION` → `0.3.83`.
+
+**Previous session shipped:**
+1. **Medoid review** — confirmed CLIP medoid paths for likeness + mistag; kept full-kit rival tags (0.3.80); deterministic seed embed sample (sort by id); stale “centroid” copy cleaned. `APP_VERSION` → `0.3.82`.
+
+**Previous session shipped:**
+1. **Kit likeness** — Options → Sort second entry: kits ranked by CLIP claim % on the visible gallery; select sets nearness filter to that kit (shared CLIP sort path) and arms stamp. `APP_VERSION` → `0.3.79`.
+2. **Stamp nearness sync** — entering stamp with nearness active prefills kit/tags; stamp footer Done → Close; Cancel collapses Change kit without clearing stamp.
+3. **Kit likeness rivals** — exact-kit nearness builds rival medoids from full kit tag sets (no allowlist strip), so competitive penalties stay on for Kit likeness. `0.3.80`.
+4. **Nearness UI split** — `nearnessSource` kit vs filter; Sort shows **Filter nearness** or **Kit likeness** (not both); full kits in likeness picker; orphaned kit cleared. `0.3.81`.
+
+**Previous session shipped:**
+1. **CLIP medoids** — kit nearness and tag-filter fit use 2–3 densest CLIP medoids (min distance), not a mean centroid; rival kits use medoid sets; singleton outliers are not adopted as prototypes. `APP_VERSION` → `0.3.78`.
+
+**Previous session shipped:**
+1. Rebuilt and restarted local preview on `:3080` (`APP_VERSION` `0.3.77`).
+
+**Previous session shipped:**
+1. **Similar review** — always keep 1-NN (closest relative) edges; mutual top-K still links piles; slider narrowed to 8–16 (CLIP 0.08–0.16, default 12); fix CLIP gate when &lt;2 overlapping embeddings; top-K insert without full neighbour lists. `APP_VERSION` → `0.3.77`.
+2. **CLIP-first Similar** (earlier) — Stage-1 CLIP nearest-neighbour path; dHash fallback. `0.3.76`.
+
+**Previous session shipped:**
+1. **Crop duplicate fix** — derived-replace queue coalesces onto the intermediate upload id; outbox drain skips in-flight replaces; `onCompleted` remaps outbox before waiters resolve. `APP_VERSION` → `0.3.75`.
+
+**Previous session shipped:**
+1. Rebuilt and restarted local preview on `:3080` (`APP_VERSION` `0.3.74`).
+
+**Previous session shipped:**
+1. **Outbox patch coalesce** — `patchFiles` batches verifies into one library walk; version-only tag updates mutate in place (no gallery refilter) and use one scheduled encrypt; outbox drain calls `patchFiles`. `APP_VERSION` → `0.3.74`.
+
+**Previous session shipped:**
+1. **Relative sort review** — verified closest/furthest with geometric path tests; freeze snake on enable/New start (like nearness) so tagging does not re-run O(n²). `APP_VERSION` → `0.3.73`.
+
+**Previous session shipped:**
+1. **Investigated** gallery lag after mass tag edits that drop files out of the active filter — main-thread optimistic `allFiles` map + tag-index update → gallery refilter/masonry reflow; then deferred full-library encrypt + N× `patchFile` encrypts on outbox verify.
+
+**Previous session shipped:**
+1. **Relative sort** — Options → Sort “Relative” Closest/Furthest: random CLIP start, greedy nearest/farthest-neighbor snake through the visible set (each file once); New start reseeds; mutually exclusive with other display sorts. `APP_VERSION` → `0.3.72`.
+
+**Previous session shipped:**
+1. Rebuilt and restarted local preview on `:3080` (`APP_VERSION` `0.3.71`).
+
+**Previous session shipped:**
+1. **AGENTS.md audit (staged)** — imports-first on `tag-filter-fit-sort`, void unused `applyOptimisticBatchTags` return, JSDoc brace fix in library-store. No version bump (compliance only).
+
+**Previous session shipped:**
+1. **Persist tag-filter fit sort across filter changes** — no longer clears when clauses drop to zero; latched mode reapplies when tags return; gallery only applies while clauses exist. `APP_VERSION` → `0.3.71`.
+
+**Previous session shipped:**
+1. **Nearness rival ranking** — competitive kit penalties when the nearness filter is exactly one kit (flat AND includes); plain centroid otherwise. `APP_VERSION` → `0.3.70`.
+2. **Filter-based nearness** — Options → Sort “Nearness” + Choose filter… (tags/kits/query builder) as an independent seed `TagFilterSelection`; main gallery filter still hides; CLIP centroid reorder of the visible set; Reapply/Change/Off; no kit-only picker or stamp auto-arm. `APP_VERSION` → `0.3.69`.
+
+**Previous session shipped:**
+1. **Tag apply perf** — one batched `applyFilesTags`; outbox `enqueue`/`upsert` batch; defer full-library `saveEncryptedFiles`; selection bulk no longer awaits outbox flush (Manage rename/delete/merge still does). Hardened on review: serialized library persist (no stale encrypt clobber), copy Sets in index updates, single-flight outbox hydrate. `APP_VERSION` → `0.3.68`.
+
+**Previous session shipped:**
+1. **Investigated** selection/viewer tag-apply hitch — sync full-library map + N× tag-index updates + awaited outbox encrypt/flush before paint/ack.
+
+**Previous session shipped:**
+1. Rebuilt and restarted local preview on `:3080` (`APP_VERSION` `0.3.67`).
+
+**Previous session shipped:**
+1. **Selection session scope** — exit select mode after a successful tag commit (sheet Apply/close, footer chips, kits, copy tags); exit when the gallery tag filter changes; leave Media still clears on unmount. Sorting does not exit. `APP_VERSION` → `0.3.67`.
+
+**Previous session shipped:**
+1. **Tag filter fit** — gallery sort best/worst by CLIP distance to the active tag-filter set’s centroid (mistag hunting). Shown only when tag clauses are active; clears when tags cleared. Mutually exclusive with viewport/size/kit/shuffle. `APP_VERSION` → `0.3.66`.
+
+**Previous session shipped:**
+1. Rebuilt and restarted local preview on `:3080` (`APP_VERSION` `0.3.65`).
+
+**Previous session shipped:**
+1. **Reverted** kit nearness picker “all tags required” filter (back to strip partial kits).
+2. **Kit suggestions** — `suggestTagKits` skips tag sets that include any tag without kit nearness enabled. `APP_VERSION` → `0.3.65`.
+
+**Previous session shipped:**
+1. **Kit nearness picker allowlist** — only list kits whose every tag has kit nearness enabled (no more stripping partial kits). `APP_VERSION` → `0.3.64`.
+
+**Previous session shipped:**
 1. **Bulk tag draft** — selection Tags sheet stages add/remove/kit taps locally; one batch write on **Apply** or sheet close. Footer chips disabled while sheet open; no-op toggles pruned; flush lock against double-write. `APP_VERSION` → `0.3.63`.
 
 **Previous session shipped:**

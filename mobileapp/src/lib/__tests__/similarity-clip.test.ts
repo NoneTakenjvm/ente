@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
-    DEFAULT_SIMILAR_CLIP_KNOBS,
+    CLIP_SCORE_COLLECT_MAX,
+    CLIP_SCORE_SLIDER_MAX,
+    CLIP_SCORE_SLIDER_MIN,
+    CLIP_TIGHT_SCORE,
+    clampClipScoreThreshold,
+    clipDistanceToScore,
+    collectConfirmedClipEdges,
     embeddingCosineDistance,
-    shouldKeepStage1Edge,
+    findClipTopNeighbours,
+    shouldConfirmClipEdge,
 } from "@/lib/similarity-clip";
 import {
     clusterFromFileEdges,
@@ -18,6 +25,13 @@ const unit = (value: number, dim = 4): number[] => {
     return v.map((x) => x / norm);
 };
 
+/** Two close-but-not-identical directions in 2D. */
+const nearPair = (): [number[], number[]] => {
+    const a = [1, 0];
+    const b = [0.995, Math.sqrt(1 - 0.995 ** 2)];
+    return [a, b];
+};
+
 describe("embeddingCosineDistance", () => {
     it("is 0 for identical vectors", () => {
         const a = unit(1);
@@ -31,106 +45,115 @@ describe("embeddingCosineDistance", () => {
     });
 });
 
-describe("shouldKeepStage1Edge", () => {
-    const knobs = DEFAULT_SIMILAR_CLIP_KNOBS;
-
-    it("keeps dHash-only edges within threshold when CLIP missing", () => {
-        expect(shouldKeepStage1Edge(6, undefined, 8, knobs)).toBe(true);
-        expect(shouldKeepStage1Edge(10, undefined, 8, knobs)).toBe(false);
+describe("clipDistanceToScore / clamp", () => {
+    it("maps cosine to slider score", () => {
+        expect(clipDistanceToScore(0.12)).toBe(12);
+        expect(clipDistanceToScore(0.084)).toBe(8);
     });
 
-    it("always keeps near-exact Hamming", () => {
-        expect(shouldKeepStage1Edge(1, 0.9, 8, knobs)).toBe(true);
-    });
-
-    it("gates mid-band dHash when CLIP is far", () => {
-        expect(shouldKeepStage1Edge(6, 0.5, 8, knobs)).toBe(false);
-    });
-
-    it("keeps mid-band dHash when CLIP is within gate", () => {
-        expect(shouldKeepStage1Edge(6, 0.2, 8, knobs)).toBe(true);
-    });
-
-    it("rescues above-threshold Hamming when CLIP is very close", () => {
-        expect(shouldKeepStage1Edge(12, 0.05, 8, knobs)).toBe(true);
-        expect(shouldKeepStage1Edge(12, 0.5, 8, knobs)).toBe(false);
+    it("clamps into the Similar slider range", () => {
+        expect(clampClipScoreThreshold(4)).toBe(CLIP_SCORE_SLIDER_MIN);
+        expect(clampClipScoreThreshold(20)).toBe(CLIP_SCORE_SLIDER_MAX);
+        expect(clampClipScoreThreshold(12)).toBe(12);
     });
 });
 
-describe("clusterFromFileEdges with CLIP", () => {
-    const items: Stage1Item[] = [
-        { fileId: 1, hashes: ["aaaaaaaaaaaaaaaa"] },
-        { fileId: 2, hashes: ["aaaaaaaaaaaaaaaa"] },
-        { fileId: 3, hashes: ["aaaaaaaaaaaaaaab"] }, // ~1 bit — tight-ish
-    ];
-
-    it("drops a mid-band edge that is far in CLIP", () => {
-        const edges: Stage1FileEdge[] = [
-            { leftFileId: 1, rightFileId: 2, distance: 6 },
-        ];
-        const embeddings = new Map<number, number[]>([
-            [1, unit(1)],
-            [2, [0, 1, 0, 0]],
-        ]);
-        const clusters = clusterFromFileEdges(items.slice(0, 2), edges, 8, {
-            embeddings,
-        });
-        expect(clusters).toEqual([]);
+describe("shouldConfirmClipEdge", () => {
+    it("always confirms tight scores", () => {
+        expect(
+            shouldConfirmClipEdge([], [], 0, 1, CLIP_TIGHT_SCORE),
+        ).toBe(true);
     });
 
-    it("rescues a high-Hamming CLIP-near pair", () => {
-        const edges: Stage1FileEdge[] = [
-            { leftFileId: 1, rightFileId: 2, distance: 12 },
-        ];
+    it("requires mutual top-K for looser scores", () => {
+        const leftTop = [{ other: 1, score: 10 }];
+        const rightTop = [{ other: 0, score: 10 }];
+        expect(shouldConfirmClipEdge(leftTop, rightTop, 0, 1, 10)).toBe(true);
+        expect(shouldConfirmClipEdge(leftTop, [], 0, 1, 10)).toBe(false);
+    });
+});
+
+describe("findClipTopNeighbours + confirm", () => {
+    it("links near neighbours and skips far ones", () => {
+        const [a, b] = nearPair();
+        const far = [0, 1];
+        const top = findClipTopNeighbours(
+            [a, b, far],
+            3,
+            CLIP_SCORE_COLLECT_MAX,
+        );
+        const edges = collectConfirmedClipEdges(top);
+        expect(edges.some((e) => e.left === 0 && e.right === 1)).toBe(true);
+        expect(edges.some((e) => e.left === 0 && e.right === 2)).toBe(false);
+    });
+
+    it("keeps asymmetric 1-NN edges (closest relative)", () => {
+        // A → B closest; B → C closest (A not mutual with B).
+        const a = [1, 0];
+        const b = [0.99, Math.sqrt(1 - 0.99 ** 2)];
+        const c = [0.985, Math.sqrt(1 - 0.985 ** 2)];
+        const top = findClipTopNeighbours([a, b, c], 3, CLIP_SCORE_COLLECT_MAX);
+        expect(top[0]![0]?.other).toBe(1);
+        expect(top[1]![0]?.other).toBe(2);
+        const edges = collectConfirmedClipEdges(top);
+        expect(edges.some((e) => e.left === 0 && e.right === 1)).toBe(true);
+        expect(edges.some((e) => e.left === 1 && e.right === 2)).toBe(true);
+    });
+});
+
+describe("runStage1ClusteringSync CLIP-first", () => {
+    const items: Stage1Item[] = [
+        { fileId: 1, hashes: ["aaaaaaaaaaaaaaaa"] },
+        { fileId: 2, hashes: ["bbbbbbbbbbbbbbbb"] },
+        { fileId: 3, hashes: ["cccccccccccccccc"] },
+    ];
+
+    it("groups CLIP-near files even when hashes differ", () => {
+        const [a, b] = nearPair();
         const embeddings = new Map<number, number[]>([
-            [1, unit(1)],
-            [2, unit(1)],
+            [1, a],
+            [2, b],
+            [3, [0, 1]],
         ]);
-        const clusters = clusterFromFileEdges(items.slice(0, 2), edges, 8, {
+        const clusters = runStage1ClusteringSync(items, CLIP_SCORE_SLIDER_MAX, {
             embeddings,
         });
         expect(clusters).toHaveLength(1);
         expect(clusters[0]!.fileIds.sort()).toEqual([1, 2]);
     });
 
-    it("force-unions CLIP rescue even when mutual-kNN would drop it", () => {
-        // Many tight hash neighbours for 1 and 2; rescue edge 1–99 is Hamming-far.
-        const many: Stage1Item[] = [
-            { fileId: 1, hashes: ["aaaaaaaaaaaaaaaa"] },
-            { fileId: 2, hashes: ["aaaaaaaaaaaaaaaa"] },
-            { fileId: 99, hashes: ["aaaaaaaaaaaaaaaa"] },
-        ];
-        for (let i = 0; i < 10; i++) {
-            many.push({
-                fileId: 10 + i,
-                hashes: ["aaaaaaaaaaaaaaaa"],
-            });
-        }
+    it("does not group orthogonal embeddings", () => {
+        const embeddings = new Map<number, number[]>([
+            [1, [1, 0]],
+            [2, [0, 1]],
+        ]);
+        const clusters = runStage1ClusteringSync(items.slice(0, 2), 12, {
+            embeddings,
+        });
+        expect(clusters).toEqual([]);
+    });
+});
+
+describe("clusterFromFileEdges CLIP scores", () => {
+    const items: Stage1Item[] = [
+        { fileId: 1, hashes: ["aaaaaaaaaaaaaaaa"] },
+        { fileId: 2, hashes: ["bbbbbbbbbbbbbbbb"] },
+    ];
+
+    it("filters by CLIP score threshold", () => {
         const edges: Stage1FileEdge[] = [
-            { leftFileId: 1, rightFileId: 99, distance: 14 },
+            { leftFileId: 1, rightFileId: 2, distance: 10 },
         ];
-        for (let i = 0; i < 10; i++) {
-            edges.push({
-                leftFileId: 1,
-                rightFileId: 10 + i,
-                distance: 1,
-            });
-            edges.push({
-                leftFileId: 99,
-                rightFileId: 10 + i,
-                distance: 1,
-            });
-        }
-        const embeddings = new Map<number, number[]>();
-        embeddings.set(1, unit(1));
-        embeddings.set(99, unit(1));
-        for (let i = 0; i < 10; i++) {
-            embeddings.set(10 + i, [0, 1, 0, 0]);
-        }
-        const clusters = clusterFromFileEdges(many, edges, 8, { embeddings });
-        const withRescue = clusters.find((c) =>
-            c.fileIds.includes(1) && c.fileIds.includes(99));
-        expect(withRescue).toBeDefined();
+        const embeddings = new Map<number, number[]>([
+            [1, unit(1)],
+            [2, unit(1)],
+        ]);
+        expect(
+            clusterFromFileEdges(items, edges, 8, { embeddings }),
+        ).toEqual([]);
+        const at10 = clusterFromFileEdges(items, edges, 10, { embeddings });
+        expect(at10).toHaveLength(1);
+        expect(at10[0]!.fileIds.sort()).toEqual([1, 2]);
     });
 });
 

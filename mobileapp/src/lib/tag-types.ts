@@ -89,6 +89,17 @@ export const isTagIncludedInKitNearness = (
 ): boolean => includeInKitNearnessByName.get(tagName) === true;
 
 /**
+ * True when every tag is opted into kit nearness (empty list → false).
+ */
+export const areAllTagsIncludedInKitNearness = (
+    tags: readonly string[],
+    includeInKitNearnessByName: ReadonlyMap<string, boolean>,
+): boolean =>
+    tags.length > 0 &&
+    tags.every((tag) =>
+        isTagIncludedInKitNearness(tag, includeInKitNearnessByName));
+
+/**
  * Keep only tags opted into kit nearness (order preserved).
  */
 export const filterKitNearnessTags = (
