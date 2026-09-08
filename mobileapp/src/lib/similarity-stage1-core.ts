@@ -1,6 +1,7 @@
 /**
  * Worker-safe Stage-1 similar-photo clustering: dHash buckets → edges →
- * mutual nearest-neighbour → Kruskal. No DOM / EnteFile imports.
+ * optional CLIP gate/rescue → mutual nearest-neighbour → Kruskal. No DOM /
+ * EnteFile imports.
  *
  * [Note: progressive tight groups.] While comparing, near-exact edges
  * (distance ≤ {@link TIGHT_MATCH_DISTANCE}) are unioned immediately so the UI
@@ -14,7 +15,16 @@
  * [Note: group size cap.] Clustering itself is uncapped. Callers trim oversized
  * components for display after grouping; capping during union artificially
  * fragments the graph into many small groups.
+ *
+ * [Note: CLIP hybrid.] Embeddings are optional. When provided, mid-band dHash
+ * edges far in CLIP space are dropped; CLIP-near pairs just outside the Hamming
+ * threshold can still join (rescue). Missing vectors → dHash-only behaviour.
  */
+import {
+    embeddingCosineDistance,
+    shouldKeepStage1Edge,
+    type SimilarClipKnobs,
+} from "@/lib/similarity-clip";
 import {
     parseDHashHex,
     variantHammingDistance,
@@ -44,6 +54,14 @@ export type Stage1FileEdge = {
     leftFileId: number;
     rightFileId: number;
     distance: number;
+};
+
+/** Optional CLIP vectors keyed by Ente file id (L2-normalized). */
+export type Stage1EmbeddingMap = ReadonlyMap<number, readonly number[]>;
+
+export type Stage1ClipOptions = {
+    embeddings?: Stage1EmbeddingMap;
+    knobs?: SimilarClipKnobs;
 };
 
 export type Stage1ClusteringResult = {
@@ -314,19 +332,56 @@ const finalizeClusters = (
     items: NumericStage1Item[],
     edgeByKey: Map<string, CandidateEdge>,
     clusterThreshold: number,
+    clip?: Stage1ClipOptions,
 ): Stage1Cluster[] => {
-    const filtered = new Map<string, CandidateEdge>();
+    const embeddings = clip?.embeddings;
+    const knobs = clip?.knobs;
+    const kept = new Map<string, CandidateEdge>();
+    /** CLIP-rescue edges (Hamming above UI threshold) — skip mutual-kNN. */
+    const forcedRescue: CandidateEdge[] = [];
     for (const [key, edge] of edgeByKey.entries()) {
-        if (edge.distance <= clusterThreshold) {
-            filtered.set(key, edge);
+        let clipDistance: number | undefined;
+        if (embeddings && embeddings.size > 0) {
+            clipDistance = embeddingCosineDistance(
+                embeddings.get(items[edge.left]!.fileId),
+                embeddings.get(items[edge.right]!.fileId),
+            );
+            if (!Number.isFinite(clipDistance)) {
+                clipDistance = undefined;
+            }
         }
+        if (
+            !shouldKeepStage1Edge(
+                edge.distance,
+                clipDistance,
+                clusterThreshold,
+                knobs,
+            )
+        ) {
+            continue;
+        }
+        if (edge.distance > clusterThreshold) {
+            forcedRescue.push(edge);
+            continue;
+        }
+        kept.set(key, edge);
     }
-    const mutual = filterMutualNearestEdges(filtered);
+    const mutual = filterMutualNearestEdges(kept);
     const uf = new UnionFind(items.length);
     const edgeDistanceByPair = new Map<string, number>();
     for (const edge of mutual) {
         uf.union(edge.left, edge.right);
         edgeDistanceByPair.set(`${edge.left}:${edge.right}`, edge.distance);
+    }
+    // Rescue pairs are CLIP-near but Hamming-far; mutual top-K would often
+    // drop them in favour of closer hash neighbours — force-union instead.
+    for (const edge of forcedRescue) {
+        uf.union(edge.left, edge.right);
+        const pairKey = `${edge.left}:${edge.right}`;
+        const prev = edgeDistanceByPair.get(pairKey);
+        if (prev === undefined || edge.distance > prev) {
+            edgeDistanceByPair.set(pairKey, edge.distance);
+        }
     }
     return clustersFromUnionFind(uf, items, edgeDistanceByPair);
 };
@@ -348,12 +403,14 @@ const edgesToFileEdges = (
 
 /**
  * Recluster from cached file-id edges at a (possibly lower) threshold.
- * Sync and cheap — no hash compares.
+ * Sync and cheap — no hash compares. Optional CLIP gate/rescue when embeddings
+ * are provided.
  */
 export const clusterFromFileEdges = (
     items: Stage1Item[],
     edges: Stage1FileEdge[],
     threshold: number,
+    clip?: Stage1ClipOptions,
 ): Stage1Cluster[] => {
     if (items.length < 2) {
         return [];
@@ -364,7 +421,7 @@ export const clusterFromFileEdges = (
     );
     const edgeByKey = new Map<string, CandidateEdge>();
     for (const edge of edges) {
-        if (edge.distance > threshold) {
+        if (edge.distance > EDGE_COLLECT_THRESHOLD) {
             continue;
         }
         const left = indexByFileId.get(edge.leftFileId);
@@ -380,7 +437,7 @@ export const clusterFromFileEdges = (
             distance: edge.distance,
         });
     }
-    return finalizeClusters(numericItems, edgeByKey, threshold);
+    return finalizeClusters(numericItems, edgeByKey, threshold, clip);
 };
 
 /**
@@ -390,6 +447,7 @@ export const clusterFromFileEdges = (
 export const runStage1ClusteringSync = (
     items: Stage1Item[],
     threshold: number,
+    clip?: Stage1ClipOptions,
 ): Stage1Cluster[] => {
     if (items.length < 2) {
         return [];
@@ -408,7 +466,7 @@ export const runStage1ClusteringSync = (
             provisionalUf,
         );
     }
-    return finalizeClusters(numericItems, edgeByKey, threshold);
+    return finalizeClusters(numericItems, edgeByKey, threshold, clip);
 };
 
 /**
@@ -423,6 +481,7 @@ export const runStage1Clustering = async (
     onProgress: (update: Stage1ProgressUpdate) => void,
     shouldAbort?: () => boolean,
     collectThreshold: number = EDGE_COLLECT_THRESHOLD,
+    clip?: Stage1ClipOptions,
 ): Promise<Stage1ClusteringResult> => {
     if (items.length < 2) {
         onProgress({
@@ -510,7 +569,12 @@ export const runStage1Clustering = async (
     }
 
     const edges = edgesToFileEdges(numericItems, edgeByKey);
-    const finalClusters = finalizeClusters(numericItems, edgeByKey, threshold);
+    const finalClusters = finalizeClusters(
+        numericItems,
+        edgeByKey,
+        threshold,
+        clip,
+    );
 
     onProgress({
         phase: "finalizing",

@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+    draftAddTag,
+    draftAddTags,
+    draftRemoveTag,
+    emptyTagDraft,
     normalizeTagNameList,
+    overlayTagDraftPresence,
     pushRecentTags,
+    tagDraftHasChanges,
     tagPresenceAcrossFiles,
 } from "@/lib/tag-bulk";
 import {
@@ -142,5 +148,36 @@ describe("tag-bulk", () => {
             "b",
         ]);
         expect(normalizeTagNameList(["x", "x", "y"], 1)).toEqual(["x"]);
+    });
+
+    it("draft add/remove cancels opposing pending edits", () => {
+        let draft = emptyTagDraft();
+        draft = draftAddTag(draft, "people");
+        expect(draft).toEqual({ adds: ["people"], removes: [] });
+        draft = draftRemoveTag(draft, "people");
+        expect(draft).toEqual({ adds: [], removes: ["people"] });
+        draft = draftAddTags(draft, ["vietnam", "people"]);
+        expect(draft.adds).toEqual(["vietnam", "people"]);
+        expect(draft.removes).toEqual([]);
+        expect(tagDraftHasChanges(draft)).toBe(true);
+        expect(tagDraftHasChanges(emptyTagDraft())).toBe(false);
+    });
+
+    it("overlayTagDraftPresence reflects staged adds and removes", () => {
+        const files = [
+            stubFile(1, ["people", "vietnam"]),
+            stubFile(2, ["people"]),
+        ];
+        const baseline = tagPresenceAcrossFiles(files);
+        const draft = draftRemoveTag(
+            draftAddTag(emptyTagDraft(), "travel"),
+            "people",
+        );
+        const overlay = overlayTagDraftPresence(baseline, draft, 2);
+        expect(overlay.presence.get("people")).toEqual({ count: 0, total: 2 });
+        expect(overlay.presence.get("travel")).toEqual({ count: 2, total: 2 });
+        expect(overlay.appliedTags).toContain("travel");
+        expect(overlay.appliedTags).not.toContain("people");
+        expect(overlay.unionTags).toContain("travel");
     });
 });

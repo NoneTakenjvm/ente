@@ -7,12 +7,18 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-08 |
-| **Last agent / session** | Thumbnail scroll scheduling |
-| **Current milestone** | Post-M8 UX |
+| **Last agent / session** | Bulk tag draft / apply |
+| **Current milestone** | Post-M8 UX / Similar + CLIP |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Hard-refresh `:3080` (preview left running) → Manage footer `0.3.61`; fling scroll in fit mode and confirm less hitching. |
+| **Next recommended action** | Rebuild/serve when ready for QA; confirm selection Tags sheet drafts then Apply/close. |
 
 **This session shipped:**
+1. **Bulk tag draft** — selection Tags sheet stages add/remove/kit taps locally; one batch write on **Apply** or sheet close. Footer working-set chips still write immediately. `APP_VERSION` → `0.3.63`.
+
+**Previous session shipped:**
+1. **CLIP Similar hybrid** — Stage-1 keeps raw dHash edges; final cluster applies CLIP **gate** (drop mid-band hash edges far in embedding space) and **rescue** (keep CLIP-near pairs above Hamming threshold). Wired through worker + Manage (`CLIP n/m` coverage). Eval helpers + grid baseline script. `APP_VERSION` → `0.3.62`. Code only (no local preview restart).
+
+**Previous session shipped:**
 1. **Scroll-friendly thumbnails** — while scrolling: concurrency 3 (else 8), no low-priority queue, skip IDB lastAccess writes, cancel off-screen decrypt during flings, rAF-batch blob URL applies (2/frame scrolling, 4 idle). Fit masonry `setScrollTop` rAF-throttled. Dropped extra `Uint8Array.from` copy. `APP_VERSION` → `0.3.61`. Preview on `:3080` not restarted; `out/` rebuilt in place.
 
 

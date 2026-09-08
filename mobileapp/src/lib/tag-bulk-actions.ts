@@ -1,5 +1,9 @@
 import { toast } from "sonner";
-import { snapshotTagsForUndo } from "@/lib/tag-bulk";
+import {
+    snapshotTagsForUndo,
+    tagDraftHasChanges,
+    type TagDraft,
+} from "@/lib/tag-bulk";
 import {
     addTagNames,
     removeTagNames,
@@ -112,6 +116,33 @@ export const bulkMergeTags = async (
     tags: string[],
 ): Promise<{ succeeded: number; failed: number }> =>
     bulkAddTags(fileIds, tags);
+
+/**
+ * Apply a staged selection-sheet draft in one batch write.
+ */
+export const bulkApplyTagDraft = async (
+    fileIds: number[],
+    draft: TagDraft,
+): Promise<{ succeeded: number; failed: number }> => {
+    if (!tagDraftHasChanges(draft)) {
+        return { succeeded: 0, failed: 0 };
+    }
+    return runBulkTagMutation(
+        fileIds,
+        (current) =>
+            removeTagNames(
+                addTagNames(current, ...draft.adds),
+                ...draft.removes,
+            ),
+        {
+            successLabel:
+                fileIds.length === 1 ?
+                    "Updated tags" :
+                    `Updated tags on ${fileIds.length} photos`,
+            recordRecent: draft.adds,
+        },
+    );
+};
 
 /**
  * Restore each file's tags from the last bulk undo snapshot.

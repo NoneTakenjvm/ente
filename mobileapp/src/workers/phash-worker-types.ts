@@ -71,6 +71,11 @@ export interface Stage1Message {
     id: number;
     items: Stage1Item[];
     threshold: number;
+    /**
+     * Optional CLIP vectors keyed by file id string. When present, Stage-1
+     * applies gate/rescue on final clustering (edges stay raw Hamming).
+     */
+    embeddingsByFileId?: Record<string, number[]>;
 }
 
 export interface Stage1AbortMessage {

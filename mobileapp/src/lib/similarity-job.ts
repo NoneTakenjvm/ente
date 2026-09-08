@@ -411,6 +411,8 @@ export const terminatePhashWorker = (): void => {
 export interface Stage1WorkerOptions {
     onProgress?: (update: Stage1ProgressUpdate) => void;
     signal?: AbortSignal;
+    /** CLIP vectors for gate/rescue (file id → L2-normalized embedding). */
+    embeddings?: ReadonlyMap<number, readonly number[]>;
 }
 
 export type Stage1WorkerResult = {
@@ -506,11 +508,26 @@ export const runStage1InWorker = (
             fail(new Error(event.message || "Stage-1 worker failed"));
         };
 
+        let embeddingsByFileId: Record<string, number[]> | undefined;
+        if (options.embeddings && options.embeddings.size > 0) {
+            embeddingsByFileId = {};
+            for (const item of items) {
+                const vector = options.embeddings.get(item.fileId);
+                if (vector) {
+                    embeddingsByFileId[String(item.fileId)] = [...vector];
+                }
+            }
+            if (Object.keys(embeddingsByFileId).length === 0) {
+                embeddingsByFileId = undefined;
+            }
+        }
+
         const message: Stage1Message = {
             kind: "stage1",
             id: requestId,
             items,
             threshold,
+            embeddingsByFileId,
         };
         worker.postMessage(message);
     });
