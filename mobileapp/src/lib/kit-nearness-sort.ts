@@ -1,9 +1,10 @@
 /**
  * Gallery reorder by visual nearness to a tag kit.
  *
- * Primary path: CLIP embeddings — seed photos are averaged into a centroid,
- * then each gallery file is ranked by cosine distance (best / lowest first).
- * Soft exclusive-affinity vs rival kit centroids mirrors the old dHash path.
+ * Primary path: CLIP embeddings — seed photos are reduced to a few medoids
+ * (real photos), then each gallery file is ranked by min cosine distance to
+ * those medoids (best / lowest first). Soft exclusive-affinity vs rival kit
+ * medoids mirrors the old dHash path.
  *
  * Legacy dHash medoid helpers remain for offline corpus GA / eval harnesses.
  * Files without an embedding sort last.
@@ -647,6 +648,18 @@ export const KIT_EMBEDDING_RIVAL_TAU = 0.12;
 /** Multiplier on the strongest rival steal penalty (CLIP path). */
 export const KIT_EMBEDDING_RIVAL_LAMBDA = 4;
 
+/**
+ * Max CLIP visual modes per kit / tag-filter fit set.
+ * 3 covers multi-mode kits without over-fragmenting on phones.
+ */
+export const MAX_KIT_EMBEDDING_MEDOIDS = 3;
+
+/**
+ * Cosine distance: stop adding a medoid when the farthest remaining seed is
+ * this close (or closer) to an existing medoid — not a distinct mode.
+ */
+export const KIT_EMBEDDING_MEDOID_MIN_SEPARATION = 0.08;
+
 const embeddingDot = (a: readonly number[], b: readonly number[]): number => {
     let sum = 0;
     const n = Math.min(a.length, b.length);
@@ -656,8 +669,157 @@ const embeddingDot = (a: readonly number[], b: readonly number[]): number => {
     return sum;
 };
 
+/** Cosine distance between two L2-normalized vectors (0 = identical). */
+export const embeddingCosineDistanceVectors = (
+    left: readonly number[] | undefined,
+    right: readonly number[] | undefined,
+): number => {
+    if (!left?.length || !right?.length || left.length !== right.length) {
+        return Number.POSITIVE_INFINITY;
+    }
+    return 1 - embeddingDot(left, right);
+};
+
+export type KitEmbeddingMedoid = {
+    fileId: number;
+    vector: number[];
+};
+
+/**
+ * Local density: how many other candidates sit within {@link minSeparation}.
+ */
+const kitEmbeddingLocalDensity = (
+    pivot: KitEmbeddingMedoid,
+    candidates: readonly KitEmbeddingMedoid[],
+    minSeparation: number,
+): number => {
+    let density = 0;
+    for (const other of candidates) {
+        if (other.fileId === pivot.fileId) {
+            continue;
+        }
+        if (
+            embeddingCosineDistanceVectors(pivot.vector, other.vector) <
+            minSeparation
+        ) {
+            density += 1;
+        }
+    }
+    return density;
+};
+
+/**
+ * Pick up to {@link MAX_KIT_EMBEDDING_MEDOIDS} real seed photos as CLIP medoids.
+ *
+ * Densest-first with min separation: finds multi-mode kits without promoting
+ * singleton outliers (important for mistag ranking). Extra medoids need at
+ * least one nearby seed (`density >= 1`).
+ */
+export const pickKitEmbeddingMedoids = (
+    seedFileIds: readonly number[],
+    embeddings: ReadonlyMap<number, number[]>,
+    options?: {
+        maxMedoids?: number;
+        maxSeeds?: number;
+        minSeparation?: number;
+    },
+): KitEmbeddingMedoid[] => {
+    const maxMedoids = options?.maxMedoids ?? MAX_KIT_EMBEDDING_MEDOIDS;
+    const maxSeeds = options?.maxSeeds ?? MAX_KIT_SEEDS;
+    const minSeparation =
+        options?.minSeparation ?? KIT_EMBEDDING_MEDOID_MIN_SEPARATION;
+
+    const candidates: KitEmbeddingMedoid[] = [];
+    const seen = new Set<number>();
+    for (const fileId of [...seedFileIds].sort((a, b) => a - b)) {
+        if (seen.has(fileId)) {
+            continue;
+        }
+        seen.add(fileId);
+        const vector = embeddings.get(fileId);
+        if (vector?.length !== KIT_EMBEDDING_DIMS) {
+            continue;
+        }
+        candidates.push({ fileId, vector });
+        if (candidates.length >= maxSeeds) {
+            break;
+        }
+    }
+
+    if (candidates.length === 0 || maxMedoids <= 0) {
+        return [];
+    }
+    if (candidates.length === 1 || maxMedoids === 1) {
+        return [candidates[0]!];
+    }
+
+    const densityOf = (pivot: KitEmbeddingMedoid): number =>
+        kitEmbeddingLocalDensity(pivot, candidates, minSeparation);
+
+    let bestStart = 0;
+    let bestDensity = -1;
+    for (let i = 0; i < candidates.length; i++) {
+        const pivot = candidates[i]!;
+        const density = densityOf(pivot);
+        if (
+            density > bestDensity ||
+            (density === bestDensity &&
+                pivot.fileId < candidates[bestStart]!.fileId)
+        ) {
+            bestDensity = density;
+            bestStart = i;
+        }
+    }
+
+    const medoids: KitEmbeddingMedoid[] = [candidates[bestStart]!];
+    const remaining = candidates.filter((_, index) => index !== bestStart);
+
+    while (medoids.length < maxMedoids && remaining.length > 0) {
+        let bestIndex = -1;
+        let bestNextDensity = -1;
+        for (let i = 0; i < remaining.length; i++) {
+            const candidate = remaining[i]!;
+            let minDistance = Number.POSITIVE_INFINITY;
+            for (const medoid of medoids) {
+                const distance = embeddingCosineDistanceVectors(
+                    candidate.vector,
+                    medoid.vector,
+                );
+                if (distance < minDistance) {
+                    minDistance = distance;
+                }
+            }
+            if (minDistance < minSeparation) {
+                continue;
+            }
+            const density = densityOf(candidate);
+            // Skip isolated points so mistags are not adopted as prototypes.
+            if (density < 1) {
+                continue;
+            }
+            if (
+                density > bestNextDensity ||
+                (density === bestNextDensity &&
+                    (bestIndex < 0 ||
+                        candidate.fileId < remaining[bestIndex]!.fileId))
+            ) {
+                bestNextDensity = density;
+                bestIndex = i;
+            }
+        }
+        if (bestIndex < 0) {
+            break;
+        }
+        medoids.push(remaining[bestIndex]!);
+        remaining.splice(bestIndex, 1);
+    }
+
+    return medoids;
+};
+
 /**
  * Mean L2-normalized embedding of seed file ids (kit centroid).
+ * Kept for eval/export helpers; production ranking uses medoids.
  */
 export const buildKitEmbeddingCentroid = (
     seedIds: readonly number[],
@@ -694,43 +856,78 @@ export const buildKitEmbeddingCentroid = (
 };
 
 /**
- * Cosine distance to kit centroid (0 = identical). Missing embedding → Infinity.
+ * Cosine distance to a single prototype vector (0 = identical).
+ * Missing embedding → Infinity.
  */
 export const kitEmbeddingDistance = (
     fileId: number,
-    centroid: readonly number[] | undefined,
+    prototype: readonly number[] | undefined,
     embeddings: ReadonlyMap<number, number[]>,
 ): number => {
-    if (!centroid?.length) {
+    if (!prototype?.length) {
         return Number.POSITIVE_INFINITY;
     }
     const vector = embeddings.get(fileId);
-    if (vector?.length !== centroid.length) {
+    if (vector?.length !== prototype.length) {
         return Number.POSITIVE_INFINITY;
     }
-    return 1 - embeddingDot(vector, centroid);
+    return 1 - embeddingDot(vector, prototype);
 };
 
 /**
- * Cosine distance between two centroids (0 = identical).
+ * Min cosine distance to any medoid / prototype (multi-mode kits).
+ */
+export const kitEmbeddingMinDistance = (
+    fileId: number,
+    medoids: readonly (readonly number[])[],
+    embeddings: ReadonlyMap<number, number[]>,
+): number => {
+    if (!medoids.length) {
+        return Number.POSITIVE_INFINITY;
+    }
+    let best = Number.POSITIVE_INFINITY;
+    for (const medoid of medoids) {
+        const d = kitEmbeddingDistance(fileId, medoid, embeddings);
+        if (d < best) {
+            best = d;
+        }
+    }
+    return best;
+};
+
+/**
+ * Cosine distance between two prototypes (0 = identical).
  */
 export const kitEmbeddingCentroidDistance = (
     left: readonly number[] | undefined,
     right: readonly number[] | undefined,
+): number => embeddingCosineDistanceVectors(left, right);
+
+/** Min distance between any pair across two medoid sets. */
+const kitEmbeddingMedoidSetDistance = (
+    left: readonly (readonly number[])[],
+    right: readonly (readonly number[])[],
 ): number => {
-    if (!left?.length || !right?.length || left.length !== right.length) {
-        return Number.POSITIVE_INFINITY;
+    let best = Number.POSITIVE_INFINITY;
+    for (const a of left) {
+        for (const b of right) {
+            const d = embeddingCosineDistanceVectors(a, b);
+            if (d < best) {
+                best = d;
+            }
+        }
     }
-    return 1 - embeddingDot(left, right);
+    return best;
 };
 
 /**
- * Competitive CLIP nearness: selected distance + soft steal vs rival centroids.
+ * Competitive CLIP nearness: min distance to selected medoids + soft steal
+ * vs rival medoid sets.
  */
 export const kitEmbeddingDistanceCompetitive = (
     fileId: number,
-    selected: readonly number[] | undefined,
-    rivals: readonly (readonly number[] | undefined)[],
+    selectedMedoids: readonly (readonly number[])[],
+    rivalMedoidSets: readonly (readonly (readonly number[])[])[],
     embeddings: ReadonlyMap<number, number[]>,
     options?: {
         lambda?: number;
@@ -740,18 +937,22 @@ export const kitEmbeddingDistanceCompetitive = (
 ): number => {
     const lambda = options?.lambda ?? KIT_EMBEDDING_RIVAL_LAMBDA;
     const tau = options?.tau ?? KIT_EMBEDDING_RIVAL_TAU;
-    const dSelected = kitEmbeddingDistance(fileId, selected, embeddings);
-    if (!Number.isFinite(dSelected) || !rivals.length || lambda <= 0) {
+    const dSelected = kitEmbeddingMinDistance(
+        fileId,
+        selectedMedoids,
+        embeddings,
+    );
+    if (!Number.isFinite(dSelected) || !rivalMedoidSets.length || lambda <= 0) {
         return dSelected;
     }
 
     let bestPenalty = 0;
-    for (let i = 0; i < rivals.length; i++) {
-        const rival = rivals[i];
+    for (let i = 0; i < rivalMedoidSets.length; i++) {
+        const rival = rivalMedoidSets[i];
         if (!rival?.length) {
             continue;
         }
-        const dRival = kitEmbeddingDistance(fileId, rival, embeddings);
+        const dRival = kitEmbeddingMinDistance(fileId, rival, embeddings);
         if (!Number.isFinite(dRival)) {
             continue;
         }
@@ -762,7 +963,7 @@ export const kitEmbeddingDistanceCompetitive = (
         const weight =
             options?.rivalWeights?.[i] ??
             kitDistinctiveness(
-                kitEmbeddingCentroidDistance(selected, rival),
+                kitEmbeddingMedoidSetDistance(selectedMedoids, rival),
                 tau,
             );
         const penalty = steal * weight;
@@ -778,22 +979,22 @@ export const kitEmbeddingDistanceCompetitive = (
  */
 export const sortFilesByKitEmbeddingCompetitive = (
     files: EnteFile[],
-    selected: readonly number[] | undefined,
-    rivals: readonly (readonly number[] | undefined)[],
+    selectedMedoids: readonly (readonly number[])[],
+    rivalMedoidSets: readonly (readonly (readonly number[])[])[],
     embeddings: ReadonlyMap<number, number[]>,
     options?: {
         lambda?: number;
         tau?: number;
     },
 ): EnteFile[] => {
-    if (!selected?.length) {
+    if (!selectedMedoids.length) {
         return [...files];
     }
     const tau = options?.tau ?? KIT_EMBEDDING_RIVAL_TAU;
-    const rivalWeights = rivals.map((rival) =>
-        rival?.length ?
+    const rivalWeights = rivalMedoidSets.map((rival) =>
+        rival.length ?
             kitDistinctiveness(
-                kitEmbeddingCentroidDistance(selected, rival),
+                kitEmbeddingMedoidSetDistance(selectedMedoids, rival),
                 tau,
             ) :
             0);
@@ -801,15 +1002,15 @@ export const sortFilesByKitEmbeddingCompetitive = (
     return [...files].sort((a, b) => {
         const scoreA = kitEmbeddingDistanceCompetitive(
             a.id,
-            selected,
-            rivals,
+            selectedMedoids,
+            rivalMedoidSets,
             embeddings,
             scoreOptions,
         );
         const scoreB = kitEmbeddingDistanceCompetitive(
             b.id,
-            selected,
-            rivals,
+            selectedMedoids,
+            rivalMedoidSets,
             embeddings,
             scoreOptions,
         );
@@ -821,26 +1022,35 @@ export const sortFilesByKitEmbeddingCompetitive = (
 };
 
 /**
- * Rank kits by how often each is the nearest CLIP centroid for an embedded file.
+ * Rank kits by how often each is the nearest CLIP medoid-set for an embedded file.
+ *
+ * Medoids are built from kit members in `seedFiles` (typically the full library).
+ * Claim shares are counted over embedded files in `scoreFiles` (typically the
+ * currently shown gallery). Using the same list for both leaves all shares at 0%
+ * when the visible set contains no tagged kit seeds.
+ *
+ * @param seedFiles files used to find kit prototypes; defaults to `scoreFiles`
  */
 export const rankKitsByBestFitShareEmbedding = (
     kits: readonly { id: string; tags: readonly string[] }[],
-    libraryFiles: readonly EnteFile[],
+    scoreFiles: readonly EnteFile[],
     embeddings: ReadonlyMap<number, number[]>,
+    seedFiles: readonly EnteFile[] = scoreFiles,
 ): KitBestFitShare[] => {
     if (!kits.length) {
         return [];
     }
 
-    const centroidByKit = new Map<string, number[] | undefined>();
+    const medoidsByKit = new Map<string, (readonly number[])[]>();
     for (const kit of kits) {
-        const seeds = listKitSeedFiles(libraryFiles, kit.tags);
-        centroidByKit.set(
+        const seeds = listKitSeedFiles(seedFiles, kit.tags);
+        const medoids = pickKitEmbeddingMedoids(
+            seeds.map((file) => file.id),
+            embeddings,
+        );
+        medoidsByKit.set(
             kit.id,
-            buildKitEmbeddingCentroid(
-                seeds.map((file) => file.id),
-                embeddings,
-            ),
+            medoids.map((medoid) => medoid.vector),
         );
     }
 
@@ -850,20 +1060,20 @@ export const rankKitsByBestFitShareEmbedding = (
     }
 
     let scored = 0;
-    for (const file of libraryFiles) {
+    for (const file of scoreFiles) {
         if (!embeddings.has(file.id)) {
             continue;
         }
         let bestId: string | undefined;
         let bestDistance = Number.POSITIVE_INFINITY;
         for (const kit of kits) {
-            const centroid = centroidByKit.get(kit.id);
-            if (!centroid?.length) {
+            const medoids = medoidsByKit.get(kit.id) ?? [];
+            if (!medoids.length) {
                 continue;
             }
-            const distance = kitEmbeddingDistance(
+            const distance = kitEmbeddingMinDistance(
                 file.id,
-                centroid,
+                medoids,
                 embeddings,
             );
             if (!Number.isFinite(distance)) {

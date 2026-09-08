@@ -493,7 +493,7 @@ export function ManageSettingsPanel(): JSX.Element {
                     <CardTitle>Kit nearness (CLIP)</CardTitle>
                     <CardDescription>
                         Explicit on-device scan (not automatic). Embeddings power
-                        kit nearness ranking via kit centroids; vectors stay
+                        kit nearness ranking via CLIP medoids; vectors stay
                         encrypted in this browser and already-scanned photos are
                         skipped. Model: CLIP ViT-B/16. Uses WebGPU (`fp16` /
                         `q4f16` when available), else WASM (`q8`). First run

@@ -8,6 +8,7 @@ import {
     isDerivedReplaceOutboxHydrated,
     type DerivedReplaceOutboxEntry,
 } from "@/lib/derived-replace-outbox";
+import { isDerivedReplaceInFlight } from "@/lib/derived-replace-queue";
 import {
     getFavoriteOutboxEntries,
     isFavoriteOutboxHydrated,
@@ -57,6 +58,8 @@ export interface TagOutboxRunnerContext {
     getFiles: () => EnteFile[];
     getCollections: () => Collection[];
     patchFile: (file: EnteFile) => Promise<void>;
+    /** Preferred: one library update + one scheduled encrypt for many verifies. */
+    patchFiles?: (files: EnteFile[]) => void | Promise<void>;
     /** Apply a pending favourite mutation (add/remove). */
     applyFavoriteMutation?: (entry: FavoriteOutboxEntry) => Promise<void>;
     /** Optional full favourites/library sync after favourite drains. */
@@ -116,7 +119,7 @@ const drainTagEntries = async (
         return { verifiedIds: [], pendingIds: [], writeFailures: 0 };
     }
 
-    const { getFiles, getCollections, patchFile } = context;
+    const { getFiles, getCollections, patchFile, patchFiles } = context;
     const filesById = new Map(getFiles().map((file) => [file.id, file]));
     const collections = getCollections();
     const http = getEnteCore().getHttpClient();
@@ -149,6 +152,7 @@ const drainTagEntries = async (
     const verifiedIds: number[] = [];
     const pendingIds = [...skippedIds];
     let superseded = 0;
+    const filesToPatch: EnteFile[] = [];
 
     for (const file of result.verified) {
         const writtenTags = extractTags(file);
@@ -162,7 +166,17 @@ const drainTagEntries = async (
             pendingIds.push(file.id);
             superseded += 1;
         }
-        await patchFile(file);
+        filesToPatch.push(file);
+    }
+
+    if (filesToPatch.length) {
+        if (patchFiles) {
+            await patchFiles(filesToPatch);
+        } else {
+            for (const file of filesToPatch) {
+                await patchFile(file);
+            }
+        }
     }
 
     for (const file of result.pending) {
@@ -257,6 +271,11 @@ const drainDerivedReplaceEntries = async (
     await mapBatched(
         entries,
         async (entry) => {
+            // Live crop/compress/video-edit owns this id until finalize clears
+            // the outbox — a concurrent retry would upload a duplicate.
+            if (isDerivedReplaceInFlight(entry.fileId)) {
+                return;
+            }
             try {
                 await context.retryDerivedReplace?.(entry);
             } catch {

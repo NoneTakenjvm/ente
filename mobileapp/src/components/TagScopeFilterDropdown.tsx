@@ -1,4 +1,5 @@
 import { useMemo, useState, type JSX } from "react";
+import dynamic from "next/dynamic";
 import { Filter, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,17 +13,37 @@ import {
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { useTagFilterDraft } from "@/hooks/use-tag-filter-draft";
 import type {
     CroppedScope,
     FavoritesScope,
     MediaScope,
+    TagFilterSelection,
     TagScope,
+} from "@/lib/tags";
+import {
+    describeTagFilter,
+    emptyTagFilter,
+    isTagFilterActive,
 } from "@/lib/tags";
 import type { ViewportFitSort } from "@/lib/viewport-fit";
 import type { ImageSizeSort } from "@/lib/image-size-sort";
+import type { RelativeSort } from "@/lib/relative-sort";
+import type { TagFilterFitSort } from "@/lib/tag-filter-fit-sort";
 import type { TagPreset } from "@/lib/tag-presets";
+import { formatKitFitPercent } from "@/lib/kit-nearness-sort";
 import { cn } from "@/lib/utils";
 import { useTagStore } from "@/stores/tag-store";
+
+/** Lazy to avoid a cycle: TagQueryEditor → TagScopeFilterDropdown → editor. */
+const NearnessFilterEditor = dynamic(
+    () =>
+        import("@/components/NearnessFilterEditor").then((mod) => ({
+            default: mod.NearnessFilterEditor,
+        })),
+    { ssr: false },
+);
 
 interface TagScopeFilterDropdownProps {
     taggedCount: number;
@@ -47,17 +68,46 @@ interface TagScopeFilterDropdownProps {
     /** Gallery-only: reorder by pixel area (not a hide-filter). */
     imageSizeSort?: ImageSizeSort;
     onImageSizeSortChange?: (mode: ImageSizeSort) => void;
-    /** Gallery-only: reorder by visual nearness to a kit (not a hide-filter). */
-    kitNearnessPresets?: TagPreset[];
-    kitNearnessPresetId?: string;
-    onKitNearnessPresetIdChange?: (presetId: string | undefined) => void;
-    /** Rebuild frozen kit nearness order from the current library. */
-    onKitNearnessReapply?: () => void;
     /**
-     * Best-fit share of CLIP-embedded library files per kit id (0..1). Used to
-     * order the kit picker and append `(x%)` to kit names.
+     * Gallery-only: CLIP fit to the active tag/kit filter. Pass a change
+     * handler only when tag clauses are active (caller gates visibility).
      */
-    kitNearnessFitShareById?: ReadonlyMap<string, number>;
+    tagFilterFitSort?: TagFilterFitSort;
+    onTagFilterFitSortChange?: (mode: TagFilterFitSort) => void;
+    /**
+     * Gallery-only: greedy CLIP nearest/farthest-neighbor chain through the
+     * visible set (random start; each file once).
+     */
+    relativeSort?: RelativeSort;
+    onRelativeSortChange?: (mode: RelativeSort) => void;
+    /** Pick a new random start for the relative chain. */
+    onRelativeReapply?: () => void;
+    /**
+     * Gallery-only: reorder by CLIP nearness to seeds matching this filter
+     * (independent of the main gallery filter).
+     */
+    nearnessFilter?: TagFilterSelection;
+    onNearnessFilterChange?: (filter: TagFilterSelection | undefined) => void;
+    /** Rebuild frozen nearness order from the current library. */
+    onNearnessReapply?: () => void;
+    /**
+     * Which nearness entry is active — only that Sort panel shows as selected.
+     */
+    nearnessSource?: "kit" | "filter";
+    /**
+     * Gallery-only: kit likeness picker (claim % on visible set). Selecting a
+     * kit sets the nearness filter to that kit; shares the nearness sort path.
+     */
+    kitLikenessPresets?: TagPreset[];
+    kitLikenessPresetId?: string;
+    onKitLikenessPresetIdChange?: (presetId: string | undefined) => void;
+    /**
+     * Best-fit share of CLIP-embedded visible files per kit id (0..1).
+     */
+    kitLikenessFitShareById?: ReadonlyMap<string, number>;
+    /** Soft rival-kit steal penalty while Kit likeness is on (default on). */
+    kitLikenessRivalPenalty?: boolean;
+    onKitLikenessRivalPenaltyChange?: (enabled: boolean) => void;
 }
 
 const isTagScope = (value: unknown): value is TagScope =>
@@ -77,6 +127,12 @@ const isViewportFitSort = (value: unknown): value is ViewportFitSort =>
 
 const isImageSizeSort = (value: unknown): value is ImageSizeSort =>
     value === "none" || value === "largest" || value === "smallest";
+
+const isTagFilterFitSort = (value: unknown): value is TagFilterFitSort =>
+    value === "none" || value === "best" || value === "worst";
+
+const isRelativeSort = (value: unknown): value is RelativeSort =>
+    value === "none" || value === "closest" || value === "furthest";
 
 export function TagScopeFilterDropdown({
     taggedCount,
@@ -99,11 +155,21 @@ export function TagScopeFilterDropdown({
     onViewportFitSortChange,
     imageSizeSort,
     onImageSizeSortChange,
-    kitNearnessPresets,
-    kitNearnessPresetId,
-    onKitNearnessPresetIdChange,
-    onKitNearnessReapply,
-    kitNearnessFitShareById,
+    tagFilterFitSort,
+    onTagFilterFitSortChange,
+    relativeSort,
+    onRelativeSortChange,
+    onRelativeReapply,
+    nearnessFilter,
+    onNearnessFilterChange,
+    onNearnessReapply,
+    nearnessSource,
+    kitLikenessPresets,
+    kitLikenessPresetId,
+    onKitLikenessPresetIdChange,
+    kitLikenessFitShareById,
+    kitLikenessRivalPenalty,
+    onKitLikenessRivalPenaltyChange,
 }: TagScopeFilterDropdownProps): JSX.Element {
     const storeFilter = useTagStore((s) => s.tagFilter);
     const setTagScope = useTagStore((s) => s.setTagScope);
@@ -118,24 +184,44 @@ export function TagScopeFilterDropdown({
     const fitSort = viewportFitSort ?? "none";
     const showImageSize = onImageSizeSortChange !== undefined;
     const sizeSort = imageSizeSort ?? "none";
-    const showKitNearness = onKitNearnessPresetIdChange !== undefined;
+    const showTagFilterFit = onTagFilterFitSortChange !== undefined;
+    const tagFitSort = tagFilterFitSort ?? "none";
+    const showRelative = onRelativeSortChange !== undefined;
+    const relSort = relativeSort ?? "none";
+    const showNearness = onNearnessFilterChange !== undefined;
+    const nearnessActive =
+        nearnessFilter !== undefined && isTagFilterActive(nearnessFilter);
+    /** Custom filter nearness — not the kit picker entry. */
+    const filterNearnessActive =
+        nearnessActive && nearnessSource === "filter";
+    const showKitLikeness = onKitLikenessPresetIdChange !== undefined;
     const kitPresets = useMemo(
-        (): TagPreset[] => kitNearnessPresets ?? [],
-        [kitNearnessPresets],
+        (): TagPreset[] => kitLikenessPresets ?? [],
+        [kitLikenessPresets],
     );
-    const showSort = showViewportFit || showImageSize || showKitNearness;
+    /** Kit likeness entry — only when entered via Choose kit. */
+    const kitLikenessActive =
+        nearnessSource === "kit" && kitLikenessPresetId !== undefined;
+    const showSort =
+        showViewportFit ||
+        showImageSize ||
+        showTagFilterFit ||
+        showRelative ||
+        showNearness ||
+        showKitLikeness;
 
     const [optionsTab, setOptionsTab] = useState<"sort" | "filter">("filter");
+    const [nearnessEditorOpen, setNearnessEditorOpen] = useState<boolean>(false);
     const [kitPickerOpen, setKitPickerOpen] = useState<boolean>(false);
     const [kitQuery, setKitQuery] = useState<string>("");
+    const nearnessDraft = useTagFilterDraft(emptyTagFilter());
 
-    const selectedKit = useMemo(
-        (): TagPreset | undefined =>
-            kitNearnessPresetId ?
-                kitPresets.find((preset) => preset.id === kitNearnessPresetId) :
-                undefined,
-        [kitNearnessPresetId, kitPresets],
-    );
+    const selectedKit = useMemo((): TagPreset | undefined => {
+        if (!kitLikenessActive || !kitLikenessPresetId) {
+            return undefined;
+        }
+        return kitPresets.find((preset) => preset.id === kitLikenessPresetId);
+    }, [kitLikenessActive, kitLikenessPresetId, kitPresets]);
 
     const filteredKits = useMemo((): TagPreset[] => {
         const query = kitQuery.trim().toLowerCase();
@@ -144,26 +230,60 @@ export function TagScopeFilterDropdown({
             kitPresets.filter(
                 (preset) =>
                     preset.name.toLowerCase().includes(query) ||
-                      preset.tags.some((tag) =>
-                          tag.toLowerCase().includes(query)),
+                    preset.tags.some((tag) =>
+                        tag.toLowerCase().includes(query)),
             );
         matched.sort((a, b) => {
-            const shareA = kitNearnessFitShareById?.get(a.id) ?? 0;
-            const shareB = kitNearnessFitShareById?.get(b.id) ?? 0;
+            const shareA = kitLikenessFitShareById?.get(a.id) ?? 0;
+            const shareB = kitLikenessFitShareById?.get(b.id) ?? 0;
             if (shareB !== shareA) {
                 return shareB - shareA;
             }
             return a.name.localeCompare(b.name);
         });
         return matched;
-    }, [kitNearnessFitShareById, kitPresets, kitQuery]);
+    }, [kitLikenessFitShareById, kitPresets, kitQuery]);
 
     const kitLabel = (preset: TagPreset): string => {
-        const share = kitNearnessFitShareById?.get(preset.id);
+        const share = kitLikenessFitShareById?.get(preset.id);
         if (share === undefined) {
             return preset.name;
         }
-        return `${preset.name} (${Math.round(Math.max(0, Math.min(1, share)) * 100)}%)`;
+        return `${preset.name} (${formatKitFitPercent(share)})`;
+    };
+
+    const openNearnessEditor = (): void => {
+        // Fresh draft when switching from kit likeness; keep current when
+        // editing an active filter-nearness selection.
+        nearnessDraft.setFilter(
+            filterNearnessActive && nearnessFilter ?
+                nearnessFilter :
+                emptyTagFilter(),
+        );
+        setNearnessEditorOpen(true);
+        setKitPickerOpen(false);
+        setKitQuery("");
+    };
+
+    const closeNearnessEditor = (): void => {
+        setNearnessEditorOpen(false);
+    };
+
+    const commitNearnessDraft = (): void => {
+        if (!onNearnessFilterChange) {
+            return;
+        }
+        if (isTagFilterActive(nearnessDraft.filter)) {
+            onNearnessFilterChange(nearnessDraft.filter);
+        } else {
+            onNearnessFilterChange(undefined);
+        }
+        setNearnessEditorOpen(false);
+    };
+
+    const closeKitPicker = (): void => {
+        setKitPickerOpen(false);
+        setKitQuery("");
     };
 
     const filterActive =
@@ -175,7 +295,10 @@ export function TagScopeFilterDropdown({
     const sortActive =
         fitSort !== "none" ||
         sizeSort !== "none" ||
-        kitNearnessPresetId !== undefined;
+        tagFitSort !== "none" ||
+        relSort !== "none" ||
+        filterNearnessActive ||
+        kitLikenessActive;
 
     const optionsActive = filterActive || sortActive;
 
@@ -335,81 +458,37 @@ export function TagScopeFilterDropdown({
         </>
     );
 
-    const kitNearnessPanel = showKitNearness ? (
+    const nearnessPanel = showNearness ? (
         <DropdownMenuGroup>
-            <DropdownMenuLabel>Kit nearness</DropdownMenuLabel>
-            {kitPickerOpen ? (
-                <div className="flex flex-col gap-2 px-1 pb-2">
-                    <Input
-                        value={kitQuery}
-                        onChange={(event) => setKitQuery(event.target.value)}
-                        placeholder="Search kits…"
-                        className="h-8"
-                        onKeyDown={(event) => event.stopPropagation()}
-                        onClick={(event) => event.stopPropagation()}
-                    />
-                    <div className="max-h-52 overflow-auto overscroll-contain">
-                        {kitPresets.length === 0 ? (
-                            <p className="px-1 py-2 text-xs text-muted-foreground">
-                                Create kits in Manage → Tags
-                            </p>
-                        ) : filteredKits.length === 0 ? (
-                            <p className="px-1 py-2 text-xs text-muted-foreground">
-                                No kits match
-                            </p>
-                        ) : (
-                            filteredKits.map((preset) => {
-                                const selected = preset.id === kitNearnessPresetId;
-                                return (
-                                    <button
-                                        key={preset.id}
-                                        type="button"
-                                        className={
-                                            selected ?
-                                                "flex w-max min-w-full items-center rounded-md bg-accent px-2 py-1.5 text-left text-sm text-accent-foreground" :
-                                                "flex w-max min-w-full items-center rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/60"
-                                        }
-                                        onClick={() => {
-                                            onKitNearnessPresetIdChange(preset.id);
-                                            setKitPickerOpen(false);
-                                            setKitQuery("");
-                                        }}
-                                    >
-                                        <span className="whitespace-nowrap">
-                                            {kitLabel(preset)}
-                                        </span>
-                                    </button>
-                                );
-                            })
-                        )}
-                    </div>
-                    <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="self-start"
-                        onClick={() => {
-                            setKitPickerOpen(false);
-                            setKitQuery("");
-                        }}
-                    >
-                        Back
-                    </Button>
-                </div>
+            <DropdownMenuLabel>Filter nearness</DropdownMenuLabel>
+            {nearnessEditorOpen ? (
+                <NearnessFilterEditor
+                    draft={nearnessDraft}
+                    taggedCount={taggedCount}
+                    untaggedCount={untaggedCount}
+                    favoritesCount={favoritesCount}
+                    notFavoritesCount={notFavoritesCount}
+                    photoCount={photoCount}
+                    videoCount={videoCount}
+                    croppedCount={croppedCount}
+                    notCroppedCount={notCroppedCount}
+                    onDone={commitNearnessDraft}
+                    onBack={closeNearnessEditor}
+                />
             ) : (
                 <div className="flex flex-col gap-1.5 px-1 pb-2">
-                    {selectedKit ? (
+                    {filterNearnessActive && nearnessFilter ? (
                         <>
                             <p className="max-h-16 overflow-auto px-1.5 text-sm font-medium break-words">
-                                {kitLabel(selectedKit)}
+                                {describeTagFilter(nearnessFilter)}
                             </p>
                             <div className="flex flex-wrap gap-1.5 px-1">
                                 <Button
                                     type="button"
                                     variant="outline"
                                     size="sm"
-                                    onClick={() => onKitNearnessReapply?.()}
-                                    disabled={onKitNearnessReapply === undefined}
+                                    onClick={() => onNearnessReapply?.()}
+                                    disabled={onNearnessReapply === undefined}
                                 >
                                     Reapply
                                 </Button>
@@ -417,7 +496,7 @@ export function TagScopeFilterDropdown({
                                     type="button"
                                     variant="outline"
                                     size="sm"
-                                    onClick={() => setKitPickerOpen(true)}
+                                    onClick={openNearnessEditor}
                                 >
                                     Change
                                 </Button>
@@ -426,7 +505,7 @@ export function TagScopeFilterDropdown({
                                     variant="ghost"
                                     size="sm"
                                     onClick={() =>
-                                        onKitNearnessPresetIdChange(undefined)
+                                        onNearnessFilterChange?.(undefined)
                                     }
                                 >
                                     Off
@@ -439,7 +518,142 @@ export function TagScopeFilterDropdown({
                             variant="outline"
                             size="sm"
                             className="ml-1 self-start"
-                            onClick={() => setKitPickerOpen(true)}
+                            onClick={openNearnessEditor}
+                        >
+                            Choose filter…
+                        </Button>
+                    )}
+                </div>
+            )}
+        </DropdownMenuGroup>
+    ) : null;
+
+    const kitLikenessPanel = showKitLikeness ? (
+        <DropdownMenuGroup>
+            <DropdownMenuLabel>Kit likeness</DropdownMenuLabel>
+            {kitPickerOpen ? (
+                <div className="flex flex-col gap-2 px-1 pb-2">
+                    <Input
+                        value={kitQuery}
+                        onChange={(event) => setKitQuery(event.target.value)}
+                        placeholder="Search kits…"
+                        className="h-8"
+                        onKeyDown={(event) => event.stopPropagation()}
+                        onClick={(event) => event.stopPropagation()}
+                    />
+                    <div className="max-h-40 overflow-y-auto overscroll-contain">
+                        {kitPresets.length === 0 ? (
+                            <p className="px-1 py-2 text-xs text-muted-foreground">
+                                Create kits in Manage → Tags
+                            </p>
+                        ) : filteredKits.length === 0 ? (
+                            <p className="px-1 py-2 text-xs text-muted-foreground">
+                                No kits match
+                            </p>
+                        ) : (
+                            filteredKits.map((preset) => {
+                                const selected =
+                                    preset.id === kitLikenessPresetId;
+                                return (
+                                    <button
+                                        key={preset.id}
+                                        type="button"
+                                        className={
+                                            selected ?
+                                                "flex w-full items-center rounded-md bg-accent px-2 py-1.5 text-left text-sm text-accent-foreground" :
+                                                "flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/60"
+                                        }
+                                        onClick={() => {
+                                            onKitLikenessPresetIdChange?.(
+                                                preset.id,
+                                            );
+                                            closeKitPicker();
+                                        }}
+                                    >
+                                        <span className="truncate">
+                                            {kitLabel(preset)}
+                                        </span>
+                                    </button>
+                                );
+                            })
+                        )}
+                    </div>
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="self-start"
+                        onClick={closeKitPicker}
+                    >
+                        Back
+                    </Button>
+                </div>
+            ) : (
+                <div className="flex flex-col gap-1.5 px-1 pb-2">
+                    {selectedKit ? (
+                        <>
+                            <p className="truncate px-1.5 text-sm font-medium">
+                                {kitLabel(selectedKit)}
+                            </p>
+                            <div className="flex flex-wrap gap-1.5 px-1">
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => onNearnessReapply?.()}
+                                    disabled={onNearnessReapply === undefined}
+                                >
+                                    Reapply
+                                </Button>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => {
+                                        setNearnessEditorOpen(false);
+                                        setKitPickerOpen(true);
+                                    }}
+                                >
+                                    Change
+                                </Button>
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() =>
+                                        onKitLikenessPresetIdChange?.(undefined)
+                                    }
+                                >
+                                    Off
+                                </Button>
+                            </div>
+                            {onKitLikenessRivalPenaltyChange ? (
+                                <label className="flex items-center gap-2 px-1.5 pt-0.5 text-xs text-muted-foreground">
+                                    <Switch
+                                        checked={
+                                            kitLikenessRivalPenalty ?? true
+                                        }
+                                        onCheckedChange={(checked) => {
+                                            onKitLikenessRivalPenaltyChange(
+                                                checked,
+                                            );
+                                        }}
+                                        aria-label="Rival kit penalties"
+                                    />
+                                    Rival kit penalties
+                                </label>
+                            ) : null}
+                        </>
+                    ) : (
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="ml-1 self-start"
+                            onClick={() => {
+                                setNearnessEditorOpen(false);
+                                setKitPickerOpen(true);
+                            }}
                         >
                             Choose kit…
                         </Button>
@@ -494,10 +708,80 @@ export function TagScopeFilterDropdown({
                     </DropdownMenuRadioItem>
                 </DropdownMenuRadioGroup>
             ) : null}
-            {(showViewportFit || showImageSize) && showKitNearness ?
+            {(showViewportFit || showImageSize) && showTagFilterFit ?
                 <DropdownMenuSeparator /> :
                 null}
-            {kitNearnessPanel}
+            {showTagFilterFit ? (
+                <DropdownMenuRadioGroup
+                    value={tagFitSort}
+                    onValueChange={(value) => {
+                        if (isTagFilterFitSort(value)) {
+                            onTagFilterFitSortChange?.(value);
+                        }
+                    }}
+                >
+                    <DropdownMenuLabel>Tag filter fit</DropdownMenuLabel>
+                    <DropdownMenuRadioItem value="none" closeOnClick>
+                        None
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="best" closeOnClick>
+                        Best fit
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="worst" closeOnClick>
+                        Worst fit
+                    </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+            ) : null}
+            {(showViewportFit || showImageSize || showTagFilterFit) &&
+            showRelative ?
+                <DropdownMenuSeparator /> :
+                null}
+            {showRelative ? (
+                <>
+                    <DropdownMenuRadioGroup
+                        value={relSort}
+                        onValueChange={(value) => {
+                            if (isRelativeSort(value)) {
+                                onRelativeSortChange?.(value);
+                            }
+                        }}
+                    >
+                        <DropdownMenuLabel>Relative</DropdownMenuLabel>
+                        <DropdownMenuRadioItem value="none" closeOnClick>
+                            None
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="closest" closeOnClick>
+                            Closest
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="furthest" closeOnClick>
+                            Furthest
+                        </DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                    {relSort !== "none" && onRelativeReapply ? (
+                        <div className="px-2 pb-1">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="w-full"
+                                onClick={onRelativeReapply}
+                            >
+                                New start
+                            </Button>
+                        </div>
+                    ) : null}
+                </>
+            ) : null}
+            {(showViewportFit ||
+                showImageSize ||
+                showTagFilterFit ||
+                showRelative) &&
+            (showNearness || showKitLikeness) ?
+                <DropdownMenuSeparator /> :
+                null}
+            {nearnessPanel}
+            {showNearness && showKitLikeness ? <DropdownMenuSeparator /> : null}
+            {kitLikenessPanel}
         </>
     );
 
@@ -511,8 +795,8 @@ export function TagScopeFilterDropdown({
                     setOptionsTab(sortActive ? "sort" : "filter");
                     return;
                 }
-                setKitPickerOpen(false);
-                setKitQuery("");
+                setNearnessEditorOpen(false);
+                closeKitPicker();
             }}
         >
             <DropdownMenuTrigger
@@ -537,7 +821,7 @@ export function TagScopeFilterDropdown({
                 align="start"
                 className={cn(
                     "p-1.5",
-                    kitPickerOpen ?
+                    nearnessEditorOpen || kitPickerOpen ?
                         "w-[min(100vw-1.5rem,24rem)] max-w-[min(100vw-1.5rem,24rem)]" :
                         "w-56",
                 )}
@@ -578,8 +862,8 @@ export function TagScopeFilterDropdown({
                                 )}
                                 onClick={() => {
                                     setOptionsTab("filter");
-                                    setKitPickerOpen(false);
-                                    setKitQuery("");
+                                    setNearnessEditorOpen(false);
+                                    closeKitPicker();
                                 }}
                             >
                                 Filter

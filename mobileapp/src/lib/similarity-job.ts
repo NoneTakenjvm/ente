@@ -411,7 +411,7 @@ export const terminatePhashWorker = (): void => {
 export interface Stage1WorkerOptions {
     onProgress?: (update: Stage1ProgressUpdate) => void;
     signal?: AbortSignal;
-    /** CLIP vectors for gate/rescue (file id → L2-normalized embedding). */
+    /** CLIP vectors for nearest-neighbour Similar (file id → L2-normalized). */
     embeddings?: ReadonlyMap<number, readonly number[]>;
 }
 

@@ -146,15 +146,26 @@ export function StampToolFooter(): JSX.Element | null {
                         <Stamp className="size-3.5 shrink-0" />
                         <span className="truncate">Stamp: {stampLabel}</span>
                     </p>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="shrink-0"
-                        onClick={exitStamp}
-                    >
-                        Done
-                    </Button>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                        {kitListExpanded ? (
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setExpandedKitKey(null)}
+                            >
+                                Cancel
+                            </Button>
+                        ) : null}
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={exitStamp}
+                        >
+                            Close
+                        </Button>
+                    </div>
                 </div>
 
                 {activeKit && !kitListExpanded ? (

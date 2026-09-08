@@ -1,7 +1,14 @@
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
-import { getTagOutboxEntries, upsertTagOutboxEntry } from "@/lib/tag-outbox";
-import { flushTagOutboxNow } from "@/lib/tag-outbox-runner";
+import {
+    enqueueTagOutboxEntries,
+    getTagOutboxEntries,
+    upsertTagOutboxEntries,
+} from "@/lib/tag-outbox";
+import {
+    flushTagOutboxNow,
+    requestTagOutboxFlush,
+} from "@/lib/tag-outbox-runner";
 import {
     mergeTagNames,
     removeTagNames,
@@ -17,10 +24,19 @@ export interface BatchTagResult {
     errors: string[];
 }
 
+const intendedTagEntries = (
+    files: EnteFile[],
+    mutator: TagMutator,
+): Array<{ fileId: number; intendedTags: string[] }> =>
+    files.map((file) => ({
+        fileId: file.id,
+        intendedTags: tagsForFile(file, mutator),
+    }));
+
 /**
- * Queue each file's intended tags and flush the shared outbox (batched PUTs).
+ * Queue each file's intended tags and await a full outbox drain (batched PUTs).
  *
- * Library patching happens inside the outbox runner on verified writes.
+ * Used by Manage rename/delete/merge where the UI waits on completion.
  */
 const runBatchTagUpdate = async (
     _http: HttpClient,
@@ -33,9 +49,7 @@ const runBatchTagUpdate = async (
     const targetIds = new Set(files.map((file) => file.id));
     const errors: string[] = [];
 
-    for (const file of files) {
-        await upsertTagOutboxEntry(file.id, tagsForFile(file, mutator));
-    }
+    await upsertTagOutboxEntries(intendedTagEntries(files, mutator));
 
     onProgress?.(0, files.length);
     await flushTagOutboxNow({ notify: false });
@@ -117,22 +131,24 @@ export const mergeTagsOnFiles = async (
 };
 
 /**
- * Queue tag mutators on each file and flush the shared outbox (batched PUTs).
+ * Queue tag mutators and schedule a debounced outbox flush (does not wait).
+ *
+ * Selection / bulk UI paths use this so the click returns after local enqueue.
+ * Failures surface later via the outbox runner toasts.
  */
 export const applyTagMutatorOnFiles = async (
-    http: HttpClient,
+    _http: HttpClient,
     files: EnteFile[],
-    collections: Collection[],
+    _collections: Collection[],
     mutator: TagMutator,
-    onFileVerified?: (file: EnteFile) => Promise<void>,
+    _onFileVerified?: (file: EnteFile) => Promise<void>,
     onProgress?: (completed: number, total: number) => void,
 ): Promise<BatchTagResult> => {
-    return runBatchTagUpdate(
-        http,
-        files,
-        collections,
-        mutator,
-        onFileVerified,
-        onProgress,
-    );
+    if (!files.length) {
+        return { succeeded: 0, failed: 0, errors: [] };
+    }
+    enqueueTagOutboxEntries(intendedTagEntries(files, mutator));
+    requestTagOutboxFlush();
+    onProgress?.(files.length, files.length);
+    return { succeeded: files.length, failed: 0, errors: [] };
 };

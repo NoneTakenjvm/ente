@@ -37,13 +37,26 @@ const persistTagOutbox = (): Promise<void> => {
 /**
  * Load the encrypted tag outbox from IndexedDB into memory.
  */
+let tagOutboxHydrateInFlight: Promise<void> | undefined;
+
 export const hydrateTagOutbox = async (): Promise<void> => {
-    const persisted = await loadEncryptedTagOutbox(getSessionCacheKey());
-    outboxByFileId.clear();
-    for (const entry of persisted ?? []) {
-        outboxByFileId.set(entry.fileId, entry);
+    if (hydrated) {
+        return;
     }
-    hydrated = true;
+    if (tagOutboxHydrateInFlight) {
+        return tagOutboxHydrateInFlight;
+    }
+    tagOutboxHydrateInFlight = (async () => {
+        const persisted = await loadEncryptedTagOutbox(getSessionCacheKey());
+        outboxByFileId.clear();
+        for (const entry of persisted ?? []) {
+            outboxByFileId.set(entry.fileId, entry);
+        }
+        hydrated = true;
+    })().finally(() => {
+        tagOutboxHydrateInFlight = undefined;
+    });
+    return tagOutboxHydrateInFlight;
 };
 
 /**
@@ -59,21 +72,67 @@ export const ensureTagOutboxHydrated = async (): Promise<void> => {
 export const isTagOutboxHydrated = (): boolean => hydrated;
 
 /**
+ * Queue or replace pending tag writes for many files (one disk persist).
+ */
+export const upsertTagOutboxEntries = async (
+    entries: Array<{ fileId: number; intendedTags: string[] }>,
+): Promise<void> => {
+    if (!entries.length) {
+        return;
+    }
+    if (!hydrated) {
+        await hydrateTagOutbox();
+    }
+    const enqueuedAt = Date.now();
+    for (const entry of entries) {
+        outboxByFileId.set(entry.fileId, {
+            fileId: entry.fileId,
+            intendedTags: entry.intendedTags,
+            enqueuedAt,
+        });
+    }
+    await persistTagOutbox();
+};
+
+/**
+ * Queue tag intents in memory immediately and schedule one disk persist.
+ *
+ * Prefer this on UI click paths — callers should not await encrypt/IDB.
+ */
+export const enqueueTagOutboxEntries = (
+    entries: Array<{ fileId: number; intendedTags: string[] }>,
+): void => {
+    if (!entries.length) {
+        return;
+    }
+    const apply = (): void => {
+        const enqueuedAt = Date.now();
+        for (const entry of entries) {
+            outboxByFileId.set(entry.fileId, {
+                fileId: entry.fileId,
+                intendedTags: entry.intendedTags,
+                enqueuedAt,
+            });
+        }
+        void persistTagOutbox();
+    };
+    if (hydrated) {
+        apply();
+        return;
+    }
+    // Use ensure (not hydrate) so a concurrent bootstrap hydrate cannot clear
+    // entries we are about to write after a second clear+reload race.
+    void ensureTagOutboxHydrated().then(apply);
+};
+
+/**
  * Queue or replace a pending tag write for a file.
  */
 export const upsertTagOutboxEntry = async (
     fileId: number,
     intendedTags: string[],
 ): Promise<void> => {
-    if (!hydrated) {
-        await hydrateTagOutbox();
-    }
-    outboxByFileId.set(fileId, {
-        fileId,
-        intendedTags,
-        enqueuedAt: Date.now(),
-    });
-    await persistTagOutbox();
+    await upsertTagOutboxEntries([{ fileId, intendedTags }]);
 };
 
 /**
@@ -168,5 +227,6 @@ export const applyOutboxTagsToFiles = (
 export const clearTagOutbox = (): void => {
     outboxByFileId.clear();
     hydrated = false;
+    tagOutboxHydrateInFlight = undefined;
     persistChain = Promise.resolve();
 };

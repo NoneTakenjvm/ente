@@ -130,17 +130,19 @@ export function SelectionActionFooter(): JSX.Element | null {
     );
 
     const runTagBusy = useCallback(
-        async (task: () => Promise<{ failed: number }>): Promise<void> => {
+        async (task: () => Promise<{ failed: number }>): Promise<boolean> => {
             setTagBusy(true);
             setTagError(undefined);
             try {
                 await task();
+                return true;
             } catch (error) {
                 setTagError(
                     error instanceof Error ?
                         error.message :
                         "Could not update tags",
                 );
+                return false;
             } finally {
                 setTagBusy(false);
             }
@@ -148,13 +150,16 @@ export function SelectionActionFooter(): JSX.Element | null {
         [],
     );
 
-    const flushTagDraft = useCallback(async (): Promise<boolean> => {
+    /** Flush staged sheet edits. `"applied"` means tags were written. */
+    const flushTagDraft = useCallback(async (): Promise<
+        "empty" | "applied" | "failed"
+    > => {
         if (tagFlushLockRef.current) {
-            return false;
+            return "failed";
         }
         if (!tagDraftHasChanges(tagDraft) || !selectedIds.length) {
             setTagDraft(emptyTagDraft());
-            return true;
+            return "empty";
         }
         tagFlushLockRef.current = true;
         setTagBusy(true);
@@ -168,14 +173,14 @@ export function SelectionActionFooter(): JSX.Element | null {
                 );
             }
             // Optimistic local write already applied; clear draft either way.
-            return true;
+            return "applied";
         } catch (error) {
             setTagError(
                 error instanceof Error ?
                     error.message :
                     "Could not update tags",
             );
-            return false;
+            return "failed";
         } finally {
             tagFlushLockRef.current = false;
             setTagBusy(false);
@@ -198,22 +203,32 @@ export function SelectionActionFooter(): JSX.Element | null {
                 return;
             }
             void (async () => {
-                const ok = await flushTagDraft();
-                if (ok) {
-                    setTagsOpen(false);
-                    setTagError(undefined);
+                const result = await flushTagDraft();
+                if (result === "failed") {
+                    return;
+                }
+                setTagsOpen(false);
+                setTagError(undefined);
+                if (result === "applied") {
+                    exitSelection();
                 }
             })();
         },
-        [flushTagDraft, openTagSheet, tagBusy],
+        [exitSelection, flushTagDraft, openTagSheet, tagBusy],
     );
 
     const handleApplyTagDraft = useCallback((): void => {
         if (tagBusy || tagFlushLockRef.current) {
             return;
         }
-        void flushTagDraft();
-    }, [flushTagDraft, tagBusy]);
+        void (async () => {
+            const result = await flushTagDraft();
+            if (result === "applied") {
+                setTagsOpen(false);
+                exitSelection();
+            }
+        })();
+    }, [exitSelection, flushTagDraft, tagBusy]);
 
     const handleDraftAddTag = useCallback(
         (tagName: string): void => {
@@ -239,44 +254,21 @@ export function SelectionActionFooter(): JSX.Element | null {
         [stageDraft],
     );
 
-    const handleBatchAddTag = useCallback(
-        async (tagName: string): Promise<void> => {
-            if (!selectedIds.length) {
-                return;
-            }
-            await runTagBusy(() => bulkAddTags(selectedIds, [tagName]));
-        },
-        [runTagBusy, selectedIds],
-    );
-
-    const handleBatchRemoveTag = useCallback(
-        async (tagName: string): Promise<void> => {
-            if (!selectedIds.length) {
-                return;
-            }
-            await runTagBusy(() => bulkRemoveTags(selectedIds, [tagName]));
-        },
-        [runTagBusy, selectedIds],
-    );
-
     const handleWorkingSetTap = useCallback(
         async (tag: string): Promise<void> => {
             if (!selectedIds.length) {
                 return;
             }
             const info = presence.get(tag);
-            if (info && info.count === info.total && info.total > 0) {
-                await handleBatchRemoveTag(tag);
-            } else {
-                await handleBatchAddTag(tag);
+            const ok =
+                info && info.count === info.total && info.total > 0 ?
+                    await runTagBusy(() => bulkRemoveTags(selectedIds, [tag])) :
+                    await runTagBusy(() => bulkAddTags(selectedIds, [tag]));
+            if (ok) {
+                exitSelection();
             }
         },
-        [
-            handleBatchAddTag,
-            handleBatchRemoveTag,
-            presence,
-            selectedIds.length,
-        ],
+        [exitSelection, presence, runTagBusy, selectedIds],
     );
 
     const handleCopyTagsFromFirst = useCallback(async (): Promise<void> => {
@@ -294,8 +286,11 @@ export function SelectionActionFooter(): JSX.Element | null {
             return;
         }
         const targets = selectedFiles.slice(1).map((file) => file.id);
-        await runTagBusy(() => bulkAddTags(targets, tags));
-    }, [runTagBusy, selectedFiles]);
+        const ok = await runTagBusy(() => bulkAddTags(targets, tags));
+        if (ok) {
+            exitSelection();
+        }
+    }, [exitSelection, runTagBusy, selectedFiles]);
 
     const handleFavorite = useCallback(
         async (isFavorite: boolean): Promise<void> => {
@@ -436,8 +431,16 @@ export function SelectionActionFooter(): JSX.Element | null {
                                 className="h-8 shrink-0 border-dashed"
                                 disabled={footerTagActionsDisabled}
                                 onClick={() => {
-                                    void runTagBusy(() =>
-                                        bulkAddTags(selectedIds, preset.tags));
+                                    void (async () => {
+                                        const ok = await runTagBusy(() =>
+                                            bulkAddTags(
+                                                selectedIds,
+                                                preset.tags,
+                                            ));
+                                        if (ok) {
+                                            exitSelection();
+                                        }
+                                    })();
                                 }}
                             >
                                 {preset.name}

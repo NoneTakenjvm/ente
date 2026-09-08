@@ -81,6 +81,9 @@ export const useLibraryBootstrap: (
                         useLibraryStore.getState().collections,
                     patchFile: (file: EnteFile): Promise<void> =>
                         useLibraryStore.getState().patchFile(file),
+                    patchFiles: (files: EnteFile[]): void => {
+                        useLibraryStore.getState().patchFiles(files);
+                    },
                     applyFavoriteMutation: async (
                         entry: FavoriteOutboxEntry,
                     ): Promise<void> => {

@@ -73,7 +73,8 @@ export interface Stage1Message {
     threshold: number;
     /**
      * Optional CLIP vectors keyed by file id string. When present, Stage-1
-     * applies gate/rescue on final clustering (edges stay raw Hamming).
+     * uses CLIP nearest-neighbour propose + mutual/tight confirm (edge
+     * distance = round(cosine * 100)). Without CLIP, dHash Hamming is used.
      */
     embeddingsByFileId?: Record<string, number[]>;
 }

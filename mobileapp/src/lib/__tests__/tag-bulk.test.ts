@@ -121,6 +121,24 @@ describe("tag-presets", () => {
         expect(withSingles[0]!.count).toBe(1);
     });
 
+    it("suggestTagKits skips sets with tags not in kit nearness", () => {
+        const files = [
+            stubFile(1, ["people", "vietnam"]),
+            stubFile(2, ["people", "vietnam"]),
+            stubFile(3, ["people", "travel"]),
+            stubFile(4, ["people", "travel"]),
+        ];
+        const allowlist = new Map([
+            ["people", true],
+            ["vietnam", true],
+        ]);
+        const suggestions = suggestTagKits(files, {
+            minCount: 2,
+            includeInKitNearnessByName: allowlist,
+        });
+        expect(suggestions.map((s) => s.name)).toEqual(["people + vietnam"]);
+    });
+
     it("formatKitSuggestionName sorts tags", () => {
         expect(formatKitSuggestionName(["vietnam", "beach"])).toBe(
             "beach + vietnam",

@@ -33,10 +33,14 @@ import {
     describeTagFilter,
     isFlatTagFilterRoot,
     isTagFilterActive,
+    type TagFilterSelection,
 } from "@/lib/tags";
 import { bulkAddTags, bulkRemoveTags } from "@/lib/tag-bulk-actions";
 import { rankKitsByBestFitShareEmbedding } from "@/lib/kit-nearness-sort";
-import { filterKitNearnessTags } from "@/lib/tag-types";
+import {
+    matchNearnessFilterToKitPreset,
+    nearnessFilterFromKitTags,
+} from "@/lib/tag-presets";
 import { Shuffle } from "lucide-react";
 import { SelectionModeToggle } from "@/components/SelectionModeToggle";
 import { StampModeToggle } from "@/components/StampModeToggle";
@@ -47,7 +51,6 @@ import { useSelectionStore } from "@/stores/selection-store";
 import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
 import { useUIStore } from "@/stores/ui-store";
-import type { TagPreset } from "@/lib/tag-presets";
 
 interface TagFilterBarProps {
     matchCount: number;
@@ -71,11 +74,12 @@ export function TagFilterBar({
 
     const selectAll = useSelectionStore((s) => s.selectAll);
     const setEnabled = useSelectionStore((s) => s.setEnabled);
+    const setStampActive = useSelectionStore((s) => s.setStampActive);
+    const setStampTags = useSelectionStore((s) => s.setStampTags);
+    const setStampPickMode = useSelectionStore((s) => s.setStampPickMode);
+    const setStampSheetOpen = useSelectionStore((s) => s.setStampSheetOpen);
 
     const presets = useTagSpeedStore((s) => s.presets);
-    const includeInKitNearnessByName = useTagStore(
-        (s) => s.includeInKitNearnessByName,
-    );
     const pinnedTags = useTagSpeedStore((s) => s.pinnedTags);
     const togglePinnedTag = useTagSpeedStore((s) => s.togglePinnedTag);
 
@@ -86,17 +90,46 @@ export function TagFilterBar({
     const setViewportFitSort = useUIStore((s) => s.setViewportFitSort);
     const imageSizeSort = useUIStore((s) => s.imageSizeSort);
     const setImageSizeSort = useUIStore((s) => s.setImageSizeSort);
-    const kitNearnessPresetId = useUIStore((s) => s.kitNearnessPresetId);
-    const setKitNearnessPresetId = useUIStore((s) => s.setKitNearnessPresetId);
-    const reapplyKitNearness = useUIStore((s) => s.reapplyKitNearness);
-    const setStampActive = useSelectionStore((s) => s.setStampActive);
-    const setStampTags = useSelectionStore((s) => s.setStampTags);
-    const setStampPickMode = useSelectionStore((s) => s.setStampPickMode);
-    const setStampSheetOpen = useSelectionStore((s) => s.setStampSheetOpen);
+    const tagFilterFitSort = useUIStore((s) => s.tagFilterFitSort);
+    const setTagFilterFitSort = useUIStore((s) => s.setTagFilterFitSort);
+    const relativeSort = useUIStore((s) => s.relativeSort);
+    const setRelativeSort = useUIStore((s) => s.setRelativeSort);
+    const reapplyRelativeSort = useUIStore((s) => s.reapplyRelativeSort);
+    const nearnessFilter = useUIStore((s) => s.nearnessFilter);
+    const nearnessSource = useUIStore((s) => s.nearnessSource);
+    const setNearnessFilter = useUIStore((s) => s.setNearnessFilter);
+    const reapplyNearness = useUIStore((s) => s.reapplyNearness);
+    const kitLikenessRivalPenalty = useUIStore(
+        (s) => s.kitLikenessRivalPenalty,
+    );
+    const setKitLikenessRivalPenalty = useUIStore(
+        (s) => s.setKitLikenessRivalPenalty,
+    );
 
     const embeddingEntries = useEmbeddingIndexStore((s) => s.entries);
     const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
     const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.hydrate);
+
+    useEffect(() => {
+        if (tagFilterFitSort === "none" || embeddingHydrated) {
+            return;
+        }
+        void hydrateEmbeddings();
+    }, [embeddingHydrated, hydrateEmbeddings, tagFilterFitSort]);
+
+    useEffect(() => {
+        if (relativeSort === "none" || embeddingHydrated) {
+            return;
+        }
+        void hydrateEmbeddings();
+    }, [embeddingHydrated, hydrateEmbeddings, relativeSort]);
+
+    useEffect(() => {
+        if (!nearnessFilter || embeddingHydrated) {
+            return;
+        }
+        void hydrateEmbeddings();
+    }, [embeddingHydrated, hydrateEmbeddings, nearnessFilter]);
 
     useEffect(() => {
         if (!presets.length || embeddingHydrated) {
@@ -105,40 +138,78 @@ export function TagFilterBar({
         void hydrateEmbeddings();
     }, [embeddingHydrated, hydrateEmbeddings, presets.length]);
 
-    const kitNearnessPresets = useMemo((): TagPreset[] => {
-        return presets
-            .map((preset) => ({
-                ...preset,
-                tags: filterKitNearnessTags(
-                    preset.tags,
-                    includeInKitNearnessByName,
-                ),
-            }))
-            .filter((preset) => preset.tags.length > 0);
-    }, [includeInKitNearnessByName, presets]);
+    const matchingFiles = useMemo(
+        () => {
+            const idSet = new Set(matchingFileIds);
+            return allFiles.filter((file) => idSet.has(file.id));
+        },
+        [allFiles, matchingFileIds],
+    );
 
-    const kitNearnessFitShareById = useMemo((): ReadonlyMap<string, number> => {
-        if (!kitNearnessPresets.length || !embeddingHydrated) {
+    // Medoids from the full library; claim % among the currently shown set.
+    const kitLikenessFitShareById = useMemo((): ReadonlyMap<string, number> => {
+        if (!presets.length || !embeddingHydrated) {
             return new Map();
         }
         const ranked = rankKitsByBestFitShareEmbedding(
-            kitNearnessPresets,
-            allFiles,
+            presets,
+            matchingFiles,
             embeddingEntries,
+            allFiles,
         );
         return new Map(ranked.map((row) => [row.presetId, row.share]));
-    }, [allFiles, embeddingEntries, embeddingHydrated, kitNearnessPresets]);
+    }, [
+        allFiles,
+        embeddingEntries,
+        embeddingHydrated,
+        matchingFiles,
+        presets,
+    ]);
 
-    const handleKitNearnessPresetIdChange = useCallback(
+    const kitLikenessPresetId = useMemo((): string | undefined => {
+        if (
+            nearnessSource !== "kit" ||
+            !nearnessFilter ||
+            !isTagFilterActive(nearnessFilter)
+        ) {
+            return undefined;
+        }
+        return matchNearnessFilterToKitPreset(nearnessFilter, presets)?.id;
+    }, [nearnessFilter, nearnessSource, presets]);
+
+    // Kit deleted or tags no longer match — drop orphaned kit nearness.
+    useEffect(() => {
+        if (nearnessSource !== "kit" || !nearnessFilter) {
+            return;
+        }
+        if (matchNearnessFilterToKitPreset(nearnessFilter, presets)) {
+            return;
+        }
+        setNearnessFilter(undefined);
+    }, [nearnessFilter, nearnessSource, presets, setNearnessFilter]);
+
+    const handleFilterNearnessChange = useCallback(
+        (filter: TagFilterSelection | undefined): void => {
+            if (filter === undefined) {
+                setNearnessFilter(undefined);
+                return;
+            }
+            setNearnessFilter(filter, "filter");
+        },
+        [setNearnessFilter],
+    );
+
+    const handleKitLikenessPresetIdChange = useCallback(
         (presetId: string | undefined): void => {
-            setKitNearnessPresetId(presetId);
             if (!presetId) {
+                setNearnessFilter(undefined);
                 return;
             }
             const preset = presets.find((entry) => entry.id === presetId);
             if (!preset?.tags.length) {
                 return;
             }
+            setNearnessFilter(nearnessFilterFromKitTags(preset.tags), "kit");
             setStampPickMode("kit");
             setStampTags(preset.tags);
             setStampActive(true);
@@ -146,7 +217,7 @@ export function TagFilterBar({
         },
         [
             presets,
-            setKitNearnessPresetId,
+            setNearnessFilter,
             setStampActive,
             setStampPickMode,
             setStampSheetOpen,
@@ -159,14 +230,6 @@ export function TagFilterBar({
     const [pendingBulkTags, setPendingBulkTags] = useState<string[]>([]);
     const [bulkBusy, setBulkBusy] = useState<boolean>(false);
     const [bulkError, setBulkError] = useState<string | undefined>();
-
-    const matchingFiles = useMemo(
-        () => {
-            const idSet = new Set(matchingFileIds);
-            return allFiles.filter((file) => idSet.has(file.id));
-        },
-        [allFiles, matchingFileIds],
-    );
 
     const isShuffled = mediaViewOrder === "shuffled";
     const filterActive = isTagFilterActive(tagFilter);
@@ -223,6 +286,8 @@ export function TagFilterBar({
 
     const clauseCount = countTagFilterClauses(tagFilter.root);
     const isFlat = isFlatTagFilterRoot(tagFilter.root);
+    // Keep latched mode when clauses drop to zero; only hide the Sort radios.
+    const tagFilterFitAvailable = clauseCount > 0;
 
     const tagsButtonLabel = useMemo((): string => {
         if (clauseCount === 0) {
@@ -311,11 +376,29 @@ export function TagFilterBar({
                         onViewportFitSortChange={setViewportFitSort}
                         imageSizeSort={imageSizeSort}
                         onImageSizeSortChange={setImageSizeSort}
-                        kitNearnessPresets={kitNearnessPresets}
-                        kitNearnessPresetId={kitNearnessPresetId}
-                        onKitNearnessPresetIdChange={handleKitNearnessPresetIdChange}
-                        onKitNearnessReapply={reapplyKitNearness}
-                        kitNearnessFitShareById={kitNearnessFitShareById}
+                        tagFilterFitSort={tagFilterFitSort}
+                        onTagFilterFitSortChange={
+                            tagFilterFitAvailable ?
+                                setTagFilterFitSort :
+                                undefined
+                        }
+                        relativeSort={relativeSort}
+                        onRelativeSortChange={setRelativeSort}
+                        onRelativeReapply={reapplyRelativeSort}
+                        nearnessFilter={nearnessFilter}
+                        onNearnessFilterChange={handleFilterNearnessChange}
+                        onNearnessReapply={reapplyNearness}
+                        nearnessSource={nearnessSource}
+                        kitLikenessPresets={presets}
+                        kitLikenessPresetId={kitLikenessPresetId}
+                        onKitLikenessPresetIdChange={
+                            handleKitLikenessPresetIdChange
+                        }
+                        kitLikenessFitShareById={kitLikenessFitShareById}
+                        kitLikenessRivalPenalty={kitLikenessRivalPenalty}
+                        onKitLikenessRivalPenaltyChange={
+                            setKitLikenessRivalPenalty
+                        }
                     />
                     <TagClausePicker
                         filter={tagFilter}

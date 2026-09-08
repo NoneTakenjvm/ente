@@ -66,7 +66,11 @@ import {
     terminatePhashWorker,
 } from "@/lib/similarity-job";
 import {
+    CLIP_SCORE_COLLECT_MAX,
+    CLIP_SCORE_SLIDER_MAX,
+    CLIP_SCORE_SLIDER_MIN,
     EDGE_COLLECT_THRESHOLD,
+    clampClipScoreThreshold,
     clusterFromFileEdges,
     type Stage1Cluster,
 } from "@/lib/similarity-stage1-core";
@@ -148,14 +152,14 @@ export default function ManagePage(): JSX.Element {
 
     const [section, setSection] = useState<ManageSection>("hub");
     const [selections, setSelections] = useState<DedupGroupSelection[]>([]);
-    const [threshold, setThreshold] = useState<number>(
-        defaultSimilarityThreshold,
+    const [threshold, setThreshold] = useState(
+        () => clampClipScoreThreshold(defaultSimilarityThreshold),
     );
     // The slider updates live while dragging; grouping only recomputes after
     // the user pauses, so moving the thumb doesn't re-run dHash grouping and
     // worker crop matches on every tick.
-    const [debouncedThreshold, setDebouncedThreshold] = useState<number>(
-        defaultSimilarityThreshold,
+    const [debouncedThreshold, setDebouncedThreshold] = useState(
+        () => clampClipScoreThreshold(defaultSimilarityThreshold),
     );
     const thresholdTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const [confirmOpen, setConfirmOpen] = useState<boolean>(false);
@@ -262,11 +266,20 @@ export default function ManagePage(): JSX.Element {
             userId,
         );
         const stage1Items = toStage1Items(indexed);
-        const indexKey = similarityIndexKey(stage1Items);
-        const cachedEdges = getCachedStage1Edges(
-            indexKey,
-            EDGE_COLLECT_THRESHOLD,
-        );
+        let clipOverlap = 0;
+        for (const item of stage1Items) {
+            if (embeddingEntries.get(item.fileId)?.length) {
+                clipOverlap += 1;
+            }
+        }
+        const useClip = clipOverlap >= 2;
+        const indexKey =
+            similarityIndexKey(stage1Items) +
+            (useClip ? `|clip:${clipOverlap}` : "|hash");
+        const collectThreshold = useClip ?
+            CLIP_SCORE_COLLECT_MAX :
+            EDGE_COLLECT_THRESHOLD;
+        const cachedEdges = getCachedStage1Edges(indexKey, collectThreshold);
         const fromCache = Boolean(cachedEdges);
 
         // Cache hit: keep current groups visible while reclustering (no flash).
@@ -309,9 +322,7 @@ export default function ManagePage(): JSX.Element {
                 // DedupGroupCards (and their thumbs) mid-pass freezes the UI.
                 let stage1Clusters: Stage1Cluster[];
                 const clip =
-                    embeddingEntries.size > 0 ?
-                        { embeddings: embeddingEntries } :
-                        undefined;
+                    useClip ? { embeddings: embeddingEntries } : undefined;
                 if (cachedEdges) {
                     stage1Clusters = clusterFromFileEdges(
                         stage1Items,
@@ -323,7 +334,7 @@ export default function ManagePage(): JSX.Element {
                     setSimilarProgress({
                         stepDescription:
                             clip ?
-                                "Comparing hashes + CLIP" :
+                                "Matching closest CLIP neighbours" :
                                 "Comparing hashes",
                         completed: 0,
                         total: Math.max(indexed.length, 1),
@@ -341,11 +352,11 @@ export default function ManagePage(): JSX.Element {
                                 const stepDescription =
                                     update.phase === "comparing" ?
                                         clip ?
-                                            "Comparing hashes + CLIP" :
+                                            "Matching closest CLIP neighbours" :
                                             "Comparing hashes" :
                                         update.phase === "finalizing" ?
                                             "Finalizing groups" :
-                                            "Hash grouping done";
+                                            "Grouping done";
                                 setSimilarProgress({
                                     stepDescription,
                                     completed: update.completed,
@@ -359,7 +370,7 @@ export default function ManagePage(): JSX.Element {
                     }
                     setCachedStage1Edges(
                         indexKey,
-                        EDGE_COLLECT_THRESHOLD,
+                        collectThreshold,
                         stage1Result.edges,
                     );
                     stage1Clusters = stage1Result.clusters;
@@ -742,21 +753,27 @@ export default function ManagePage(): JSX.Element {
                                 <Field>
                                     <FieldLabel htmlFor="similarity-threshold">
                                         Threshold: {threshold}
+                                        {clipCoverageOnIndexed >= 2 ?
+                                            ` (CLIP ≤ ${(threshold / 100).toFixed(2)})` :
+                                            ""}
                                     </FieldLabel>
                                     <Slider
                                         id="similarity-threshold"
-                                        min={4}
-                                        max={20}
+                                        min={CLIP_SCORE_SLIDER_MIN}
+                                        max={CLIP_SCORE_SLIDER_MAX}
+                                        step={1}
                                         value={[threshold]}
                                         onValueChange={(value) => {
                                             const next = Array.isArray(value) ? value[0] : value;
                                             if (next !== undefined) {
-                                                setThreshold(next);
+                                                const clamped =
+                                                    clampClipScoreThreshold(next);
+                                                setThreshold(clamped);
                                                 if (thresholdTimer.current) {
                                                     clearTimeout(thresholdTimer.current);
                                                 }
                                                 thresholdTimer.current = setTimeout(() => {
-                                                    setDebouncedThreshold(next);
+                                                    setDebouncedThreshold(clamped);
                                                 }, 300);
                                             }
                                         }}
@@ -777,10 +794,13 @@ export default function ManagePage(): JSX.Element {
                                             ""}
                                 </p>
                                 {phashIndexedCount > 0 &&
-                                    clipCoverageOnIndexed < phashIndexedCount ? (
+                                    clipCoverageOnIndexed < 2 ? (
                                         <p className="text-xs text-muted-foreground">
-                                            Scan CLIP embeddings in Settings for
-                                            better Similar matching (gate + rescue).
+                                            Scan CLIP embeddings in Settings —
+                                            Similar matches each photo to its
+                                            closest CLIP neighbour, then keeps
+                                            pairs within the threshold. Without
+                                            CLIP it falls back to hashes only.
                                         </p>
                                     ) : null}
                                 {phashJobStatus === "running" ? (
