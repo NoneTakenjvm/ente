@@ -13,7 +13,7 @@
 | **Next recommended action** | Rebuild/serve when ready for QA; confirm selection Tags sheet drafts then Apply/close. |
 
 **This session shipped:**
-1. **Bulk tag draft** — selection Tags sheet stages add/remove/kit taps locally; one batch write on **Apply** or sheet close. Footer working-set chips still write immediately. `APP_VERSION` → `0.3.63`.
+1. **Bulk tag draft** — selection Tags sheet stages add/remove/kit taps locally; one batch write on **Apply** or sheet close. Footer chips disabled while sheet open; no-op toggles pruned; flush lock against double-write. `APP_VERSION` → `0.3.63`.
 
 **Previous session shipped:**
 1. **CLIP Similar hybrid** — Stage-1 keeps raw dHash edges; final cluster applies CLIP **gate** (drop mid-band hash edges far in embedding space) and **rescue** (keep CLIP-near pairs above Hamming threshold). Wired through worker + Manage (`CLIP n/m` coverage). Eval helpers + grid baseline script. `APP_VERSION` → `0.3.62`. Code only (no local preview restart).

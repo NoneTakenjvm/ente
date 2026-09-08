@@ -6,6 +6,7 @@ import {
     emptyTagDraft,
     normalizeTagNameList,
     overlayTagDraftPresence,
+    pruneTagDraft,
     pushRecentTags,
     tagDraftHasChanges,
     tagPresenceAcrossFiles,
@@ -179,5 +180,30 @@ describe("tag-bulk", () => {
         expect(overlay.appliedTags).toContain("travel");
         expect(overlay.appliedTags).not.toContain("people");
         expect(overlay.unionTags).toContain("travel");
+    });
+
+    it("pruneTagDraft drops no-op toggles against baseline", () => {
+        const files = [
+            stubFile(1, ["people"]),
+            stubFile(2, ["people"]),
+        ];
+        const { presence } = tagPresenceAcrossFiles(files);
+        const toggledOffThenOn = pruneTagDraft(
+            draftAddTag(draftRemoveTag(emptyTagDraft(), "people"), "people"),
+            presence,
+        );
+        expect(tagDraftHasChanges(toggledOffThenOn)).toBe(false);
+
+        const toggledOnThenOff = pruneTagDraft(
+            draftRemoveTag(draftAddTag(emptyTagDraft(), "travel"), "travel"),
+            presence,
+        );
+        expect(tagDraftHasChanges(toggledOnThenOff)).toBe(false);
+
+        const realAdd = pruneTagDraft(
+            draftAddTag(emptyTagDraft(), "travel"),
+            presence,
+        );
+        expect(realAdd.adds).toEqual(["travel"]);
     });
 });
