@@ -7,6 +7,7 @@ import {
     putThumbnailCiphertext,
 } from "@/db/thumbnails";
 import { blobFromUint8Array } from "@/lib/bytes-blob";
+import { isGalleryScrolling } from "@/lib/gallery-scroll-activity";
 import {
     readJsHeapSnapshot,
     type JsHeapSnapshot,
@@ -22,6 +23,11 @@ interface ThumbnailEntry {
     lastAccess?: number;
 }
 
+interface PendingReady {
+    fileId: number;
+    bytes: Uint8Array;
+}
+
 /**
  * Soft cap on decrypted thumbnail blob URLs retained in RAM this session.
  * Raised from 64MB so long gallery scrolls keep recently-seen thumbs warm
@@ -32,26 +38,50 @@ const SESSION_BUDGET_BYTES = 160 * 1024 * 1024;
 /** Only thrash the session cache when the heap is near the limit. */
 const THUMB_HEAP_PRESSURE_RATIO = 0.85;
 
+const MAX_CONCURRENT_IDLE = 8;
+const MAX_CONCURRENT_SCROLLING = 3;
+const MAX_APPLIES_PER_FRAME_IDLE = 4;
+const MAX_APPLIES_PER_FRAME_SCROLLING = 2;
+
 const idleEntry: ThumbnailEntry = { status: "idle" };
 const loadingEntry: ThumbnailEntry = { status: "loading" };
 
 const cache: Map<number, ThumbnailEntry> = new Map();
 const listeners: Map<number, Set<() => void>> = new Map();
 
-const maxConcurrent = 8;
 let inFlight = 0;
 /** Visible / subscribed cells — drained first. */
 const highQueue: Array<() => void> = [];
-/** Off-screen work — runs only when highQueue is empty. */
+/** Off-screen work — runs only when highQueue is empty and not scrolling. */
 const lowQueue: Array<() => void> = [];
 
+/** Decrypted bytes waiting for main-thread blob URL + React notify. */
+const pendingReady: PendingReady[] = [];
+let applyFrameScheduled = false;
+
+const maxConcurrentNow = (): number =>
+    isGalleryScrolling() ? MAX_CONCURRENT_SCROLLING : MAX_CONCURRENT_IDLE;
+
+const appliesPerFrameNow = (): number =>
+    isGalleryScrolling() ?
+        MAX_APPLIES_PER_FRAME_SCROLLING :
+        MAX_APPLIES_PER_FRAME_IDLE;
+
 const runNext = (): void => {
-    while (
-        inFlight < maxConcurrent &&
-        (highQueue.length > 0 || lowQueue.length > 0)
-    ) {
-        const task: (() => void) | undefined =
-            highQueue.shift() ?? lowQueue.shift();
+    const limit = maxConcurrentNow();
+    while (inFlight < limit && highQueue.length > 0) {
+        const task = highQueue.shift();
+        if (task) {
+            inFlight++;
+            task();
+        }
+    }
+    // During a fling, do not start off-screen / unsubscribed work.
+    if (isGalleryScrolling()) {
+        return;
+    }
+    while (inFlight < limit && lowQueue.length > 0) {
+        const task = lowQueue.shift();
         if (task) {
             inFlight++;
             task();
@@ -175,6 +205,83 @@ const resetToIdle = (fileId: number): void => {
     }
 };
 
+/**
+ * Apply blob URL + notify immediately. Prefer {@link scheduleSetReady} so
+ * scroll frames are not starved by a burst of ready thumbs.
+ */
+const applyReadyNow = (fileId: number, bytes: Uint8Array): void => {
+    relieveHeapPressureIfNeeded();
+    const byteSize = bytes.byteLength;
+    evictSessionUntilFit(byteSize);
+
+    const existing = cache.get(fileId);
+    if (existing?.url) {
+        URL.revokeObjectURL(existing.url);
+    }
+
+    const blob = blobFromUint8Array(bytes, "image/jpeg");
+    const url = URL.createObjectURL(blob);
+    cache.set(fileId, {
+        status: "ready",
+        url,
+        byteSize,
+        lastAccess: Date.now(),
+    });
+    if (hasSubscribers(fileId)) {
+        notify(fileId);
+    }
+};
+
+const takeNextPendingReady = (): PendingReady | undefined => {
+    const subscribedIdx = pendingReady.findIndex((item) =>
+        hasSubscribers(item.fileId));
+    if (subscribedIdx >= 0) {
+        return pendingReady.splice(subscribedIdx, 1)[0];
+    }
+    return pendingReady.shift();
+};
+
+const flushPendingReady = (): void => {
+    applyFrameScheduled = false;
+    const budget = appliesPerFrameNow();
+    let applied = 0;
+    while (applied < budget && pendingReady.length > 0) {
+        const next = takeNextPendingReady();
+        if (!next) {
+            break;
+        }
+        applyReadyNow(next.fileId, next.bytes);
+        applied++;
+    }
+    if (pendingReady.length > 0) {
+        scheduleApplyFrame();
+    }
+    // Scroll may have ended — resume deferred low-priority loads.
+    runNext();
+};
+
+const scheduleApplyFrame = (): void => {
+    if (applyFrameScheduled) {
+        return;
+    }
+    applyFrameScheduled = true;
+    requestAnimationFrame(flushPendingReady);
+};
+
+/**
+ * Queue decrypted bytes for a paced main-thread apply (blob URL + React).
+ */
+const scheduleSetReady = (fileId: number, bytes: Uint8Array): void => {
+    // Replace any older pending payload for the same file.
+    for (let i = pendingReady.length - 1; i >= 0; i--) {
+        if (pendingReady[i]?.fileId === fileId) {
+            pendingReady.splice(i, 1);
+        }
+    }
+    pendingReady.push({ fileId, bytes });
+    scheduleApplyFrame();
+};
+
 export const subscribeThumbnail = (
     fileId: number,
     listener: () => void,
@@ -204,27 +311,6 @@ export const getThumbnailEntry = (fileId: number): ThumbnailEntry => {
     return entry;
 };
 
-const setReady = (fileId: number, bytes: Uint8Array): void => {
-    relieveHeapPressureIfNeeded();
-    const byteSize = bytes.byteLength;
-    evictSessionUntilFit(byteSize);
-
-    const existing = cache.get(fileId);
-    if (existing?.url) {
-        URL.revokeObjectURL(existing.url);
-    }
-
-    const blob = blobFromUint8Array(bytes, "image/jpeg");
-    const url = URL.createObjectURL(blob);
-    cache.set(fileId, {
-        status: "ready",
-        url,
-        byteSize,
-        lastAccess: Date.now(),
-    });
-    notify(fileId);
-};
-
 const loadThumbnail = (file: EnteFile): void => {
     const existing: ThumbnailEntry | undefined = cache.get(file.id);
     if (existing && existing.status !== "idle") {
@@ -239,15 +325,25 @@ const loadThumbnail = (file: EnteFile): void => {
             try {
                 relieveHeapPressureIfNeeded();
 
+                // Cell scrolled away during a fling — do not burn decrypt CPU.
+                if (!hasSubscribers(file.id) && isGalleryScrolling()) {
+                    resetToIdle(file.id);
+                    return;
+                }
+
                 const cached = await getThumbnailCiphertext(file.id);
                 if (cached) {
-                    // IDB hit is cheap enough to finish even if the cell
-                    // scrolled away — warms scroll-back without a network trip.
+                    if (!hasSubscribers(file.id) && isGalleryScrolling()) {
+                        resetToIdle(file.id);
+                        return;
+                    }
                     const bytes = await decryptThumbnailCiphertext(
                         cached,
                         file.key,
                     );
-                    setReady(file.id, bytes);
+                    // Warm session cache even if unsubscribed; notify only if
+                    // still visible (handled inside applyReadyNow).
+                    scheduleSetReady(file.id, bytes);
                     return;
                 }
 
@@ -261,11 +357,16 @@ const loadThumbnail = (file: EnteFile): void => {
                 const ciphertext =
                     await core.fetchEncryptedThumbnail(file);
                 await putThumbnailCiphertext(file.id, ciphertext);
+                if (!hasSubscribers(file.id)) {
+                    // Ciphertext is on disk; skip decode until remounted.
+                    resetToIdle(file.id);
+                    return;
+                }
                 const bytes = await decryptThumbnailCiphertext(
                     ciphertext,
                     file.key,
                 );
-                setReady(file.id, bytes);
+                scheduleSetReady(file.id, bytes);
             } catch {
                 cache.set(file.id, { status: "error" });
                 notify(file.id);
@@ -334,7 +435,7 @@ export const primeThumbnailFromBytes = (
     void (async (): Promise<void> => {
         try {
             const thumbBytes = await generateImageThumbnail(imageBytes);
-            setReady(fileId, thumbBytes);
+            scheduleSetReady(fileId, thumbBytes);
         } catch {
             cache.set(fileId, { status: "error" });
             notify(fileId);
@@ -361,7 +462,7 @@ export const primeVideoThumbnailFromBytes = (
             const { extractVideoFrameJpeg } = await import("@/lib/ffmpeg");
             const frameBytes = await extractVideoFrameJpeg(videoBytes, "video/mp4");
             const thumbBytes = await generateImageThumbnail(frameBytes);
-            setReady(fileId, thumbBytes);
+            scheduleSetReady(fileId, thumbBytes);
         } catch {
             cache.set(fileId, { status: "error" });
             notify(fileId);
@@ -375,6 +476,11 @@ export const primeVideoThumbnailFromBytes = (
 export const invalidateThumbnailCache = async (
     fileId: number,
 ): Promise<void> => {
+    for (let i = pendingReady.length - 1; i >= 0; i--) {
+        if (pendingReady[i]?.fileId === fileId) {
+            pendingReady.splice(i, 1);
+        }
+    }
     const entry = cache.get(fileId);
     if (entry) {
         revokeEntryUrl(entry);
@@ -392,5 +498,7 @@ export const clearThumbnailCache = (): void => {
     listeners.clear();
     highQueue.length = 0;
     lowQueue.length = 0;
+    pendingReady.length = 0;
+    applyFrameScheduled = false;
     inFlight = 0;
 };

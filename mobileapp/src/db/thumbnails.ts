@@ -1,4 +1,5 @@
 import { fromB64, toB64 } from "ente-base/crypto";
+import { isGalleryScrolling } from "@/lib/gallery-scroll-activity";
 import {
     getOrganizerDB,
     hasOrganizerDB,
@@ -87,8 +88,9 @@ export const getThumbnailCiphertext = async (
 
     const now = Date.now();
     const needsTouch =
-        !record.byteSize ||
-        now - recordLastAccess(record) >= TOUCH_MIN_INTERVAL_MS;
+        !isGalleryScrolling() &&
+        (!record.byteSize ||
+            now - recordLastAccess(record) >= TOUCH_MIN_INTERVAL_MS);
     if (needsTouch) {
         const touched: ThumbnailRecord = {
             ...record,
