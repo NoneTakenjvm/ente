@@ -63,7 +63,7 @@ describe("buildAnonymisedKitNearnessCorpus", () => {
 
         expect(corpus.version).toBe(KIT_NEARNESS_CORPUS_VERSION);
         expect(corpus.privacyNotice).toBe(KIT_NEARNESS_CORPUS_PRIVACY_NOTICE);
-        expect(corpus.embeddingModelId).toBe("Xenova/clip-vit-base-patch32");
+        expect(corpus.embeddingModelId).toBe("Xenova/clip-vit-base-patch16");
         expect(corpus.embeddingDims).toBe(512);
         expect(corpus.photos).toHaveLength(3);
         expect(corpus.kits).toHaveLength(1);
@@ -99,7 +99,7 @@ describe("buildAnonymisedKitNearnessCorpus", () => {
             "privacyNotice",
             "version",
         ]);
-        expect(parsed.embeddingModelId).toBe("Xenova/clip-vit-base-patch32");
+        expect(parsed.embeddingModelId).toBe("Xenova/clip-vit-base-patch16");
         expect(parsed.embeddingDims).toBe(512);
         for (const kit of parsed.derivedKits) {
             expect(Object.keys(kit).sort()).toEqual(["count", "id", "tags"]);

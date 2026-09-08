@@ -25,7 +25,10 @@ import {
 } from "@/lib/app-settings";
 import { getEnteCore } from "@/core";
 import { isLocalDevToolsVisible } from "@/lib/dev-flags";
-import { runKitEmbeddingJob } from "@/lib/kit-embedding";
+import {
+    getKitEmbeddingWebGpuSkipReason,
+    runKitEmbeddingJob,
+} from "@/lib/kit-embedding";
 import { imageFilesForPhash } from "@/lib/similarity-job";
 import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
 import { useLibraryStore } from "@/stores/library-store";
@@ -61,6 +64,7 @@ export function ManageSettingsPanel(): JSX.Element {
     const [clipRuntime, setClipRuntime] = useState<string>("");
     const clipAbort = useRef<AbortController | undefined>(undefined);
     const clipPaused = useRef(false);
+    const clipWebGpuToastShown = useRef(false);
 
     const allFiles = useLibraryStore((s) => s.allFiles);
     const allFilesCount = allFiles.length;
@@ -97,7 +101,9 @@ export function ManageSettingsPanel(): JSX.Element {
         clipAbort.current?.abort();
         clipAbort.current = new AbortController();
         clipPaused.current = false;
+        clipWebGpuToastShown.current = false;
         setClipJobStatus("running");
+        setClipRuntime("");
         const candidates = imageFilesForPhash(allFiles, userId);
         const pending = candidates.filter(
             (file) => !embeddingEntries.has(file.id),
@@ -121,6 +127,16 @@ export function ManageSettingsPanel(): JSX.Element {
                             `WebGPU×${progress.concurrency ?? "?"}` :
                             `WASM×${progress.concurrency ?? "?"}`;
                     setClipRuntime(label);
+                    if (
+                        progress.device === "wasm" &&
+                        !clipWebGpuToastShown.current
+                    ) {
+                        clipWebGpuToastShown.current = true;
+                        const reason = getKitEmbeddingWebGpuSkipReason();
+                        if (reason) {
+                            toast.message(`WebGPU unavailable — ${reason}`);
+                        }
+                    }
                 }
                 if (progress.phase === "embed") {
                     setClipProgress({
@@ -479,9 +495,10 @@ export function ManageSettingsPanel(): JSX.Element {
                         Explicit on-device scan (not automatic). Embeddings power
                         kit nearness ranking via kit centroids; vectors stay
                         encrypted in this browser and already-scanned photos are
-                        skipped. Uses WebGPU when available (else WASM) with a
-                        small concurrency cap. First run may download a ~150MB
-                        model.
+                        skipped. Model: CLIP ViT-B/16. Uses WebGPU (`fp16` /
+                        `q4f16` when available), else WASM (`q8`). First run
+                        downloads a new model weight set (old B/32 embeddings
+                        are discarded).
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-3">
