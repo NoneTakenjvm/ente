@@ -69,6 +69,27 @@ export const draftAddTags = (draft: TagDraft, tags: string[]): TagDraft => {
 };
 
 /**
+ * Drop staged edits that already match live selection presence.
+ */
+export const pruneTagDraft = (
+    draft: TagDraft,
+    presence: Map<string, TagPresence>,
+): TagDraft => {
+    const adds = draft.adds.filter((tag) => {
+        const info = presence.get(tag);
+        const fullyOn =
+            Boolean(info) && info!.count === info!.total && info!.total > 0;
+        return !fullyOn;
+    });
+    const removes = draft.removes.filter((tag) => {
+        const info = presence.get(tag);
+        const fullyOff = !info || info.count === 0;
+        return !fullyOff;
+    });
+    return { adds, removes };
+};
+
+/**
  * Overlay a draft onto live selection presence for the Tags sheet UI.
  */
 export const overlayTagDraftPresence = (

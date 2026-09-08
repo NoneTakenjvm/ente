@@ -1,6 +1,7 @@
 import {
     useCallback,
     useMemo,
+    useRef,
     useState,
     type JSX,
 } from "react";
@@ -27,6 +28,7 @@ import {
     draftRemoveTag,
     emptyTagDraft,
     overlayTagDraftPresence,
+    pruneTagDraft,
     tagDraftHasChanges,
     tagPresenceAcrossFiles,
     type TagDraft,
@@ -63,6 +65,7 @@ export function SelectionActionFooter(): JSX.Element | null {
     const [archiveBusy, setArchiveBusy] = useState<boolean>(false);
     const [trashOpen, setTrashOpen] = useState<boolean>(false);
     const [trashBusy, setTrashBusy] = useState<boolean>(false);
+    const tagFlushLockRef = useRef<boolean>(false);
 
     const selectedFiles = useMemo(
         () => allFiles.filter((file) => selectedIds.includes(file.id)),
@@ -117,6 +120,15 @@ export function SelectionActionFooter(): JSX.Element | null {
         setEnabled(false);
     }, [setEnabled]);
 
+    const stageDraft = useCallback(
+        (mutator: (current: TagDraft) => TagDraft): void => {
+            setTagDraft((current) =>
+                pruneTagDraft(mutator(current), livePresence.presence));
+            setTagError(undefined);
+        },
+        [livePresence.presence],
+    );
+
     const runTagBusy = useCallback(
         async (task: () => Promise<{ failed: number }>): Promise<void> => {
             setTagBusy(true);
@@ -137,15 +149,25 @@ export function SelectionActionFooter(): JSX.Element | null {
     );
 
     const flushTagDraft = useCallback(async (): Promise<boolean> => {
+        if (tagFlushLockRef.current) {
+            return false;
+        }
         if (!tagDraftHasChanges(tagDraft) || !selectedIds.length) {
             setTagDraft(emptyTagDraft());
             return true;
         }
+        tagFlushLockRef.current = true;
         setTagBusy(true);
         setTagError(undefined);
         try {
-            await bulkApplyTagDraft(selectedIds, tagDraft);
+            const result = await bulkApplyTagDraft(selectedIds, tagDraft);
             setTagDraft(emptyTagDraft());
+            if (result.failed > 0) {
+                setTagError(
+                    `Updated ${result.succeeded}, ${result.failed} failed`,
+                );
+            }
+            // Optimistic local write already applied; clear draft either way.
             return true;
         } catch (error) {
             setTagError(
@@ -155,6 +177,7 @@ export function SelectionActionFooter(): JSX.Element | null {
             );
             return false;
         } finally {
+            tagFlushLockRef.current = false;
             setTagBusy(false);
         }
     }, [selectedIds, tagDraft]);
@@ -171,7 +194,7 @@ export function SelectionActionFooter(): JSX.Element | null {
                 openTagSheet();
                 return;
             }
-            if (tagBusy) {
+            if (tagBusy || tagFlushLockRef.current) {
                 return;
             }
             void (async () => {
@@ -186,31 +209,35 @@ export function SelectionActionFooter(): JSX.Element | null {
     );
 
     const handleApplyTagDraft = useCallback((): void => {
-        if (tagBusy) {
+        if (tagBusy || tagFlushLockRef.current) {
             return;
         }
-        void (async () => {
-            await flushTagDraft();
-        })();
+        void flushTagDraft();
     }, [flushTagDraft, tagBusy]);
 
-    const handleDraftAddTag = useCallback((tagName: string): void => {
-        setTagDraft((current) => draftAddTag(current, tagName));
-        setTagError(undefined);
-    }, []);
+    const handleDraftAddTag = useCallback(
+        (tagName: string): void => {
+            stageDraft((current) => draftAddTag(current, tagName));
+        },
+        [stageDraft],
+    );
 
-    const handleDraftRemoveTag = useCallback((tagName: string): void => {
-        setTagDraft((current) => draftRemoveTag(current, tagName));
-        setTagError(undefined);
-    }, []);
+    const handleDraftRemoveTag = useCallback(
+        (tagName: string): void => {
+            stageDraft((current) => draftRemoveTag(current, tagName));
+        },
+        [stageDraft],
+    );
 
-    const handleDraftApplyPreset = useCallback((tags: string[]): void => {
-        if (!tags.length) {
-            return;
-        }
-        setTagDraft((current) => draftAddTags(current, tags));
-        setTagError(undefined);
-    }, []);
+    const handleDraftApplyPreset = useCallback(
+        (tags: string[]): void => {
+            if (!tags.length) {
+                return;
+            }
+            stageDraft((current) => draftAddTags(current, tags));
+        },
+        [stageDraft],
+    );
 
     const handleBatchAddTag = useCallback(
         async (tagName: string): Promise<void> => {
@@ -344,6 +371,8 @@ export function SelectionActionFooter(): JSX.Element | null {
     const count = selectedIds.length;
     const actionsBusy = tagBusy || favoriteBusy || archiveBusy || trashBusy;
     const draftPending = tagDraftHasChanges(tagDraft);
+    /** Avoid footer chips fighting a staged sheet draft. */
+    const footerTagActionsDisabled = actionsBusy || tagsOpen;
 
     if (count === 0) {
         return null;
@@ -380,7 +409,7 @@ export function SelectionActionFooter(): JSX.Element | null {
                                         "h-8 shrink-0",
                                         partial && "border-dashed",
                                     )}
-                                    disabled={actionsBusy}
+                                    disabled={footerTagActionsDisabled}
                                     onClick={() => {
                                         void handleWorkingSetTap(tag);
                                     }}
@@ -405,7 +434,7 @@ export function SelectionActionFooter(): JSX.Element | null {
                                 variant="outline"
                                 size="sm"
                                 className="h-8 shrink-0 border-dashed"
-                                disabled={actionsBusy}
+                                disabled={footerTagActionsDisabled}
                                 onClick={() => {
                                     void runTagBusy(() =>
                                         bulkAddTags(selectedIds, preset.tags));
@@ -439,7 +468,7 @@ export function SelectionActionFooter(): JSX.Element | null {
                             variant="outline"
                             size="sm"
                             className="gap-1.5"
-                            disabled={actionsBusy}
+                            disabled={footerTagActionsDisabled}
                             title="Copy tags from first selected onto the rest"
                             onClick={() => {
                                 void handleCopyTagsFromFirst();
