@@ -7,12 +7,19 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-08 |
-| **Last agent / session** | ONLY kit population counts |
+| **Last agent / session** | Thumbnail scroll scheduling |
 | **Current milestone** | Post-M8 UX |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Hard-refresh → Manage footer `0.3.60`; Gallery Tags → Kits: toggle ONLY and confirm badges/sort drop to exact tag-set populations. |
+| **Next recommended action** | Hard-refresh `:3080` (preview left running) → Manage footer `0.3.61`; fling scroll in fit mode and confirm less hitching. |
 
 **This session shipped:**
+1. **Scroll-friendly thumbnails** — while scrolling: concurrency 3 (else 8), no low-priority queue, skip IDB lastAccess writes, cancel off-screen decrypt during flings, rAF-batch blob URL applies (2/frame scrolling, 4 idle). Fit masonry `setScrollTop` rAF-throttled. Dropped extra `Uint8Array.from` copy. `APP_VERSION` → `0.3.61`. Preview on `:3080` not restarted; `out/` rebuilt in place.
+
+
+**Previous session shipped:**
+1. Restarted local preview on `:3080` from the latest `out/` build (`APP_VERSION` `0.3.60`).
+
+**Previous session shipped:**
 1. **ONLY kit population** — gallery Kits picker badges and sort use exact user-tag-set counts when match mode is ONLY (AND/OR keep superset). `APP_VERSION` → `0.3.60`.
 
 **Previous session shipped:**

@@ -1,6 +1,7 @@
 import {
     memo,
     useCallback,
+    useEffect,
     useMemo,
     useRef,
     useState,
@@ -15,6 +16,7 @@ import {
 } from "react-window";
 import type { GalleryColumnCount } from "@/lib/app-settings";
 import { resolveMarqueeDragIntent } from "@/lib/compress";
+import { noteGalleryScrollActivity } from "@/lib/gallery-scroll-activity";
 import {
     computeMasonryLayout,
     masonryItemsInMarquee,
@@ -140,6 +142,7 @@ function SizedGrid({
             itemData={itemData}
             overscanCount={6}
             onScroll={(props) => {
+                noteGalleryScrollActivity();
                 onScrollOffsetChange(props.scrollOffset);
             }}
             style={{ paddingBottom: footerInsetPx }}
@@ -171,6 +174,9 @@ function SizedMasonryGrid({
     onScrollOffsetChange,
 }: SizedMasonryGridProps): JSX.Element {
     const [scrollTop, setScrollTop] = useState<number>(0);
+    const pendingScrollTopRef = useRef<number>(0);
+    const scrollRafRef = useRef<number | undefined>(undefined);
+
     const layout: MasonryLayout = useMemo(
         () => computeMasonryLayout(files, width, columns),
         [columns, files, width],
@@ -180,11 +186,28 @@ function SizedMasonryGrid({
         [height, layout.items, scrollTop],
     );
 
+    useEffect(() => {
+        return (): void => {
+            if (scrollRafRef.current !== undefined) {
+                cancelAnimationFrame(scrollRafRef.current);
+            }
+        };
+    }, []);
+
     const handleScroll = useCallback(
         (event: UIEvent<HTMLDivElement>): void => {
             const nextScrollTop = event.currentTarget.scrollTop;
-            setScrollTop(nextScrollTop);
+            noteGalleryScrollActivity();
+            pendingScrollTopRef.current = nextScrollTop;
+            // Marquee / selection use the latest offset immediately.
             onScrollOffsetChange(nextScrollTop);
+            if (scrollRafRef.current !== undefined) {
+                return;
+            }
+            scrollRafRef.current = requestAnimationFrame(() => {
+                scrollRafRef.current = undefined;
+                setScrollTop(pendingScrollTopRef.current);
+            });
         },
         [onScrollOffsetChange],
     );
