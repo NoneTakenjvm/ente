@@ -1,9 +1,10 @@
 /**
  * On-device CLIP image embeddings for kit nearness ranking.
  *
- * Uses transformers.js + Xenova CLIP (quantized). Prefers WebGPU when
- * available, falls back to WASM. Embed jobs run with a small concurrency cap.
- * First load downloads the model from Hugging Face (~150MB) and caches it.
+ * Uses transformers.js + Xenova CLIP ViT-B/16. Prefers WebGPU (`q4f16` when the
+ * hub file exists, else `fp16`); falls back to WASM (`q8`). Embed jobs use a
+ * small concurrency cap. First load downloads the model from Hugging Face and
+ * caches it. Changing {@link KIT_EMBEDDING_MODEL_ID} invalidates the local index.
  *
  * Full-library scans are started explicitly from Manage → Settings. Gallery kit
  * nearness only embeds missing seed thumbnails for the selected kit.
@@ -19,7 +20,7 @@ import { imageFilesForPhash } from "@/lib/similarity-job";
 import type { EnteFile } from "ente-media/file";
 
 /** Model id baked into corpus exports so offline eval stays consistent. */
-export const KIT_EMBEDDING_MODEL_ID = "Xenova/clip-vit-base-patch32";
+export const KIT_EMBEDDING_MODEL_ID = "Xenova/clip-vit-base-patch16";
 
 export const KIT_EMBEDDING_DIMS = 512;
 
@@ -32,6 +33,17 @@ type ImageFeaturePipeline = (
 
 let pipelinePromise: Promise<ImageFeaturePipeline> | undefined;
 let activeDevice: KitEmbeddingDevice | undefined;
+/** Why WebGPU was skipped / failed (for Settings toast + console). */
+let webGpuSkipReason: string | undefined;
+
+type KitEmbeddingDtype = "q4f16" | "fp16" | "q8";
+
+/**
+ * WebGPU prefers fp16 (widely available on Xenova CLIP hubs); q4f16 is tried
+ * next when present. Keep q8 for the WASM path only.
+ */
+const WEBGPU_DTYPES: readonly KitEmbeddingDtype[] = ["fp16", "q4f16"];
+const WASM_DTYPE: KitEmbeddingDtype = "q8";
 
 const canUseWebGpu = async (): Promise<boolean> => {
     const gpu = (
@@ -40,12 +52,20 @@ const canUseWebGpu = async (): Promise<boolean> => {
         }
     ).gpu;
     if (!gpu) {
+        webGpuSkipReason = "navigator.gpu missing (use Chrome/Edge, check chrome://gpu)";
         return false;
     }
     try {
         const adapter = await gpu.requestAdapter();
-        return !!adapter;
-    } catch {
+        if (!adapter) {
+            webGpuSkipReason =
+                "no WebGPU adapter (GPU blocked or disabled in chrome://flags)";
+            return false;
+        }
+        return true;
+    } catch (error) {
+        webGpuSkipReason =
+            error instanceof Error ? error.message : "requestAdapter failed";
         return false;
     }
 };
@@ -69,33 +89,56 @@ const kitEmbeddingConcurrencyFor = (
 
 const loadPipeline = async (
     device: KitEmbeddingDevice,
+    dtype: KitEmbeddingDtype,
 ): Promise<ImageFeaturePipeline> => {
     const { pipeline } = await import("@huggingface/transformers");
     const extractor = await pipeline(
         "image-feature-extraction",
         KIT_EMBEDDING_MODEL_ID,
-        { dtype: "q8", device },
+        { dtype, device },
     );
     return extractor as unknown as ImageFeaturePipeline;
 };
+
+/** Active backend after the first model load (undefined until then). */
+export const getKitEmbeddingDevice = (): KitEmbeddingDevice | undefined =>
+    activeDevice;
+
+/** Human-readable reason when the session fell back to WASM. */
+export const getKitEmbeddingWebGpuSkipReason = (): string | undefined =>
+    webGpuSkipReason;
 
 const getExtractor = async (): Promise<ImageFeaturePipeline> => {
     if (!pipelinePromise) {
         pipelinePromise = (async () => {
             if (await canUseWebGpu()) {
-                try {
-                    const extractor = await loadPipeline("webgpu");
-                    activeDevice = "webgpu";
-                    return extractor;
-                } catch (error) {
-                    console.warn(
-                        "[kit-embedding] WebGPU load failed; falling back to WASM",
-                        error,
-                    );
+                for (const dtype of WEBGPU_DTYPES) {
+                    try {
+                        const extractor = await loadPipeline("webgpu", dtype);
+                        activeDevice = "webgpu";
+                        webGpuSkipReason = undefined;
+                        return extractor;
+                    } catch (error) {
+                        const detail =
+                            error instanceof Error ?
+                                error.message :
+                                String(error);
+                        webGpuSkipReason = `WebGPU ${dtype}: ${detail}`;
+                        console.warn(
+                            `[kit-embedding] WebGPU dtype=${dtype} failed; trying next`,
+                            error,
+                        );
+                    }
                 }
             }
-            const extractor = await loadPipeline("wasm");
+            const extractor = await loadPipeline("wasm", WASM_DTYPE);
             activeDevice = "wasm";
+            if (webGpuSkipReason) {
+                console.warn(
+                    "[kit-embedding] falling back to WASM:",
+                    webGpuSkipReason,
+                );
+            }
             return extractor;
         })();
     }

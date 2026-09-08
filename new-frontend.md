@@ -7,12 +7,16 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-08 |
-| **Last agent / session** | CLIP kit-nearness cleanup (pre-commit) |
+| **Last agent / session** | CLIP ViT-B/16 bake |
 | **Current milestone** | Post-M8 UX / kit nearness (CLIP) |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Commit/push `0.3.53` CLIP kit nearness; QA kit nearness + compact stamp; WebGPU via 127.0.0.1 if speed matters. |
+| **Next recommended action** | Hard-refresh `127.0.0.1:3080`, footer `0.3.55`, full CLIP rescan (B/32 index discarded), QA kit nearness feel vs B/32. |
 
 **This session shipped:**
+1. **CLIP ViT-B/16** — switch from `clip-vit-base-patch32` to `Xenova/clip-vit-base-patch16` (WebGPU `fp16`/`q4f16`, WASM `q8`). Model-id mismatch clears stored embeddings → full rescan. `APP_VERSION` → `0.3.55`.
+2. **WebGPU dtype fix** — do not load CLIP with `q8` on WebGPU (silent WASM fallback). Surface skip reason via toast + console. `0.3.54`.
+
+**Previous session shipped:**
 1. **Cleanup for commit** — removed unused CLIP exports / stale comments; Manage CLIP copy clarifies explicit scan (no background library scan); stamp compact footer = Change kit / Done only; corpus export reuses store imports.
 2. About to commit/push **0.3.53** CLIP kit nearness (centroid sort, explicit Manage scan, corpus v3, compact stamp).
 
