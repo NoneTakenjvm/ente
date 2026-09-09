@@ -96,7 +96,18 @@ export const useLibraryBootstrap: (
                                     candidate.id === entry.fileId,
                             );
                         if (!file) {
-                            return;
+                            const trashed: boolean = (
+                                await import("@/stores/trash-store")
+                            ).useTrashStore.getState().items.some(
+                                (item: { file: { id: number } }): boolean =>
+                                    item.file.id === entry.fileId,
+                            );
+                            if (trashed) {
+                                return;
+                            }
+                            throw new Error(
+                                `File ${entry.fileId} not in library`,
+                            );
                         }
                         const core: EnteCore = getEnteCore();
                         const ctx: {

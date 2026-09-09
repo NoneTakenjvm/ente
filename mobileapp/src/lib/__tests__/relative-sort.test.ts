@@ -3,6 +3,7 @@ import {
     pickRelativeStartId,
     sortFilesByRelative,
 } from "@/lib/relative-sort";
+import { sortIdsByRelativePacked } from "@/lib/relative-sort-packed";
 import type { EnteFile } from "ente-media/file";
 
 const file = (id: number): EnteFile => ({ id }) as EnteFile;
@@ -118,7 +119,24 @@ describe("sortFilesByRelative", () => {
         expect(new Set(ordered.map((f) => f.id)).size).toBe(4);
     });
 
-    it("appends files missing embeddings at the end", () => {
+    it("uses an explicit startFileId as the chain tip", () => {
+        const embeddings = new Map([
+            [1, axis(0)],
+            [2, blend01(0.4)],
+            [3, blend01(1)],
+            [4, axis(1)],
+        ]);
+        const ordered = sortFilesByRelative(
+            [file(1), file(2), file(3), file(4)],
+            "closest",
+            embeddings,
+            0,
+            4,
+        );
+        expect(ordered.map((f) => f.id)[0]).toBe(4);
+    });
+
+    it("falls back to seed when startFileId is missing an embedding", () => {
         const embeddings = new Map([
             [1, axis(0)],
             [2, axis(1)],
@@ -131,12 +149,37 @@ describe("sortFilesByRelative", () => {
             }
         }
         const ordered = sortFilesByRelative(
-            [file(9), file(1), file(2)],
+            [file(1), file(2), file(9)],
             "closest",
             embeddings,
             seed,
+            9,
         );
-        expect(ordered.map((f) => f.id).at(-1)).toBe(9);
         expect(ordered.map((f) => f.id).slice(0, 2)).toEqual([1, 2]);
+    });
+});
+
+describe("sortIdsByRelativePacked", () => {
+    it("matches sortFilesByRelative order for a closest line", () => {
+        const embeddings = new Map([
+            [1, axis(0)],
+            [2, blend01(0.4)],
+            [3, blend01(1)],
+            [4, axis(1)],
+        ]);
+        const ids = [1, 2, 3, 4];
+        const packed = new Float32Array(ids.length * 512);
+        for (let index = 0; index < ids.length; index += 1) {
+            packed.set(embeddings.get(ids[index]!)!, index * 512);
+        }
+        const ordered = sortIdsByRelativePacked(
+            ids,
+            packed,
+            512,
+            "closest",
+            0,
+            1,
+        );
+        expect(ordered).toEqual([1, 2, 3, 4]);
     });
 });

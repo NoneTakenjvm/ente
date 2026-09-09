@@ -1,14 +1,21 @@
 /**
  * Gallery reorder by a greedy CLIP "snake": random start, then repeatedly
  * pick the closest (or furthest) remaining file to the current tip. Each
- * file appears once. Files without embeddings trail at the end.
+ * file appears once. Videos and files without embeddings trail at the end
+ * (videos are never CLIP-judged by poster thumbnail).
  */
 import type { EnteFile } from "ente-media/file";
 import { KIT_EMBEDDING_DIMS } from "@/lib/kit-embedding";
-import { embeddingCosineDistance } from "@/lib/similarity-clip";
+import { isEnteVideoFile } from "@/lib/media-kind";
+import {
+    pickRelativeStartIndex,
+    sortIdsByRelativePacked,
+} from "@/lib/relative-sort-packed";
 
 /** Gallery reorder by relative CLIP nearest/farthest-neighbor chain. */
 export type RelativeSort = "none" | "closest" | "furthest";
+
+export { pickRelativeStartIndex };
 
 /**
  * Pick a deterministic start id from `ids` using a mulberry32 sample.
@@ -19,14 +26,28 @@ export type RelativeSort = "none" | "closest" | "furthest";
 export const pickRelativeStartId = (
     ids: readonly number[],
     seed: number,
-): number => {
-    let state = seed >>> 0;
-    state += 0x6d2b79f5;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    const u = ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    return ids[Math.floor(u * ids.length)]!;
+): number => ids[pickRelativeStartIndex(ids, seed)]!;
+
+/**
+ * Copy CLIP vectors for {@link fileIds} into a transferable Float32 buffer.
+ *
+ * @param fileIds ids in the same order the packed walk should use
+ * @param embeddings CLIP index (Ente file id → L2-normalized vector)
+ */
+export const packRelativeEmbeddings = (
+    fileIds: readonly number[],
+    embeddings: ReadonlyMap<number, number[]>,
+    dim: number = KIT_EMBEDDING_DIMS,
+): Float32Array => {
+    const packed = new Float32Array(fileIds.length * dim);
+    for (let index = 0; index < fileIds.length; index += 1) {
+        const vector = embeddings.get(fileIds[index]!);
+        if (vector?.length !== dim) {
+            continue;
+        }
+        packed.set(vector, index * dim);
+    }
+    return packed;
 };
 
 /**
@@ -36,71 +57,53 @@ export const pickRelativeStartId = (
  * @param mode closest / furthest / none
  * @param embeddings CLIP index (Ente file id → L2-normalized vector)
  * @param seed picks the random first tip among embedded files
+ * @param startFileId when present and embedded, used as the chain tip instead of seed
  */
 export const sortFilesByRelative = (
     files: readonly EnteFile[],
     mode: RelativeSort,
     embeddings: ReadonlyMap<number, number[]>,
     seed: number,
+    startFileId?: number,
 ): EnteFile[] => {
     if (mode === "none" || files.length < 2) {
         return [...files];
     }
 
     const withEmbedding: EnteFile[] = [];
-    const withoutEmbedding: EnteFile[] = [];
+    const skipped: EnteFile[] = [];
     for (const file of files) {
         const vector = embeddings.get(file.id);
-        if (vector?.length === KIT_EMBEDDING_DIMS) {
+        if (
+            !isEnteVideoFile(file) &&
+            vector?.length === KIT_EMBEDDING_DIMS
+        ) {
             withEmbedding.push(file);
         } else {
-            withoutEmbedding.push(file);
+            skipped.push(file);
         }
     }
     if (withEmbedding.length < 2) {
         return [...files];
     }
 
-    const remaining = new Map(withEmbedding.map((file) => [file.id, file]));
-    const candidateIds = [...remaining.keys()].sort((a, b) => a - b);
-    const startId = pickRelativeStartId(candidateIds, seed);
+    const ids = withEmbedding.map((file) => file.id);
+    const packed = packRelativeEmbeddings(ids, embeddings);
+    const orderedIds = sortIdsByRelativePacked(
+        ids,
+        packed,
+        KIT_EMBEDDING_DIMS,
+        mode,
+        seed,
+        startFileId,
+    );
+    const byId = new Map(withEmbedding.map((file) => [file.id, file]));
     const order: EnteFile[] = [];
-    let current = remaining.get(startId)!;
-    remaining.delete(startId);
-    order.push(current);
-
-    const preferClosest = mode === "closest";
-    while (remaining.size > 0) {
-        const currentVector = embeddings.get(current.id);
-        let bestId: number | undefined;
-        let bestDist = preferClosest ?
-            Number.POSITIVE_INFINITY :
-            Number.NEGATIVE_INFINITY;
-        for (const id of remaining.keys()) {
-            const dist = embeddingCosineDistance(
-                currentVector,
-                embeddings.get(id),
-            );
-            if (!Number.isFinite(dist)) {
-                continue;
-            }
-            const better = preferClosest ?
-                dist < bestDist :
-                dist > bestDist;
-            const tie = dist === bestDist && bestId !== undefined && id < bestId;
-            if (better || tie) {
-                bestDist = dist;
-                bestId = id;
-            }
+    for (const id of orderedIds) {
+        const file = byId.get(id);
+        if (file) {
+            order.push(file);
         }
-        if (bestId === undefined) {
-            break;
-        }
-        current = remaining.get(bestId)!;
-        remaining.delete(bestId);
-        order.push(current);
     }
-
-    const leftovers = [...remaining.values()].sort((a, b) => a.id - b.id);
-    return [...order, ...leftovers, ...withoutEmbedding];
+    return [...order, ...skipped];
 };

@@ -10,6 +10,14 @@ export const isGifFile = (file: EnteFile): boolean =>
     fileFileName(file).toLowerCase().endsWith(".gif");
 
 /**
+ * True when the library file is a video (not a still / live photo).
+ *
+ * CLIP must never judge videos — that would embed the poster thumbnail.
+ */
+export const isEnteVideoFile = (file: EnteFile): boolean =>
+    file.metadata?.fileType === FileType.video;
+
+/**
  * Classify a library file for transcode and viewer behaviour.
  */
 export const mediaKindForFile = (file: EnteFile): MediaKind | null => {

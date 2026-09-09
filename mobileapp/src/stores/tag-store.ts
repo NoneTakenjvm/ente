@@ -37,6 +37,7 @@ import {
     setClauseModeOnFilter,
     setKitTagsInGroupOnFilter,
     setKitTagsModeOnFilter,
+    setTagFilterModeOnFilter,
 } from "@/lib/tag-filter-mutations";
 
 import type { EnteFile } from "ente-media/file";
@@ -48,7 +49,16 @@ interface TagState {
     tagTypes: string[];
     tagTypeByName: Map<string, string>;
     includeInKitNearnessByName: Map<string, boolean>;
+    includeInEffectsPresenceByName: Map<string, boolean>;
     tagFilter: TagFilterSelection;
+    /** Bumps whenever the tag→file index changes. */
+    tagIndexRevision: number;
+    /**
+     * File ids touched by the latest {@link applyFilesTags} call.
+     * `undefined` means a full rebuild / structural rename — gallery must
+     * refilter from scratch.
+     */
+    lastTagTouchFileIds: number[] | undefined;
     hydrateFromPersisted: (index: PersistedTagIndex) => void;
     hydrateTagTypes: (config: PersistedTagTypeConfig | undefined) => void;
     hydrateRegisteredTags: (names: string[] | undefined) => void;
@@ -78,11 +88,16 @@ interface TagState {
     ensureTagType: (typeName: string) => void;
     setTagType: (tagName: string, typeName: string) => void;
     setIncludeInKitNearness: (tagName: string, include: boolean) => void;
+    setIncludeInEffectsPresence: (tagName: string, include: boolean) => void;
     registerTag: (tagName: string, typeName?: string) => string | undefined;
-    applyFileTags: (fileId: number, tags: string[]) => void;
+    applyFileTags: (fileId: number, tags: string[], previousTags?: string[]) => void;
     /** Update the tag index for many files in one store notify + persist. */
     applyFilesTags: (
-        updates: Array<{ fileId: number; tags: string[] }>,
+        updates: Array<{
+            fileId: number;
+            tags: string[];
+            previousTags?: string[];
+        }>,
     ) => void;
     applyTagRename: (oldName: string, newName: string) => void;
     applyTagDelete: (tagName: string) => void;
@@ -100,7 +115,10 @@ const initialTagState: Pick<
     "tagTypes" |
     "tagTypeByName" |
     "includeInKitNearnessByName" |
-    "tagFilter"
+    "includeInEffectsPresenceByName" |
+    "tagFilter" |
+    "tagIndexRevision" |
+    "lastTagTouchFileIds"
 > = {
     tags: [],
     fileIdsByTag: new Map(),
@@ -108,7 +126,11 @@ const initialTagState: Pick<
     tagTypes: initialTypeState.types,
     tagTypeByName: initialTypeState.tagTypeByName,
     includeInKitNearnessByName: initialTypeState.includeInKitNearnessByName,
+    includeInEffectsPresenceByName:
+        initialTypeState.includeInEffectsPresenceByName,
     tagFilter: emptyTagFilter(),
+    tagIndexRevision: 0,
+    lastTagTouchFileIds: undefined,
 };
 
 const indexFromMaps = (
@@ -122,26 +144,140 @@ const indexFromMaps = (
     return { tags, fileIdsByTag: fileIdsByTagRecord };
 };
 
-const persistCurrentIndex = (
+const TAG_INDEX_SAVE_DEBOUNCE_MS = 1500;
+
+let tagIndexSaveTimer: ReturnType<typeof setTimeout> | undefined;
+let tagIndexPersistChain: Promise<void> = Promise.resolve();
+/** Latest index maps; serialized only when the debounced flush runs. */
+let pendingTagIndexMaps: {
+    tags: string[];
+    fileIdsByTag: Map<string, Set<number>>;
+} | undefined;
+
+const enqueueTagIndexPersist = (index: PersistedTagIndex): Promise<void> => {
+    tagIndexPersistChain = tagIndexPersistChain
+        .catch(() => undefined)
+        .then(() => saveEncryptedTagIndex(index, getSessionCacheKey()));
+    return tagIndexPersistChain;
+};
+
+/** Immediate encrypt+IDB write (rebuild / structural renames). */
+const persistCurrentIndexNow = (
     tags: string[],
     fileIdsByTag: Map<string, Set<number>>,
 ): void => {
-    void saveEncryptedTagIndex(
-        indexFromMaps(tags, fileIdsByTag),
-        getSessionCacheKey(),
+    void enqueueTagIndexPersist(indexFromMaps(tags, fileIdsByTag));
+};
+
+/**
+ * Trailing-debounce tag-index encrypt so per-file tag commits stay snappy.
+ * Latest snapshot wins; flushed on page hide.
+ */
+const schedulePersistCurrentIndex = (
+    tags: string[],
+    fileIdsByTag: Map<string, Set<number>>,
+): void => {
+    pendingTagIndexMaps = { tags, fileIdsByTag };
+    if (tagIndexSaveTimer !== undefined) {
+        clearTimeout(tagIndexSaveTimer);
+    }
+    tagIndexSaveTimer = setTimeout(() => {
+        tagIndexSaveTimer = undefined;
+        const pending = pendingTagIndexMaps;
+        pendingTagIndexMaps = undefined;
+        if (!pending) {
+            return;
+        }
+        void enqueueTagIndexPersist(
+            indexFromMaps(pending.tags, pending.fileIdsByTag),
+        );
+    }, TAG_INDEX_SAVE_DEBOUNCE_MS);
+};
+
+const flushScheduledTagIndexSave = (): Promise<void> => {
+    if (tagIndexSaveTimer !== undefined) {
+        clearTimeout(tagIndexSaveTimer);
+        tagIndexSaveTimer = undefined;
+    }
+    const pending = pendingTagIndexMaps;
+    pendingTagIndexMaps = undefined;
+    if (!pending) {
+        return tagIndexPersistChain;
+    }
+    return enqueueTagIndexPersist(
+        indexFromMaps(pending.tags, pending.fileIdsByTag),
     );
+};
+
+const cancelScheduledTagIndexSave = (): void => {
+    if (tagIndexSaveTimer !== undefined) {
+        clearTimeout(tagIndexSaveTimer);
+        tagIndexSaveTimer = undefined;
+    }
+    pendingTagIndexMaps = undefined;
+};
+
+/**
+ * Move one file between tag buckets without scanning every tag in the library.
+ *
+ * @returns true when a tag key was added or removed from the index
+ */
+const applyIncrementalFileTags = (
+    fileIdsByTag: Map<string, Set<number>>,
+    fileId: number,
+    previousTags: readonly string[],
+    newTags: readonly string[],
+): boolean => {
+    let tagKeysChanged = false;
+    const previous = new Set(previousTags);
+    const next = new Set(newTags);
+
+    for (const tag of previous) {
+        if (next.has(tag)) {
+            continue;
+        }
+        const bucket = fileIdsByTag.get(tag);
+        if (!bucket?.has(fileId)) {
+            continue;
+        }
+        if (bucket.size === 1) {
+            fileIdsByTag.delete(tag);
+            tagKeysChanged = true;
+        } else {
+            const updated = new Set(bucket);
+            updated.delete(fileId);
+            fileIdsByTag.set(tag, updated);
+        }
+    }
+
+    for (const tag of next) {
+        if (previous.has(tag)) {
+            continue;
+        }
+        const bucket = fileIdsByTag.get(tag);
+        const updated = new Set(bucket);
+        updated.add(fileId);
+        fileIdsByTag.set(tag, updated);
+        if (!bucket) {
+            tagKeysChanged = true;
+        }
+    }
+
+    return tagKeysChanged;
 };
 
 const persistTagTypesConfig = (
     tagTypes: string[],
     tagTypeByName: Map<string, string>,
     includeInKitNearnessByName: Map<string, boolean>,
+    includeInEffectsPresenceByName: Map<string, boolean>,
 ): void => {
     enqueueOrganizerConfigPatch({
         tagTypes: configToPersisted(
             tagTypes,
             tagTypeByName,
             includeInKitNearnessByName,
+            includeInEffectsPresenceByName,
         ),
     });
 };
@@ -231,16 +367,6 @@ const mergeTypeForTarget = (
     }
     return undefined;
 };
-
-const removeClauseByTagFromRoot = (
-    root: TagFilterGroup,
-    tag: string,
-): TagFilterGroup => ({
-    ...root,
-    children: root.children.filter(
-        (child) => !(isTagFilterClause(child) && child.tag === tag),
-    ),
-});
 
 const removeNodeFromTree = (
     root: TagFilterGroup,
@@ -413,13 +539,28 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
 
     hydrateFromPersisted: (index: PersistedTagIndex): void => {
         const { tags, fileIdsByTag } = tagIndexToMaps(index);
-        set({ tags, fileIdsByTag });
+        set({
+            tags,
+            fileIdsByTag,
+            tagIndexRevision: get().tagIndexRevision + 1,
+            lastTagTouchFileIds: undefined,
+        });
     },
 
     hydrateTagTypes: (config: PersistedTagTypeConfig | undefined): void => {
-        const { types, tagTypeByName, includeInKitNearnessByName } =
-            configFromPersisted(config);
-        set({ tagTypes: types, tagTypeByName, includeInKitNearnessByName });
+        const {
+            types,
+            tagTypeByName,
+            includeInKitNearnessByName,
+            includeInEffectsPresenceByName,
+        } = configFromPersisted(config);
+        set({
+            tagTypes: types,
+            tagTypeByName,
+            includeInKitNearnessByName,
+            includeInEffectsPresenceByName,
+            lastTagTouchFileIds: undefined,
+        });
     },
 
     hydrateRegisteredTags: (names: string[] | undefined): void => {
@@ -429,7 +570,13 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             get().fileIdsByTag,
             registeredTagNames,
         );
-        set({ registeredTagNames, tags, fileIdsByTag });
+        set({
+            registeredTagNames,
+            tags,
+            fileIdsByTag,
+            tagIndexRevision: get().tagIndexRevision + 1,
+            lastTagTouchFileIds: undefined,
+        });
     },
 
     rebuildFromFiles: (files: EnteFile[]): void => {
@@ -452,8 +599,10 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             tags: merged.tags,
             fileIdsByTag: merged.fileIdsByTag,
             registeredTagNames,
+            tagIndexRevision: get().tagIndexRevision + 1,
+            lastTagTouchFileIds: undefined,
         });
-        persistCurrentIndex(merged.tags, merged.fileIdsByTag);
+        persistCurrentIndexNow(merged.tags, merged.fileIdsByTag);
     },
 
     setTagScope: (scope: TagScope): void => {
@@ -500,37 +649,8 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
     },
 
     setTagFilterMode: (tag: string, mode: TagFilterMode | null): void => {
-        const { tagFilter } = get();
-        const withoutTag = removeClauseByTagFromRoot(tagFilter.root, tag);
-        if (mode === null) {
-            set({
-                tagFilter: {
-                    ...tagFilter,
-                    tagScope: tagFilter.tagScope === "untagged" ?
-                        "all" :
-                        tagFilter.tagScope,
-                    root: withoutTag,
-                },
-            });
-            return;
-        }
-        const clause = {
-            kind: "clause" as const,
-            id: newTagFilterNodeId(),
-            tag,
-            mode,
-        };
         set({
-            tagFilter: {
-                ...tagFilter,
-                tagScope: tagFilter.tagScope === "untagged" ?
-                    "all" :
-                    tagFilter.tagScope,
-                root: {
-                    ...withoutTag,
-                    children: [...withoutTag.children, clause],
-                },
-            },
+            tagFilter: setTagFilterModeOnFilter(get().tagFilter, tag, mode),
         });
     },
 
@@ -660,6 +780,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             nextTypes,
             get().tagTypeByName,
             get().includeInKitNearnessByName,
+            get().includeInEffectsPresenceByName,
         );
     },
 
@@ -677,6 +798,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             get().tagTypes,
             tagTypeByName,
             get().includeInKitNearnessByName,
+            get().includeInEffectsPresenceByName,
         );
     },
 
@@ -698,6 +820,34 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             get().tagTypes,
             get().tagTypeByName,
             includeInKitNearnessByName,
+            get().includeInEffectsPresenceByName,
+        );
+    },
+
+    setIncludeInEffectsPresence: (tagName: string, include: boolean): void => {
+        const normalizedTag = normalizeTagName(tagName);
+        if (!normalizedTag || isReservedTag(normalizedTag)) {
+            return;
+        }
+        const includeInEffectsPresenceByName = new Map(
+            get().includeInEffectsPresenceByName,
+        );
+        if (include) {
+            includeInEffectsPresenceByName.delete(normalizedTag);
+        } else {
+            includeInEffectsPresenceByName.set(normalizedTag, false);
+        }
+        // Full gallery refilter — presence changes can move many files in/out
+        // of tagged/untagged, not just the last touched file.
+        set({
+            includeInEffectsPresenceByName,
+            lastTagTouchFileIds: undefined,
+        });
+        persistTagTypesConfig(
+            get().tagTypes,
+            get().tagTypeByName,
+            get().includeInKitNearnessByName,
+            includeInEffectsPresenceByName,
         );
     },
 
@@ -722,39 +872,69 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             tags: tagList,
             fileIdsByTag: fileIdsByTagNext,
             registeredTagNames: nextRegistered,
+            tagIndexRevision: get().tagIndexRevision + 1,
+            lastTagTouchFileIds: undefined,
         });
-        persistCurrentIndex(tagList, fileIdsByTagNext);
+        persistCurrentIndexNow(tagList, fileIdsByTagNext);
         persistRegisteredTags(nextRegistered);
         return name;
     },
 
-    applyFileTags: (fileId: number, tags: string[]): void => {
-        get().applyFilesTags([{ fileId, tags }]);
+    applyFileTags: (fileId: number, tags: string[], previousTags?: string[]): void => {
+        get().applyFilesTags([{ fileId, tags, previousTags }]);
     },
 
     applyFilesTags: (
-        updates: Array<{ fileId: number; tags: string[] }>,
+        updates: Array<{
+            fileId: number;
+            tags: string[];
+            previousTags?: string[];
+        }>,
     ): void => {
         if (!updates.length) {
             return;
         }
         const fileIdsByTag = new Map(get().fileIdsByTag);
-        const touchedFileIds = new Set<number>();
         const touchedTagNames: string[] = [];
-        for (const { fileId, tags } of updates) {
-            touchedFileIds.add(fileId);
-            touchedTagNames.push(...tags);
-        }
-        removeFilesFromIndex(fileIdsByTag, touchedFileIds);
-        for (const { fileId, tags } of updates) {
-            for (const tag of tags) {
-                const existing = fileIdsByTag.get(tag);
-                const ids = new Set(existing);
-                ids.add(fileId);
-                fileIdsByTag.set(tag, ids);
+        let tagKeysChanged = false;
+
+        const canUseIncremental = updates.every(
+            (update) => update.previousTags !== undefined,
+        );
+
+        if (canUseIncremental) {
+            for (const { fileId, tags, previousTags } of updates) {
+                touchedTagNames.push(...tags);
+                if (applyIncrementalFileTags(
+                    fileIdsByTag,
+                    fileId,
+                    previousTags!,
+                    tags,
+                )) {
+                    tagKeysChanged = true;
+                }
             }
+        } else {
+            const touchedFileIds = new Set<number>();
+            for (const { fileId, tags } of updates) {
+                touchedFileIds.add(fileId);
+                touchedTagNames.push(...tags);
+            }
+            removeFilesFromIndex(fileIdsByTag, touchedFileIds);
+            for (const { fileId, tags } of updates) {
+                for (const tag of tags) {
+                    const existing = fileIdsByTag.get(tag);
+                    const ids = new Set(existing);
+                    ids.add(fileId);
+                    fileIdsByTag.set(tag, ids);
+                }
+            }
+            tagKeysChanged = true;
         }
-        const tagList = [...fileIdsByTag.keys()].sort();
+
+        const tagList = tagKeysChanged ?
+            [...fileIdsByTag.keys()].sort() :
+            get().tags;
         const registeredTagNames = dropRegisteredTagsWithFiles(
             get().registeredTagNames,
             fileIdsByTag,
@@ -763,8 +943,14 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         if (registeredTagNames.length !== get().registeredTagNames.length) {
             persistRegisteredTags(registeredTagNames);
         }
-        set({ tags: tagList, fileIdsByTag, registeredTagNames });
-        persistCurrentIndex(tagList, fileIdsByTag);
+        set({
+            tags: tagList,
+            fileIdsByTag,
+            registeredTagNames,
+            tagIndexRevision: get().tagIndexRevision + 1,
+            lastTagTouchFileIds: updates.map((update) => update.fileId),
+        });
+        schedulePersistCurrentIndex(tagList, fileIdsByTag);
     },
 
     applyTagRename: (oldName: string, newName: string): void => {
@@ -773,6 +959,8 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         if (!oldIds) {
             return;
         }
+        const newExisted =
+            fileIdsByTag.has(newName) || get().tags.includes(newName);
         fileIdsByTag.delete(oldName);
         const existing = fileIdsByTag.get(newName) ?? new Set<number>();
         fileIdsByTag.set(newName, new Set([...existing, ...oldIds]));
@@ -798,6 +986,17 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         } else {
             includeInKitNearnessByName.delete(oldName);
         }
+        const includeInEffectsPresenceByName = new Map(
+            get().includeInEffectsPresenceByName,
+        );
+        const oldEffectsExcluded =
+            includeInEffectsPresenceByName.get(oldName) === false;
+        includeInEffectsPresenceByName.delete(oldName);
+        // Transfer exclusion only onto a brand-new name. Renaming onto an
+        // existing included tag must not turn its presence off.
+        if (oldEffectsExcluded && !newExisted) {
+            includeInEffectsPresenceByName.set(newName, false);
+        }
         const registeredTagNames = get().registeredTagNames
             .map((tag) => (tag === oldName ? newName : tag))
             .filter((tag, index, list) => list.indexOf(tag) === index)
@@ -813,6 +1012,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             fileIdsByTag,
             tagTypeByName,
             includeInKitNearnessByName,
+            includeInEffectsPresenceByName,
             registeredTagNames,
             tagFilter: isTagFilterActive(tagFilter) ?
                 {
@@ -820,12 +1020,15 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
                     root: renameTagInTree(tagFilter.root, oldName, newName),
                 } :
                 tagFilter,
+            tagIndexRevision: get().tagIndexRevision + 1,
+            lastTagTouchFileIds: undefined,
         });
-        persistCurrentIndex(tagList, fileIdsByTag);
+        persistCurrentIndexNow(tagList, fileIdsByTag);
         persistTagTypesConfig(
             get().tagTypes,
             tagTypeByName,
             includeInKitNearnessByName,
+            includeInEffectsPresenceByName,
         );
     },
 
@@ -846,6 +1049,10 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             get().includeInKitNearnessByName,
         );
         includeInKitNearnessByName.delete(tagName);
+        const includeInEffectsPresenceByName = new Map(
+            get().includeInEffectsPresenceByName,
+        );
+        includeInEffectsPresenceByName.delete(tagName);
         set({
             tags: tagList,
             fileIdsByTag,
@@ -856,17 +1063,23 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             },
             tagTypeByName,
             includeInKitNearnessByName,
+            includeInEffectsPresenceByName,
+            tagIndexRevision: get().tagIndexRevision + 1,
+            lastTagTouchFileIds: undefined,
         });
-        persistCurrentIndex(tagList, fileIdsByTag);
+        persistCurrentIndexNow(tagList, fileIdsByTag);
         persistTagTypesConfig(
             get().tagTypes,
             tagTypeByName,
             includeInKitNearnessByName,
+            includeInEffectsPresenceByName,
         );
     },
 
     applyTagMerge: (sourceNames: string[], targetName: string): void => {
         const fileIdsByTag = new Map(get().fileIdsByTag);
+        const targetExisted =
+            fileIdsByTag.has(targetName) || get().tags.includes(targetName);
         const merged = new Set(fileIdsByTag.get(targetName) ?? []);
         for (const source of sourceNames) {
             const ids = fileIdsByTag.get(source);
@@ -886,12 +1099,30 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         const includeInKitNearnessByName = new Map(
             get().includeInKitNearnessByName,
         );
+        const includeInEffectsPresenceByName = new Map(
+            get().includeInEffectsPresenceByName,
+        );
         const mergedType = mergeTypeForTarget(
             targetName,
             sourceNames,
             tagTypeByName,
         );
         let mergedInclude = includeInKitNearnessByName.get(targetName) === true;
+        // OR inclusion across involved tags. Do not seed a brand-new target as
+        // included (default-true) or merging only excluded tags would flip on.
+        const effectsNames = new Set(sourceNames);
+        if (
+            targetExisted ||
+            includeInEffectsPresenceByName.has(targetName)
+        ) {
+            effectsNames.add(targetName);
+        }
+        let mergedEffects = false;
+        for (const name of effectsNames) {
+            if (includeInEffectsPresenceByName.get(name) !== false) {
+                mergedEffects = true;
+            }
+        }
         for (const source of sourceNames) {
             tagFilter = {
                 ...tagFilter,
@@ -902,6 +1133,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
                 mergedInclude = true;
             }
             includeInKitNearnessByName.delete(source);
+            includeInEffectsPresenceByName.delete(source);
         }
         if (mergedType && !tagTypeByName.has(targetName)) {
             tagTypeByName.set(targetName, mergedType);
@@ -910,6 +1142,11 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             includeInKitNearnessByName.set(targetName, true);
         } else {
             includeInKitNearnessByName.delete(targetName);
+        }
+        if (mergedEffects) {
+            includeInEffectsPresenceByName.delete(targetName);
+        } else {
+            includeInEffectsPresenceByName.set(targetName, false);
         }
         let registeredTagNames = get().registeredTagNames.filter(
             (tag) => !sourceNames.includes(tag),
@@ -942,24 +1179,46 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             tagFilter,
             tagTypeByName,
             includeInKitNearnessByName,
+            includeInEffectsPresenceByName,
+            tagIndexRevision: get().tagIndexRevision + 1,
+            lastTagTouchFileIds: undefined,
         });
-        persistCurrentIndex(mergedIndex.tags, mergedIndex.fileIdsByTag);
+        persistCurrentIndexNow(mergedIndex.tags, mergedIndex.fileIdsByTag);
         persistTagTypesConfig(
             get().tagTypes,
             tagTypeByName,
             includeInKitNearnessByName,
+            includeInEffectsPresenceByName,
         );
     },
 
     reset: (): void => {
+        cancelScheduledTagIndexSave();
         set({
             ...initialTagState,
             tagTypes: [DEFAULT_TAG_TYPE],
             tagTypeByName: new Map(),
             includeInKitNearnessByName: new Map(),
+            includeInEffectsPresenceByName: new Map(),
             registeredTagNames: [],
         });
     },
 });
 
 export const useTagStore = create<TagState>(createTagStore);
+
+/** Flush debounced tag-index encrypt (page hide / before unload). */
+export const flushTagIndexPersist = (): Promise<void> =>
+    flushScheduledTagIndexSave();
+
+if (typeof window !== "undefined") {
+    const flushOnHide = (): void => {
+        void flushScheduledTagIndexSave();
+    };
+    window.addEventListener("pagehide", flushOnHide);
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") {
+            flushOnHide();
+        }
+    });
+}

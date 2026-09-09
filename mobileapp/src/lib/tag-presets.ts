@@ -9,12 +9,19 @@ import {
     type TagFilterSelection,
 } from "@/lib/tags";
 import { areAllTagsIncludedInKitNearness } from "@/lib/tag-types";
+import {
+    parseKitNearnessTuneResult,
+    type KitNearnessTuneResult,
+} from "@/lib/kit-nearness-embedding-genome";
+import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 import type { EnteFile } from "ente-media/file";
 
 export interface TagPreset {
     id: string;
     name: string;
     tags: string[];
+    /** Optional per-kit CLIP nearness tune (only when it beats the global default). */
+    nearnessTune?: KitNearnessTuneResult;
 }
 
 export type PersistedTagPresets = TagPreset[];
@@ -58,6 +65,7 @@ export const normalizePresetTags = (tags: string[]): string[] => {
 
 /**
  * How many files already have every tag in the kit (extras allowed).
+ * Archived files are ignored (long-term storage).
  */
 export const countFilesMatchingKit = (
     files: EnteFile[],
@@ -68,6 +76,9 @@ export const countFilesMatchingKit = (
     }
     let matched = 0;
     for (const file of files) {
+        if (isFileArchivedLocally(file)) {
+            continue;
+        }
         const have = new Set(extractUserTags(file));
         if (kitTags.every((tag) => have.has(tag))) {
             matched += 1;
@@ -175,6 +186,7 @@ export const stampTagsFromNearnessFilter = (
 
 /**
  * How many files whose user tags are exactly the kit tag set (ONLY semantics).
+ * Archived files are ignored (long-term storage).
  */
 export const countFilesMatchingKitExact = (
     files: EnteFile[],
@@ -186,6 +198,9 @@ export const countFilesMatchingKitExact = (
     const required = [...new Set(kitTags)];
     let matched = 0;
     for (const file of files) {
+        if (isFileArchivedLocally(file)) {
+            continue;
+        }
         if (tagSetsEqual(extractUserTags(file), required)) {
             matched += 1;
         }
@@ -256,8 +271,9 @@ export interface SuggestTagKitsOptions {
  *
  * Each file with 2+ user tags contributes only its full tag set (not subsets
  * or pairs). Reserved/system tags are ignored via {@link extractUserTags}.
- * When {@link SuggestTagKitsOptions.includeInKitNearnessByName} is set, tag
- * sets that include any non–kit-nearness tag are skipped.
+ * Archived files are skipped. When
+ * {@link SuggestTagKitsOptions.includeInKitNearnessByName} is set, tag sets
+ * that include any non–kit-nearness tag are skipped.
  */
 export const suggestTagKits = (
     files: EnteFile[],
@@ -272,6 +288,9 @@ export const suggestTagKits = (
 
     const counts = new Map<string, { tags: string[]; count: number }>();
     for (const file of files) {
+        if (isFileArchivedLocally(file)) {
+            continue;
+        }
         const tags = normalizePresetTags(extractUserTags(file));
         if (tags.length < 2) {
             continue;
@@ -335,14 +354,27 @@ export const presetsFromPersisted = (
         if (!id || !name || tags.length === 0) {
             continue;
         }
-        result.push({ id, name, tags });
+        const nearnessTune = parseKitNearnessTuneResult(
+            (entry as { nearnessTune?: unknown }).nearnessTune,
+        );
+        const preset: TagPreset = { id, name, tags };
+        if (nearnessTune) {
+            preset.nearnessTune = nearnessTune;
+        }
+        result.push(preset);
     }
     return result;
 };
 
 export const presetsToPersisted = (presets: TagPreset[]): PersistedTagPresets =>
-    presets.map((preset) => ({
-        id: preset.id,
-        name: preset.name,
-        tags: [...preset.tags],
-    }));
+    presets.map((preset) => {
+        const row: TagPreset = {
+            id: preset.id,
+            name: preset.name,
+            tags: [...preset.tags],
+        };
+        if (preset.nearnessTune) {
+            row.nearnessTune = preset.nearnessTune;
+        }
+        return row;
+    });

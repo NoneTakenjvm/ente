@@ -1,4 +1,5 @@
 import {
+    startTransition,
     useCallback,
     useEffect,
     useMemo,
@@ -30,20 +31,33 @@ import {
 import { dedupeFilesById } from "@/lib/sync/merge-files";
 import { reconcileShuffledIds } from "@/lib/shuffle-files";
 import {
-    countFilesMatchingTagFilter,
     countTagFilterClauses,
     filterFilesByTags,
     isTagFilterActive,
+    patchFilteredFilesForTagTouch,
 } from "@/lib/tags";
 import { isFileArchivedLocally } from "@/lib/visibility-outbox";
-import { sortFilesByEdit, sortFilesByUpload } from "@/lib/sort-files";
+import {
+    remapSortedFilesIfSameIds,
+    sortFilesByEdit,
+    sortFilesByUpload,
+} from "@/lib/sort-files";
+import { sortFilesByUpdatedAt } from "@/lib/updated-at-sort";
 import {
     deviceViewerAspectRatio,
     sortFilesByViewportFit,
 } from "@/lib/viewport-fit";
 import { sortFilesByImageSize } from "@/lib/image-size-sort";
-import { sortFilesByRelative } from "@/lib/relative-sort";
+import {
+    packRelativeEmbeddings,
+    sortFilesByRelative,
+} from "@/lib/relative-sort";
+import { sortRelativeIdsInWorker } from "@/lib/relative-sort-job";
+import { KIT_EMBEDDING_DIMS } from "@/lib/kit-embedding";
 import { sortFilesByTagFilterFit } from "@/lib/tag-filter-fit-sort";
+import { isEnteVideoFile } from "@/lib/media-kind";
+import { buildKitEmbeddingPrototypes } from "@/lib/kit-nearness-embedding-eval";
+import { DEFAULT_KIT_EMBEDDING_GENOME } from "@/lib/kit-nearness-embedding-genome";
 import {
     MAX_KIT_SEEDS,
     listKitSeedFiles,
@@ -106,18 +120,26 @@ export default function GalleryPage(): JSX.Element {
     const email = useSessionStore((s) => s.email);
 
     const allFiles = useLibraryStore((s) => s.allFiles);
+    const filesRevision = useLibraryStore((s) => s.filesRevision);
     const favoriteFileIds = useFavoritesStore((s) => s.favoriteFileIds);
     const tagFilter = useTagStore((s) => s.tagFilter);
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
+    const includeInEffectsPresenceByName = useTagStore(
+        (s) => s.includeInEffectsPresenceByName,
+    );
+    const tagIndexRevision = useTagStore((s) => s.tagIndexRevision);
+    const lastTagTouchFileIds = useTagStore((s) => s.lastTagTouchFileIds);
     const mediaViewOrder = useUIStore((s) => s.mediaViewOrder);
     const mediaShuffleSeed = useUIStore((s) => s.mediaShuffleSeed);
     const mediaShuffledFileIds = useUIStore((s) => s.mediaShuffledFileIds);
     const reconcileMediaShuffle = useUIStore((s) => s.reconcileMediaShuffle);
     const viewportFitSort = useUIStore((s) => s.viewportFitSort);
+    const updatedAtSort = useUIStore((s) => s.updatedAtSort);
     const imageSizeSort = useUIStore((s) => s.imageSizeSort);
     const tagFilterFitSort = useUIStore((s) => s.tagFilterFitSort);
     const relativeSort = useUIStore((s) => s.relativeSort);
     const relativeSeed = useUIStore((s) => s.relativeSeed);
+    const relativeStartFileId = useUIStore((s) => s.relativeStartFileId);
     const nearnessFilter = useUIStore((s) => s.nearnessFilter);
     const nearnessEpoch = useUIStore((s) => s.nearnessEpoch);
     const setNearnessFilter = useUIStore((s) => s.setNearnessFilter);
@@ -127,7 +149,6 @@ export default function GalleryPage(): JSX.Element {
     const gallerySortBy = useSettingsStore((s) => s.gallerySortBy);
     const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
     const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.hydrate);
-    const embeddingEntries = useEmbeddingIndexStore((s) => s.entries);
 
     const nearnessActive =
         nearnessFilter !== undefined && isTagFilterActive(nearnessFilter);
@@ -217,7 +238,12 @@ export default function GalleryPage(): JSX.Element {
                 library,
                 nearnessFilter,
                 tagState.fileIdsByTag,
-                { favoriteFileIds: useFavoritesStore.getState().favoriteFileIds },
+                {
+                    favoriteFileIds:
+                        useFavoritesStore.getState().favoriteFileIds,
+                    includeInEffectsPresenceByName:
+                        tagState.includeInEffectsPresenceByName,
+                },
             );
             const seeds = imageFilesForPhash(seedMatches, userId)
                 .sort((a, b) => a.id - b.id)
@@ -305,16 +331,30 @@ export default function GalleryPage(): JSX.Element {
         const embeddings = useEmbeddingIndexStore.getState().entries;
         const tagState = useTagStore.getState();
         const favoriteIds = useFavoritesStore.getState().favoriteFileIds;
+        const filterOptions = {
+            favoriteFileIds: favoriteIds,
+            includeInEffectsPresenceByName:
+                tagState.includeInEffectsPresenceByName,
+        };
         const seedIds = filterFilesByTags(
             library,
             filter,
             tagState.fileIdsByTag,
-            { favoriteFileIds: favoriteIds },
-        ).map((file) => file.id);
-        const selectedMedoids = pickKitEmbeddingMedoids(
+            filterOptions,
+        )
+            .filter((file) => !isEnteVideoFile(file))
+            .map((file) => file.id);
+        const matchedKit = matchNearnessFilterToKitPreset(
+            filter,
+            useTagSpeedStore.getState().presets,
+        );
+        const selectedGenome =
+            matchedKit?.nearnessTune?.genome ?? DEFAULT_KIT_EMBEDDING_GENOME;
+        const selectedMedoids = buildKitEmbeddingPrototypes(
             seedIds,
             embeddings,
-        ).map((medoid) => medoid.vector);
+            selectedGenome,
+        );
         if (!selectedMedoids.length) {
             return [];
         }
@@ -322,15 +362,11 @@ export default function GalleryPage(): JSX.Element {
             library,
             tagState.tagFilter,
             tagState.fileIdsByTag,
-            { favoriteFileIds: favoriteIds },
+            filterOptions,
         );
         // Rival penalties when nearness is exactly one kit. For Kit likeness,
         // respect the session toggle; Filter nearness always uses rivals.
         const ui = useUIStore.getState();
-        const matchedKit = matchNearnessFilterToKitPreset(
-            filter,
-            useTagSpeedStore.getState().presets,
-        );
         const useRivalPenalty =
             matchedKit !== undefined &&
             (ui.nearnessSource !== "kit" || ui.kitLikenessRivalPenalty);
@@ -342,12 +378,16 @@ export default function GalleryPage(): JSX.Element {
                     if (!entry.tags.length) {
                         return [];
                     }
-                    return pickKitEmbeddingMedoids(
+                    const rivalGenome =
+                        entry.nearnessTune?.genome ??
+                        DEFAULT_KIT_EMBEDDING_GENOME;
+                    return buildKitEmbeddingPrototypes(
                         listKitSeedFiles(library, entry.tags).map(
                             (file) => file.id,
                         ),
                         embeddings,
-                    ).map((medoid) => medoid.vector);
+                        rivalGenome,
+                    );
                 })
                 .filter((medoids) => medoids.length > 0) :
             [];
@@ -356,6 +396,10 @@ export default function GalleryPage(): JSX.Element {
             selectedMedoids,
             rivalMedoidSets,
             embeddings,
+            {
+                lambda: selectedGenome.rivalLambda,
+                tau: selectedGenome.rivalTau,
+            },
         ).map((file) => file.id);
         // nearnessEpoch is the intentional rebuild trigger.
         // eslint-disable-next-line react-hooks/exhaustive-deps -- snapshot only on apply
@@ -363,12 +407,22 @@ export default function GalleryPage(): JSX.Element {
 
     /**
      * Relative snake snapshotted when mode/seed changes (or embeddings hydrate).
-     * Reads library via getState so tagging does not re-run O(n²) each edit.
+     * Computed off the gallery thread so tagging / filter taps stay responsive.
      */
-    const frozenRelativeOrderIds = useMemo((): number[] => {
+    const [frozenRelativeOrderIds, setFrozenRelativeOrderIds] = useState<
+        number[]
+    >([]);
+    const relativeJobRef = useRef(0);
+
+    useEffect(() => {
         if (relativeSort === "none" || !embeddingHydrated) {
-            return [];
+            relativeJobRef.current += 1;
+            setFrozenRelativeOrderIds([]);
+            return;
         }
+        const jobId = relativeJobRef.current + 1;
+        relativeJobRef.current = jobId;
+
         const library = sortLibraryFiles(
             dedupeFilesById(useLibraryStore.getState().allFiles).filter(
                 (file) => !isFileArchivedLocally(file),
@@ -381,34 +435,187 @@ export default function GalleryPage(): JSX.Element {
             library,
             tagState.tagFilter,
             tagState.fileIdsByTag,
-            { favoriteFileIds: favoriteIds },
+            {
+                favoriteFileIds: favoriteIds,
+                includeInEffectsPresenceByName:
+                    tagState.includeInEffectsPresenceByName,
+            },
         );
-        return sortFilesByRelative(
-            filtered,
-            relativeSort,
-            embeddings,
-            relativeSeed,
-        ).map((file) => file.id);
-        // Rebuild only when mode/seed/embeddings change — not on every tag edit.
-    }, [relativeSort, relativeSeed, embeddingHydrated, sortLibraryFiles]);
+        const withEmbeddingIds: number[] = [];
+        for (const file of filtered) {
+            const vector = embeddings.get(file.id);
+            if (
+                !isEnteVideoFile(file) &&
+                vector?.length === KIT_EMBEDDING_DIMS
+            ) {
+                withEmbeddingIds.push(file.id);
+            }
+        }
 
+        const applyOrder = (embeddedOrder: number[]): void => {
+            if (jobId !== relativeJobRef.current) {
+                return;
+            }
+            const embedded = new Set(embeddedOrder);
+            const skipped: number[] = [];
+            for (const file of filtered) {
+                if (!embedded.has(file.id)) {
+                    skipped.push(file.id);
+                }
+            }
+            startTransition(() => {
+                setFrozenRelativeOrderIds([...embeddedOrder, ...skipped]);
+            });
+        };
+
+        if (withEmbeddingIds.length < 2) {
+            applyOrder(filtered.map((file) => file.id));
+            return;
+        }
+
+        const packed = packRelativeEmbeddings(withEmbeddingIds, embeddings);
+        void sortRelativeIdsInWorker(
+            withEmbeddingIds,
+            packed,
+            relativeSort,
+            relativeSeed,
+            relativeStartFileId,
+        )
+            .then(applyOrder)
+            .catch(() => {
+                applyOrder(
+                    sortFilesByRelative(
+                        filtered,
+                        relativeSort,
+                        embeddings,
+                        relativeSeed,
+                        relativeStartFileId,
+                    ).map((file) => file.id),
+                );
+            });
+    }, [
+        relativeSort,
+        relativeSeed,
+        relativeStartFileId,
+        embeddingHydrated,
+        sortLibraryFiles,
+    ]);
+
+    const libraryFilesCacheRef = useRef<EnteFile[]>([]);
+    const librarySourceRef = useRef<EnteFile[] | undefined>(undefined);
+    const librarySortFnRef = useRef(sortLibraryFiles);
     const libraryFiles = useMemo(() => {
+        // filesRevision bumps on in-place slot swaps when allFiles identity is unchanged.
+        void filesRevision;
+        const prev = libraryFilesCacheRef.current;
+        const sourceUnchanged = allFiles === librarySourceRef.current;
+        const sortUnchanged = sortLibraryFiles === librarySortFnRef.current;
+        librarySortFnRef.current = sortLibraryFiles;
+
+        if (sourceUnchanged && sortUnchanged && prev.length > 0) {
+            const remapped: EnteFile[] = [];
+            const library = useLibraryStore.getState();
+            for (const file of prev) {
+                const updated = library.getFileById(file.id) ?? file;
+                if (!isFileArchivedLocally(updated)) {
+                    remapped.push(updated);
+                }
+            }
+            libraryFilesCacheRef.current = remapped;
+            return remapped;
+        }
+
+        librarySourceRef.current = allFiles;
         const deduped = dedupeFilesById(allFiles).filter(
             (file) => !isFileArchivedLocally(file),
         );
-        return sortLibraryFiles(deduped);
-    }, [allFiles, sortLibraryFiles]);
+        if (sortUnchanged) {
+            const remapped = remapSortedFilesIfSameIds(prev, deduped);
+            if (remapped) {
+                libraryFilesCacheRef.current = remapped;
+                return remapped;
+            }
+        }
+        const sorted = sortLibraryFiles(deduped);
+        libraryFilesCacheRef.current = sorted;
+        return sorted;
+    }, [
+        allFiles,
+        filesRevision,
+        sortLibraryFiles,
+    ]);
 
-    const filteredFiles = useMemo(
-        () =>
-            filterFilesByTags(
+    const filteredFilesCacheRef = useRef<EnteFile[]>([]);
+    const filterBasisRef = useRef<{
+        tagFilter: typeof tagFilter;
+        favoriteFileIds: typeof favoriteFileIds;
+        includeInEffectsPresenceByName: typeof includeInEffectsPresenceByName;
+    } | undefined>(undefined);
+    const filteredFiles = useMemo(() => {
+        // tagIndexRevision forces refresh when fileIdsByTag Map identity alone is unreliable.
+        void tagIndexRevision;
+        if (!isTagFilterActive(tagFilter)) {
+            filteredFilesCacheRef.current = libraryFiles;
+            filterBasisRef.current = {
+                tagFilter,
+                favoriteFileIds,
+                includeInEffectsPresenceByName,
+            };
+            return libraryFiles;
+        }
+        const options = {
+            favoriteFileIds,
+            includeInEffectsPresenceByName,
+        };
+        const basis = filterBasisRef.current;
+        const filterUnchanged =
+            basis?.tagFilter === tagFilter &&
+            basis.favoriteFileIds === favoriteFileIds &&
+            basis.includeInEffectsPresenceByName ===
+                includeInEffectsPresenceByName;
+        const touchIds = lastTagTouchFileIds;
+        // Only splice one file when the filter basis is unchanged — otherwise
+        // a stale lastTagTouch would patch against a new filter incorrectly.
+        if (
+            filterUnchanged &&
+            touchIds?.length === 1 &&
+            filteredFilesCacheRef.current.length
+        ) {
+            const patched = patchFilteredFilesForTagTouch(
+                filteredFilesCacheRef.current,
                 libraryFiles,
+                touchIds[0]!,
                 tagFilter,
                 fileIdsByTag,
-                { favoriteFileIds },
-            ),
-        [libraryFiles, tagFilter, fileIdsByTag, favoriteFileIds],
-    );
+                options,
+            );
+            if (patched) {
+                filteredFilesCacheRef.current = patched;
+                return patched;
+            }
+        }
+        const next = filterFilesByTags(
+            libraryFiles,
+            tagFilter,
+            fileIdsByTag,
+            options,
+        );
+        filteredFilesCacheRef.current = next;
+        filterBasisRef.current = {
+            tagFilter,
+            favoriteFileIds,
+            includeInEffectsPresenceByName,
+        };
+        return next;
+    }, [
+        libraryFiles,
+        tagFilter,
+        fileIdsByTag,
+        favoriteFileIds,
+        includeInEffectsPresenceByName,
+        tagIndexRevision,
+        lastTagTouchFileIds,
+    ]);
 
     // Latch tag-fit mode across filter edits; only reorder while clauses exist.
     const tagFilterFitActive =
@@ -420,6 +627,7 @@ export default function GalleryPage(): JSX.Element {
         if (
             mediaViewOrder !== "shuffled" ||
             viewportFitSort !== "none" ||
+            updatedAtSort !== "none" ||
             imageSizeSort !== "none" ||
             tagFilterFitActive ||
             relativeActive ||
@@ -436,10 +644,38 @@ export default function GalleryPage(): JSX.Element {
         relativeActive,
         tagFilterFitActive,
         viewportFitSort,
+        updatedAtSort,
         imageSizeSort,
     ]);
 
+    const computedOrderCacheRef = useRef<{
+        kind: string;
+        tagFilter: typeof tagFilter;
+        ids: number[];
+    }>({ kind: "", tagFilter, ids: [] });
+
     const files = useMemo(() => {
+        const reuseComputedOrder = (
+            kind: string,
+            compute: () => EnteFile[],
+        ): EnteFile[] => {
+            const cache = computedOrderCacheRef.current;
+            if (
+                cache.kind === kind &&
+                cache.tagFilter === tagFilter &&
+                cache.ids.length > 0
+            ) {
+                return reconcileFrozenFileOrder(filteredFiles, cache.ids);
+            }
+            const sorted = compute();
+            computedOrderCacheRef.current = {
+                kind,
+                tagFilter,
+                ids: sorted.map((file) => file.id),
+            };
+            return sorted;
+        };
+
         if (nearnessActive) {
             return reconcileFrozenFileOrder(filteredFiles, frozenNearnessOrderIds);
         }
@@ -450,20 +686,34 @@ export default function GalleryPage(): JSX.Element {
             );
         }
         if (tagFilterFitActive) {
-            return sortFilesByTagFilterFit(
-                filteredFiles,
-                tagFilterFitSort,
-                embeddingEntries,
+            return reuseComputedOrder(
+                `fit:${tagFilterFitSort}:${embeddingHydrated ? "1" : "0"}`,
+                () =>
+                    sortFilesByTagFilterFit(
+                        filteredFiles,
+                        tagFilterFitSort,
+                        useEmbeddingIndexStore.getState().entries,
+                    ),
             );
         }
         if (imageSizeSort !== "none") {
-            return sortFilesByImageSize(filteredFiles, imageSizeSort);
+            return reuseComputedOrder(
+                `size:${imageSizeSort}`,
+                () => sortFilesByImageSize(filteredFiles, imageSizeSort),
+            );
+        }
+        if (updatedAtSort !== "none") {
+            return sortFilesByUpdatedAt(filteredFiles, updatedAtSort);
         }
         if (viewportFitSort !== "none") {
-            return sortFilesByViewportFit(
-                filteredFiles,
-                viewportFitSort,
-                viewerAspect,
+            return reuseComputedOrder(
+                `viewport:${viewportFitSort}:${viewerAspect}`,
+                () =>
+                    sortFilesByViewportFit(
+                        filteredFiles,
+                        viewportFitSort,
+                        viewerAspect,
+                    ),
             );
         }
         if (mediaViewOrder !== "shuffled") {
@@ -483,7 +733,7 @@ export default function GalleryPage(): JSX.Element {
             return file ? [file] : [];
         });
     }, [
-        embeddingEntries,
+        embeddingHydrated,
         filteredFiles,
         frozenNearnessOrderIds,
         frozenRelativeOrderIds,
@@ -493,22 +743,15 @@ export default function GalleryPage(): JSX.Element {
         mediaShuffleSeed,
         mediaViewOrder,
         relativeActive,
+        tagFilter,
         tagFilterFitActive,
         tagFilterFitSort,
+        updatedAtSort,
         viewportFitSort,
         viewerAspect,
     ]);
 
-    const matchCount = useMemo(() => {
-        const candidateIds = new Set(libraryFiles.map((file) => file.id));
-        return countFilesMatchingTagFilter(
-            candidateIds,
-            tagFilter,
-            fileIdsByTag,
-            libraryFiles,
-            { favoriteFileIds },
-        );
-    }, [libraryFiles, tagFilter, fileIdsByTag, favoriteFileIds]);
+    const matchCount = filteredFiles.length;
 
     const matchingFileIds = useMemo(
         () => filteredFiles.map((file) => file.id),

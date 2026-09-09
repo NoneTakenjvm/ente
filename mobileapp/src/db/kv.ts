@@ -300,6 +300,23 @@ export interface PersistedEmbeddingIndex {
     entries: Record<number, number[]>;
 }
 
+/**
+ * Meta for chunked embedding storage (v2). Vectors live in the
+ * {@code embeddingChunks} object store — each flush encrypts only the dirty
+ * batch, not the whole library. Chunk rows are discovered via getAll (no
+ * growing chunkIds list to re-encrypt every flush).
+ */
+export interface PersistedEmbeddingMeta {
+    version: 2;
+    modelId: string;
+    dims: number;
+    nextChunkId: number;
+}
+
+export interface EmbeddingChunkPayload {
+    entries: Record<number, number[]>;
+}
+
 export const loadEncryptedEmbeddingIndex = async (
     cacheKey: string,
 ): Promise<PersistedEmbeddingIndex | undefined> => {
@@ -318,4 +335,101 @@ export const saveEncryptedEmbeddingIndex = async (
         "embeddingIndex",
         await encryptCachePayload(index, cacheKey),
     );
+};
+
+export const loadEmbeddingMeta = async (
+    cacheKey: string,
+): Promise<PersistedEmbeddingMeta | undefined> => {
+    const payload = await getEncrypted("embeddingIndex");
+    if (!payload) {
+        return undefined;
+    }
+    const parsed = await decryptCachePayload<
+        PersistedEmbeddingMeta | PersistedEmbeddingIndex
+    >(payload, cacheKey);
+    if (!parsed || typeof parsed !== "object") {
+        return undefined;
+    }
+    if ((parsed as PersistedEmbeddingMeta).version === 2) {
+        return parsed as PersistedEmbeddingMeta;
+    }
+    // v1 monolith is obsolete — caller treats as empty and rescans.
+    return undefined;
+};
+
+export const saveEmbeddingMeta = async (
+    meta: PersistedEmbeddingMeta,
+    cacheKey: string,
+): Promise<void> => {
+    await putEncrypted(
+        "embeddingIndex",
+        await encryptCachePayload(meta, cacheKey),
+    );
+};
+
+export const clearEmbeddingChunks = async (): Promise<void> => {
+    const db = await getOrganizerDB();
+    await db.clear("embeddingChunks");
+};
+
+/**
+ * Encrypt and append one embedding chunk; updates meta atomically after write.
+ */
+export const appendEmbeddingChunk = async (
+    entries: Map<number, number[]>,
+    meta: PersistedEmbeddingMeta,
+    cacheKey: string,
+): Promise<PersistedEmbeddingMeta> => {
+    if (entries.size === 0) {
+        return meta;
+    }
+    const chunkId = meta.nextChunkId;
+    const payload: EmbeddingChunkPayload = {
+        entries: Object.fromEntries(entries),
+    };
+    const encrypted = await encryptCachePayload(payload, cacheKey);
+    const db = await getOrganizerDB();
+    await db.put("embeddingChunks", {
+        chunkId,
+        modelId: meta.modelId,
+        dims: meta.dims,
+        encryptedData: encrypted.encryptedData,
+        decryptionHeader: encrypted.decryptionHeader,
+    });
+    const nextMeta: PersistedEmbeddingMeta = {
+        ...meta,
+        nextChunkId: chunkId + 1,
+    };
+    await saveEmbeddingMeta(nextMeta, cacheKey);
+    return nextMeta;
+};
+
+/**
+ * Decrypt all chunks for the given model and merge into a map.
+ */
+export const loadAllEmbeddingChunks = async (
+    meta: PersistedEmbeddingMeta,
+    cacheKey: string,
+): Promise<Map<number, number[]>> => {
+    const db = await getOrganizerDB();
+    const map = new Map<number, number[]>();
+    const records = await db.getAll("embeddingChunks");
+    for (const record of records) {
+        if (record.modelId !== meta.modelId || record.dims !== meta.dims) {
+            continue;
+        }
+        const payload = await decryptCachePayload<EmbeddingChunkPayload>(
+            {
+                encryptedData: record.encryptedData,
+                decryptionHeader: record.decryptionHeader,
+            },
+            cacheKey,
+        );
+        for (const [id, vector] of Object.entries(payload.entries)) {
+            if (Array.isArray(vector) && vector.length === meta.dims) {
+                map.set(Number(id), vector);
+            }
+        }
+    }
+    return map;
 };

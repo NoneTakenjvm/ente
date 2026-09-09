@@ -61,6 +61,9 @@ export function AlbumEditorPanel({
     const allFiles = useLibraryStore((s) => s.allFiles);
     const favoriteFileIds = useFavoritesStore((s) => s.favoriteFileIds);
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
+    const includeInEffectsPresenceByName = useTagStore(
+        (s) => s.includeInEffectsPresenceByName,
+    );
 
     const initialFilter = album ? queryAlbumFilter(album) : emptyTagFilter();
     const { filter, actions } = useTagFilterDraft(initialFilter);
@@ -88,9 +91,15 @@ export function AlbumEditorPanel({
                 libraryFiles,
                 filter,
                 fileIdsByTag,
-                { favoriteFileIds },
+                { favoriteFileIds, includeInEffectsPresenceByName },
             ),
-        [favoriteFileIds, fileIdsByTag, filter, libraryFiles],
+        [
+            favoriteFileIds,
+            fileIdsByTag,
+            filter,
+            includeInEffectsPresenceByName,
+            libraryFiles,
+        ],
     );
 
     const previewAlbum = useMemo(
@@ -115,19 +124,36 @@ export function AlbumEditorPanel({
                 filter,
                 fileIdsByTag,
                 libraryFiles,
-                { favoriteFileIds },
+                { favoriteFileIds, includeInEffectsPresenceByName },
             ),
-        [favoriteFileIds, fileIdsByTag, filter, libraryFileIds, libraryFiles],
+        [
+            favoriteFileIds,
+            fileIdsByTag,
+            filter,
+            includeInEffectsPresenceByName,
+            libraryFileIds,
+            libraryFiles,
+        ],
     );
 
     const taggedCount = useMemo(
-        () => countTaggedInCandidates(libraryFileIds, fileIdsByTag),
-        [libraryFileIds, fileIdsByTag],
+        () =>
+            countTaggedInCandidates(
+                libraryFileIds,
+                fileIdsByTag,
+                includeInEffectsPresenceByName,
+            ),
+        [includeInEffectsPresenceByName, libraryFileIds, fileIdsByTag],
     );
 
     const untaggedCount = useMemo(
-        () => countUntaggedInCandidates(libraryFileIds, fileIdsByTag),
-        [libraryFileIds, fileIdsByTag],
+        () =>
+            countUntaggedInCandidates(
+                libraryFileIds,
+                fileIdsByTag,
+                includeInEffectsPresenceByName,
+            ),
+        [includeInEffectsPresenceByName, libraryFileIds, fileIdsByTag],
     );
 
     const favoritesCount = useMemo(

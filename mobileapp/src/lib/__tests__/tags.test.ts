@@ -8,6 +8,7 @@ import {
     extractTags,
     extractUserTags,
     filterFilesByTags,
+    patchFilteredFilesForTagTouch,
     countFilesMatchingTagFilter,
     isSystemTag,
     newTagFilterNodeId,
@@ -301,6 +302,44 @@ describe("tags", () => {
         expect(filtered.map((file) => file.id)).toEqual([2, 3]);
     });
 
+    it("tag presence scope ignores tags with effects presence off", () => {
+        const files = [
+            fileWithTags(1, []),
+            fileWithTags(2, ["junk"]),
+            fileWithTags(3, ["selfie"]),
+            fileWithTags(4, ["junk", "selfie"]),
+        ];
+        const index = buildTagIndex(files);
+        const { fileIdsByTag } = tagIndexToMaps(index);
+        const includeInEffectsPresenceByName = new Map([["junk", false]]);
+        const tagged = filterFilesByTags(
+            files,
+            {
+                tagScope: "tagged",
+                favoritesScope: "all",
+                mediaScope: "all",
+                croppedScope: "all",
+                root: createEmptyTagFilterRoot(),
+            },
+            fileIdsByTag,
+            { includeInEffectsPresenceByName },
+        );
+        expect(tagged.map((file) => file.id)).toEqual([3, 4]);
+        const untagged = filterFilesByTags(
+            files,
+            {
+                tagScope: "untagged",
+                favoritesScope: "all",
+                mediaScope: "all",
+                croppedScope: "all",
+                root: createEmptyTagFilterRoot(),
+            },
+            fileIdsByTag,
+            { includeInEffectsPresenceByName },
+        );
+        expect(untagged.map((file) => file.id)).toEqual([1, 2]);
+    });
+
     it("filterFilesByTags combines tagged scope with exclude clauses", () => {
         const files = [
             fileWithTags(1, ["selfie"]),
@@ -525,5 +564,36 @@ describe("tags", () => {
             fileIdsByTag,
         );
         expect(filtered.map((file) => file.id).sort()).toEqual([1, 2]);
+    });
+
+    it("patchFilteredFilesForTagTouch inserts and removes one file", () => {
+        const a = fileWithTags(1, ["beach"]);
+        const b = fileWithTags(2, ["city"]);
+        const c = fileWithTags(3, ["beach"]);
+        const library = [a, b, c];
+        const filter = filterWithRoot(andRoot(includeClause("beach")));
+        const previous = [a, c];
+
+        const withoutC = patchFilteredFilesForTagTouch(
+            previous,
+            library,
+            3,
+            filter,
+            new Map([["beach", new Set([1])], ["city", new Set([2])]]),
+        );
+        expect(withoutC?.map((file) => file.id)).toEqual([1]);
+
+        const withB = patchFilteredFilesForTagTouch(
+            [a],
+            library,
+            2,
+            filter,
+            new Map([
+                ["beach", new Set([1, 2])],
+                ["city", new Set([2])],
+            ]),
+        );
+        // file 2 now has beach in the patched index → should appear
+        expect(withB?.map((file) => file.id)).toEqual([1, 2]);
     });
 });

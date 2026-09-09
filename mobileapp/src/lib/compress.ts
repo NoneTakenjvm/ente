@@ -4,6 +4,7 @@ import type { EnteFile } from "ente-media/file";
 import { extractTags } from "@/lib/tags";
 import { addTagNames } from "@/lib/tag-writes";
 import { isGifFile } from "@/lib/media-kind";
+import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 import type {
     CompressWorkerRequest,
     CompressWorkerResponse,
@@ -160,6 +161,7 @@ export const canCompress = (file: EnteFile): boolean => canCompressMedia(file);
 
 /**
  * Files eligible for bulk compression on the manage tab.
+ * Archived files are skipped (long-term storage).
  */
 export const compressManageCandidates = (
     files: EnteFile[],
@@ -167,6 +169,7 @@ export const compressManageCandidates = (
 ): EnteFile[] =>
     files.filter(
         (file) =>
+            !isFileArchivedLocally(file) &&
             isCompressibleMediaType(file) &&
             (includePreviouslyCompressed || !isAlreadyCompressed(file)),
     );

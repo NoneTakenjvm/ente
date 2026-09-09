@@ -5,6 +5,7 @@ import { FileType } from "ente-media/file-type";
 import type { PhashEntry } from "@/lib/crop-match";
 import {
     buildSimilarityGroups,
+    indexableFiles,
     MAX_GROUP_SIZE,
     mergeCropMatches,
 } from "@/lib/similarity-groups";
@@ -271,5 +272,34 @@ describe("mergeCropMatches uncapped match + display filter", () => {
                 signal: abort.signal,
             }),
         ).rejects.toMatchObject({ name: "AbortError" });
+    });
+});
+
+describe("indexableFiles", () => {
+    it("skips archived files", () => {
+        const active = stubFile(1, 1, 1);
+        const archived = {
+            ...stubFile(2, 1, 1),
+            magicMetadata: {
+                version: 1,
+                count: 1,
+                data: { visibility: 1 },
+            },
+        } as EnteFile;
+        const filesById = new Map([
+            [1, active],
+            [2, archived],
+        ]);
+        const entries = new Map<number, PhashEntry>([
+            [1, { hashes: ["a1bf--------"] }],
+            [2, { hashes: ["a1bf--------"] }],
+        ]);
+        const indexed = indexableFiles(
+            entries,
+            filesById,
+            [stubCollection(1)],
+            1,
+        );
+        expect(indexed.map((row) => row.fileId)).toEqual([1]);
     });
 });

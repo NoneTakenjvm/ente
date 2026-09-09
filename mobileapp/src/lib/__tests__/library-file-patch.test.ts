@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { EnteFile } from "ente-media/file";
 import { ItemVisibility } from "ente-media/file-metadata";
-import { planLibraryFilePatches } from "@/lib/library-file-patch";
+import {
+    planLibraryFilePatches,
+    patchFileInLibrary,
+    patchFileInPlace,
+    patchFilesInLibrary,
+} from "@/lib/library-file-patch";
 import { fileWithOrganizerTags } from "@/lib/tag-writes";
 
 const stubFile = (
@@ -28,6 +33,71 @@ const stubFile = (
             withTags.magicMetadata,
     } as EnteFile;
 };
+
+describe("patchFileInPlace", () => {
+    it("mutates one slot without copying the array", () => {
+        const a = stubFile(1, ["x"]);
+        const b = stubFile(2, ["y"]);
+        const files = [a, b];
+        const patched = stubFile(1, ["z"]);
+        expect(patchFileInPlace(files, 1, patched)).toBe(true);
+        expect(files[0]).toBe(patched);
+        expect(files[1]).toBe(b);
+        expect(files).toHaveLength(2);
+    });
+
+    it("uses an optional id index for O(1) lookup", () => {
+        const a = stubFile(1, ["x"]);
+        const b = stubFile(2, ["y"]);
+        const files = [a, b];
+        const patched = stubFile(2, ["yy"]);
+        expect(
+            patchFileInPlace(files, 2, patched, new Map([[1, 0], [2, 1]])),
+        ).toBe(true);
+        expect(files[1]).toBe(patched);
+    });
+});
+
+describe("patchFileInLibrary", () => {
+    it("replaces one slot and keeps other identities", () => {
+        const a = stubFile(1, ["x"]);
+        const b = stubFile(2, ["y"]);
+        const patched = stubFile(1, ["z"]);
+        const next = patchFileInLibrary([a, b], 1, patched);
+        expect(next).not.toBeNull();
+        expect(next![0]).toBe(patched);
+        expect(next![1]).toBe(b);
+    });
+
+    it("returns null when id is missing", () => {
+        expect(
+            patchFileInLibrary([stubFile(1, [])], 9, stubFile(9, [])),
+        ).toBeNull();
+    });
+});
+
+describe("patchFilesInLibrary", () => {
+    it("applies a sparse map in one copy", () => {
+        const a = stubFile(1, ["x"]);
+        const b = stubFile(2, ["y"]);
+        const c = stubFile(3, ["z"]);
+        const patchedB = stubFile(2, ["yy"]);
+        const next = patchFilesInLibrary(
+            [a, b, c],
+            new Map([[2, patchedB]]),
+        );
+        expect(next![0]).toBe(a);
+        expect(next![1]).toBe(patchedB);
+        expect(next![2]).toBe(c);
+    });
+
+    it("returns null when nothing matches", () => {
+        const a = stubFile(1, ["x"]);
+        expect(
+            patchFilesInLibrary([a], new Map([[9, stubFile(9, [])]])),
+        ).toBeNull();
+    });
+});
 
 describe("planLibraryFilePatches", () => {
     it("skips notify when only pubMagic version advances and tags match", () => {

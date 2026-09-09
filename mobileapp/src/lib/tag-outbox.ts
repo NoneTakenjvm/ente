@@ -1,4 +1,5 @@
 import type { EnteFile } from "ente-media/file";
+import type { FilePublicMagicMetadataData } from "ente-media/file-metadata";
 import {
     loadEncryptedTagOutbox,
     saveEncryptedTagOutbox,
@@ -6,7 +7,11 @@ import {
 } from "@/db/kv";
 import { getSessionCacheKey } from "@/lib/cache-key";
 import { extractTags } from "@/lib/tags";
-import { fileWithOrganizerTags, tagsEqual } from "@/lib/tag-writes";
+import {
+    fileWithOrganizerTags,
+    tagsEqual,
+    type OrganizerPublicMetadata,
+} from "@/lib/tag-writes";
 
 export interface TagOutboxEntry {
     fileId: number;
@@ -30,7 +35,12 @@ const flushTagOutboxToDisk = async (): Promise<void> => {
 };
 
 const persistTagOutbox = (): Promise<void> => {
-    persistChain = persistChain.then(() => flushTagOutboxToDisk());
+    persistChain = persistChain
+        .catch(() => undefined)
+        .then(() => flushTagOutboxToDisk())
+        .catch((error: unknown) => {
+            console.warn("Tag outbox persist failed", error);
+        });
     return persistChain;
 };
 
@@ -70,6 +80,18 @@ export const ensureTagOutboxHydrated = async (): Promise<void> => {
 };
 
 export const isTagOutboxHydrated = (): boolean => hydrated;
+
+/**
+ * Persist the in-memory outbox to encrypted IDB (page hide / before unload).
+ *
+ * Does not drain to the server — only makes pending intents survive a kill.
+ */
+export const flushTagOutboxPersist = (): Promise<void> => {
+    if (!hydrated) {
+        return ensureTagOutboxHydrated().then(() => persistTagOutbox());
+    }
+    return persistTagOutbox();
+};
 
 /**
  * Queue or replace pending tag writes for many files (one disk persist).
@@ -224,9 +246,84 @@ export const applyOutboxTagsToFiles = (
     });
 };
 
+const pubMagicVersion = (file: EnteFile): number =>
+    file.pubMagicMetadata?.version && file.pubMagicMetadata.version > 0 ?
+        file.pubMagicMetadata.version :
+        0;
+
+/**
+ * Copy organizer tags from a live library file onto a pulled file, keeping the
+ * live pub-magic version so a later PUT is not sent against a stale snapshot.
+ */
+const copyAheadOrganizerTags = (pulled: EnteFile, live: EnteFile): EnteFile => {
+    const liveMeta = live.pubMagicMetadata;
+    const pulledMeta = pulled.pubMagicMetadata;
+    const liveData = liveMeta?.data as OrganizerPublicMetadata | undefined;
+    const pulledData = pulledMeta?.data as OrganizerPublicMetadata | undefined;
+    return {
+        ...pulled,
+        pubMagicMetadata: {
+            version: pubMagicVersion(live) || pubMagicVersion(pulled) || 1,
+            count: liveMeta?.count ?? pulledMeta?.count ?? 0,
+            data: {
+                ...pulledData,
+                _organizer_v1: liveData?._organizer_v1,
+            } as FilePublicMagicMetadataData,
+        },
+    };
+};
+
+/**
+ * Keep local organizer-tag writes that landed (or were acked) while a pull
+ * snapshot was in flight. Outbox overlays are left untouched.
+ *
+ * A pulled file whose live counterpart has a higher pub-magic version and
+ * different tags is treated as a post-snapshot local write the pull missed.
+ */
+export const mergeAheadOrganizerTags = (
+    pulled: EnteFile[],
+    live: EnteFile[],
+): EnteFile[] => {
+    if (!live.length || !pulled.length) {
+        return pulled;
+    }
+    const liveById = new Map(live.map((file) => [file.id, file]));
+    let changed = false;
+    const merged = pulled.map((file) => {
+        if (outboxByFileId.has(file.id)) {
+            return file;
+        }
+        const local = liveById.get(file.id);
+        if (!local) {
+            return file;
+        }
+        if (pubMagicVersion(local) <= pubMagicVersion(file)) {
+            return file;
+        }
+        if (tagsEqual(extractTags(local), extractTags(file))) {
+            return file;
+        }
+        changed = true;
+        return copyAheadOrganizerTags(file, local);
+    });
+    return changed ? merged : pulled;
+};
+
 export const clearTagOutbox = (): void => {
     outboxByFileId.clear();
     hydrated = false;
     tagOutboxHydrateInFlight = undefined;
     persistChain = Promise.resolve();
 };
+
+if (typeof window !== "undefined") {
+    const flushOnHide = (): void => {
+        void flushTagOutboxPersist();
+    };
+    window.addEventListener("pagehide", flushOnHide);
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") {
+            flushOnHide();
+        }
+    });
+}

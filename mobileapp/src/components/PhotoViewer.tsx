@@ -1,4 +1,5 @@
 import {
+    startTransition,
     useCallback,
     useEffect,
     useRef,
@@ -48,11 +49,17 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import { getEnteCore } from "@/core";
+import { useCoarsePointer } from "@/hooks/use-coarse-pointer";
 import { usePinchZoom } from "@/hooks/use-pinch-zoom";
 import { canCrop, canCropVideo } from "@/lib/crop";
 import { hasEditHistory } from "@/lib/edit-history";
+import { KIT_EMBEDDING_DIMS } from "@/lib/kit-embedding";
 import { getLocalMediaOverride } from "@/lib/local-media-overrides";
-import { mediaKindForFile, mimeTypeForFile } from "@/lib/media-kind";
+import {
+    isEnteVideoFile,
+    mediaKindForFile,
+    mimeTypeForFile,
+} from "@/lib/media-kind";
 import { toRenderableImageBlob } from "@/lib/renderable-image";
 import { cn } from "@/lib/utils";
 import {
@@ -64,10 +71,14 @@ import {
     transferSessionVideoUrl,
 } from "@/lib/video-media-cache";
 import {
+    extractTags,
     extractUserTags,
     isReservedTag,
+    isSystemTag,
 } from "@/lib/tags";
-import { addTagNames, normalizeTagName, removeTagNames, tagsEqual } from "@/lib/tag-writes";
+import { addTagNames, applyTagMutator, normalizeTagName, removeTagNames, tagsEqual } from "@/lib/tag-writes";
+import { enqueueTagOutboxEntries } from "@/lib/tag-outbox";
+import { requestTagOutboxFlush } from "@/lib/tag-outbox-runner";
 import {
     getThumbnailEntry,
     requestThumbnail,
@@ -75,10 +86,12 @@ import {
 } from "@/lib/thumbnail-cache";
 import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 import { FileType } from "ente-media/file-type";
+import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useTagStore } from "@/stores/tag-store";
+import { useUIStore } from "@/stores/ui-store";
 import { useVideoPlaybackStore } from "@/stores/video-playback-store";
 import type { EnteFile } from "ente-media/file";
 import { toast } from "sonner";
@@ -321,6 +334,8 @@ export function PhotoViewer({
     const [tagError, setTagError] = useState<string | undefined>();
     const [tagSaveBusy, setTagSaveBusy] = useState<boolean>(false);
     const [showTagPicker, setShowTagPicker] = useState<boolean>(false);
+    /** Local draft while the tag sheet is open; committed on close. */
+    const [stagedTags, setStagedTags] = useState<string[] | null>(null);
     const [favoriteBusy, setFavoriteBusy] = useState<boolean>(false);
     const [favoriteError, setFavoriteError] = useState<string | undefined>();
     const [archiveBusy, setArchiveBusy] = useState<boolean>(false);
@@ -337,6 +352,7 @@ export function PhotoViewer({
     const [viewportHeight, setViewportHeight] = useState<number>(0);
     const [chromeVisible, setChromeVisible] = useState<boolean>(true);
     const [videoScrubbing, setVideoScrubbing] = useState<boolean>(false);
+    const coarsePointer = useCoarsePointer();
 
     const viewportRef = useRef<HTMLDivElement>(null);
     const trackRef = useRef<HTMLDivElement>(null);
@@ -365,6 +381,8 @@ export function PhotoViewer({
     const currentIndexRef = useRef<number>(currentIndex);
     const sessionFilesRef = useRef<EnteFile[]>(sessionFiles);
     const tagBaselineRef = useRef<string[]>([]);
+    /** Mirrors {@link stagedTags} so close flush always reads the latest draft. */
+    const stagedTagsRef = useRef<string[] | null>(null);
     const viewerActiveRef = useRef<boolean>(true);
 
     currentIndexRef.current = currentIndex;
@@ -409,6 +427,21 @@ export function PhotoViewer({
     const file = sessionFiles[currentIndex];
     const mediaKind = file ? mediaKindForFile(file) : null;
     const isVideo = file?.metadata.fileType === FileType.video;
+    const relativeSort = useUIStore((s) => s.relativeSort);
+    const relativeStartFileId = useUIStore((s) => s.relativeStartFileId);
+    const setRelativeStartFileId = useUIStore((s) => s.setRelativeStartFileId);
+    const hasClipEmbedding = useEmbeddingIndexStore((s) => {
+        if (!file) {
+            return false;
+        }
+        const vector = s.entries.get(file.id);
+        return vector?.length === KIT_EMBEDDING_DIMS;
+    });
+    const showSetRelative =
+        relativeSort !== "none" &&
+        file !== undefined &&
+        !isEnteVideoFile(file) &&
+        hasClipEmbedding;
     const zoomEnabled = mediaKind === "image" || mediaKind === "gif";
     const chromePaused =
         cropMode ||
@@ -417,9 +450,9 @@ export function PhotoViewer({
         videoScrubbing;
 
     const updateTagsOnFile = useLibraryStore((s) => s.updateTagsOnFile);
-    const storeFile = useLibraryStore((s) => file ?
-        s.allFiles.find((entry) => entry.id === file.id) :
-        undefined);
+    const viewerFileId = file?.id;
+    const storeFile = useLibraryStore((s) =>
+        viewerFileId === undefined ? undefined : s.getFileById(viewerFileId));
     const displayFile = storeFile ?? file;
     const setFileFavorite = useLibraryStore((s) => s.setFileFavorite);
     const setFileArchived = useLibraryStore((s) => s.setFileArchived);
@@ -451,6 +484,7 @@ export function PhotoViewer({
         () => getThumbnailEntry(0),
     );
     const tags = displayFile ? extractUserTags(displayFile) : [];
+    const displayTags = stagedTags ?? tags;
     const activeSlideMedia = file ? mediaByFileId.get(file.id) : undefined;
 
     useEffect((): void => {
@@ -475,6 +509,20 @@ export function PhotoViewer({
         video.volume = videoVolume;
         video.muted = videoMuted;
     }, [isVideo, videoMuted, videoVolume, file?.id, activeSlideMedia?.status]);
+
+    useEffect(() => {
+        if (relativeStartFileId === undefined) {
+            return;
+        }
+        const currentId = viewerFileIdRef.current;
+        setSessionFiles(files);
+        const index = files.findIndex((entry) => entry.id === currentId);
+        if (index >= 0) {
+            setCurrentIndex(index);
+        }
+        // Rematch viewer order after pinning a relative tip (files already rebuilt).
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- tip change only
+    }, [relativeStartFileId]);
 
     useEffect(() => {
         if (initialFileId === viewerFileIdRef.current) {
@@ -975,6 +1023,23 @@ export function PhotoViewer({
         };
     }, [chromePaused, chromeVisible, resetChromeTimer]);
 
+    // Desktop: hide chrome only after the pointer has been still for CHROME_HIDE_MS.
+    useEffect((): (() => void) => {
+        if (coarsePointer || chromePaused || !chromeVisible) {
+            return (): void => undefined;
+        }
+        const onPointerMove = (event: PointerEvent): void => {
+            if (event.pointerType === "touch") {
+                return;
+            }
+            resetChromeTimer();
+        };
+        document.addEventListener("pointermove", onPointerMove);
+        return (): void => {
+            document.removeEventListener("pointermove", onPointerMove);
+        };
+    }, [chromePaused, chromeVisible, coarsePointer, resetChromeTimer]);
+
     useEffect((): void => {
         const track = trackRef.current;
         if (track) {
@@ -1328,9 +1393,7 @@ export function PhotoViewer({
 
     const syncSessionFile = useCallback(
         (fileId: number): void => {
-            const updated = useLibraryStore.getState().allFiles.find(
-                (entry) => entry.id === fileId,
-            );
+            const updated = useLibraryStore.getState().getFileById(fileId);
             if (updated) {
                 setSessionFiles((current) => current.map((entry) => (
                     entry.id === fileId ? updated : entry
@@ -1341,63 +1404,72 @@ export function PhotoViewer({
         [notifyFileUpdated],
     );
 
-    const flushTagDraft = useCallback(async (): Promise<void> => {
+    const beginTagDraft = useCallback((): void => {
+        const baseline = displayFile ? extractUserTags(displayFile) : [];
+        tagBaselineRef.current = [...baseline];
+        stagedTagsRef.current = [...baseline];
+        setStagedTags([...baseline]);
+        setTagError(undefined);
+        setShowTagPicker(true);
+    }, [displayFile]);
+
+    const flushTagDraft = useCallback((): void => {
         if (!displayFile) {
+            stagedTagsRef.current = null;
+            setStagedTags(null);
+            setShowTagPicker(false);
             return;
         }
         const fileId = displayFile.id;
-        const currentFile =
-            useLibraryStore.getState().allFiles.find(
-                (entry) => entry.id === fileId,
-            ) ?? displayFile;
-        const currentTags = extractUserTags(currentFile);
-        if (tagsEqual(tagBaselineRef.current, currentTags)) {
+        const intendedTags =
+            stagedTagsRef.current ?? extractUserTags(displayFile);
+        setShowTagPicker(false);
+        if (tagsEqual(tagBaselineRef.current, intendedTags)) {
+            stagedTagsRef.current = null;
+            setStagedTags(null);
             return;
         }
+
         setTagSaveBusy(true);
         setTagError(undefined);
-        try {
-            await updateTagsOnFile(fileId, () => currentTags);
-            tagBaselineRef.current = currentTags;
-            syncSessionFile(fileId);
-        } catch (error: unknown) {
-            syncSessionFile(fileId);
-            setTagError(
-                error instanceof Error ?
-                    error.message :
-                    "Could not save tags",
-            );
-        } finally {
-            setTagSaveBusy(false);
-        }
-    }, [displayFile, syncSessionFile, updateTagsOnFile]);
+        stagedTagsRef.current = null;
+        setStagedTags(null);
+        tagBaselineRef.current = intendedTags;
 
-    const applyTagChange = useCallback(
-        (mutator: (current: string[]) => string[]): void => {
-            if (!displayFile) {
-                return;
-            }
-            const fileId = displayFile.id;
-            setTagError(undefined);
-            void updateTagsOnFile(fileId, mutator)
-                .then(() => {
-                    syncSessionFile(fileId);
-                })
-                .catch((error: unknown) => {
-                    syncSessionFile(fileId);
-                    setTagError(
-                        error instanceof Error ?
-                            error.message :
-                            "Could not save tags",
-                    );
-                });
-        },
-        [
-            displayFile,
-            syncSessionFile,
-            updateTagsOnFile,
-        ],
-    );
+        const mutator = (current: string[]): string[] => [
+            ...current.filter((tag) => isSystemTag(tag)),
+            ...intendedTags,
+        ];
+        // Enqueue before yielding so a kill during rAF cannot void the draft.
+        enqueueTagOutboxEntries([
+            {
+                fileId,
+                intendedTags: applyTagMutator(mutator, extractTags(displayFile)),
+            },
+        ]);
+        requestTagOutboxFlush();
+
+        // Let the sheet close paint before store + gallery work runs.
+        requestAnimationFrame(() => {
+            startTransition(() => {
+                void updateTagsOnFile(fileId, mutator)
+                    .then(() => {
+                        syncSessionFile(fileId);
+                    })
+                    .catch((error: unknown) => {
+                        syncSessionFile(fileId);
+                        setTagError(
+                            error instanceof Error ?
+                                error.message :
+                                "Could not save tags",
+                        );
+                    })
+                    .finally(() => {
+                        setTagSaveBusy(false);
+                    });
+            });
+        });
+    }, [displayFile, syncSessionFile, updateTagsOnFile]);
 
     const handleAddTag = useCallback(
         (name: string): void => {
@@ -1405,16 +1477,32 @@ export function PhotoViewer({
             if (!normalized || isReservedTag(normalized)) {
                 return;
             }
-            applyTagChange((current) => addTagNames(current, normalized));
+            setTagError(undefined);
+            setStagedTags((current) => {
+                if (!current) {
+                    return current;
+                }
+                const next = addTagNames(current, normalized);
+                stagedTagsRef.current = next;
+                return next;
+            });
         },
-        [applyTagChange],
+        [],
     );
 
     const handleRemoveTag = useCallback(
         (tag: string): void => {
-            applyTagChange((current) => removeTagNames(current, tag));
+            setTagError(undefined);
+            setStagedTags((current) => {
+                if (!current) {
+                    return current;
+                }
+                const next = removeTagNames(current, tag);
+                stagedTagsRef.current = next;
+                return next;
+            });
         },
-        [applyTagChange],
+        [],
     );
 
     const handleDerivedFileFinalized = useCallback(
@@ -1902,9 +1990,28 @@ export function PhotoViewer({
                     >
                         <X />
                     </Button>
-                    <span className="text-xs text-muted-foreground">
+                    <span className="min-w-0 flex-1 truncate text-center text-xs text-muted-foreground">
                         {currentIndex + 1} / {sessionFiles.length}
                     </span>
+                    {showSetRelative && file ? (
+                        <Button
+                            type="button"
+                            variant={
+                                file.id === relativeStartFileId ?
+                                    "secondary" :
+                                    "outline"
+                            }
+                            size="sm"
+                            className="h-8 shrink-0 px-2 text-xs"
+                            onClick={() => {
+                                resetChromeTimer();
+                                setRelativeStartFileId(file.id);
+                            }}
+                            aria-pressed={file.id === relativeStartFileId}
+                        >
+                            Set Relative
+                        </Button>
+                    ) : null}
                     <div className="flex items-center gap-1">
                         <Button
                             type="button"
@@ -2121,21 +2228,19 @@ export function PhotoViewer({
                         disabled={tagSaveBusy}
                         onClick={() => {
                             resetChromeTimer();
-                            tagBaselineRef.current = [...tags];
-                            setTagError(undefined);
-                            setShowTagPicker(true);
+                            beginTagDraft();
                         }}
                     >
                         {tagSaveBusy ? <Spinner /> : <Tag />}
                         Tags
                     </Button>
                     <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overflow-y-hidden overscroll-x-contain">
-                        {tags.length === 0 ? (
+                        {displayTags.length === 0 ? (
                             <span className="shrink-0 text-xs text-muted-foreground">
                                 No tags
                             </span>
                         ) : (
-                            tags.map((tag) => (
+                            displayTags.map((tag) => (
                                 <Badge
                                     key={tag}
                                     variant="secondary"
@@ -2171,17 +2276,15 @@ export function PhotoViewer({
 
             <TagPickerSheet
                 open={showTagPicker}
-                appliedTags={tags}
+                appliedTags={displayTags}
                 knownTags={knownTags}
                 error={tagError}
+                batchSelectionHint="Tap tags to stage changes. Closing saves."
                 onOpenChange={(open) => {
                     if (open) {
-                        tagBaselineRef.current = [...tags];
-                        setTagError(undefined);
-                        setShowTagPicker(true);
+                        beginTagDraft();
                         return;
                     }
-                    setShowTagPicker(false);
                     void flushTagDraft();
                 }}
                 onAddTag={handleAddTag}

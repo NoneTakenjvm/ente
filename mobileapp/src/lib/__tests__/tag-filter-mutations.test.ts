@@ -4,6 +4,7 @@ import {
     setClauseInGroupOnFilter,
     setClauseModeOnFilter,
     setKitTagsModeOnFilter,
+    setTagFilterModeOnFilter,
 } from "@/lib/tag-filter-mutations";
 import {
     createEmptyTagFilterRoot,
@@ -92,5 +93,38 @@ describe("tag-filter-mutations", () => {
         filter = setKitTagsModeOnFilter(filter, ["a", "b"], null);
         expect(kitTagsAreIncluded(filter.root, ["a", "b"])).toBe(false);
         expect(filter.root.children).toHaveLength(0);
+    });
+
+    it("setTagFilterModeOnFilter clears tagged scope when adding include", () => {
+        let filter = {
+            ...emptyTagFilter(),
+            tagScope: "tagged" as const,
+        };
+        filter = setTagFilterModeOnFilter(filter, "selfie", "include");
+        expect(filter.tagScope).toBe("all");
+        expect(findClauseInGroup(filter.root, "selfie")?.mode).toBe("include");
+    });
+
+    it("setTagFilterModeOnFilter keeps tagged scope when adding exclude", () => {
+        let filter = {
+            ...emptyTagFilter(),
+            tagScope: "tagged" as const,
+        };
+        filter = setTagFilterModeOnFilter(filter, "vietnam", "exclude");
+        expect(filter.tagScope).toBe("tagged");
+        expect(findClauseInGroup(filter.root, "vietnam")?.mode).toBe("exclude");
+    });
+
+    it("setClauseModeOnFilter clears tagged scope when switching to include", () => {
+        const clause = includeClause("selfie");
+        let filter = {
+            ...emptyTagFilter(),
+            tagScope: "tagged" as const,
+            root: andRoot({ ...clause, mode: "exclude" }),
+        };
+        filter = setClauseModeOnFilter(filter, clause.id, "include");
+        expect(filter.tagScope).toBe("all");
+        const updated = filter.root.children[0] as TagFilterClauseNode;
+        expect(updated.mode).toBe("include");
     });
 });

@@ -10,6 +10,12 @@ export interface PersistedTagTypeConfig {
      * Sparse on disk: only `true` entries need be stored.
      */
     includeInKitNearnessByName?: Record<string, boolean>;
+    /**
+     * Tags that count toward the tagged/untagged presence filter.
+     * Absent or true = included (default). Sparse on disk: only `false`
+     * entries need be stored.
+     */
+    includeInEffectsPresenceByName?: Record<string, boolean>;
 }
 
 export const emptyTagTypeConfig = (): PersistedTagTypeConfig => ({
@@ -34,6 +40,7 @@ export const configFromPersisted = (
     types: string[];
     tagTypeByName: Map<string, string>;
     includeInKitNearnessByName: Map<string, boolean>;
+    includeInEffectsPresenceByName: Map<string, boolean>;
 } => {
     const base = config ?? emptyTagTypeConfig();
     const types = base.types.includes(DEFAULT_TAG_TYPE) ?
@@ -47,10 +54,19 @@ export const configFromPersisted = (
             includeInKitNearnessByName.set(name, true);
         }
     }
+    const includeInEffectsPresenceByName = new Map<string, boolean>();
+    for (const [name, value] of Object.entries(
+        base.includeInEffectsPresenceByName ?? {},
+    )) {
+        if (value === false) {
+            includeInEffectsPresenceByName.set(name, false);
+        }
+    }
     return {
         types,
         tagTypeByName: new Map(Object.entries(base.tagTypeByName)),
         includeInKitNearnessByName,
+        includeInEffectsPresenceByName,
     };
 };
 
@@ -58,11 +74,18 @@ export const configToPersisted = (
     types: string[],
     tagTypeByName: Map<string, string>,
     includeInKitNearnessByName: Map<string, boolean> = new Map(),
+    includeInEffectsPresenceByName: Map<string, boolean> = new Map(),
 ): PersistedTagTypeConfig => {
     const includeEntries: Record<string, boolean> = {};
     for (const [name, value] of includeInKitNearnessByName) {
         if (value) {
             includeEntries[name] = true;
+        }
+    }
+    const effectsPresenceEntries: Record<string, boolean> = {};
+    for (const [name, value] of includeInEffectsPresenceByName) {
+        if (value === false) {
+            effectsPresenceEntries[name] = false;
         }
     }
     const persisted: PersistedTagTypeConfig = {
@@ -71,6 +94,9 @@ export const configToPersisted = (
     };
     if (Object.keys(includeEntries).length > 0) {
         persisted.includeInKitNearnessByName = includeEntries;
+    }
+    if (Object.keys(effectsPresenceEntries).length > 0) {
+        persisted.includeInEffectsPresenceByName = effectsPresenceEntries;
     }
     return persisted;
 };
@@ -108,6 +134,14 @@ export const filterKitNearnessTags = (
 ): string[] =>
     tags.filter((tag) =>
         isTagIncludedInKitNearness(tag, includeInKitNearnessByName));
+
+/**
+ * Whether the tag counts toward tagged/untagged presence (default true).
+ */
+export const isTagIncludedInEffectsPresence = (
+    tagName: string,
+    includeInEffectsPresenceByName: ReadonlyMap<string, boolean>,
+): boolean => includeInEffectsPresenceByName.get(tagName) !== false;
 
 export const orderedTypeTabs = (types: string[]): string[] => [
     ALL_TAG_TYPES_TAB,

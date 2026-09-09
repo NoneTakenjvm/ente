@@ -100,15 +100,16 @@ export const sortFilesByViewportFit = (
         return [...files];
     }
     const ascending = mode === "best";
+    const scoreById = new Map<number, number>();
+    for (const file of files) {
+        scoreById.set(
+            file.id,
+            viewportBlankFraction(fileAspectRatio(file), viewportAspect),
+        );
+    }
     return [...files].sort((a, b) => {
-        const scoreA = viewportBlankFraction(
-            fileAspectRatio(a),
-            viewportAspect,
-        );
-        const scoreB = viewportBlankFraction(
-            fileAspectRatio(b),
-            viewportAspect,
-        );
+        const scoreA = scoreById.get(a.id) ?? 0;
+        const scoreB = scoreById.get(b.id) ?? 0;
         if (scoreA !== scoreB) {
             return ascending ? scoreA - scoreB : scoreB - scoreA;
         }

@@ -5,9 +5,11 @@ import type { EnteFile } from "ente-media/file";
 import {
     createUnsyncedFavoriteUpdate,
     deriveFavoriteFileIDs,
+    mergePendingFavoriteUpdates,
     type UnsyncedFavoriteUpdate,
     type UnsyncedFavoriteUpdateKey,
 } from "@/lib/favorites";
+import { unsyncedUpdatesFromFavoriteOutbox } from "@/lib/favorite-outbox";
 
 interface FavoritesState {
     favoritesCollectionId: number | null;
@@ -64,15 +66,22 @@ const createFavoritesStore: StateCreator<FavoritesState> = (set, get) => ({
         collections: Collection[],
         allFiles: EnteFile[],
     ): void => {
+        const baseline = deriveFavoriteFileIDs(userId, collections, allFiles);
+        const unsyncedFavoriteUpdates = mergePendingFavoriteUpdates(
+            get().unsyncedFavoriteUpdates,
+            unsyncedUpdatesFromFavoriteOutbox(),
+            baseline.favoriteFileIds,
+        );
         const { favoritesCollectionId, favoriteFileIds } = deriveFavoriteFileIDs(
             userId,
             collections,
             allFiles,
+            unsyncedFavoriteUpdates,
         );
         set({
             favoritesCollectionId,
             favoriteFileIds,
-            unsyncedFavoriteUpdates: new Map(),
+            unsyncedFavoriteUpdates,
         });
     },
 
@@ -156,7 +165,13 @@ const createFavoritesStore: StateCreator<FavoritesState> = (set, get) => ({
             favoriteFileIds.delete(fileId);
             pendingFavoriteFileIds.delete(fileId);
         }
-        set({ favoriteFileIds, pendingFavoriteFileIds });
+        const unsyncedFavoriteUpdates = new Map(get().unsyncedFavoriteUpdates);
+        for (const [key, update] of unsyncedFavoriteUpdates) {
+            if (trashed.has(update.fileID)) {
+                unsyncedFavoriteUpdates.delete(key);
+            }
+        }
+        set({ favoriteFileIds, pendingFavoriteFileIds, unsyncedFavoriteUpdates });
     },
 
     clearUnsynced: (): void => {

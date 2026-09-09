@@ -18,6 +18,8 @@ import {
     type PackedDHash,
 } from "@/lib/phash";
 import { extractUserTags } from "@/lib/tags";
+import { isEnteVideoFile } from "@/lib/media-kind";
+import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 import type { EnteFile } from "ente-media/file";
 
 /** Cap how many visual modes we keep per kit. */
@@ -86,6 +88,9 @@ export const fileMatchesKitTags = (
 
 /**
  * Library files that fully match the kit (stable id order).
+ *
+ * Videos and archived files are omitted — CLIP (and legacy dHash kit seeds)
+ * must not use poster thumbnails or cold-storage photos as stand-ins.
  */
 export const listKitSeedFiles = (
     libraryFiles: readonly EnteFile[],
@@ -95,7 +100,12 @@ export const listKitSeedFiles = (
         return [];
     }
     return libraryFiles
-        .filter((file) => fileMatchesKitTags(file, kitTags))
+        .filter(
+            (file) =>
+                !isEnteVideoFile(file) &&
+                !isFileArchivedLocally(file) &&
+                fileMatchesKitTags(file, kitTags),
+        )
         .sort((a, b) => a.id - b.id);
 };
 
@@ -533,7 +543,7 @@ export const rankKitsByBestFitShare = (
 
     let scored = 0;
     for (const file of libraryFiles) {
-        if (!entries.has(file.id)) {
+        if (isEnteVideoFile(file) || !entries.has(file.id)) {
             continue;
         }
         let bestId: string | undefined;
@@ -976,6 +986,9 @@ export const kitEmbeddingDistanceCompetitive = (
 
 /**
  * Reorder gallery by CLIP competitive nearness (lowest distance first).
+ *
+ * Videos are appended in original order after ranked stills — never scored by
+ * poster-thumbnail embeddings.
  */
 export const sortFilesByKitEmbeddingCompetitive = (
     files: EnteFile[],
@@ -990,6 +1003,15 @@ export const sortFilesByKitEmbeddingCompetitive = (
     if (!selectedMedoids.length) {
         return [...files];
     }
+    const stills: EnteFile[] = [];
+    const videos: EnteFile[] = [];
+    for (const file of files) {
+        if (isEnteVideoFile(file)) {
+            videos.push(file);
+        } else {
+            stills.push(file);
+        }
+    }
     const tau = options?.tau ?? KIT_EMBEDDING_RIVAL_TAU;
     const rivalWeights = rivalMedoidSets.map((rival) =>
         rival.length ?
@@ -999,7 +1021,7 @@ export const sortFilesByKitEmbeddingCompetitive = (
             ) :
             0);
     const scoreOptions = { ...options, rivalWeights };
-    return [...files].sort((a, b) => {
+    stills.sort((a, b) => {
         const scoreA = kitEmbeddingDistanceCompetitive(
             a.id,
             selectedMedoids,
@@ -1019,6 +1041,7 @@ export const sortFilesByKitEmbeddingCompetitive = (
         }
         return a.id - b.id;
     });
+    return [...stills, ...videos];
 };
 
 /**
@@ -1061,7 +1084,7 @@ export const rankKitsByBestFitShareEmbedding = (
 
     let scored = 0;
     for (const file of scoreFiles) {
-        if (!embeddings.has(file.id)) {
+        if (isEnteVideoFile(file) || !embeddings.has(file.id)) {
             continue;
         }
         let bestId: string | undefined;

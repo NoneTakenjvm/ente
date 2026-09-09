@@ -27,7 +27,8 @@ import {
     type DedupGroupSelection,
 } from "@/lib/dedup-prune";
 import type { CollectionFilesContext } from "@/core/api/collection-files";
-import { planLibraryFilePatches } from "@/lib/library-file-patch";
+import { planLibraryFilePatches, patchFileInLibrary, patchFileInPlace, patchFilesInLibrary } from "@/lib/library-file-patch";
+import { buildFileIndexById } from "@/lib/library-file-index";
 import { applyTagMutator, fileWithOrganizerTags, mergeTagNames, removeTagNames, replaceTagName, tagsForFile, type TagMutator } from "@/lib/tag-writes";
 import { extractTags } from "@/lib/tags";
 import {
@@ -37,6 +38,7 @@ import {
     getTagOutboxEntries,
     getTagOutboxEntry,
     hydrateTagOutbox,
+    mergeAheadOrganizerTags,
     reconcileTagOutboxWithFiles,
     remapTagOutboxFileId,
 } from "@/lib/tag-outbox";
@@ -54,6 +56,10 @@ import {
     MAX_IN_MEMORY_EDIT_HISTORY_BYTES,
 } from "@/lib/edit-history";
 import {
+    ensureFavoriteOutboxHydrated,
+    hydrateFavoriteOutbox,
+    reconcileFavoriteOutboxWithLibrary,
+    removeFavoriteOutboxForFileIds,
     upsertFavoriteOutboxEntry,
     remapFavoriteOutboxFileId,
 } from "@/lib/favorite-outbox";
@@ -87,6 +93,7 @@ import {
 import { useAlbumStore } from "./album-store";
 import { useSettingsStore } from "./settings-store";
 import { useTagStore } from "./tag-store";
+import { useTrashStore } from "./trash-store";
 import { useUIStore } from "./ui-store";
 import {
     buildCompressedOrganizerTags,
@@ -114,9 +121,17 @@ interface LibraryState {
     collections: Collection[];
     activeCollectionId: number | null;
     allFiles: EnteFile[];
+    /** O(1) file-id → index into {@link allFiles}. */
+    fileIndexById: Map<number, number>;
+    /**
+     * Bumps on every library mutation (including in-place slot swaps) so
+     * React memos that depend on `allFiles` identity still refresh.
+     */
+    filesRevision: number;
     syncStatus: SyncStatus;
     syncProgress: { current: number; total: number };
     syncError: string | undefined;
+    getFileById: (fileId: number) => EnteFile | undefined;
     bootstrapFromCache: () => Promise<boolean>;
     syncRemote: () => Promise<void>;
     /**
@@ -239,11 +254,27 @@ const rebuildFavoritesFromLibrary = (
     useFavoritesStore.getState().rebuildFromLibrary(userId, collections, allFiles);
 };
 
+const excludeLocallyTrashedFiles = (
+    files: EnteFile[],
+    extraTrashedIds?: Iterable<number>,
+): EnteFile[] => {
+    const trashedIds = new Set(extraTrashedIds ?? []);
+    for (const item of useTrashStore.getState().items) {
+        trashedIds.add(item.file.id);
+    }
+    if (trashedIds.size === 0) {
+        return files;
+    }
+    return files.filter((file) => !trashedIds.has(file.id));
+};
+
 /**
- * Coalesce full-library encrypt+IDB writes so tag clicks can paint first.
- * Persists are serialized and always re-read `allFiles` at write time so a
- * later `patchFile` cannot be overwritten by a stale in-flight encrypt.
+ * Coalesce full-library encrypt+IDB writes so tag commits stay off the
+ * critical path. Trailing debounce; persists always re-read `allFiles` at
+ * write time so a later patch cannot be overwritten by a stale encrypt.
  */
+const ENCRYPTED_FILES_SAVE_DEBOUNCE_MS = 1500;
+
 let encryptedFilesSaveTimer: ReturnType<typeof setTimeout> | undefined;
 let encryptedFilesSaveGetter: (() => EnteFile[]) | undefined;
 let encryptedFilesPersistChain: Promise<void> = Promise.resolve();
@@ -260,7 +291,7 @@ const enqueueEncryptedFilesPersist = (
 const scheduleSaveEncryptedFiles = (getAllFiles: () => EnteFile[]): void => {
     encryptedFilesSaveGetter = getAllFiles;
     if (encryptedFilesSaveTimer !== undefined) {
-        return;
+        clearTimeout(encryptedFilesSaveTimer);
     }
     encryptedFilesSaveTimer = setTimeout(() => {
         encryptedFilesSaveTimer = undefined;
@@ -270,7 +301,21 @@ const scheduleSaveEncryptedFiles = (getAllFiles: () => EnteFile[]): void => {
             return;
         }
         void enqueueEncryptedFilesPersist(getter);
-    }, 0);
+    }, ENCRYPTED_FILES_SAVE_DEBOUNCE_MS);
+};
+
+/** Flush any pending debounced library encrypt immediately (logout / hide). */
+const flushScheduledEncryptedFilesSave = (): Promise<void> => {
+    if (encryptedFilesSaveTimer !== undefined) {
+        clearTimeout(encryptedFilesSaveTimer);
+        encryptedFilesSaveTimer = undefined;
+    }
+    const getter = encryptedFilesSaveGetter;
+    encryptedFilesSaveGetter = undefined;
+    if (!getter) {
+        return encryptedFilesPersistChain;
+    }
+    return enqueueEncryptedFilesPersist(getter);
 };
 
 const cancelScheduledEncryptedFilesSave = (): void => {
@@ -279,6 +324,26 @@ const cancelScheduledEncryptedFilesSave = (): void => {
         encryptedFilesSaveTimer = undefined;
     }
     encryptedFilesSaveGetter = undefined;
+};
+
+/**
+ * Replace {@link LibraryState.allFiles}, refresh the id index, and bump
+ * {@link LibraryState.filesRevision} so subscribers see the change.
+ */
+const commitAllFiles = (
+    set: (partial: Partial<LibraryState>) => void,
+    get: () => LibraryState,
+    nextFiles: EnteFile[],
+    options?: { rebuildIndex?: boolean },
+): void => {
+    const rebuildIndex = options?.rebuildIndex !== false;
+    set({
+        allFiles: nextFiles,
+        ...(rebuildIndex ?
+            { fileIndexById: buildFileIndexById(nextFiles) } :
+            {}),
+        filesRevision: get().filesRevision + 1,
+    });
 };
 
 /**
@@ -294,19 +359,32 @@ const applyOptimisticBatchTags = (
         return;
     }
     const { allFiles } = get();
-    const tagUpdates: Array<{ fileId: number; tags: string[] }> = [];
-    const optimisticFiles = allFiles.map((file) => {
+    const tagUpdates: Array<{
+        fileId: number;
+        tags: string[];
+        previousTags: string[];
+    }> = [];
+    const patches = new Map<number, EnteFile>();
+    for (const file of allFiles) {
         if (!fileIds.has(file.id)) {
-            return file;
+            continue;
         }
         const tags = tagsForFile(file, mutator);
-        tagUpdates.push({ fileId: file.id, tags });
-        return fileWithOrganizerTags(file, tags);
-    });
+        tagUpdates.push({
+            fileId: file.id,
+            tags,
+            previousTags: extractTags(file),
+        });
+        patches.set(file.id, fileWithOrganizerTags(file, tags));
+    }
     if (!tagUpdates.length) {
         return;
     }
-    set({ allFiles: optimisticFiles });
+    const optimisticFiles = patchFilesInLibrary(allFiles, patches);
+    if (!optimisticFiles) {
+        return;
+    }
+    commitAllFiles(set, get, optimisticFiles);
     useTagStore.getState().applyFilesTags(tagUpdates);
     scheduleSaveEncryptedFiles(() => get().allFiles);
 };
@@ -316,6 +394,8 @@ const initialState: Pick<
     | "collections" |
     "activeCollectionId" |
     "allFiles" |
+    "fileIndexById" |
+    "filesRevision" |
     "syncStatus" |
     "syncProgress" |
     "syncError"
@@ -323,6 +403,8 @@ const initialState: Pick<
     collections: [],
     activeCollectionId: null,
     allFiles: [],
+    fileIndexById: new Map(),
+    filesRevision: 0,
     syncStatus: "idle",
     syncProgress: { current: 0, total: 0 },
     syncError: undefined,
@@ -334,7 +416,7 @@ const appendUploadedFile = async (
     uploaded: EnteFile,
 ): Promise<EnteFile> => {
     const nextFiles = [...get().allFiles, uploaded];
-    set({ allFiles: nextFiles });
+    commitAllFiles(set, get, nextFiles);
     await saveEncryptedFiles(nextFiles, getSessionCacheKey());
     useTagStore.getState().rebuildFromFiles(nextFiles);
     requestThumbnail(uploaded);
@@ -362,6 +444,8 @@ const replaceSourceWithCompressed = async (
     await core.moveFilesToTrash([sourceFile]);
 
     const sourceId = sourceFile.id;
+    await useTrashStore.getState().seedTrashedFiles([sourceFile]);
+    await remapOutboxesAfterReplace(sourceId, uploaded.id);
     registerShuffleFileSubstitution(sourceId, uploaded.id);
     useUIStore.getState().substituteMediaShuffleFileId(sourceId, uploaded.id);
     const withoutSource = get().allFiles.filter((file) => file.id !== sourceId);
@@ -374,7 +458,7 @@ const replaceSourceWithCompressed = async (
                 ...withoutSource.slice(sourceIndex),
             ] :
             [...withoutSource, uploaded];
-    set({ allFiles: nextFiles });
+    commitAllFiles(set, get, nextFiles);
     await saveEncryptedFiles(nextFiles, getSessionCacheKey());
     useTagStore.getState().rebuildFromFiles(nextFiles);
     useFavoritesStore.getState().removeTrashedFileIds([sourceId]);
@@ -500,6 +584,12 @@ let syncRemoteInFlight: Promise<void> | undefined;
 const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
     ...initialState,
 
+    getFileById: (fileId: number): EnteFile | undefined => {
+        const { allFiles, fileIndexById } = get();
+        const index = fileIndexById.get(fileId);
+        return index === undefined ? undefined : allFiles[index];
+    },
+
     bootstrapFromCache: async (): Promise<boolean> => {
         const core = getEnteCore();
         const userId = core.getUserID();
@@ -522,14 +612,18 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         }
 
         await hydrateTagOutbox();
+        await hydrateFavoriteOutbox();
         await ensureVisibilityOutboxHydrated();
-        const filesWithOutbox = applyOutboxVisibilityToFiles(
-            applyOutboxTagsToFiles(files ?? []),
+        await useTrashStore.getState().hydrateFromCache();
+        const filesWithOutbox = excludeLocallyTrashedFiles(
+            applyOutboxVisibilityToFiles(applyOutboxTagsToFiles(files ?? [])),
         );
 
         set({
             collections: collections ?? [],
             allFiles: filesWithOutbox,
+            fileIndexById: buildFileIndexById(filesWithOutbox),
+            filesRevision: get().filesRevision + 1,
             syncStatus: "success",
         });
 
@@ -539,7 +633,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             useTagStore.getState().rebuildFromFiles(filesWithOutbox);
         }
 
-        rebuildFavoritesFromLibrary(userId, collections ?? [], files ?? []);
+        rebuildFavoritesFromLibrary(userId, collections ?? [], filesWithOutbox);
 
         const organizerCollection = (collections ?? []).find((collection) =>
             isOrganizerConfigCollection(collection));
@@ -553,10 +647,6 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 });
             });
         }
-
-        void import("@/stores/trash-store").then(({ useTrashStore }) => {
-            void useTrashStore.getState().hydrateFromCache();
-        });
 
         return Boolean(files?.length);
     },
@@ -626,23 +716,37 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                     },
                 });
 
+                const liveFiles = get().allFiles;
                 allFiles = filesPull.files;
                 await ensureTagOutboxHydrated();
+                await ensureFavoriteOutboxHydrated();
                 await ensureVisibilityOutboxHydrated();
                 await reconcileTagOutboxWithFiles(allFiles);
+                await reconcileFavoriteOutboxWithLibrary(
+                    getEnteCore().getUserID(),
+                    collections,
+                    allFiles,
+                );
                 await reconcileVisibilityOutboxWithFiles(allFiles);
                 allFiles = applyOutboxTagsToFiles(allFiles);
+                allFiles = mergeAheadOrganizerTags(allFiles, liveFiles);
                 allFiles = applyOutboxVisibilityToFiles(allFiles);
+                allFiles = excludeLocallyTrashedFiles(allFiles);
                 useTagStore.getState().rebuildFromFiles(allFiles);
                 rebuildFavoritesFromLibrary(
                     getEnteCore().getUserID(),
                     collections,
                     allFiles,
                 );
+                // Re-read trash immediately before commit so a delete that
+                // finished during rebuild cannot be resurrected by this pull.
+                allFiles = excludeLocallyTrashedFiles(allFiles);
 
                 set({
                     collections,
                     allFiles,
+                    fileIndexById: buildFileIndexById(allFiles),
+                    filesRevision: get().filesRevision + 1,
                     syncStatus: "success",
                     syncProgress: { current: 0, total: 0 },
                 });
@@ -713,7 +817,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         }
 
         if (notifyNeeded) {
-            set({ allFiles: nextFiles });
+            commitAllFiles(set, get, nextFiles);
         } else {
             // [Note: quiet version patch] Mutate slots in place so React does
             // not re-render the gallery for metadata-version-only updates.
@@ -729,17 +833,22 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
     },
 
     applyLocalTagsOnFile: (fileId: number, intendedTags: string[]): void => {
-        const { allFiles } = get();
-        const file = allFiles.find((entry) => entry.id === fileId);
+        const { allFiles, fileIndexById } = get();
+        const file = get().getFileById(fileId);
         if (!file) {
             return;
         }
+        const previousTags = extractTags(file);
         const optimisticFile = fileWithOrganizerTags(file, intendedTags);
-        const optimisticFiles = allFiles.map((entry) => (
-            entry.id === fileId ? optimisticFile : entry
-        ));
-        set({ allFiles: optimisticFiles });
-        useTagStore.getState().applyFileTags(fileId, intendedTags);
+        if (!patchFileInPlace(allFiles, fileId, optimisticFile, fileIndexById)) {
+            return;
+        }
+        commitAllFiles(set, get, allFiles, { rebuildIndex: false });
+        useTagStore.getState().applyFileTags(
+            fileId,
+            intendedTags,
+            previousTags,
+        );
         scheduleSaveEncryptedFiles(() => get().allFiles);
     },
 
@@ -747,20 +856,25 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         fileId: number,
         mutator: TagMutator,
     ): Promise<void> => {
-        const { allFiles } = get();
-        const file = allFiles.find((entry) => entry.id === fileId);
+        const { allFiles, fileIndexById } = get();
+        const file = get().getFileById(fileId);
         if (!file) {
             throw new Error(`File ${fileId} not found`);
         }
 
-        const intendedTags = applyTagMutator(mutator, extractTags(file));
+        const previousTags = extractTags(file);
+        const intendedTags = applyTagMutator(mutator, previousTags);
         const optimisticFile = fileWithOrganizerTags(file, intendedTags);
-        const optimisticFiles = allFiles.map((entry) => (
-            entry.id === fileId ? optimisticFile : entry
-        ));
+        if (!patchFileInPlace(allFiles, fileId, optimisticFile, fileIndexById)) {
+            return;
+        }
 
-        set({ allFiles: optimisticFiles });
-        useTagStore.getState().applyFileTags(fileId, intendedTags);
+        commitAllFiles(set, get, allFiles, { rebuildIndex: false });
+        useTagStore.getState().applyFileTags(
+            fileId,
+            intendedTags,
+            previousTags,
+        );
         scheduleSaveEncryptedFiles(() => get().allFiles);
 
         enqueueTagOutboxEntries([{ fileId, intendedTags }]);
@@ -885,11 +999,18 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             ItemVisibility.archived :
             ItemVisibility.visible;
         const optimisticFile = applyOptimisticVisibility(file, visibility);
-        const allFiles = get().allFiles.map((entry) => (
-            entry.id === file.id ? optimisticFile : entry
-        ));
-        set({ allFiles });
-        void saveEncryptedFiles(allFiles, getSessionCacheKey());
+        const { allFiles: library, fileIndexById } = get();
+        const allFiles = patchFileInLibrary(
+            library,
+            file.id,
+            optimisticFile,
+            fileIndexById,
+        );
+        if (!allFiles) {
+            return;
+        }
+        commitAllFiles(set, get, allFiles);
+        scheduleSaveEncryptedFiles(() => get().allFiles);
 
         void upsertVisibilityOutboxEntry(file.id, visibility)
             .then(() => drainTagOutbox())
@@ -954,6 +1075,17 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         });
 
         if (!options?.dryRun) {
+            await useTrashStore.getState().seedTrashedFiles(plan.filesToTrash);
+            const trashedIds = plan.filesToTrash.map((file) => file.id);
+            await removeFavoriteOutboxForFileIds(trashedIds);
+            const trashedIdSet = new Set(trashedIds);
+            const nextFiles = get().allFiles.filter(
+                (file) => !trashedIdSet.has(file.id),
+            );
+            commitAllFiles(set, get, nextFiles);
+            await saveEncryptedFiles(nextFiles, getSessionCacheKey());
+            useTagStore.getState().rebuildFromFiles(nextFiles);
+            useFavoritesStore.getState().removeTrashedFileIds(trashedIds);
             await get().syncRemote();
         }
     },
@@ -1057,15 +1189,25 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             throw new CompressionSkippedError();
         }
 
+        const previousTags = extractTags(file);
         const intendedTags = buildCompressedOrganizerTags(file);
         const optimisticFile = fileWithOrganizerTags(file, intendedTags);
-        const optimisticFiles = allFiles.map((entry) => (
-            entry.id === fileId ? optimisticFile : entry
-        ));
+        if (!patchFileInPlace(
+            allFiles,
+            fileId,
+            optimisticFile,
+            get().fileIndexById,
+        )) {
+            throw new Error(`File ${fileId} not found`);
+        }
 
-        set({ allFiles: optimisticFiles });
-        useTagStore.getState().applyFileTags(fileId, intendedTags);
-        void saveEncryptedFiles(optimisticFiles, getSessionCacheKey());
+        commitAllFiles(set, get, allFiles, { rebuildIndex: false });
+        useTagStore.getState().applyFileTags(
+            fileId,
+            intendedTags,
+            previousTags,
+        );
+        scheduleSaveEncryptedFiles(() => get().allFiles);
         setLocalMediaOverride(fileId, result.bytes);
         if (result.mimeType.startsWith("video/")) {
             queueMicrotask(() => {
@@ -1247,17 +1389,27 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         }
 
         const previousOverride = getLocalMediaOverride(fileId)?.slice();
+        const previousTags = extractTags(file);
         const intendedTags = buildCroppedOrganizerTags(file, {
             autoCropped: options?.autoCropped,
         });
         const optimisticFile = fileWithOrganizerTags(file, intendedTags);
-        const optimisticFiles = allFiles.map((entry) => (
-            entry.id === fileId ? optimisticFile : entry
-        ));
+        if (!patchFileInPlace(
+            allFiles,
+            fileId,
+            optimisticFile,
+            get().fileIndexById,
+        )) {
+            throw new Error(`File ${fileId} not found`);
+        }
 
-        set({ allFiles: optimisticFiles });
-        useTagStore.getState().applyFileTags(fileId, intendedTags);
-        void saveEncryptedFiles(optimisticFiles, getSessionCacheKey());
+        commitAllFiles(set, get, allFiles, { rebuildIndex: false });
+        useTagStore.getState().applyFileTags(
+            fileId,
+            intendedTags,
+            previousTags,
+        );
+        scheduleSaveEncryptedFiles(() => get().allFiles);
         setLocalMediaOverride(fileId, croppedBytes);
         primeThumbnailFromBytes(fileId, croppedBytes);
 
@@ -1341,15 +1493,25 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
 
         // Prefer an existing override reference — do not .slice() (doubles RAM).
         const previousOverride = getLocalMediaOverride(fileId);
+        const previousTags = extractTags(file);
         const intendedTags = buildCroppedOrganizerTags(file);
         const optimisticFile = fileWithOrganizerTags(file, intendedTags);
-        const optimisticFiles = allFiles.map((entry) => (
-            entry.id === fileId ? optimisticFile : entry
-        ));
+        if (!patchFileInPlace(
+            allFiles,
+            fileId,
+            optimisticFile,
+            get().fileIndexById,
+        )) {
+            throw new Error(`File ${fileId} not found`);
+        }
 
-        set({ allFiles: optimisticFiles });
-        useTagStore.getState().applyFileTags(fileId, intendedTags);
-        void saveEncryptedFiles(optimisticFiles, getSessionCacheKey());
+        commitAllFiles(set, get, allFiles, { rebuildIndex: false });
+        useTagStore.getState().applyFileTags(
+            fileId,
+            intendedTags,
+            previousTags,
+        );
+        scheduleSaveEncryptedFiles(() => get().allFiles);
         setLocalMediaOverride(fileId, result.bytes);
         // Defer poster extract so it does not overlap ffmpeg WASM + source video.
         queueMicrotask(() => {
@@ -1495,16 +1657,17 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         await getEnteCore().moveFilesToTrash(files);
 
         const trashedIds = new Set(files.map((file) => file.id));
-        const nextFiles = allFiles.filter((file) => !trashedIds.has(file.id));
-        set({ allFiles: nextFiles });
+        // Seed trash before dropping library rows so an in-flight syncRemote
+        // cannot resurrect files the server already accepted.
+        await useTrashStore.getState().seedTrashedFiles(files);
+        const nextFiles = get().allFiles.filter(
+            (file) => !trashedIds.has(file.id),
+        );
+        commitAllFiles(set, get, nextFiles);
         await saveEncryptedFiles(nextFiles, getSessionCacheKey());
         useTagStore.getState().rebuildFromFiles(nextFiles);
         useFavoritesStore.getState().removeTrashedFileIds([...trashedIds]);
-        // Keep thumbnail ciphertext so Manage → Trash can still show previews;
-        // permanent delete / empty prunes caches.
-        void import("@/stores/trash-store").then(({ useTrashStore }) => {
-            void useTrashStore.getState().seedTrashedFiles(files);
-        });
+        await removeFavoriteOutboxForFileIds([...trashedIds]);
     },
 
     reinsertRestoredFiles: async (files: EnteFile[]): Promise<void> => {
@@ -1516,7 +1679,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             byId.set(file.id, file);
         }
         const nextFiles = [...byId.values()];
-        set({ allFiles: nextFiles });
+        commitAllFiles(set, get, nextFiles);
         await saveEncryptedFiles(nextFiles, getSessionCacheKey());
         useTagStore.getState().rebuildFromFiles(nextFiles);
         rebuildFavoritesFromLibrary(
@@ -1628,3 +1791,19 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
 });
 
 export const useLibraryStore = create<LibraryState>(createLibraryStore);
+
+/** Flush debounced encrypted library cache (page hide / before unload). */
+export const flushLibraryCachePersist = (): Promise<void> =>
+    flushScheduledEncryptedFilesSave();
+
+if (typeof window !== "undefined") {
+    const flushOnHide = (): void => {
+        void flushScheduledEncryptedFilesSave();
+    };
+    window.addEventListener("pagehide", flushOnHide);
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") {
+            flushOnHide();
+        }
+    });
+}

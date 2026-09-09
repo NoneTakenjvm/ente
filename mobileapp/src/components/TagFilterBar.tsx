@@ -66,6 +66,9 @@ export function TagFilterBar({
     const favoriteFileIds = useFavoritesStore((s) => s.favoriteFileIds);
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
     const tagFilter = useTagStore((s) => s.tagFilter);
+    const includeInEffectsPresenceByName = useTagStore(
+        (s) => s.includeInEffectsPresenceByName,
+    );
     const setTagFilterMode = useTagStore((s) => s.setTagFilterMode);
     const setKitTagsMode = useTagStore((s) => s.setKitTagsMode);
     const setGroupOp = useTagStore((s) => s.setGroupOp);
@@ -88,6 +91,8 @@ export function TagFilterBar({
     const setMediaDefaultOrder = useUIStore((s) => s.setMediaDefaultOrder);
     const viewportFitSort = useUIStore((s) => s.viewportFitSort);
     const setViewportFitSort = useUIStore((s) => s.setViewportFitSort);
+    const updatedAtSort = useUIStore((s) => s.updatedAtSort);
+    const setUpdatedAtSort = useUIStore((s) => s.setUpdatedAtSort);
     const imageSizeSort = useUIStore((s) => s.imageSizeSort);
     const setImageSizeSort = useUIStore((s) => s.setImageSizeSort);
     const tagFilterFitSort = useUIStore((s) => s.tagFilterFitSort);
@@ -241,14 +246,22 @@ export function TagFilterBar({
 
     const untaggedCount = useMemo(
         (): number =>
-            countUntaggedInCandidates(libraryFileIds, fileIdsByTag),
-        [libraryFileIds, fileIdsByTag],
+            countUntaggedInCandidates(
+                libraryFileIds,
+                fileIdsByTag,
+                includeInEffectsPresenceByName,
+            ),
+        [libraryFileIds, fileIdsByTag, includeInEffectsPresenceByName],
     );
 
     const taggedCount = useMemo(
         (): number =>
-            countTaggedInCandidates(libraryFileIds, fileIdsByTag),
-        [libraryFileIds, fileIdsByTag],
+            countTaggedInCandidates(
+                libraryFileIds,
+                fileIdsByTag,
+                includeInEffectsPresenceByName,
+            ),
+        [libraryFileIds, fileIdsByTag, includeInEffectsPresenceByName],
     );
 
     const favoritesCount = useMemo(
@@ -374,6 +387,8 @@ export function TagFilterBar({
                         notCroppedCount={notCroppedCount}
                         viewportFitSort={viewportFitSort}
                         onViewportFitSortChange={setViewportFitSort}
+                        updatedAtSort={updatedAtSort}
+                        onUpdatedAtSortChange={setUpdatedAtSort}
                         imageSizeSort={imageSizeSort}
                         onImageSizeSortChange={setImageSizeSort}
                         tagFilterFitSort={tagFilterFitSort}

@@ -1,10 +1,12 @@
 import {
     useCallback,
     useMemo,
+    useRef,
     useState,
     type FormEvent,
     type JSX,
 } from "react";
+import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
     AlertDialog,
@@ -41,12 +43,14 @@ import {
 } from "@/components/ui/empty";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Switch } from "@/components/ui/switch";
 import {
     DEFAULT_TAG_TYPE,
+    isTagIncludedInEffectsPresence,
     isTagIncludedInKitNearness,
     normalizeTagTypeName,
     tagsGroupedByType,
@@ -58,6 +62,11 @@ import {
 } from "@/lib/tag-presets";
 import { normalizeTagName } from "@/lib/tag-writes";
 import { isReservedTag } from "@/lib/tags";
+import {
+    runKitNearnessTune,
+    type KitNearnessTuneProgress,
+} from "@/lib/kit-nearness-embedding-tune";
+import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
@@ -71,9 +80,15 @@ export function ManageTagsPanel(): JSX.Element {
     const includeInKitNearnessByName = useTagStore(
         (s) => s.includeInKitNearnessByName,
     );
+    const includeInEffectsPresenceByName = useTagStore(
+        (s) => s.includeInEffectsPresenceByName,
+    );
     const setTagType = useTagStore((s) => s.setTagType);
     const setIncludeInKitNearness = useTagStore(
         (s) => s.setIncludeInKitNearness,
+    );
+    const setIncludeInEffectsPresence = useTagStore(
+        (s) => s.setIncludeInEffectsPresence,
     );
     const ensureTagType = useTagStore((s) => s.ensureTagType);
     const registerTag = useTagStore((s) => s.registerTag);
@@ -87,10 +102,18 @@ export function ManageTagsPanel(): JSX.Element {
     const updatePreset = useTagSpeedStore((s) => s.updatePreset);
     const deletePreset = useTagSpeedStore((s) => s.deletePreset);
 
+    const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
+    const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.hydrate);
+
     const [renameTarget, setRenameTarget] = useState<string | undefined>();
     const [renameValue, setRenameValue] = useState<string>("");
     const [mergeSources, setMergeSources] = useState<string[]>([]);
     const [mergeTarget, setMergeTarget] = useState<string>("");
+    const [tuningPresetId, setTuningPresetId] = useState<string | undefined>();
+    const [tuneProgress, setTuneProgress] = useState<
+        KitNearnessTuneProgress | undefined
+    >();
+    const tuneAbort = useRef<AbortController | undefined>(undefined);
     const [deleteTarget, setDeleteTarget] = useState<string | undefined>();
     const [progress, setProgress] = useState<string | undefined>();
     const [error, setError] = useState<string | undefined>();
@@ -281,6 +304,22 @@ export function ManageTagsPanel(): JSX.Element {
                                 />
                                 Kit nearness
                             </label>
+                            <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                                <Switch
+                                    checked={isTagIncludedInEffectsPresence(
+                                        tag,
+                                        includeInEffectsPresenceByName,
+                                    )}
+                                    onCheckedChange={(checked) => {
+                                        setIncludeInEffectsPresence(
+                                            tag,
+                                            checked,
+                                        );
+                                    }}
+                                    aria-label={`Include ${tag} in effects presence`}
+                                />
+                                Effects presence
+                            </label>
                         </div>
                         <div className="flex gap-2">
                             <Button
@@ -353,6 +392,96 @@ export function ManageTagsPanel(): JSX.Element {
     const cancelRenamePreset = (): void => {
         setRenamingPresetId(undefined);
         setRenameDraft("");
+    };
+
+    const handleCancelTune = (): void => {
+        tuneAbort.current?.abort();
+        tuneAbort.current = undefined;
+        setTuningPresetId(undefined);
+        setTuneProgress(undefined);
+    };
+
+    const handleClearTune = (presetId: string): void => {
+        updatePreset(presetId, { nearnessTune: null });
+        toast.message("Cleared kit nearness tune — using global defaults");
+    };
+
+    const handleTunePreset = (presetId: string): void => {
+        if (tuningPresetId) {
+            return;
+        }
+        const preset = presets.find((entry) => entry.id === presetId);
+        if (!preset) {
+            return;
+        }
+        void (async (): Promise<void> => {
+            if (!embeddingHydrated) {
+                await hydrateEmbeddings();
+            }
+            const embeddings = useEmbeddingIndexStore.getState().entries;
+            if (embeddings.size < 20) {
+                toast.message(
+                    "Run Manage → Settings → Scan CLIP embeddings before tuning",
+                );
+                return;
+            }
+            tuneAbort.current?.abort();
+            const abort = new AbortController();
+            tuneAbort.current = abort;
+            setTuningPresetId(presetId);
+            setTuneProgress({
+                phase: "setup",
+                label: "Starting…",
+                current: 0,
+                total: 1,
+            });
+            try {
+                const result = await runKitNearnessTune({
+                    libraryFiles: allFiles,
+                    kitTags: preset.tags,
+                    kitId: preset.id,
+                    embeddings,
+                    rivalKits: presets.map((entry) => ({
+                        id: entry.id,
+                        tags: entry.tags,
+                        genome: entry.nearnessTune?.genome,
+                    })),
+                    signal: abort.signal,
+                    onProgress: setTuneProgress,
+                });
+                if (abort.signal.aborted) {
+                    return;
+                }
+                if (result) {
+                    updatePreset(presetId, { nearnessTune: result });
+                    toast.success(
+                        `Tuned “${preset.name}” — fitness ${(result.fitness * 100).toFixed(1)}% (default ${(result.baselineFitness * 100).toFixed(1)}%)`,
+                    );
+                } else {
+                    updatePreset(presetId, { nearnessTune: null });
+                    toast.message(
+                        `No clear gain for “${preset.name}” — keeping global defaults`,
+                    );
+                }
+            } catch (error: unknown) {
+                if (
+                    error instanceof DOMException &&
+                    error.name === "AbortError"
+                ) {
+                    toast.message("Tune cancelled");
+                    return;
+                }
+                toast.error(
+                    error instanceof Error ? error.message : "Tune failed",
+                );
+            } finally {
+                if (tuneAbort.current === abort) {
+                    tuneAbort.current = undefined;
+                    setTuningPresetId(undefined);
+                    setTuneProgress(undefined);
+                }
+            }
+        })();
     };
 
     const handleOpenSuggestions = (): void => {
@@ -491,8 +620,10 @@ export function ManageTagsPanel(): JSX.Element {
                 <CardHeader>
                     <CardTitle>Tag presets</CardTitle>
                     <CardDescription>
-                        Named kits you can apply in one tap from selection or
-                        “Tag matching…”.
+                        Named kits for stamp / nearness. Tune nearness runs a
+                        deep holdout search on that kit’s CLIP embeddings
+                        (~3–6 min) and keeps kit-specific params only when they
+                        beat the global default.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-4">
@@ -720,6 +851,100 @@ export function ManageTagsPanel(): JSX.Element {
                                                 </option>
                                             ))}
                                         </select>
+                                        {tuningPresetId === preset.id &&
+                                        tuneProgress ? (
+                                                <div className="flex flex-col gap-1.5">
+                                                    <p className="text-xs text-muted-foreground">
+                                                        {tuneProgress.label}
+                                                    </p>
+                                                    <Progress
+                                                        value={
+                                                            tuneProgress.total > 0 ?
+                                                                Math.min(
+                                                                    100,
+                                                                    Math.round(
+                                                                        (100 *
+                                                                          tuneProgress.current) /
+                                                                          tuneProgress.total,
+                                                                    ),
+                                                                ) :
+                                                                0
+                                                        }
+                                                        className="h-1"
+                                                    />
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        onClick={handleCancelTune}
+                                                    >
+                                                        Cancel tune
+                                                    </Button>
+                                                </div>
+                                            ) : (
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        disabled={
+                                                            tuningPresetId !==
+                                                        undefined
+                                                        }
+                                                        onClick={() => {
+                                                            handleTunePreset(
+                                                                preset.id,
+                                                            );
+                                                        }}
+                                                    >
+                                                        Tune nearness
+                                                    </Button>
+                                                    {preset.nearnessTune ? (
+                                                        <>
+                                                            <span className="text-xs text-muted-foreground">
+                                                                Tuned · fitness{" "}
+                                                                {(
+                                                                    preset
+                                                                        .nearnessTune
+                                                                        .fitness *
+                                                                100
+                                                                ).toFixed(0)}
+                                                                % (+
+                                                                {(
+                                                                    (preset
+                                                                        .nearnessTune
+                                                                        .fitness -
+                                                                    preset
+                                                                        .nearnessTune
+                                                                        .baselineFitness) *
+                                                                100
+                                                                ).toFixed(1)}{" "}
+                                                                pp)
+                                                            </span>
+                                                            <Button
+                                                                type="button"
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                disabled={
+                                                                    tuningPresetId !==
+                                                                undefined
+                                                                }
+                                                                onClick={() => {
+                                                                    handleClearTune(
+                                                                        preset.id,
+                                                                    );
+                                                                }}
+                                                            >
+                                                                Clear tune
+                                                            </Button>
+                                                        </>
+                                                    ) : (
+                                                        <span className="text-xs text-muted-foreground">
+                                                            Using global defaults
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            )}
                                     </li>
                                 );
                             })}

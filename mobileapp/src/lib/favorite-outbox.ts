@@ -10,6 +10,8 @@ import {
     deriveFavoriteFileIDs,
     hashAndTypeKey,
     isFileFavorited,
+    type UnsyncedFavoriteUpdate,
+    type UnsyncedFavoriteUpdateKey,
 } from "@/lib/favorites";
 
 export interface FavoriteOutboxEntry {
@@ -22,6 +24,7 @@ export interface FavoriteOutboxEntry {
 const outboxByKey = new Map<string, FavoriteOutboxEntry>();
 let hydrated = false;
 let persistChain: Promise<void> = Promise.resolve();
+let favoriteOutboxHydrateInFlight: Promise<void> | undefined;
 
 const entryKey = (entry: FavoriteOutboxEntry): string =>
     entry.fileHashAndTypeKey ?? String(entry.fileId);
@@ -41,7 +44,12 @@ const flushFavoriteOutboxToDisk = async (): Promise<void> => {
 };
 
 const persistFavoriteOutbox = (): Promise<void> => {
-    persistChain = persistChain.then(() => flushFavoriteOutboxToDisk());
+    persistChain = persistChain
+        .catch(() => undefined)
+        .then(() => flushFavoriteOutboxToDisk())
+        .catch((error: unknown) => {
+            console.warn("Favourite outbox persist failed", error);
+        });
     return persistChain;
 };
 
@@ -49,12 +57,23 @@ const persistFavoriteOutbox = (): Promise<void> => {
  * Load the encrypted favourite outbox from IndexedDB into memory.
  */
 export const hydrateFavoriteOutbox = async (): Promise<void> => {
-    const persisted = await loadEncryptedFavoriteOutbox(getSessionCacheKey());
-    outboxByKey.clear();
-    for (const entry of persisted ?? []) {
-        outboxByKey.set(entryKey(entry), entry);
+    if (hydrated) {
+        return;
     }
-    hydrated = true;
+    if (favoriteOutboxHydrateInFlight) {
+        return favoriteOutboxHydrateInFlight;
+    }
+    favoriteOutboxHydrateInFlight = (async () => {
+        const persisted = await loadEncryptedFavoriteOutbox(getSessionCacheKey());
+        outboxByKey.clear();
+        for (const entry of persisted ?? []) {
+            outboxByKey.set(entryKey(entry), entry);
+        }
+        hydrated = true;
+    })().finally(() => {
+        favoriteOutboxHydrateInFlight = undefined;
+    });
+    return favoriteOutboxHydrateInFlight;
 };
 
 export const ensureFavoriteOutboxHydrated = async (): Promise<void> => {
@@ -67,6 +86,16 @@ export const ensureFavoriteOutboxHydrated = async (): Promise<void> => {
 export const isFavoriteOutboxHydrated = (): boolean => hydrated;
 
 /**
+ * Persist the in-memory outbox to encrypted IDB (page hide / before unload).
+ */
+export const flushFavoriteOutboxPersist = (): Promise<void> => {
+    if (!hydrated) {
+        return ensureFavoriteOutboxHydrated().then(() => persistFavoriteOutbox());
+    }
+    return persistFavoriteOutbox();
+};
+
+/**
  * Queue or replace a pending favourite mutation for a file.
  */
 export const upsertFavoriteOutboxEntry = async (
@@ -75,7 +104,7 @@ export const upsertFavoriteOutboxEntry = async (
     isFavorite: boolean,
 ): Promise<void> => {
     if (!hydrated) {
-        await hydrateFavoriteOutbox();
+        await ensureFavoriteOutboxHydrated();
     }
     const fileHashAndTypeKey =
         file.ownerID !== userId ? hashAndTypeKey(file) : undefined;
@@ -101,8 +130,49 @@ export const removeFavoriteOutboxEntries = async (
     await persistFavoriteOutbox();
 };
 
+/**
+ * Drop pending favourite intents for files that were moved to trash.
+ */
+export const removeFavoriteOutboxForFileIds = async (
+    fileIds: number[],
+): Promise<void> => {
+    if (!fileIds.length) {
+        return;
+    }
+    const idSet = new Set(fileIds);
+    const keys: string[] = [];
+    for (const [key, entry] of outboxByKey) {
+        if (idSet.has(entry.fileId)) {
+            keys.push(key);
+        }
+    }
+    await removeFavoriteOutboxEntries(keys);
+};
+
 export const getFavoriteOutboxEntries = (): FavoriteOutboxEntry[] =>
     [...outboxByKey.values()];
+
+/**
+ * Pending favourite intents as unsynced store updates (for overlay after sync).
+ */
+export const unsyncedUpdatesFromFavoriteOutbox = (): Map<
+    UnsyncedFavoriteUpdateKey,
+    UnsyncedFavoriteUpdate
+> => {
+    const updates = new Map<
+        UnsyncedFavoriteUpdateKey,
+        UnsyncedFavoriteUpdate
+    >();
+    for (const entry of outboxByKey.values()) {
+        const key = entry.fileHashAndTypeKey ?? entry.fileId;
+        updates.set(key, {
+            fileID: entry.fileId,
+            fileHashAndTypeKey: entry.fileHashAndTypeKey,
+            isFavorite: entry.isFavorite,
+        });
+    }
+    return updates;
+};
 
 /**
  * Remap a pending favourite entry when a derived replace changes the file id.
@@ -168,5 +238,18 @@ export const reconcileFavoriteOutboxWithLibrary = async (
 export const clearFavoriteOutbox = (): void => {
     outboxByKey.clear();
     hydrated = false;
+    favoriteOutboxHydrateInFlight = undefined;
     persistChain = Promise.resolve();
 };
+
+if (typeof window !== "undefined") {
+    const flushOnHide = (): void => {
+        void flushFavoriteOutboxPersist();
+    };
+    window.addEventListener("pagehide", flushOnHide);
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") {
+            flushOnHide();
+        }
+    });
+}

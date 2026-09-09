@@ -58,6 +58,21 @@ describe("fileMatchesKitTags / listKitSeedFiles", () => {
             2, 3,
         ]);
     });
+
+    it("skips archived seed files", () => {
+        const active = fileWithTags(1, ["a", "b"]);
+        const archived = {
+            ...fileWithTags(2, ["a", "b"]),
+            magicMetadata: {
+                version: 1,
+                count: 1,
+                data: { visibility: 1 },
+            },
+        } as EnteFile;
+        expect(listKitSeedFiles([active, archived], ["a", "b"]).map((f) => f.id)).toEqual(
+            [1],
+        );
+    });
 });
 
 describe("pickKitMedoids", () => {

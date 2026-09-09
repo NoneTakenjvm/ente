@@ -69,7 +69,7 @@ export function TagQueryBuilderPanel({
             />
             <DropdownMenuContent
                 align="start"
-                className="flex max-h-[min(80dvh,28rem)] w-[min(100vw-2rem,24rem)] flex-col overflow-hidden p-2"
+                className="flex max-h-[min(80dvh,28rem)] w-[min(100vw-2rem,24rem)] flex-col overflow-x-hidden overflow-y-auto overscroll-contain p-2"
             >
                 <DropdownMenuGroup className="flex min-h-0 flex-1 flex-col gap-3">
                     <DropdownMenuLabel className="shrink-0 px-0">
