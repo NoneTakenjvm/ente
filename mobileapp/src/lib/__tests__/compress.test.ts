@@ -91,6 +91,23 @@ describe("compress", () => {
         ]);
     });
 
+    it("compressManageCandidates excludes archived files", () => {
+        const active = fileWithTags(1, FileType.image, []);
+        const archived = {
+            ...fileWithTags(2, FileType.image, []),
+            magicMetadata: {
+                version: 1,
+                count: 1,
+                data: { visibility: 1 },
+            },
+        } as EnteFile;
+        expect(
+            compressManageCandidates([active, archived], false).map(
+                (file) => file.id,
+            ),
+        ).toEqual([1]);
+    });
+
     it("buildCompressedOrganizerTags merges source tags", () => {
         expect(
             buildCompressedOrganizerTags(

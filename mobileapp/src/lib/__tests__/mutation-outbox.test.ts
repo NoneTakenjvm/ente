@@ -62,6 +62,23 @@ describe("favorite outbox", () => {
         await remapFavoriteOutboxFileId(42, 99);
         expect(getFavoriteOutboxEntries()[0]?.fileId).toBe(99);
     });
+
+    it("hydrateFavoriteOutbox does not clear newer in-memory entries", async () => {
+        const {
+            upsertFavoriteOutboxEntry,
+            getFavoriteOutboxEntries,
+            hydrateFavoriteOutbox,
+            ensureFavoriteOutboxHydrated,
+        } = await import("@/lib/favorite-outbox");
+        const { loadEncryptedFavoriteOutbox } = await import("@/db/kv");
+
+        await hydrateFavoriteOutbox();
+        await upsertFavoriteOutboxEntry(stubFile(7), 1, true);
+        vi.mocked(loadEncryptedFavoriteOutbox).mockResolvedValueOnce([]);
+
+        await ensureFavoriteOutboxHydrated();
+        expect(getFavoriteOutboxEntries()[0]?.fileId).toBe(7);
+    });
 });
 
 describe("visibility outbox", () => {

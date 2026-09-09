@@ -70,6 +70,26 @@ describe("exact-duplicates", () => {
         expect(groups).toHaveLength(0);
     });
 
+    it("skips archived files", () => {
+        const collections = [collection(10, "Trips")];
+        const active = fileWithHash(1, "abc");
+        const archived = {
+            ...fileWithHash(2, "abc"),
+            magicMetadata: {
+                version: 1,
+                count: 1,
+                data: { visibility: 1 },
+            },
+        } as EnteFile;
+
+        const groups = findExactDuplicateGroups(
+            [active, archived],
+            collections,
+            userId,
+        );
+        expect(groups).toHaveLength(0);
+    });
+
     it("defaults keeper selection to first item", () => {
         const collections = [collection(10, "Trips")];
         const files = [fileWithHash(1, "abc"), fileWithHash(2, "abc")];

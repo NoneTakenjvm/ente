@@ -7,15 +7,16 @@ import {
     getCollectionSyncTime,
     saveCollectionSyncTime,
 } from "@/db/cursors";
-import { saveEncryptedFiles } from "@/db/kv";
+import { loadEncryptedTrashItems, saveEncryptedFiles } from "@/db/kv";
 import { invalidateThumbnailCache } from "@/lib/thumbnail-cache";
 import { getSessionCacheKey } from "@/lib/cache-key";
+import { removePhashEntry } from "@/lib/similarity-job";
 import {
     dedupeFilesById,
     didFileContentChange,
     mergeFileChangesIntoLibrary,
 } from "@/lib/sync/merge-files";
-import { removePhashEntry } from "@/lib/similarity-job";
+import { applyOutboxTagsToFiles } from "@/lib/tag-outbox";
 
 const collectionSyncConcurrency = 2;
 
@@ -143,7 +144,14 @@ export const pullFiles = async (
 
     const files = sortFilesByUpload([...libraryById.values()]);
     if (didUpdate) {
-        await saveEncryptedFiles(files, getSessionCacheKey());
+        const trashItems = await loadEncryptedTrashItems(getSessionCacheKey());
+        const trashedIds = new Set(
+            (trashItems ?? []).map((item) => item.file.id),
+        );
+        const forDisk = applyOutboxTagsToFiles(files).filter(
+            (file) => !trashedIds.has(file.id),
+        );
+        await saveEncryptedFiles(forDisk, getSessionCacheKey());
     }
     // Cursors only after a durable library snapshot (or when no file changes).
     await commitPendingSyncCursors(pendingCursors);

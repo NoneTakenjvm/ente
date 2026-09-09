@@ -119,6 +119,29 @@ describe("buildAnonymisedKitNearnessCorpus", () => {
         expect(corpus.derivedKits).toEqual([]);
         expect(JSON.stringify(corpus)).not.toContain("eeeeeeeeeeeeeeee");
     });
+
+    it("skips archived files", () => {
+        const archived = {
+            ...fileWithTags(9, ["beach", "vietnam"]),
+            magicMetadata: {
+                version: 1,
+                count: 1,
+                data: { visibility: 1 },
+            },
+        } as EnteFile;
+        const corpus = buildAnonymisedKitNearnessCorpus({
+            files: [
+                fileWithTags(1, ["beach", "vietnam"]),
+                fileWithTags(2, ["beach", "vietnam"]),
+                archived,
+            ],
+            phashEntries: new Map(),
+            kits: [],
+            random: makeRandom(3),
+        });
+        expect(corpus.photos).toHaveLength(2);
+        expect(corpus.derivedKits[0]!.count).toBe(2);
+    });
 });
 
 describe("deriveExactTagSetKits", () => {

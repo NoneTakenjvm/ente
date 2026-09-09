@@ -6,6 +6,7 @@ import {
     configToPersisted,
     filterKitNearnessTags,
     areAllTagsIncludedInKitNearness,
+    isTagIncludedInEffectsPresence,
     isTagIncludedInKitNearness,
     normalizeTagTypeName,
     sortTagsByUsage,
@@ -42,6 +43,32 @@ describe("tag-types", () => {
         expect(persisted.includeInKitNearnessByName).toEqual({ beach: true });
         const loaded = configFromPersisted(persisted);
         expect(loaded.includeInKitNearnessByName.get("beach")).toBe(true);
+    });
+
+    it("effects presence include defaults to true and round-trips sparsely", () => {
+        expect(
+            isTagIncludedInEffectsPresence("beach", new Map()),
+        ).toBe(true);
+        const include = new Map([["junk", false]]);
+        expect(isTagIncludedInEffectsPresence("junk", include)).toBe(false);
+        expect(isTagIncludedInEffectsPresence("beach", include)).toBe(true);
+        const persisted = configToPersisted(
+            [DEFAULT_TAG_TYPE],
+            new Map(),
+            new Map(),
+            include,
+        );
+        expect(persisted.includeInEffectsPresenceByName).toEqual({
+            junk: false,
+        });
+        const loaded = configFromPersisted(persisted);
+        expect(loaded.includeInEffectsPresenceByName.get("junk")).toBe(false);
+        expect(
+            isTagIncludedInEffectsPresence(
+                "beach",
+                loaded.includeInEffectsPresenceByName,
+            ),
+        ).toBe(true);
     });
 
     it("sortTagsByUsage orders by count then name", () => {

@@ -25,6 +25,7 @@ import {
     type DedupGroupItem,
     type DedupGroupSelection,
 } from "@/lib/dedup-prune";
+import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 
 export interface SimilarityGroup {
     id: string;
@@ -90,7 +91,7 @@ class UnionFind {
 const variantDistance = (left: string[], right: string[]): number =>
     variantHammingDistanceHex(left, right);
 
-/** Only the owned, allowed-collection, image files that have a phash entry. */
+/** Only the owned, allowed-collection, non-archived image files that have a phash entry. */
 export const indexableFiles = (
     entries: Map<number, PhashEntry>,
     filesById: Map<number, EnteFile>,
@@ -109,6 +110,9 @@ export const indexableFiles = (
             continue;
         }
         if (file.ownerID !== userId) {
+            continue;
+        }
+        if (isFileArchivedLocally(file)) {
             continue;
         }
         if (!allowedCollectionIDs.has(file.collectionID)) {

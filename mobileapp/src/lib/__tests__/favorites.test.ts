@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { FileType } from "ente-media/file-type";
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
-import { deriveFavoriteFileIDs, isFileFavorited } from "@/lib/favorites";
+import { deriveFavoriteFileIDs, isFileFavorited, mergePendingFavoriteUpdates } from "@/lib/favorites";
 
 const userId = 1;
 const favoritesCollectionId = 99;
@@ -46,5 +46,26 @@ describe("favorites", () => {
         expect(isFileFavorited(galleryFile, userId, collections, allFiles)).toBe(
             true,
         );
+    });
+
+    it("mergePendingFavoriteUpdates keeps unconfirmed intents and drops matches", () => {
+        const existing = new Map([
+            [10, { fileID: 10, isFavorite: true }],
+            [11, { fileID: 11, isFavorite: true }],
+        ]);
+        const fromOutbox = new Map([
+            [12, { fileID: 12, isFavorite: false }],
+        ]);
+        const confirmed = new Set([11, 12]);
+
+        const merged = mergePendingFavoriteUpdates(
+            existing,
+            fromOutbox,
+            confirmed,
+        );
+
+        expect([...merged.keys()].sort()).toEqual([10, 12]);
+        expect(merged.get(10)?.isFavorite).toBe(true);
+        expect(merged.get(12)?.isFavorite).toBe(false);
     });
 });

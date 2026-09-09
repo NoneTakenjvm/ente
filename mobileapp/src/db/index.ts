@@ -1,6 +1,6 @@
 import { deleteDB, openDB, type IDBPDatabase } from "idb";
 
-const dbVersion = 4;
+const dbVersion = 5;
 
 export type KvKey =
     | "collections" |
@@ -63,6 +63,15 @@ export interface SyncCursorRecord {
     sinceTime: number;
 }
 
+/** One encrypted CLIP embedding chunk (append-only during scan). */
+export interface EmbeddingChunkRecord {
+    chunkId: number;
+    modelId: string;
+    dims: number;
+    encryptedData: string;
+    decryptionHeader: string;
+}
+
 export interface OrganizerDB {
     kv: {
         key: KvKey;
@@ -83,6 +92,10 @@ export interface OrganizerDB {
     syncCursors: {
         key: number;
         value: SyncCursorRecord;
+    };
+    embeddingChunks: {
+        key: number;
+        value: EmbeddingChunkRecord;
     };
     meta: {
         key: string;
@@ -115,6 +128,9 @@ const openOrganizerDB = (userId: number): Promise<IDBPDatabase<OrganizerDB>> =>
             }
             if (!db.objectStoreNames.contains("syncCursors")) {
                 db.createObjectStore("syncCursors", { keyPath: "collectionId" });
+            }
+            if (!db.objectStoreNames.contains("embeddingChunks")) {
+                db.createObjectStore("embeddingChunks", { keyPath: "chunkId" });
             }
             if (!db.objectStoreNames.contains("meta")) {
                 db.createObjectStore("meta");

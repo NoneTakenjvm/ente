@@ -10,6 +10,7 @@ import {
     type DedupGroupItem,
     type DedupGroupSelection,
 } from "@/lib/dedup-prune";
+import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 
 export interface ExactDuplicateGroup {
     id: string;
@@ -37,6 +38,9 @@ export const findExactDuplicateGroups = (
 
     for (const file of allFiles) {
         if (file.ownerID !== userId) {
+            continue;
+        }
+        if (isFileArchivedLocally(file)) {
             continue;
         }
         if (!allowedCollectionIDs.has(file.collectionID)) {

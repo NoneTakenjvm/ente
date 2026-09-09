@@ -9,18 +9,16 @@ import {
     CardTitle,
 } from "@/components/ui/card";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import type { GalleryColumnCount } from "@/lib/app-settings";
 import {
+    CLIP_EMBEDDING_BATCH_SIZE_AUTO,
+    CLIP_EMBEDDING_BATCH_SIZE_OPTIONS,
+    clampClipEmbeddingBatchSize,
+    clampGalleryColumns,
+    MAX_GALLERY_COLUMNS,
     MAX_SIMILAR_MAX_GROUP_SIZE,
+    MIN_GALLERY_COLUMNS,
     MIN_SIMILAR_MAX_GROUP_SIZE,
 } from "@/lib/app-settings";
 import { getEnteCore } from "@/core";
@@ -28,8 +26,11 @@ import { isLocalDevToolsVisible } from "@/lib/dev-flags";
 import {
     getKitEmbeddingWebGpuSkipReason,
     runKitEmbeddingJob,
+    stripVideoEmbeddings,
 } from "@/lib/kit-embedding";
+import { isEnteVideoFile } from "@/lib/media-kind";
 import { imageFilesForPhash } from "@/lib/similarity-job";
+import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { usePhashIndexStore } from "@/stores/phash-index-store";
@@ -39,12 +40,20 @@ import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
 import type { BackgroundJobStatus } from "@/stores/ui-store";
 
-const columnOptions: GalleryColumnCount[] = [2, 3, 4, 5, 6];
+const columnOptions: number[] = Array.from(
+    { length: MAX_GALLERY_COLUMNS - MIN_GALLERY_COLUMNS + 1 },
+    (_, i) => MIN_GALLERY_COLUMNS + i,
+);
 
 const similarMaxGroupSizeOptions: number[] = Array.from(
     { length: MAX_SIMILAR_MAX_GROUP_SIZE - MIN_SIMILAR_MAX_GROUP_SIZE + 1 },
     (_, i) => MIN_SIMILAR_MAX_GROUP_SIZE + i,
 );
+
+const clipBatchSizeOptions: number[] = [
+    CLIP_EMBEDDING_BATCH_SIZE_AUTO,
+    ...CLIP_EMBEDDING_BATCH_SIZE_OPTIONS,
+];
 
 export function ManageSettingsPanel(): JSX.Element {
     const videoAutoPlay = useSettingsStore((s) => s.videoAutoPlay);
@@ -53,6 +62,9 @@ export function ManageSettingsPanel(): JSX.Element {
     const galleryColumns = useSettingsStore((s) => s.galleryColumns);
     const galleryThumbnailMode = useSettingsStore((s) => s.galleryThumbnailMode);
     const similarMaxGroupSize = useSettingsStore((s) => s.similarMaxGroupSize);
+    const clipEmbeddingBatchSize = useSettingsStore(
+        (s) => s.clipEmbeddingBatchSize,
+    );
     const patchSettings = useSettingsStore((s) => s.patchSettings);
     const [corpusExporting, setCorpusExporting] = useState(false);
     const [corpusExportLabel, setCorpusExportLabel] = useState("Exporting…");
@@ -94,6 +106,22 @@ export function ManageSettingsPanel(): JSX.Element {
         void hydrateEmbeddings();
     }, [embeddingHydrated, hydrateEmbeddings]);
 
+    // Drop any stale video poster vectors once the library is known.
+    useEffect(() => {
+        if (!embeddingHydrated || allFiles.length === 0) {
+            return;
+        }
+        const pruned = stripVideoEmbeddings(embeddingEntries, allFiles);
+        if (pruned !== embeddingEntries) {
+            setEmbeddingEntries(pruned);
+        }
+    }, [
+        allFiles,
+        embeddingEntries,
+        embeddingHydrated,
+        setEmbeddingEntries,
+    ]);
+
     const handleStartClipJob = (): void => {
         if (clipJobStatus === "running") {
             return;
@@ -105,9 +133,11 @@ export function ManageSettingsPanel(): JSX.Element {
         setClipJobStatus("running");
         setClipRuntime("");
         const candidates = imageFilesForPhash(allFiles, userId);
-        const pending = candidates.filter(
-            (file) => !embeddingEntries.has(file.id),
-        );
+        const existing = stripVideoEmbeddings(embeddingEntries, allFiles);
+        if (existing !== embeddingEntries) {
+            setEmbeddingEntries(existing);
+        }
+        const pending = candidates.filter((file) => !existing.has(file.id));
         setClipProgress({ current: 0, total: pending.length });
         if (pending.length === 0) {
             setClipJobStatus("done");
@@ -117,15 +147,15 @@ export function ManageSettingsPanel(): JSX.Element {
         void runKitEmbeddingJob({
             files: allFiles,
             userId,
-            existing: new Map(embeddingEntries),
+            existing,
             signal: clipAbort.current.signal,
             shouldPause: () => clipPaused.current,
             onProgress: (progress) => {
                 if (progress.device) {
                     const label =
                         progress.device === "webgpu" ?
-                            `WebGPU×${progress.concurrency ?? "?"}` :
-                            `WASM×${progress.concurrency ?? "?"}`;
+                            `WebGPU batch×${progress.batchSize ?? "?"}` :
+                            `WASM batch×${progress.batchSize ?? "?"}`;
                     setClipRuntime(label);
                     if (
                         progress.device === "wasm" &&
@@ -221,12 +251,16 @@ export function ManageSettingsPanel(): JSX.Element {
                 useTagStore.getState().includeInKitNearnessByName;
             const onlyFileIds = new Set(
                 files
-                    .filter((file) =>
-                        extractUserTags(file).some((tag) =>
-                            isTagIncludedInKitNearness(
-                                tag,
-                                includeInKitNearnessByName,
-                            )))
+                    .filter(
+                        (file) =>
+                            !isEnteVideoFile(file) &&
+                            !isFileArchivedLocally(file) &&
+                            extractUserTags(file).some((tag) =>
+                                isTagIncludedInKitNearness(
+                                    tag,
+                                    includeInKitNearnessByName,
+                                )),
+                    )
                     .map((file) => file.id),
             );
             const embeddings = await runKitEmbeddingJob({
@@ -369,34 +403,37 @@ export function ManageSettingsPanel(): JSX.Element {
                     <FieldGroup>
                         <Field>
                             <FieldLabel>Gallery width</FieldLabel>
-                            <Select
-                                value={String(galleryColumns)}
-                                onValueChange={(value) => {
-                                    if (!value) {
+                            <ToggleGroup
+                                variant="outline"
+                                value={[String(galleryColumns)]}
+                                onValueChange={(next) => {
+                                    const raw = Array.isArray(next) ?
+                                        next[0] :
+                                        next;
+                                    if (raw === undefined || raw === "") {
+                                        return;
+                                    }
+                                    const parsed = Number.parseInt(raw, 10);
+                                    if (!Number.isFinite(parsed)) {
                                         return;
                                     }
                                     patchSettings({
-                                        galleryColumns: Number.parseInt(
-                                            value,
-                                            10,
-                                        ) as GalleryColumnCount,
+                                        galleryColumns:
+                                            clampGalleryColumns(parsed),
                                     });
                                 }}
+                                className="w-full"
                             >
-                                <SelectTrigger className="w-full">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {columnOptions.map((count) => (
-                                        <SelectItem
-                                            key={count}
-                                            value={String(count)}
-                                        >
-                                            {count} across
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
+                                {columnOptions.map((count) => (
+                                    <ToggleGroupItem
+                                        key={count}
+                                        value={String(count)}
+                                        className="flex-1"
+                                    >
+                                        {count}
+                                    </ToggleGroupItem>
+                                ))}
+                            </ToggleGroup>
                         </Field>
                         <Field>
                             <FieldLabel>Thumbnail layout</FieldLabel>
@@ -495,16 +532,63 @@ export function ManageSettingsPanel(): JSX.Element {
                         Explicit on-device scan (not automatic). Embeddings power
                         kit nearness ranking via CLIP medoids; vectors stay
                         encrypted in this browser and already-scanned photos are
-                        skipped. Model: CLIP ViT-B/16. Uses WebGPU (`fp16` /
-                        `q4f16` when available), else WASM (`q8`). First run
-                        downloads a new model weight set (old B/32 embeddings
-                        are discarded).
+                        skipped. Videos are never scanned or ranked (poster
+                        thumbnail ≠ content). Model: CLIP ViT-B/16. Uses WebGPU
+                        (`fp16`) when available, else WASM (`q8`). Batch size is
+                        images per GPU/CPU forward. Auto is 2 on phones / 6 on
+                        desktop (WebGPU), or 1 / 2 on WASM. Two batches stay in
+                        flight so decode overlaps the GPU.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-3">
+                    <FieldGroup>
+                        <Field>
+                            <FieldLabel>ORT batch size</FieldLabel>
+                            <ToggleGroup
+                                variant="outline"
+                                value={[String(clipEmbeddingBatchSize)]}
+                                onValueChange={(next) => {
+                                    const raw = Array.isArray(next) ?
+                                        next[0] :
+                                        next;
+                                    if (raw === undefined || raw === "") {
+                                        return;
+                                    }
+                                    const parsed = Number.parseInt(raw, 10);
+                                    if (!Number.isFinite(parsed)) {
+                                        return;
+                                    }
+                                    patchSettings({
+                                        clipEmbeddingBatchSize:
+                                            clampClipEmbeddingBatchSize(
+                                                parsed,
+                                            ),
+                                    });
+                                }}
+                                className="w-full flex-wrap"
+                            >
+                                {clipBatchSizeOptions.map((count) => (
+                                    <ToggleGroupItem
+                                        key={count}
+                                        value={String(count)}
+                                        className="flex-1 min-w-8"
+                                    >
+                                        {count ===
+                                        CLIP_EMBEDDING_BATCH_SIZE_AUTO ?
+                                            "Auto" :
+                                            count}
+                                    </ToggleGroupItem>
+                                ))}
+                            </ToggleGroup>
+                        </Field>
+                    </FieldGroup>
                     <p className="text-sm text-muted-foreground">
                         {embeddingHydrated ?
-                            `${clipIndexedCount.toLocaleString()} / ${clipCandidateCount.toLocaleString()} images embedded` :
+                            `${(
+                                clipJobStatus === "running" ?
+                                    clipIndexedCount + clipProgress.current :
+                                    clipIndexedCount
+                            ).toLocaleString()} / ${clipCandidateCount.toLocaleString()} images embedded` :
                             "Loading embedding index…"}
                         {clipRuntime ? ` · ${clipRuntime}` : null}
                         {clipJobStatus === "running" && clipProgress.total > 0 ?

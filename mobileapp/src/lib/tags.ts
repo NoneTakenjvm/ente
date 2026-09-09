@@ -3,6 +3,7 @@ import type { EnteFile } from "ente-media/file";
 import { FileType } from "ente-media/file-type";
 import { getPublicMetadata } from "@/core/metadata";
 import type { PersistedTagIndex } from "@/db/kv";
+import { isTagIncludedInEffectsPresence } from "@/lib/tag-types";
 
 export interface OrganizerTagMetadata {
     tags?: string[];
@@ -79,6 +80,11 @@ export interface TagFilterSelection {
 
 export interface TagFilterOptions {
     favoriteFileIds?: Set<number>;
+    /**
+     * Tags that count toward tagged/untagged. Absent map entries (and an
+     * omitted map) count as included — see {@link isTagIncludedInEffectsPresence}.
+     */
+    includeInEffectsPresenceByName?: ReadonlyMap<string, boolean>;
 }
 
 let tagFilterNodeCounter = 0;
@@ -365,10 +371,12 @@ const allFileIds = (files: EnteFile[]): Set<number> =>
 const untaggedIdsInCandidates = (
     candidateFileIds: Set<number>,
     fileIdsByTag: Map<string, Set<number>>,
+    includeInEffectsPresenceByName?: ReadonlyMap<string, boolean>,
 ): Set<number> => {
     const taggedIds = taggedIdsInCandidates(
         candidateFileIds,
         fileIdsByTag,
+        includeInEffectsPresenceByName,
     );
     return new Set(
         [...candidateFileIds].filter((id) => !taggedIds.has(id)),
@@ -378,9 +386,16 @@ const untaggedIdsInCandidates = (
 const taggedIdsInCandidates = (
     candidateFileIds: Set<number>,
     fileIdsByTag: Map<string, Set<number>>,
+    includeInEffectsPresenceByName?: ReadonlyMap<string, boolean>,
 ): Set<number> => {
     const taggedIds = new Set<number>();
-    for (const ids of fileIdsByTag.values()) {
+    for (const [tag, ids] of fileIdsByTag) {
+        if (
+            includeInEffectsPresenceByName &&
+            !isTagIncludedInEffectsPresence(tag, includeInEffectsPresenceByName)
+        ) {
+            continue;
+        }
         for (const id of ids) {
             if (candidateFileIds.has(id)) {
                 taggedIds.add(id);
@@ -405,13 +420,18 @@ const tagIdsInCandidates = (
     candidateIds: Set<number>,
     files: EnteFile[],
     fileIdsByTag: Map<string, Set<number>>,
+    includeInEffectsPresenceByName?: ReadonlyMap<string, boolean>,
 ): Set<number> => {
     const idsForTag = fileIdsByTag.get(tag) ?? new Set<number>();
     const scoped = new Set(
         [...idsForTag].filter((id) => candidateIds.has(id)),
     );
     if (tag === UNTAGGED_FILTER) {
-        return untaggedIdsInCandidates(candidateIds, fileIdsByTag);
+        return untaggedIdsInCandidates(
+            candidateIds,
+            fileIdsByTag,
+            includeInEffectsPresenceByName,
+        );
     }
     return scoped;
 };
@@ -421,12 +441,14 @@ const evaluateClauseNode = (
     candidateIds: Set<number>,
     files: EnteFile[],
     fileIdsByTag: Map<string, Set<number>>,
+    includeInEffectsPresenceByName?: ReadonlyMap<string, boolean>,
 ): Set<number> => {
     const tagIds = tagIdsInCandidates(
         clause.tag,
         candidateIds,
         files,
         fileIdsByTag,
+        includeInEffectsPresenceByName,
     );
     if (clause.mode === "include") {
         return tagIds;
@@ -476,9 +498,16 @@ export const evaluateTagFilterNode = (
     candidateIds: Set<number>,
     files: EnteFile[],
     fileIdsByTag: Map<string, Set<number>>,
+    includeInEffectsPresenceByName?: ReadonlyMap<string, boolean>,
 ): Set<number> => {
     if (isTagFilterClause(node)) {
-        return evaluateClauseNode(node, candidateIds, files, fileIdsByTag);
+        return evaluateClauseNode(
+            node,
+            candidateIds,
+            files,
+            fileIdsByTag,
+            includeInEffectsPresenceByName,
+        );
     }
 
     if (node.children.length === 0) {
@@ -513,6 +542,7 @@ export const evaluateTagFilterNode = (
                 matchingIds,
                 files,
                 fileIdsByTag,
+                includeInEffectsPresenceByName,
             );
         }
 
@@ -524,6 +554,7 @@ export const evaluateTagFilterNode = (
                     matchingIds,
                     files,
                     fileIdsByTag,
+                    includeInEffectsPresenceByName,
                 ),
             );
         }
@@ -536,6 +567,7 @@ export const evaluateTagFilterNode = (
         candidateIds,
         files,
         fileIdsByTag,
+        includeInEffectsPresenceByName,
     ));
 
     if (node.op === "or") {
@@ -551,12 +583,21 @@ const applyTagScope = (
     tagScope: TagScope,
     candidateIds: Set<number>,
     fileIdsByTag: Map<string, Set<number>>,
+    includeInEffectsPresenceByName?: ReadonlyMap<string, boolean>,
 ): Set<number> | undefined => {
     if (tagScope === "untagged") {
-        return untaggedIdsInCandidates(candidateIds, fileIdsByTag);
+        return untaggedIdsInCandidates(
+            candidateIds,
+            fileIdsByTag,
+            includeInEffectsPresenceByName,
+        );
     }
     if (tagScope === "tagged") {
-        return taggedIdsInCandidates(candidateIds, fileIdsByTag);
+        return taggedIdsInCandidates(
+            candidateIds,
+            fileIdsByTag,
+            includeInEffectsPresenceByName,
+        );
     }
     return undefined;
 };
@@ -633,6 +674,7 @@ const resolveMatchingIds = (
     filter: TagFilterSelection,
     fileIdsByTag: Map<string, Set<number>>,
     favoriteFileIds: Set<number> | undefined,
+    includeInEffectsPresenceByName?: ReadonlyMap<string, boolean>,
 ): Set<number> => {
     let matchingIds = new Set(candidateIds);
 
@@ -640,6 +682,7 @@ const resolveMatchingIds = (
         filter.tagScope,
         matchingIds,
         fileIdsByTag,
+        includeInEffectsPresenceByName,
     );
     if (scopeIds !== undefined) {
         matchingIds = scopeIds;
@@ -663,6 +706,7 @@ const resolveMatchingIds = (
         matchingIds,
         files,
         fileIdsByTag,
+        includeInEffectsPresenceByName,
     );
 
     if (countTagFilterClauses(filter.root) === 0) {
@@ -691,9 +735,91 @@ export const filterFilesByTags = (
         filter,
         fileIdsByTag,
         options?.favoriteFileIds,
+        options?.includeInEffectsPresenceByName,
     );
 
     return files.filter((file) => matchingIds.has(file.id));
+};
+
+/**
+ * Whether a single file matches the active tag filter (scopes + expression).
+ */
+export const fileMatchesTagFilter = (
+    file: EnteFile,
+    filter: TagFilterSelection,
+    fileIdsByTag: Map<string, Set<number>>,
+    options?: TagFilterOptions,
+): boolean => {
+    if (!isTagFilterActive(filter)) {
+        return true;
+    }
+    return resolveMatchingIds(
+        [file],
+        new Set([file.id]),
+        filter,
+        fileIdsByTag,
+        options?.favoriteFileIds,
+        options?.includeInEffectsPresenceByName,
+    ).has(file.id);
+};
+
+/**
+ * Patch a previously filtered list after one file's tags changed.
+ *
+ * Keeps gallery order for other files; inserts the file at the end of its
+ * peer group when it newly matches (callers that need strict sort should
+ * fall back to a full {@link filterFilesByTags}).
+ *
+ * @returns the patched list, or `null` when a full refilter is safer
+ */
+export const patchFilteredFilesForTagTouch = (
+    previousFiltered: EnteFile[],
+    libraryFiles: EnteFile[],
+    fileId: number,
+    filter: TagFilterSelection,
+    fileIdsByTag: Map<string, Set<number>>,
+    options?: TagFilterOptions,
+): EnteFile[] | null => {
+    const file = libraryFiles.find((entry) => entry.id === fileId);
+    if (!file) {
+        return previousFiltered.filter((entry) => entry.id !== fileId);
+    }
+    const matches = fileMatchesTagFilter(file, filter, fileIdsByTag, options);
+    const existingIndex = previousFiltered.findIndex(
+        (entry) => entry.id === fileId,
+    );
+    if (matches) {
+        if (existingIndex >= 0) {
+            const next = previousFiltered.slice();
+            next[existingIndex] = file;
+            return next;
+        }
+        // Insert at library order position among currently visible files.
+        const libraryOrder = new Map(
+            libraryFiles.map((entry, index) => [entry.id, index]),
+        );
+        const libraryIndex = libraryOrder.get(fileId);
+        if (libraryIndex === undefined) {
+            return null;
+        }
+        let insertAt = previousFiltered.length;
+        for (let i = 0; i < previousFiltered.length; i += 1) {
+            const peerIndex = libraryOrder.get(previousFiltered[i]!.id);
+            if (peerIndex !== undefined && peerIndex > libraryIndex) {
+                insertAt = i;
+                break;
+            }
+        }
+        const next = previousFiltered.slice();
+        next.splice(insertAt, 0, file);
+        return next;
+    }
+    if (existingIndex < 0) {
+        return previousFiltered;
+    }
+    const next = previousFiltered.slice();
+    next.splice(existingIndex, 1);
+    return next;
 };
 
 /**
@@ -719,22 +845,33 @@ export const countFilesMatchingTagFilter = (
         filter,
         fileIdsByTag,
         options?.favoriteFileIds,
+        options?.includeInEffectsPresenceByName,
     ).size;
 };
 
-/** Number of files in scope that have no user tags. */
+/** Number of files in scope that have no presence-counting user tags. */
 export const countUntaggedInCandidates = (
     candidateFileIds: Set<number>,
     fileIdsByTag: Map<string, Set<number>>,
+    includeInEffectsPresenceByName?: ReadonlyMap<string, boolean>,
 ): number =>
-    untaggedIdsInCandidates(candidateFileIds, fileIdsByTag).size;
+    untaggedIdsInCandidates(
+        candidateFileIds,
+        fileIdsByTag,
+        includeInEffectsPresenceByName,
+    ).size;
 
-/** Number of files in scope that have at least one user tag. */
+/** Number of files in scope with at least one presence-counting user tag. */
 export const countTaggedInCandidates = (
     candidateFileIds: Set<number>,
     fileIdsByTag: Map<string, Set<number>>,
+    includeInEffectsPresenceByName?: ReadonlyMap<string, boolean>,
 ): number =>
-    taggedIdsInCandidates(candidateFileIds, fileIdsByTag).size;
+    taggedIdsInCandidates(
+        candidateFileIds,
+        fileIdsByTag,
+        includeInEffectsPresenceByName,
+    ).size;
 
 /** Number of favourited files within a candidate id set. */
 export const countFavoritesInCandidates = (

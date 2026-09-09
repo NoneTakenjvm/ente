@@ -68,6 +68,9 @@ export default function AlbumsPage(): JSX.Element {
     const syncStatus = useLibraryStore((s) => s.syncStatus);
     const favoriteFileIds = useFavoritesStore((s) => s.favoriteFileIds);
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
+    const includeInEffectsPresenceByName = useTagStore(
+        (s) => s.includeInEffectsPresenceByName,
+    );
     const initialLoadDone = useLibraryBootstrap();
 
     const [mode, setMode] = useState<AlbumsMode>("list");
@@ -108,12 +111,19 @@ export default function AlbumsPage(): JSX.Element {
                     filter,
                     fileIdsByTag,
                     libraryFiles,
-                    { favoriteFileIds },
+                    { favoriteFileIds, includeInEffectsPresenceByName },
                 ),
             );
         }
         return counts;
-    }, [albums, favoriteFileIds, fileIdsByTag, libraryFileIds, libraryFiles]);
+    }, [
+        albums,
+        favoriteFileIds,
+        fileIdsByTag,
+        includeInEffectsPresenceByName,
+        libraryFileIds,
+        libraryFiles,
+    ]);
 
     const albumCoverById = useMemo(() => {
         const covers = new Map<string, EnteFile | undefined>();
@@ -123,12 +133,18 @@ export default function AlbumsPage(): JSX.Element {
                 libraryFiles,
                 filter,
                 fileIdsByTag,
-                { favoriteFileIds },
+                { favoriteFileIds, includeInEffectsPresenceByName },
             );
             covers.set(album.id, resolveAlbumCoverFile(album, matches));
         }
         return covers;
-    }, [albums, favoriteFileIds, fileIdsByTag, libraryFiles]);
+    }, [
+        albums,
+        favoriteFileIds,
+        fileIdsByTag,
+        includeInEffectsPresenceByName,
+        libraryFiles,
+    ]);
 
     const viewFiles = useMemo(() => {
         if (!activeAlbum) {
@@ -139,9 +155,15 @@ export default function AlbumsPage(): JSX.Element {
             libraryFiles,
             filter,
             fileIdsByTag,
-            { favoriteFileIds },
+            { favoriteFileIds, includeInEffectsPresenceByName },
         );
-    }, [activeAlbum, favoriteFileIds, fileIdsByTag, libraryFiles]);
+    }, [
+        activeAlbum,
+        favoriteFileIds,
+        fileIdsByTag,
+        includeInEffectsPresenceByName,
+        libraryFiles,
+    ]);
 
     const activeAlbumCoverId = useMemo(() => {
         if (!activeAlbum) {

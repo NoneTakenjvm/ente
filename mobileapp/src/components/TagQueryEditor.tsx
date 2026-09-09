@@ -163,7 +163,6 @@ function FilterNodeRow({
                             node.mode === "include" ? "default" : "outline"
                         }
                         className="h-7 px-2"
-                        disabled={filter.tagScope === "tagged"}
                         onClick={() => {
                             onSetClauseMode(node.id, "include");
                         }}

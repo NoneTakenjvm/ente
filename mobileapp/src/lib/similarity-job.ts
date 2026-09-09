@@ -12,6 +12,7 @@ import {
     getDecryptedThumbnailBytes,
     isThumbnailCachedLocally,
 } from "@/lib/thumbnail-bytes";
+import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 import type {
     Stage1Cluster,
     Stage1FileEdge,
@@ -229,6 +230,10 @@ export const checkCropMatchBatchInWorkers = (
     ).then(() => matches);
 };
 
+/**
+ * Owned still images only. Used for dHash scan and CLIP embed — videos and
+ * archived files are excluded (archived = long-term storage, not active gallery).
+ */
 export const imageFilesForPhash = (
     files: EnteFile[],
     userId: number,
@@ -236,7 +241,8 @@ export const imageFilesForPhash = (
     files.filter(
         (file) =>
             file.ownerID === userId &&
-            file.metadata.fileType === FileType.image,
+            file.metadata.fileType === FileType.image &&
+            !isFileArchivedLocally(file),
     );
 
 /** Normalize a legacy (v1/v2) or current (v3) persisted value to a full {@link PhashEntry}. */

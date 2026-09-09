@@ -149,4 +149,91 @@ describe("tag-outbox", () => {
 
         expect(getTagOutboxEntry(9)?.intendedTags).toEqual(["queued"]);
     });
+
+    it("persist continues after a failed IDB write", async () => {
+        const {
+            enqueueTagOutboxEntries,
+            flushTagOutboxPersist,
+            getTagOutboxEntries,
+            hydrateTagOutbox,
+        } = await import("@/lib/tag-outbox");
+
+        await hydrateTagOutbox();
+        saveEncryptedTagOutbox.mockRejectedValueOnce(new Error("idb"));
+        enqueueTagOutboxEntries([{ fileId: 1, intendedTags: ["a"] }]);
+        await flushTagOutboxPersist();
+
+        saveEncryptedTagOutbox.mockResolvedValue(undefined);
+        enqueueTagOutboxEntries([{ fileId: 2, intendedTags: ["b"] }]);
+        await flushTagOutboxPersist();
+
+        expect(
+            getTagOutboxEntries()
+                .map((entry) => entry.fileId)
+                .sort(),
+        ).toEqual([1, 2]);
+        const lastWrite = saveEncryptedTagOutbox.mock.calls.at(-1)?.[0] as
+            Array<{ fileId: number }> | undefined;
+        expect(lastWrite?.map((entry) => entry.fileId).sort()).toEqual([1, 2]);
+    });
+
+    it("mergeAheadOrganizerTags keeps higher-version local tags the pull missed", async () => {
+        const { mergeAheadOrganizerTags, hydrateTagOutbox } =
+            await import("@/lib/tag-outbox");
+
+        await hydrateTagOutbox();
+        const pulled = fileWithOrganizerTags(
+            {
+                id: 1,
+                pubMagicMetadata: {
+                    version: 1,
+                    count: 1,
+                    data: { caption: "keep-me" },
+                },
+            } as EnteFile,
+            ["old"],
+        );
+        const live = {
+            ...fileWithOrganizerTags({ id: 1 } as EnteFile, ["new"]),
+            pubMagicMetadata: {
+                ...fileWithOrganizerTags({ id: 1 } as EnteFile, ["new"])
+                    .pubMagicMetadata!,
+                version: 2,
+            },
+        };
+
+        const merged = mergeAheadOrganizerTags([pulled], [live]);
+
+        expect(merged[0]?.pubMagicMetadata?.version).toBe(2);
+        expect(merged[0]?.pubMagicMetadata?.data._organizer_v1?.tags).toEqual([
+            "new",
+        ]);
+        expect(merged[0]?.pubMagicMetadata?.data.caption).toBe("keep-me");
+    });
+
+    it("mergeAheadOrganizerTags does not override a pending outbox overlay", async () => {
+        const {
+            enqueueTagOutboxEntries,
+            hydrateTagOutbox,
+            mergeAheadOrganizerTags,
+        } = await import("@/lib/tag-outbox");
+
+        await hydrateTagOutbox();
+        enqueueTagOutboxEntries([{ fileId: 1, intendedTags: ["pending"] }]);
+
+        const pulled = fileWithOrganizerTags({ id: 1 } as EnteFile, [
+            "pending",
+        ]);
+        const live = {
+            ...fileWithOrganizerTags({ id: 1 } as EnteFile, ["stale-acked"]),
+            pubMagicMetadata: {
+                ...fileWithOrganizerTags({ id: 1 } as EnteFile, ["stale-acked"])
+                    .pubMagicMetadata!,
+                version: 3,
+            },
+        };
+
+        const merged = mergeAheadOrganizerTags([pulled], [live]);
+        expect(merged[0]).toBe(pulled);
+    });
 });

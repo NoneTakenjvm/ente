@@ -31,6 +31,7 @@ import type { ViewportFitSort } from "@/lib/viewport-fit";
 import type { ImageSizeSort } from "@/lib/image-size-sort";
 import type { RelativeSort } from "@/lib/relative-sort";
 import type { TagFilterFitSort } from "@/lib/tag-filter-fit-sort";
+import type { UpdatedAtSort } from "@/lib/updated-at-sort";
 import type { TagPreset } from "@/lib/tag-presets";
 import { formatKitFitPercent } from "@/lib/kit-nearness-sort";
 import { cn } from "@/lib/utils";
@@ -65,6 +66,9 @@ interface TagScopeFilterDropdownProps {
     /** Gallery-only: reorder by viewer viewport fit (not a hide-filter). */
     viewportFitSort?: ViewportFitSort;
     onViewportFitSortChange?: (mode: ViewportFitSort) => void;
+    /** Gallery-only: reorder by last update time (not a hide-filter). */
+    updatedAtSort?: UpdatedAtSort;
+    onUpdatedAtSortChange?: (mode: UpdatedAtSort) => void;
     /** Gallery-only: reorder by pixel area (not a hide-filter). */
     imageSizeSort?: ImageSizeSort;
     onImageSizeSortChange?: (mode: ImageSizeSort) => void;
@@ -125,6 +129,9 @@ const isCroppedScope = (value: unknown): value is CroppedScope =>
 const isViewportFitSort = (value: unknown): value is ViewportFitSort =>
     value === "none" || value === "best" || value === "worst";
 
+const isUpdatedAtSort = (value: unknown): value is UpdatedAtSort =>
+    value === "none" || value === "newest" || value === "oldest";
+
 const isImageSizeSort = (value: unknown): value is ImageSizeSort =>
     value === "none" || value === "largest" || value === "smallest";
 
@@ -153,6 +160,8 @@ export function TagScopeFilterDropdown({
     onCroppedScopeChange,
     viewportFitSort,
     onViewportFitSortChange,
+    updatedAtSort,
+    onUpdatedAtSortChange,
     imageSizeSort,
     onImageSizeSortChange,
     tagFilterFitSort,
@@ -182,6 +191,8 @@ export function TagScopeFilterDropdown({
     const croppedScope = controlledCroppedScope ?? storeFilter.croppedScope;
     const showViewportFit = onViewportFitSortChange !== undefined;
     const fitSort = viewportFitSort ?? "none";
+    const showUpdatedAt = onUpdatedAtSortChange !== undefined;
+    const updateSort = updatedAtSort ?? "none";
     const showImageSize = onImageSizeSortChange !== undefined;
     const sizeSort = imageSizeSort ?? "none";
     const showTagFilterFit = onTagFilterFitSortChange !== undefined;
@@ -204,6 +215,7 @@ export function TagScopeFilterDropdown({
         nearnessSource === "kit" && kitLikenessPresetId !== undefined;
     const showSort =
         showViewportFit ||
+        showUpdatedAt ||
         showImageSize ||
         showTagFilterFit ||
         showRelative ||
@@ -294,6 +306,7 @@ export function TagScopeFilterDropdown({
 
     const sortActive =
         fitSort !== "none" ||
+        updateSort !== "none" ||
         sizeSort !== "none" ||
         tagFitSort !== "none" ||
         relSort !== "none" ||
@@ -665,9 +678,52 @@ export function TagScopeFilterDropdown({
 
     const sortPanel = (
         <>
+            <div className="px-1 pb-1">
+                <Button
+                    type="button"
+                    variant={sortActive ? "outline" : "secondary"}
+                    size="sm"
+                    className="w-full"
+                    aria-pressed={!sortActive}
+                    disabled={!sortActive}
+                    onClick={() => {
+                        onUpdatedAtSortChange?.("none");
+                        onViewportFitSortChange?.("none");
+                        onImageSizeSortChange?.("none");
+                        onTagFilterFitSortChange?.("none");
+                        onRelativeSortChange?.("none");
+                        onNearnessFilterChange?.(undefined);
+                        onKitLikenessPresetIdChange?.(undefined);
+                        setNearnessEditorOpen(false);
+                        closeKitPicker();
+                    }}
+                >
+                    None
+                </Button>
+            </div>
+            <DropdownMenuSeparator />
+            {showUpdatedAt ? (
+                <DropdownMenuRadioGroup
+                    value={updateSort === "none" ? "" : updateSort}
+                    onValueChange={(value) => {
+                        if (isUpdatedAtSort(value)) {
+                            onUpdatedAtSortChange(value);
+                        }
+                    }}
+                >
+                    <DropdownMenuLabel>Updated At</DropdownMenuLabel>
+                    <DropdownMenuRadioItem value="newest" closeOnClick>
+                        Newest
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="oldest" closeOnClick>
+                        Oldest
+                    </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+            ) : null}
+            {showUpdatedAt && showViewportFit ? <DropdownMenuSeparator /> : null}
             {showViewportFit ? (
                 <DropdownMenuRadioGroup
-                    value={fitSort}
+                    value={fitSort === "none" ? "" : fitSort}
                     onValueChange={(value) => {
                         if (isViewportFitSort(value)) {
                             onViewportFitSortChange(value);
@@ -675,9 +731,6 @@ export function TagScopeFilterDropdown({
                     }}
                 >
                     <DropdownMenuLabel>Viewport fit</DropdownMenuLabel>
-                    <DropdownMenuRadioItem value="none" closeOnClick>
-                        None
-                    </DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="best" closeOnClick>
                         Best Fit
                     </DropdownMenuRadioItem>
@@ -686,10 +739,12 @@ export function TagScopeFilterDropdown({
                     </DropdownMenuRadioItem>
                 </DropdownMenuRadioGroup>
             ) : null}
-            {showViewportFit && showImageSize ? <DropdownMenuSeparator /> : null}
+            {(showUpdatedAt || showViewportFit) && showImageSize ?
+                <DropdownMenuSeparator /> :
+                null}
             {showImageSize ? (
                 <DropdownMenuRadioGroup
-                    value={sizeSort}
+                    value={sizeSort === "none" ? "" : sizeSort}
                     onValueChange={(value) => {
                         if (isImageSizeSort(value)) {
                             onImageSizeSortChange(value);
@@ -697,9 +752,6 @@ export function TagScopeFilterDropdown({
                     }}
                 >
                     <DropdownMenuLabel>Image size</DropdownMenuLabel>
-                    <DropdownMenuRadioItem value="none" closeOnClick>
-                        None
-                    </DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="largest" closeOnClick>
                         Largest
                     </DropdownMenuRadioItem>
@@ -708,12 +760,13 @@ export function TagScopeFilterDropdown({
                     </DropdownMenuRadioItem>
                 </DropdownMenuRadioGroup>
             ) : null}
-            {(showViewportFit || showImageSize) && showTagFilterFit ?
+            {(showUpdatedAt || showViewportFit || showImageSize) &&
+            showTagFilterFit ?
                 <DropdownMenuSeparator /> :
                 null}
             {showTagFilterFit ? (
                 <DropdownMenuRadioGroup
-                    value={tagFitSort}
+                    value={tagFitSort === "none" ? "" : tagFitSort}
                     onValueChange={(value) => {
                         if (isTagFilterFitSort(value)) {
                             onTagFilterFitSortChange?.(value);
@@ -721,9 +774,6 @@ export function TagScopeFilterDropdown({
                     }}
                 >
                     <DropdownMenuLabel>Tag filter fit</DropdownMenuLabel>
-                    <DropdownMenuRadioItem value="none" closeOnClick>
-                        None
-                    </DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="best" closeOnClick>
                         Best fit
                     </DropdownMenuRadioItem>
@@ -732,14 +782,17 @@ export function TagScopeFilterDropdown({
                     </DropdownMenuRadioItem>
                 </DropdownMenuRadioGroup>
             ) : null}
-            {(showViewportFit || showImageSize || showTagFilterFit) &&
+            {(showUpdatedAt ||
+                showViewportFit ||
+                showImageSize ||
+                showTagFilterFit) &&
             showRelative ?
                 <DropdownMenuSeparator /> :
                 null}
             {showRelative ? (
                 <>
                     <DropdownMenuRadioGroup
-                        value={relSort}
+                        value={relSort === "none" ? "" : relSort}
                         onValueChange={(value) => {
                             if (isRelativeSort(value)) {
                                 onRelativeSortChange?.(value);
@@ -747,9 +800,6 @@ export function TagScopeFilterDropdown({
                         }}
                     >
                         <DropdownMenuLabel>Relative</DropdownMenuLabel>
-                        <DropdownMenuRadioItem value="none" closeOnClick>
-                            None
-                        </DropdownMenuRadioItem>
                         <DropdownMenuRadioItem value="closest" closeOnClick>
                             Closest
                         </DropdownMenuRadioItem>
@@ -772,7 +822,8 @@ export function TagScopeFilterDropdown({
                     ) : null}
                 </>
             ) : null}
-            {(showViewportFit ||
+            {(showUpdatedAt ||
+                showViewportFit ||
                 showImageSize ||
                 showTagFilterFit ||
                 showRelative) &&

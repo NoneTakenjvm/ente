@@ -3,10 +3,12 @@
  *
  * Picks a few CLIP medoids (real photos) from the filtered set, then sorts by
  * min cosine distance to those medoids (best = closest first, worst = farthest).
- * Missing vectors sort last for best / first for worst. Used to surface mistags.
+ * Videos and missing vectors sort last for best / first for worst. Videos are
+ * never used as medoids or scored (poster thumbnail ≠ content).
  */
 import type { EnteFile } from "ente-media/file";
 import { KIT_EMBEDDING_DIMS } from "@/lib/kit-embedding";
+import { isEnteVideoFile } from "@/lib/media-kind";
 import {
     kitEmbeddingMinDistance,
     pickKitEmbeddingMedoids,
@@ -30,7 +32,16 @@ export const sortFilesByTagFilterFit = (
     if (mode === "none" || files.length < 2) {
         return [...files];
     }
-    const seedIds = files
+    const stills: EnteFile[] = [];
+    const videos: EnteFile[] = [];
+    for (const file of files) {
+        if (isEnteVideoFile(file)) {
+            videos.push(file);
+        } else {
+            stills.push(file);
+        }
+    }
+    const seedIds = stills
         .map((file) => file.id)
         .filter((id) => {
             const vector = embeddings.get(id);
@@ -43,9 +54,16 @@ export const sortFilesByTagFilterFit = (
     const prototypes = medoids.map((medoid) => medoid.vector);
 
     const bestFirst = mode === "best";
-    return [...files].sort((a, b) => {
-        const distA = kitEmbeddingMinDistance(a.id, prototypes, embeddings);
-        const distB = kitEmbeddingMinDistance(b.id, prototypes, embeddings);
+    const scoreById = new Map<number, number>();
+    for (const file of stills) {
+        scoreById.set(
+            file.id,
+            kitEmbeddingMinDistance(file.id, prototypes, embeddings),
+        );
+    }
+    stills.sort((a, b) => {
+        const distA = scoreById.get(a.id) ?? Number.POSITIVE_INFINITY;
+        const distB = scoreById.get(b.id) ?? Number.POSITIVE_INFINITY;
         const finiteA = Number.isFinite(distA);
         const finiteB = Number.isFinite(distB);
         if (finiteA !== finiteB) {
@@ -57,4 +75,6 @@ export const sortFilesByTagFilterFit = (
         }
         return a.id - b.id;
     });
+    // Videos never participate in CLIP ranking — trail after ranked stills.
+    return [...stills, ...videos];
 };

@@ -177,9 +177,22 @@ function SizedMasonryGrid({
     const pendingScrollTopRef = useRef<number>(0);
     const scrollRafRef = useRef<number | undefined>(undefined);
 
-    const layout: MasonryLayout = useMemo(
+    const fileIdKey = files.map((file) => file.id).join(",");
+    const placedLayout: MasonryLayout = useMemo(
         () => computeMasonryLayout(files, width, columns),
-        [columns, files, width],
+        // Placement depends on id order + geometry, not file object identity.
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- see fileIdKey
+        [columns, fileIdKey, width],
+    );
+    const layout: MasonryLayout = useMemo(
+        () => ({
+            ...placedLayout,
+            items: placedLayout.items.map((item, index) => ({
+                ...item,
+                file: files[index]!,
+            })),
+        }),
+        [files, placedLayout],
     );
     const visibleItems = useMemo(
         () => visibleMasonryItems(layout.items, scrollTop, height, 800),
@@ -309,7 +322,7 @@ const fileIdsInMarquee = (
     return ids;
 };
 
-export function ThumbnailGrid({
+export const ThumbnailGrid = memo(function ThumbnailGrid({
     files,
     onOpenFile,
     selection,
@@ -541,4 +554,4 @@ export function ThumbnailGrid({
             ) : null}
         </div>
     );
-}
+});

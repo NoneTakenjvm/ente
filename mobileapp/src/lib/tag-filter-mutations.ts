@@ -15,6 +15,20 @@ import {
     type MediaScope,
 } from "@/lib/tags";
 
+/** Untagged scope cannot hold tag clauses; include clauses replace the tagged scope. */
+const tagScopeAfterClauseChange = (
+    tagScope: TagScope,
+    mode: TagFilterMode | null,
+): TagScope => {
+    if (tagScope === "untagged") {
+        return "all";
+    }
+    if (tagScope === "tagged" && mode === "include") {
+        return "all";
+    }
+    return tagScope;
+};
+
 const removeClauseByTagFromRoot = (
     root: TagFilterGroup,
     tag: string,
@@ -200,7 +214,7 @@ export const setTagFilterModeOnFilter = (
     if (mode === null) {
         return {
             ...filter,
-            tagScope: filter.tagScope === "untagged" ? "all" : filter.tagScope,
+            tagScope: tagScopeAfterClauseChange(filter.tagScope, mode),
             root: withoutTag,
         };
     }
@@ -212,7 +226,7 @@ export const setTagFilterModeOnFilter = (
     };
     return {
         ...filter,
-        tagScope: filter.tagScope === "untagged" ? "all" : filter.tagScope,
+        tagScope: tagScopeAfterClauseChange(filter.tagScope, mode),
         root: {
             ...withoutTag,
             children: [...withoutTag.children, clause],
@@ -320,6 +334,7 @@ export const setClauseModeOnFilter = (
     mode: TagFilterMode,
 ): TagFilterSelection => ({
     ...filter,
+    tagScope: tagScopeAfterClauseChange(filter.tagScope, mode),
     root: updateClauseModeInTree(filter.root, clauseId, mode),
 });
 
@@ -358,7 +373,7 @@ export const setClauseInGroupOnFilter = (
     });
     return {
         ...filter,
-        tagScope: filter.tagScope === "untagged" ? "all" : filter.tagScope,
+        tagScope: tagScopeAfterClauseChange(filter.tagScope, mode),
         root: updatedRoot,
     };
 };

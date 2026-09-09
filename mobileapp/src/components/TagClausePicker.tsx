@@ -307,15 +307,7 @@ export function TagClausePicker({
                                                         "outline"
                                                 }
                                                 className="h-7 px-2"
-                                                disabled={
-                                                    filter.tagScope === "tagged"
-                                                }
-                                                title={
-                                                    filter.tagScope ===
-                                                    "tagged" ?
-                                                        "Already limited to tagged photos" :
-                                                        "Include every tag in this kit"
-                                                }
+                                                title="Include every tag in this kit"
                                                 onClick={() => {
                                                     handleKitInclude(
                                                         preset.tags,
@@ -362,15 +354,6 @@ export function TagClausePicker({
                                                         "outline"
                                                 }
                                                 className="h-7 px-2"
-                                                disabled={
-                                                    filter.tagScope === "tagged"
-                                                }
-                                                title={
-                                                    filter.tagScope ===
-                                                    "tagged" ?
-                                                        "Already limited to tagged photos" :
-                                                        undefined
-                                                }
                                                 onClick={() => {
                                                     handleModeChange(
                                                         tag,

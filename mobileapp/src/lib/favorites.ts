@@ -68,6 +68,27 @@ const unsyncedUpdateKey = (
 };
 
 /**
+ * Merge in-memory and outbox favourite intents, dropping those the library
+ * snapshot already confirms.
+ */
+export const mergePendingFavoriteUpdates = (
+    existing: Map<UnsyncedFavoriteUpdateKey, UnsyncedFavoriteUpdate>,
+    fromOutbox: Map<UnsyncedFavoriteUpdateKey, UnsyncedFavoriteUpdate>,
+    confirmedFavoriteIds: Set<number>,
+): Map<UnsyncedFavoriteUpdateKey, UnsyncedFavoriteUpdate> => {
+    const merged = new Map(existing);
+    for (const [key, update] of fromOutbox) {
+        merged.set(key, update);
+    }
+    for (const [key, update] of merged) {
+        if (confirmedFavoriteIds.has(update.fileID) === update.isFavorite) {
+            merged.delete(key);
+        }
+    }
+    return merged;
+};
+
+/**
  * Compute favourite file IDs from synced library state plus optimistic overrides.
  */
 export const deriveFavoriteFileIDs = (

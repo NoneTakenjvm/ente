@@ -7,12 +7,106 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-09 |
-| **Last agent / session** | Audit staged + commit/push + CI |
+| **Last agent / session** | Sort panel global None |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Hard-refresh → Manage footer `0.3.84`; Kit likeness → Rival kit penalties toggle. |
+| **Next recommended action** | Hard-refresh → `0.3.115`; Options → Sort has one global None. |
 
 **This session shipped:**
+1. **Sort panel global None** — removed per-section None radios; one top None clears all Options sorts (including nearness/kit). `APP_VERSION` → `0.3.115`.
+
+**Previous session shipped:**
+1. **Updated At in Options → Sort** — session sort (Newest/Oldest) mutually exclusive with other Options sorts; header ArrowDownUp is upload/edit only again. `APP_VERSION` → `0.3.114`.
+
+**Previous session shipped:**
+1. **Ignore archived in analysis** — CLIP/dHash scans, similar/exact dedup, compress, kit seeds/tune/suggestions, and corpus export skip archived (`isFileArchivedLocally`); tag index + Manage rename/merge/delete still include them. `APP_VERSION` → `0.3.113`.
+
+**Previous session shipped:**
+1. **Gallery filter/sort speed** — skip full library re-sort on tag patches; freeze viewport/size/fit order across tag edits; relative CLIP snake runs packed in a worker; precompute fit/size/viewport scores; reuse masonry layout when id order is unchanged. `APP_VERSION` → `0.3.112`.
+2. **Favourite + trash durability review** — seed trash on crop/compress replace and dedup prune; remap outboxes on compress replace; drop pruned files from the live library immediately; re-exclude trash at sync commit; strip favourite unsynced on trash; rebuild library from live files after trash POST. `APP_VERSION` → `0.3.111`.
+3. **Favourite + trash durability** — favourite outbox persist/hydrate/pagehide + overlay on sync; missing-file drain no longer acks; trash seeded before library drop and excluded from cache/sync/pull snapshots. `APP_VERSION` → `0.3.110`.
+
+**Previous session shipped:**
+1. **Tag outbox durability** — persist chain survives IDB failure; flush outbox on pagehide; merge ahead local tag writes on sync commit; viewer enqueues before rAF. `APP_VERSION` → `0.3.109`.
+
+**Previous session shipped:**
+1. **Tag apply robustness audit** (no code) — encrypted outbox retries failed PUTs; drafts, unsynced outbox persist, and in-flight `syncRemote` snapshots can still void a change.
+
+**Previous session shipped:**
+1. **Per-kit CLIP nearness tune** — depth-biased holdout GA (pop 36 × 70 gens × 2 restarts + polish); persist `nearnessTune` on TagPreset only when lift ≥2pp; gallery uses per-kit genome; Manage → Tags progress UI. `APP_VERSION` → `0.3.108`.
+
+**Previous session shipped:**
+1. **Updated At gallery sort** — third time-sort mode; newest of tag `updatedAt`, `editedAt`, and `updationTime`. Sort button cycles uploaded → edited → updated. `APP_VERSION` → `0.3.107`.
+
+**Previous session shipped:**
+1. **CLIP skip videos harden** — gallery nearness no longer medoids from video tag matches; `stripVideoEmbeddings` on hydrate/scan (same-ref when unchanged); corpus allowlist excludes videos; dHash kit claim skips videos. `APP_VERSION` → `0.3.106`.
+
+**Previous session shipped:**
+1. **Effects presence review** — clear `lastTagTouchFileIds` on toggle/hydrate; merge of only-excluded tags into a new name stays excluded; rename onto an existing tag no longer transfers exclusion. `APP_VERSION` → `0.3.105`.
+
+**Previous session shipped:**
+1. **Tag commit audit** — preserve system tags on viewer flush; incremental gallery patch only when filter basis unchanged; register/hydrate bump `tagIndexRevision`. `APP_VERSION` → `0.3.104`.
+2. **Tag commit perf v3** — `fileIndexById` / `filesRevision`; incremental filter; leaner cache encrypt. (prior in session)
+
+**Previous session shipped:**
+1. Per-tag **Effects presence** toggle in Manage → Tags (default on). Off = ignored by tagged/untagged presence filter. Persisted sparsely with tag types. `APP_VERSION` → `0.3.102`.
+
+**Previous session shipped:**
+1. **Set Relative** — when Relative (closest/furthest) is on, the photo viewer top bar shows **Set Relative** to pin that image as the CLIP snake start (`relativeStartFileId`). New start clears the pin. `APP_VERSION` → `0.3.101`.
+
+**Previous session shipped:**
+1. **CLIP skips videos** — never embed/score/seed/export videos (poster ≠ content); drop stale video vectors on scan; nearness/relative/fit sorts append videos unscored. `APP_VERSION` → `0.3.100`.
+
+**Previous session shipped:**
+1. **Tag commit perf v2** — incremental tag-index update; defer `indexFromMaps`; in-place library patch; sheet close via rAF + `startTransition`. `APP_VERSION` → `0.3.99`.
+
+**Previous session shipped:**
+1. **Tag commit perf** — sparse `patchFile(s)InLibrary`; 1.5s debounce for encrypted files + tag-index persist. `APP_VERSION` → `0.3.98`.
+
+**Previous session shipped:**
+1. **Query builder scroll** — dropdown used `overflow-hidden`, which clipped long queries; now `overflow-y-auto`. `APP_VERSION` → `0.3.97`.
+
+**Previous session shipped:**
+1. **CLIP setting rename** — `clipEmbeddingBatchSize` (was concurrency); UI “ORT batch size” with Auto / 4 / 8 / 12 / 16 only. `APP_VERSION` → `0.3.96`.
+
+**Previous session shipped:**
+1. **CLIP pipeline depth** — dual in-flight ORT batches; max batch briefly 1–16. `APP_VERSION` → `0.3.95`.
+
+**Previous session shipped:**
+1. **CLIP micro-opts** — JPEG decode overlaps ORT; dropped separate cache-check pass; chunk meta via getAll; WASM `numThreads`; desktop Auto batch 4→6. `APP_VERSION` → `0.3.94`.
+
+**Previous session shipped:**
+1. **PhotoViewer tag lag** — sheet clicks only mutate local `stagedTags`; one `updateTagsOnFile` on close. `APP_VERSION` → `0.3.93`.
+
+**Previous session shipped:**
+1. **CLIP batch ORT** — worker `embed-batch` via `extractor([imgs])`; Scan batch size 1–8 = images per forward; pipeline next batch while GPU runs.
+2. **Chunked write queue** — IDB `embeddingChunks` + meta v2; flush every 64 dirty vectors (O(batch) encrypt); legacy v1 monolith ignored → one rescan. `APP_VERSION` → `0.3.92`.
+
+**Previous session shipped:**
+1. **CLIP crawl fix v2** — no mid-scan index encrypt (only on end/pause); fix prefetch waiter deadlock; single worker message router; throttle progress UI. `APP_VERSION` → `0.3.91`.
+
+**Previous session shipped:**
+1. **CLIP scan stall fix** — mid-scan full-index encrypt was chaining every 48 embeds on the main thread (matches ~45–47 cliff + pause/resume reset). Coalesce to latest snapshot, checkpoint every 256, yield between encrypts. `APP_VERSION` → `0.3.90`.
+
+**Previous session shipped:**
+1. **CLIP concurrency setting** — Manage → Kit nearness: Auto (device 2/4 WebGPU, 1/2 WASM) or 1–8 override; persisted in organizer app settings. `APP_VERSION` → `0.3.88`.
+
+**Previous session shipped:**
+1. **CLIP concurrency restore** — multi-in-flight embeds again (WebGPU 2/4, WASM 1/2); worker no longer serializes; Settings shows `WebGPU×N`. Kept proven caps (higher = OOM risk, little GPU gain). `APP_VERSION` → `0.3.87`.
+
+**Previous session shipped:**
+1. **CLIP check** — confirmed 0.3.85 serializes embeds (1 in-flight); prior was WebGPU×4. Quant: hub has fp16/q8 only; q8 on WebGPU not a free win on v3.5.
+
+**Previous session shipped:**
+1. **Gallery width** — range 2–8 (was 2–6); Manage control is a ToggleGroup like Similar max group size. `APP_VERSION` → `0.3.86`.
+
+**Previous session shipped:**
+1. **CLIP scan perf** — dedicated `clip-embedding.worker` (WebGPU fp16 / WASM q8); main-thread cached/network thumb prefetch (ready queue 8); non-blocking index persist every 48; logout tears down worker. `APP_VERSION` → `0.3.85`.
+
+**Previous session shipped:**
+1. **CLIP scan perf review** (no code) — bottleneck map + recommended wins; see chat.
+
+**Previous session shipped:**
 1. AGENTS.md audit of staged nearness/relative/outbox/CLIP batch; minor doc/import tidy; committed + pushed `4867b46`; Deploy (NTPhotos) run 41 **success**.
 
 **Previous session shipped:**

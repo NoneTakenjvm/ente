@@ -139,6 +139,27 @@ describe("tag-presets", () => {
         expect(suggestions.map((s) => s.name)).toEqual(["people + vietnam"]);
     });
 
+    it("suggestTagKits and kit counts ignore archived files", () => {
+        const activeA = stubFile(1, ["people", "vietnam"]);
+        const activeB = stubFile(3, ["people", "vietnam"]);
+        const archived = {
+            ...stubFile(2, ["people", "vietnam"]),
+            magicMetadata: {
+                version: 1,
+                count: 1,
+                data: { visibility: 1 },
+            },
+        } as EnteFile;
+        const files = [activeA, archived, activeB];
+        expect(countFilesMatchingKit(files, ["people", "vietnam"])).toBe(2);
+        expect(countFilesMatchingKitExact(files, ["people", "vietnam"])).toBe(
+            2,
+        );
+        expect(
+            suggestTagKits(files, { minCount: 2 }).map((s) => s.count),
+        ).toEqual([2]);
+    });
+
     it("formatKitSuggestionName sorts tags", () => {
         expect(formatKitSuggestionName(["vietnam", "beach"])).toBe(
             "beach + vietnam",

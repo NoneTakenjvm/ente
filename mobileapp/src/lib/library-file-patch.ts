@@ -12,6 +12,80 @@ export interface LibraryFilePatchPlan {
 }
 
 /**
+ * Replace one library slot in place (no array copy).
+ *
+ * @param fileIndexById optional O(1) id→index map
+ * @returns whether a slot was updated
+ */
+export const patchFileInPlace = (
+    allFiles: EnteFile[],
+    fileId: number,
+    patched: EnteFile,
+    fileIndexById?: ReadonlyMap<number, number>,
+): boolean => {
+    const index = fileIndexById?.get(fileId) ??
+        allFiles.findIndex((file) => file.id === fileId);
+    if (index === undefined || index < 0 || allFiles[index] === patched) {
+        return false;
+    }
+    allFiles[index] = patched;
+    return true;
+};
+
+/**
+ * Replace one library slot without mapping every file.
+ *
+ * @returns a shallow-copied array, or `null` when the id is missing
+ */
+export const patchFileInLibrary = (
+    allFiles: EnteFile[],
+    fileId: number,
+    patched: EnteFile,
+    fileIndexById?: ReadonlyMap<number, number>,
+): EnteFile[] | null => {
+    const index = fileIndexById?.get(fileId) ??
+        allFiles.findIndex((file) => file.id === fileId);
+    if (index === undefined || index < 0) {
+        return null;
+    }
+    if (allFiles[index] === patched) {
+        return null;
+    }
+    const next = allFiles.slice();
+    next[index] = patched;
+    return next;
+};
+
+/**
+ * Replace several library slots in one shallow copy.
+ *
+ * Walks `allFiles` once. Unpatched entries keep the same object identity.
+ *
+ * @returns a shallow-copied array, or `null` when nothing changed
+ */
+export const patchFilesInLibrary = (
+    allFiles: EnteFile[],
+    patches: ReadonlyMap<number, EnteFile>,
+): EnteFile[] | null => {
+    if (patches.size === 0) {
+        return null;
+    }
+    let next: EnteFile[] | null = null;
+    for (let index = 0; index < allFiles.length; index += 1) {
+        const file = allFiles[index]!;
+        const patch = patches.get(file.id);
+        if (!patch || patch === file) {
+            continue;
+        }
+        if (!next) {
+            next = allFiles.slice();
+        }
+        next[index] = patch;
+    }
+    return next;
+};
+
+/**
  * Merge resolved remote file patches into the local library snapshot.
  *
  * Version-only updates (same tags + archive state) keep object swaps in

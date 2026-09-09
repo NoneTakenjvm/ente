@@ -1,7 +1,7 @@
 import {
+    encryptBlob,
     decryptMetadataJSON,
     deriveSubKeyBytes,
-    encryptMetadataJSON,
     toB64,
 } from "ente-base/crypto";
 
@@ -30,13 +30,33 @@ export const deriveCacheKey = async (masterKey: string): Promise<string> => {
 };
 
 /**
+ * Yield so the UI can paint before a large JSON.stringify blocks.
+ */
+const yieldToUi = (): Promise<void> =>
+    new Promise((resolve) => {
+        setTimeout(resolve, 0);
+    });
+
+/**
  * Encrypt a JSON-serializable value for IndexedDB storage.
+ *
+ * Large payloads (full library) stringify on the main thread after a yield,
+ * then encrypt the UTF-8 bytes in the crypto worker — avoiding Comlink's
+ * structured clone of the whole EnteFile[] graph.
  */
 export const encryptCachePayload = async (
     data: unknown,
     cacheKey: string,
-): Promise<EncryptedPayload> =>
-    encryptMetadataJSON(data, cacheKey);
+): Promise<EncryptedPayload> => {
+    await yieldToUi();
+    const json = JSON.stringify(data);
+    const bytes = new TextEncoder().encode(json);
+    const encrypted = await encryptBlob(bytes, cacheKey);
+    return {
+        encryptedData: encrypted.encryptedData,
+        decryptionHeader: encrypted.decryptionHeader,
+    };
+};
 
 /**
  * Decrypt a payload previously written by {@link encryptCachePayload}.

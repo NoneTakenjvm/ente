@@ -22,9 +22,13 @@ export const sortFilesByImageSize = (
         return [...files];
     }
     const descending = mode === "largest";
+    const areaById = new Map<number, number>();
+    for (const file of files) {
+        areaById.set(file.id, filePixelArea(file));
+    }
     return [...files].sort((a, b) => {
-        const areaA = filePixelArea(a);
-        const areaB = filePixelArea(b);
+        const areaA = areaById.get(a.id) ?? 0;
+        const areaB = areaById.get(b.id) ?? 0;
         if (areaA !== areaB) {
             return descending ? areaB - areaA : areaA - areaB;
         }

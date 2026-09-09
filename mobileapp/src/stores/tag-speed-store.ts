@@ -14,6 +14,7 @@ import {
     type PersistedTagPresets,
     type TagPreset,
 } from "@/lib/tag-presets";
+import type { KitNearnessTuneResult } from "@/lib/kit-nearness-embedding-genome";
 
 const MAX_RECENT_TAGS = 12;
 const MAX_PINNED_TAGS = 16;
@@ -30,7 +31,11 @@ interface TagSpeedState {
     addPreset: (name: string, tags: string[]) => TagPreset | undefined;
     updatePreset: (
         id: string,
-        patch: { name?: string; tags?: string[] },
+        patch: {
+            name?: string;
+            tags?: string[];
+            nearnessTune?: KitNearnessTuneResult | null;
+        },
     ) => void;
     deletePreset: (id: string) => void;
     setPinnedTags: (tags: string[]) => void;
@@ -104,7 +109,13 @@ export const useTagSpeedStore = create<TagSpeedState>((set, get) => ({
                 patch.tags !== undefined ?
                     normalizePresetTags(patch.tags) :
                     preset.tags;
-            return { ...preset, name, tags };
+            const next: TagPreset = { ...preset, name, tags };
+            if (patch.nearnessTune === null) {
+                delete next.nearnessTune;
+            } else if (patch.nearnessTune !== undefined) {
+                next.nearnessTune = patch.nearnessTune;
+            }
+            return next;
         }).filter((preset) => preset.tags.length > 0);
         set({ presets });
         persistPresets(presets);

@@ -5,6 +5,7 @@ import type { ImageSizeSort } from "@/lib/image-size-sort";
 import type { RelativeSort } from "@/lib/relative-sort";
 import type { TagFilterFitSort } from "@/lib/tag-filter-fit-sort";
 import type { TagFilterSelection } from "@/lib/tags";
+import type { UpdatedAtSort } from "@/lib/updated-at-sort";
 import type { ViewportFitSort } from "@/lib/viewport-fit";
 
 export type MediaViewOrder = "default" | "shuffled";
@@ -154,6 +155,9 @@ interface UIState {
     /** Gallery reorder by viewer viewport fit (session-only; device-specific). */
     viewportFitSort: ViewportFitSort;
     setViewportFitSort: (mode: ViewportFitSort) => void;
+    /** Gallery reorder by last update time (session-only). */
+    updatedAtSort: UpdatedAtSort;
+    setUpdatedAtSort: (mode: UpdatedAtSort) => void;
     /** Gallery reorder by pixel area (session-only). */
     imageSizeSort: ImageSizeSort;
     setImageSizeSort: (mode: ImageSizeSort) => void;
@@ -170,7 +174,14 @@ interface UIState {
     relativeSort: RelativeSort;
     /** Seed for the random first tip when relative sort is active. */
     relativeSeed: number;
+    /**
+     * Explicit chain tip (from viewer "Set Relative"). When set and still in
+     * the filtered set, overrides {@link relativeSeed}. Cleared by New start.
+     */
+    relativeStartFileId: number | undefined;
     setRelativeSort: (mode: RelativeSort) => void;
+    /** Pin the relative snake tip to this file id (requires relative sort on). */
+    setRelativeStartFileId: (fileId: number) => void;
     /** Pick a new random start and rebuild the relative chain. */
     reapplyRelativeSort: () => void;
     /**
@@ -222,9 +233,34 @@ export const useUIStore = create<UIState>((set) => ({
             viewportFitSort: mode,
             ...(mode !== "none" ?
                 {
+                    updatedAtSort: "none" as const,
                     imageSizeSort: "none" as const,
                     tagFilterFitSort: "none" as const,
                     relativeSort: "none" as const,
+                    relativeStartFileId: undefined,
+                    nearnessFilter: undefined,
+                    nearnessSource: undefined,
+                    ...(state.mediaViewOrder === "shuffled" ?
+                        {
+                            mediaViewOrder: "default" as const,
+                            mediaShuffledFileIds: [] as number[],
+                        } :
+                        {}),
+                } :
+                {}),
+        }));
+    },
+    updatedAtSort: "none",
+    setUpdatedAtSort: (mode: UpdatedAtSort): void => {
+        set((state) => ({
+            updatedAtSort: mode,
+            ...(mode !== "none" ?
+                {
+                    viewportFitSort: "none" as const,
+                    imageSizeSort: "none" as const,
+                    tagFilterFitSort: "none" as const,
+                    relativeSort: "none" as const,
+                    relativeStartFileId: undefined,
                     nearnessFilter: undefined,
                     nearnessSource: undefined,
                     ...(state.mediaViewOrder === "shuffled" ?
@@ -244,8 +280,10 @@ export const useUIStore = create<UIState>((set) => ({
             ...(mode !== "none" ?
                 {
                     viewportFitSort: "none" as const,
+                    updatedAtSort: "none" as const,
                     tagFilterFitSort: "none" as const,
                     relativeSort: "none" as const,
+                    relativeStartFileId: undefined,
                     nearnessFilter: undefined,
                     nearnessSource: undefined,
                     ...(state.mediaViewOrder === "shuffled" ?
@@ -265,8 +303,10 @@ export const useUIStore = create<UIState>((set) => ({
             ...(mode !== "none" ?
                 {
                     viewportFitSort: "none" as const,
+                    updatedAtSort: "none" as const,
                     imageSizeSort: "none" as const,
                     relativeSort: "none" as const,
+                    relativeStartFileId: undefined,
                     nearnessFilter: undefined,
                     nearnessSource: undefined,
                     ...(state.mediaViewOrder === "shuffled" ?
@@ -281,6 +321,7 @@ export const useUIStore = create<UIState>((set) => ({
     },
     relativeSort: "none",
     relativeSeed: 1,
+    relativeStartFileId: undefined,
     setRelativeSort: (mode: RelativeSort): void => {
         set((state) => ({
             relativeSort: mode,
@@ -291,7 +332,12 @@ export const useUIStore = create<UIState>((set) => ({
                         state.relativeSort === "none" ?
                             Date.now() :
                             state.relativeSeed,
+                    relativeStartFileId:
+                        state.relativeSort === "none" ?
+                            undefined :
+                            state.relativeStartFileId,
                     viewportFitSort: "none" as const,
+                    updatedAtSort: "none" as const,
                     imageSizeSort: "none" as const,
                     tagFilterFitSort: "none" as const,
                     nearnessFilter: undefined,
@@ -303,15 +349,26 @@ export const useUIStore = create<UIState>((set) => ({
                         } :
                         {}),
                 } :
-                {}),
+                { relativeStartFileId: undefined }),
         }));
+    },
+    setRelativeStartFileId: (fileId: number): void => {
+        set((state) => {
+            if (state.relativeSort === "none") {
+                return state;
+            }
+            return { relativeStartFileId: fileId };
+        });
     },
     reapplyRelativeSort: (): void => {
         set((state) => {
             if (state.relativeSort === "none") {
                 return state;
             }
-            return { relativeSeed: Date.now() };
+            return {
+                relativeSeed: Date.now(),
+                relativeStartFileId: undefined,
+            };
         });
     },
     nearnessFilter: undefined,
@@ -338,9 +395,11 @@ export const useUIStore = create<UIState>((set) => ({
                 {
                     nearnessEpoch: state.nearnessEpoch + 1,
                     viewportFitSort: "none" as const,
+                    updatedAtSort: "none" as const,
                     imageSizeSort: "none" as const,
                     tagFilterFitSort: "none" as const,
                     relativeSort: "none" as const,
+                    relativeStartFileId: undefined,
                     ...(state.mediaViewOrder === "shuffled" ?
                         {
                             mediaViewOrder: "default" as const,
@@ -365,9 +424,11 @@ export const useUIStore = create<UIState>((set) => ({
             mediaShuffleSeed: seed,
             mediaShuffledFileIds: [],
             viewportFitSort: "none",
+            updatedAtSort: "none",
             imageSizeSort: "none",
             tagFilterFitSort: "none",
             relativeSort: "none",
+            relativeStartFileId: undefined,
             nearnessFilter: undefined,
             nearnessSource: undefined,
         });
@@ -381,9 +442,11 @@ export const useUIStore = create<UIState>((set) => ({
             mediaShuffleSeed: Date.now(),
             mediaShuffledFileIds: [],
             viewportFitSort: "none",
+            updatedAtSort: "none",
             imageSizeSort: "none",
             tagFilterFitSort: "none",
             relativeSort: "none",
+            relativeStartFileId: undefined,
             nearnessFilter: undefined,
             nearnessSource: undefined,
         });

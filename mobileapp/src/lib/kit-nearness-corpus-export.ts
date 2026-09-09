@@ -16,6 +16,8 @@ import {
 } from "@/lib/kit-embedding";
 import { tagSetKey, type TagPreset } from "@/lib/tag-presets";
 import { extractUserTags } from "@/lib/tags";
+import { isEnteVideoFile } from "@/lib/media-kind";
+import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 import type { EnteFile } from "ente-media/file";
 
 /** Schema version for harness loaders. */
@@ -206,7 +208,10 @@ export const buildAnonymisedKitNearnessCorpus = (
     };
 
     const eligible = input.files.filter(
-        (file) => filterTags(extractUserTags(file)).length > 0,
+        (file) =>
+            !isEnteVideoFile(file) &&
+            !isFileArchivedLocally(file) &&
+            filterTags(extractUserTags(file)).length > 0,
     );
 
     const tagSet = new Set<string>();
