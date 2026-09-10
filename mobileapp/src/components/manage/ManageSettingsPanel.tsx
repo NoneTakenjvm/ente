@@ -858,7 +858,9 @@ export function ManageSettingsPanel(): JSX.Element {
                     <CardDescription>
                         Score stills for grain, pixelation, blur, and low
                         resolution from thumbnails. Used by Options → Sort →
-                        Image quality. Videos are never scanned.
+                        Image quality. After an app update that changes the
+                        formula, run the scan again (old scores are discarded).
+                        Videos are never scanned.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-3">

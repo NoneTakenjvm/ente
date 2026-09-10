@@ -583,9 +583,9 @@ export default function GalleryPage(): JSX.Element {
                     skipped.push(file.id);
                 }
             }
-            startTransition(() => {
-                setFrozenRelativeOrderIds([...embeddedOrder, ...skipped]);
-            });
+            // Urgent update — startTransition + useDeferredValue deferred the
+            // reorder enough that Closest/Furthest looked like a no-op.
+            setFrozenRelativeOrderIds([...embeddedOrder, ...skipped]);
         };
 
         if (withEmbeddingIds.length < 2) {
@@ -601,6 +601,23 @@ export default function GalleryPage(): JSX.Element {
         }
         relativeInsufficientToastKeyRef.current = "";
 
+        // Paint immediately with the main-thread snake so the grid never sits
+        // on an empty frozen order while the worker runs (or if Int32-era
+        // workers returned unusable ids).
+        applyOrder(
+            sortFilesByRelative(
+                filtered,
+                relativeSort,
+                embeddings,
+                relativeSeed,
+                relativeStartFileId,
+            ).map((file) => file.id),
+        );
+
+        // Large sets: refine off-thread with the same algorithm (Float64 ids).
+        if (withEmbeddingIds.length < 400) {
+            return;
+        }
         const packed = packRelativeEmbeddings(withEmbeddingIds, embeddings);
         void sortRelativeIdsInWorker(
             withEmbeddingIds,
@@ -611,15 +628,7 @@ export default function GalleryPage(): JSX.Element {
         )
             .then(applyOrder)
             .catch(() => {
-                applyOrder(
-                    sortFilesByRelative(
-                        filtered,
-                        relativeSort,
-                        embeddings,
-                        relativeSeed,
-                        relativeStartFileId,
-                    ).map((file) => file.id),
-                );
+                // Main-thread order already applied.
             });
     }, [
         embeddingCount,

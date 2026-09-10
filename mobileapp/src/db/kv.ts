@@ -127,7 +127,7 @@ export const saveEncryptedPhashIndex = async (
 
 /** fileId → combined quality score in [0, 1] (higher = better). */
 export interface PersistedQualityIndex {
-    version: 1;
+    version: 2;
     entries: Record<number, number>;
 }
 

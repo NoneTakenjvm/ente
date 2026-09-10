@@ -6,6 +6,7 @@ import {
 } from "@/db/kv";
 import { getSessionCacheKey } from "@/lib/cache-key";
 import { fileByteSize } from "@/lib/compress";
+import { QUALITY_INDEX_VERSION } from "@/lib/image-quality";
 import {
     getDecryptedThumbnailBytes,
     isThumbnailCachedLocally,
@@ -26,12 +27,12 @@ export interface ImageQualityJobOptions {
 }
 
 const emptyIndex = (): PersistedQualityIndex => ({
-    version: 1,
+    version: QUALITY_INDEX_VERSION,
     entries: {},
 });
 
 const indexFromMap = (entries: Map<number, number>): PersistedQualityIndex => ({
-    version: 1,
+    version: QUALITY_INDEX_VERSION,
     entries: Object.fromEntries(entries.entries()),
 });
 
@@ -110,7 +111,7 @@ const scoreBytesInWorker = (
 
 export const hydrateQualityIndex = async (): Promise<Map<number, number>> => {
     const persisted = await loadEncryptedQualityIndex(getSessionCacheKey());
-    if (persisted?.version !== 1) {
+    if (persisted?.version !== QUALITY_INDEX_VERSION) {
         return new Map();
     }
     const entries = new Map<number, number>();

@@ -7,13 +7,18 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-10 |
-| **Last agent / session** | Fix relative sort |
+| **Last agent / session** | PhotoViewer Image + Viewport size chip |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable |
-| **Next recommended action** | Phone QA: Relative Closest/Furthest reorder + Set Relative closes viewer (`0.3.146`). |
+| **Next recommended action** | Phone QA: full viewer chrome shows Image + Viewport sizes (`0.3.149`). |
 
 **This session shipped:**
-1. **Relative sort fix** — hydrate embeddings after library bootstrap; rebuild frozen CLIP snake when embedding count changes; toast if &lt;2 embedded photos in view; Set Relative pins tip and closes viewer (removed rematch effect). `APP_VERSION` → `0.3.146`.
+1. **PhotoViewer size chip** — chrome overlay shows `Image: W×H` (from pub magic metadata) and `Viewport: W×H` (live device). `APP_VERSION` → `0.3.149`.
+
+**Previous session shipped:**
+1. **Image quality score retune** — ranking is now `resolution × sharpness` (product) so soft/low-res cannot float into Best; mild grain/pixelation/crush only. Index **v2** invalidates prior scores (rescan required). `APP_VERSION` → `0.3.148`.
+2. **Relative sort Int32 fix** — worker used `Int32Array` for file ids; Ente ids above 2³¹−1 truncated so returned order never matched gallery files (identity passthrough). Switched to `Float64Array`, apply snake sync on main thread (no `startTransition`), worker only for ≥400. `APP_VERSION` → `0.3.147`.
+3. **Relative sort hydrate/toast/Set Relative close** (0.3.146) — bootstrap hydrate gate, rebuild on embedding count, insufficient-embedding toast, Set Relative closes viewer.
 
 **Previous session shipped:**
 1. **Image quality sort** — Manage → Settings thumbnail scan persists per-file 0–1 quality scores (resolution + sharpness/grain/pixelation/bpp from thumbs). Options → Sort → Image quality (Worst / Best); unscanned last. Encrypted `qualityIndex` KV + worker job. `APP_VERSION` → `0.3.145`.

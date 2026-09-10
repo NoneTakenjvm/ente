@@ -7,14 +7,15 @@ interface RelativeSortWorkerRequest {
     mode: "closest" | "furthest";
     seed: number;
     startFileId?: number;
-    ids: Int32Array;
+    /** File ids (Float64 — must not use Int32; Ente ids overflow signed 32-bit). */
+    ids: Float64Array;
     packed: Float32Array;
     dim: number;
 }
 
 interface RelativeSortWorkerResponse {
     requestId: number;
-    orderIds?: Int32Array;
+    orderIds?: Float64Array;
     error?: string;
 }
 
@@ -30,7 +31,7 @@ self.onmessage = (event: MessageEvent<RelativeSortWorkerRequest>): void => {
             seed,
             startFileId,
         );
-        const orderIds = Int32Array.from(order);
+        const orderIds = Float64Array.from(order);
         const response: RelativeSortWorkerResponse = { requestId, orderIds };
         self.postMessage(response, [orderIds.buffer]);
     } catch (error: unknown) {

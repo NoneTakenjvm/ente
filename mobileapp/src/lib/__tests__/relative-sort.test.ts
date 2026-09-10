@@ -182,4 +182,33 @@ describe("sortIdsByRelativePacked", () => {
         );
         expect(ordered).toEqual([1, 2, 3, 4]);
     });
+
+    it("preserves Ente-scale file ids that do not fit in Int32", () => {
+        const ids = [2_500_000_001, 2_500_000_002, 2_500_000_003, 2_500_000_004];
+        const embeddings = new Map([
+            [ids[0]!, axis(0)],
+            [ids[1]!, blend01(0.4)],
+            [ids[2]!, blend01(1)],
+            [ids[3]!, axis(1)],
+        ]);
+        const packed = new Float32Array(ids.length * 512);
+        for (let index = 0; index < ids.length; index += 1) {
+            packed.set(embeddings.get(ids[index]!)!, index * 512);
+        }
+        // Float64 round-trip (worker id buffer) must not truncate.
+        const transferred = Float64Array.from(ids);
+        expect([...transferred]).toEqual(ids);
+        expect([...Int32Array.from(ids)]).not.toEqual(ids);
+
+        const ordered = sortIdsByRelativePacked(
+            [...transferred],
+            packed,
+            512,
+            "closest",
+            0,
+            ids[0],
+        );
+        expect(ordered[0]).toBe(ids[0]);
+        expect(new Set(ordered)).toEqual(new Set(ids));
+    });
 });
