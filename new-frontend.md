@@ -7,12 +7,15 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-10 |
-| **Last agent / session** | Options Sort panel: merge Nearness + collapsible sections |
+| **Last agent / session** | No-tag filter vs system tags |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | ffmpeg WASM + full video bytes still heavy on the fallback path (Safari / no VideoEncoder) |
-| **Next recommended action** | Phone QA of `0.3.126` Options → Sort: collapsed section headers, Nearness with Choose kit / Choose tags, auto-expand when that sort is on. Also still pending: phone QA of gallery perf / compress / kit likeness. **Note:** working tree uncommitted since `85cffccd44`. |
+| **Next recommended action** | Phone QA of `0.3.127`: No tag / Has tag ignore `compressed`/`cropped`/`rotated`/`auto-cropped`. Also still pending: Options Sort UX (`0.3.126`) and gallery perf / compress / kit likeness. **Note:** working tree uncommitted since `85cffccd44`. |
 
 **This session shipped:**
+1. **No-tag ignores system tags** — tagged/untagged presence skips `SYSTEM_TAGS`; compress/crop incremental index updates no longer add them; hydrate scrubs dirty persisted buckets. `APP_VERSION` → `0.3.127`.
+
+**Previous session shipped:**
 1. **Options Sort UX** — merged Filter nearness + Kit likeness into one **Nearness** section (`Choose kit` / `Choose tags`); each Sort section is collapsible (title + chevron), auto-expanded while its sort is active (or while the nearness picker/editor is open). `APP_VERSION` → `0.3.126`.
 
 **Previous session shipped:**

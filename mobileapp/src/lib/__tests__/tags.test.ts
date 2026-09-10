@@ -11,6 +11,8 @@ import {
     patchFilteredFilesForTagTouch,
     countFilesMatchingTagFilter,
     countFileKindsInCandidates,
+    countTaggedInCandidates,
+    countUntaggedInCandidates,
     isSystemTag,
     newTagFilterNodeId,
     tagIndexToMaps,
@@ -275,6 +277,51 @@ describe("tags", () => {
             fileIdsByTag,
         );
         expect(filtered.map((file) => file.id)).toEqual([1, 3]);
+    });
+
+    it("tag presence scope ignores system tags even when indexed", () => {
+        const files = [
+            fileWithTags(1, ["compressed"]),
+            fileWithTags(2, ["compressed", "rotated"]),
+            fileWithTags(3, ["selfie", "compressed"]),
+            fileWithTags(4, []),
+        ];
+        // Simulate a dirty index that still lists system tags (older builds).
+        const fileIdsByTag = new Map<string, Set<number>>([
+            ["compressed", new Set([1, 2, 3])],
+            ["rotated", new Set([2])],
+            ["selfie", new Set([3])],
+        ]);
+        const tagged = filterFilesByTags(
+            files,
+            {
+                tagScope: "tagged",
+                favoritesScope: "all",
+                mediaScope: "all",
+                croppedScope: "all",
+                root: createEmptyTagFilterRoot(),
+            },
+            fileIdsByTag,
+        );
+        expect(tagged.map((file) => file.id)).toEqual([3]);
+        const untagged = filterFilesByTags(
+            files,
+            {
+                tagScope: "untagged",
+                favoritesScope: "all",
+                mediaScope: "all",
+                croppedScope: "all",
+                root: createEmptyTagFilterRoot(),
+            },
+            fileIdsByTag,
+        );
+        expect(untagged.map((file) => file.id).sort()).toEqual([1, 2, 4]);
+        expect(
+            countTaggedInCandidates(new Set([1, 2, 3, 4]), fileIdsByTag),
+        ).toBe(1);
+        expect(
+            countUntaggedInCandidates(new Set([1, 2, 3, 4]), fileIdsByTag),
+        ).toBe(3);
     });
 
     it("countFilesMatchingTagFilter counts untagged files in candidate set", () => {

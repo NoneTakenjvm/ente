@@ -15,6 +15,7 @@ import {
     buildTagIndex,
     createEmptyTagFilterRoot,
     emptyTagFilter,
+    isSystemTag,
     isTagFilterActive,
     isTagFilterClause,
     isTagFilterGroup,
@@ -219,6 +220,7 @@ const cancelScheduledTagIndexSave = (): void => {
 
 /**
  * Move one file between tag buckets without scanning every tag in the library.
+ * System tags are ignored — they must not affect tagged/untagged presence.
  *
  * @returns true when a tag key was added or removed from the index
  */
@@ -229,8 +231,10 @@ const applyIncrementalFileTags = (
     newTags: readonly string[],
 ): boolean => {
     let tagKeysChanged = false;
-    const previous = new Set(previousTags);
-    const next = new Set(newTags);
+    const previous = new Set(
+        previousTags.filter((tag) => !isSystemTag(tag)),
+    );
+    const next = new Set(newTags.filter((tag) => !isSystemTag(tag)));
 
     for (const tag of previous) {
         if (next.has(tag)) {
@@ -264,6 +268,21 @@ const applyIncrementalFileTags = (
     }
 
     return tagKeysChanged;
+};
+
+/** Drop system-tag buckets left by older builds that indexed them. */
+const scrubSystemTagsFromIndex = (
+    fileIdsByTag: Map<string, Set<number>>,
+): boolean => {
+    let changed = false;
+    for (const tag of [...fileIdsByTag.keys()]) {
+        if (!isSystemTag(tag)) {
+            continue;
+        }
+        fileIdsByTag.delete(tag);
+        changed = true;
+    }
+    return changed;
 };
 
 const persistTagTypesConfig = (
@@ -539,12 +558,19 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
 
     hydrateFromPersisted: (index: PersistedTagIndex): void => {
         const { tags, fileIdsByTag } = tagIndexToMaps(index);
+        const scrubbed = scrubSystemTagsFromIndex(fileIdsByTag);
+        const tagList = scrubbed ?
+            [...fileIdsByTag.keys()].sort() :
+            tags.filter((tag) => !isSystemTag(tag));
         set({
-            tags,
+            tags: tagList,
             fileIdsByTag,
             tagIndexRevision: get().tagIndexRevision + 1,
             lastTagTouchFileIds: undefined,
         });
+        if (scrubbed) {
+            persistCurrentIndexNow(tagList, fileIdsByTag);
+        }
     },
 
     hydrateTagTypes: (config: PersistedTagTypeConfig | undefined): void => {
@@ -904,7 +930,9 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
 
         if (canUseIncremental) {
             for (const { fileId, tags, previousTags } of updates) {
-                touchedTagNames.push(...tags);
+                touchedTagNames.push(
+                    ...tags.filter((tag) => !isSystemTag(tag)),
+                );
                 if (applyIncrementalFileTags(
                     fileIdsByTag,
                     fileId,
@@ -918,17 +946,26 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             const touchedFileIds = new Set<number>();
             for (const { fileId, tags } of updates) {
                 touchedFileIds.add(fileId);
-                touchedTagNames.push(...tags);
+                touchedTagNames.push(
+                    ...tags.filter((tag) => !isSystemTag(tag)),
+                );
             }
             removeFilesFromIndex(fileIdsByTag, touchedFileIds);
             for (const { fileId, tags } of updates) {
                 for (const tag of tags) {
+                    if (isSystemTag(tag)) {
+                        continue;
+                    }
                     const existing = fileIdsByTag.get(tag);
                     const ids = new Set(existing);
                     ids.add(fileId);
                     fileIdsByTag.set(tag, ids);
                 }
             }
+            tagKeysChanged = true;
+        }
+
+        if (scrubSystemTagsFromIndex(fileIdsByTag)) {
             tagKeysChanged = true;
         }
 

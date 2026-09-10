@@ -412,6 +412,10 @@ const taggedIdsInCandidates = (
 ): Set<number> => {
     const taggedIds = new Set<number>();
     for (const [tag, ids] of fileIdsByTag) {
+        // System tags never count toward tagged/untagged presence.
+        if (isSystemTag(tag)) {
+            continue;
+        }
         if (
             includeInEffectsPresenceByName &&
             !isTagIncludedInEffectsPresence(tag, includeInEffectsPresenceByName)
