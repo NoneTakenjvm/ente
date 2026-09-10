@@ -3,8 +3,10 @@ import type { StateCreator } from "zustand";
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
 import {
+    applyFavoriteUpdateToIds,
     createUnsyncedFavoriteUpdate,
     deriveFavoriteFileIDs,
+    findUserFavoritesCollection,
     mergePendingFavoriteUpdates,
     type UnsyncedFavoriteUpdate,
     type UnsyncedFavoriteUpdateKey,
@@ -92,7 +94,8 @@ const createFavoritesStore: StateCreator<FavoritesState> = (set, get) => ({
         collections: Collection[],
         allFiles: EnteFile[],
     ): boolean => {
-        const unsyncedFavoriteUpdates = new Map(get().unsyncedFavoriteUpdates);
+        const state = get();
+        const unsyncedFavoriteUpdates = new Map(state.unsyncedFavoriteUpdates);
         const { key, update } = createUnsyncedFavoriteUpdate(
             file,
             userId,
@@ -100,16 +103,27 @@ const createFavoritesStore: StateCreator<FavoritesState> = (set, get) => ({
         );
         unsyncedFavoriteUpdates.set(key, update);
 
-        const { favoritesCollectionId, favoriteFileIds } = deriveFavoriteFileIDs(
+        const favoriteFileIds = applyFavoriteUpdateToIds(
+            state.favoriteFileIds,
+            update,
             userId,
-            collections,
             allFiles,
-            unsyncedFavoriteUpdates,
         );
+        const pendingFavoriteFileIds = new Set(state.pendingFavoriteFileIds);
+        pendingFavoriteFileIds.add(file.id);
+
+        const favoritesCollection =
+            state.favoritesCollectionId !== null ?
+                undefined :
+                findUserFavoritesCollection(collections, userId);
+
         set({
             unsyncedFavoriteUpdates,
-            favoritesCollectionId,
             favoriteFileIds,
+            pendingFavoriteFileIds,
+            ...(favoritesCollection ?
+                { favoritesCollectionId: favoritesCollection.id } :
+                {}),
         });
         return favoriteFileIds.has(file.id);
     },
@@ -118,26 +132,26 @@ const createFavoritesStore: StateCreator<FavoritesState> = (set, get) => ({
         file: EnteFile,
         userId: number,
         wasFavorite: boolean,
-        collections: Collection[],
+        _collections: Collection[],
         allFiles: EnteFile[],
     ): void => {
-        const unsyncedFavoriteUpdates = new Map(get().unsyncedFavoriteUpdates);
-        const { key } = createUnsyncedFavoriteUpdate(
+        const state = get();
+        const unsyncedFavoriteUpdates = new Map(state.unsyncedFavoriteUpdates);
+        const { key, update } = createUnsyncedFavoriteUpdate(
             file,
             userId,
             !wasFavorite,
         );
         unsyncedFavoriteUpdates.delete(key);
 
-        const { favoritesCollectionId, favoriteFileIds } = deriveFavoriteFileIDs(
+        const favoriteFileIds = applyFavoriteUpdateToIds(
+            state.favoriteFileIds,
+            { ...update, isFavorite: wasFavorite },
             userId,
-            collections,
             allFiles,
-            unsyncedFavoriteUpdates,
         );
         set({
             unsyncedFavoriteUpdates,
-            favoritesCollectionId,
             favoriteFileIds,
         });
     },

@@ -86,6 +86,9 @@ import { useUIStore, useUploadJobStore } from "@/stores/ui-store";
 import type { EnteFile } from "ente-media/file";
 import { toast } from "sonner";
 
+/** Stable empty set so gallery can skip favourite-store updates when unused. */
+const EMPTY_FAVORITE_FILE_IDS = new Set<number>();
+
 /**
  * Keep a frozen id order; drop gone ids; append newcomers at the end.
  */
@@ -129,8 +132,12 @@ export default function GalleryPage(): JSX.Element {
 
     const allFiles = useLibraryStore((s) => s.allFiles);
     const filesRevision = useLibraryStore((s) => s.filesRevision);
-    const favoriteFileIds = useFavoritesStore((s) => s.favoriteFileIds);
     const tagFilter = useTagStore((s) => s.tagFilter);
+    // Only subscribe to favourite-id changes when the filter uses them — otherwise
+    // starring a photo would re-render the whole gallery page.
+    const favoritesScopeActive = tagFilter.favoritesScope !== "all";
+    const favoriteFileIds = useFavoritesStore((s) =>
+        favoritesScopeActive ? s.favoriteFileIds : EMPTY_FAVORITE_FILE_IDS);
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
     const includeInEffectsPresenceByName = useTagStore(
         (s) => s.includeInEffectsPresenceByName,

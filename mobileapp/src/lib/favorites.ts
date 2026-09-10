@@ -89,6 +89,54 @@ export const mergePendingFavoriteUpdates = (
 };
 
 /**
+ * File IDs touched by one unsynced favourite intent.
+ *
+ * Owned files: just {@link UnsyncedFavoriteUpdate.fileID}. Shared files keyed
+ * by hash: every non-owned library row with that hash/type (may scan
+ * {@link allFiles}).
+ */
+export const fileIdsForFavoriteUpdate = (
+    update: UnsyncedFavoriteUpdate,
+    userId: number,
+    allFiles: EnteFile[],
+): number[] => {
+    if (!update.fileHashAndTypeKey) {
+        return [update.fileID];
+    }
+    const ids: number[] = [];
+    for (const file of allFiles) {
+        if (file.ownerID === userId) {
+            continue;
+        }
+        if (hashAndTypeKey(file) === update.fileHashAndTypeKey) {
+            ids.push(file.id);
+        }
+    }
+    return ids.length > 0 ? ids : [update.fileID];
+};
+
+/**
+ * Patch an existing favourite-id set for one unsynced intent (no full-library
+ * baseline rebuild). Owned toggles are O(1); shared hash toggles scan once.
+ */
+export const applyFavoriteUpdateToIds = (
+    favoriteFileIds: Set<number>,
+    update: UnsyncedFavoriteUpdate,
+    userId: number,
+    allFiles: EnteFile[],
+): Set<number> => {
+    const next = new Set(favoriteFileIds);
+    for (const fileID of fileIdsForFavoriteUpdate(update, userId, allFiles)) {
+        if (update.isFavorite) {
+            next.add(fileID);
+        } else {
+            next.delete(fileID);
+        }
+    }
+    return next;
+};
+
+/**
  * Compute favourite file IDs from synced library state plus optimistic overrides.
  */
 export const deriveFavoriteFileIDs = (
@@ -130,16 +178,11 @@ export const deriveFavoriteFileIDs = (
     }
 
     for (const update of unsyncedFavoriteUpdates.values()) {
-        const updatedFileIDs = update.fileHashAndTypeKey ?
-            allFiles
-                .filter(
-                    (file) =>
-                        file.ownerID !== userId &&
-                          hashAndTypeKey(file) === update.fileHashAndTypeKey,
-                )
-                .map((file) => file.id) :
-            [update.fileID];
-        for (const fileID of updatedFileIDs) {
+        for (const fileID of fileIdsForFavoriteUpdate(
+            update,
+            userId,
+            allFiles,
+        )) {
             if (update.isFavorite) {
                 favoriteFileIds.add(fileID);
             } else {

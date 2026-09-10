@@ -1,5 +1,6 @@
 import {
     useCallback,
+    useDeferredValue,
     useEffect,
     useMemo,
     useState,
@@ -61,6 +62,8 @@ export function TagFilterBar({
 }: TagFilterBarProps): JSX.Element {
     const allFiles = useLibraryStore((s) => s.allFiles);
     const favoriteFileIds = useFavoritesStore((s) => s.favoriteFileIds);
+    // Defer the favourites count so starring stays snappy; the badge can lag a frame.
+    const deferredFavoriteFileIds = useDeferredValue(favoriteFileIds);
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
     const tagFilter = useTagStore((s) => s.tagFilter);
     const includeInEffectsPresenceByName = useTagStore(
@@ -309,8 +312,8 @@ export function TagFilterBar({
 
     const favoritesCount = useMemo(
         (): number =>
-            countFavoritesInCandidates(libraryFileIds, favoriteFileIds),
-        [libraryFileIds, favoriteFileIds],
+            countFavoritesInCandidates(libraryFileIds, deferredFavoriteFileIds),
+        [libraryFileIds, deferredFavoriteFileIds],
     );
 
     const notFavoritesCount = libraryFileIds.size - favoritesCount;
