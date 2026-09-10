@@ -11,6 +11,7 @@ import {
     SlidersHorizontal,
     Images,
     Film,
+    History,
 } from "lucide-react";
 import { useState, type ReactNode, type JSX } from "react";
 import { useSessionStore } from "@/stores/session-store";
@@ -41,6 +42,7 @@ interface AppShellProps {
 const navItems = [
     { href: "/gallery", label: "Media", icon: Film },
     { href: "/albums", label: "Albums", icon: Images },
+    { href: "/recents", label: "Recents", icon: History },
     { href: "/manage", label: "Manage", icon: SlidersHorizontal },
 ] as const;
 
@@ -111,7 +113,7 @@ export function AppShell({
                 className="z-40 shrink-0 border-t border-border bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur supports-backdrop-filter:bg-background/80"
                 aria-label="Main navigation"
             >
-                <div className="grid grid-cols-3 gap-1 px-2 py-1.5">
+                <div className="grid grid-cols-4 gap-1 px-2 py-1.5">
                     {navItems.map(({ href, label, icon: Icon }) => {
                         const active = pathname === href;
                         return (

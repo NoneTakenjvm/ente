@@ -578,6 +578,10 @@ const remapOutboxesAfterReplace = async (
     toFileId: number,
 ): Promise<void> => {
     remapEditHistoryFileId(fromFileId, toFileId);
+    const { useViewSessionsStore } = await import(
+        "@/stores/view-sessions-store"
+    );
+    useViewSessionsStore.getState().remapFileId(fromFileId, toFileId);
     await Promise.all([
         remapFavoriteOutboxFileId(fromFileId, toFileId),
         remapVisibilityOutboxFileId(fromFileId, toFileId),
@@ -616,6 +620,11 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             loadEncryptedFiles(cacheKey),
             loadEncryptedTagIndex(cacheKey),
         ]);
+
+        await import("@/stores/view-sessions-store").then(
+            ({ useViewSessionsStore }) =>
+                useViewSessionsStore.getState().hydrateFromCache(),
+        );
 
         if (!files?.length && !collections?.length) {
             set({ syncStatus: "idle" });

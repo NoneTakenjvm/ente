@@ -13,7 +13,8 @@ export type KvKey =
     "visibilityOutbox" |
     "derivedReplaceOutbox" |
     "trashItems" |
-    "trashCollectionKeys";
+    "trashCollectionKeys" |
+    "viewSessions";
 
 export interface KvRecord {
     key: KvKey;
