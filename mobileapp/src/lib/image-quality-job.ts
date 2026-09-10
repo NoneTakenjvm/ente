@@ -109,6 +109,13 @@ const scoreBytesInWorker = (
         worker.postMessage(request, [request.bytes.buffer]);
     });
 
+/**
+ * Load the encrypted quality index, or an empty map when missing/stale.
+ *
+ * [Note: quality index version] Scores are discarded when
+ * `persisted.version !== QUALITY_INDEX_VERSION` so formula changes force a
+ * Manage → Settings rescan rather than ranking with incompatible numbers.
+ */
 export const hydrateQualityIndex = async (): Promise<Map<number, number>> => {
     const persisted = await loadEncryptedQualityIndex(getSessionCacheKey());
     if (persisted?.version !== QUALITY_INDEX_VERSION) {
