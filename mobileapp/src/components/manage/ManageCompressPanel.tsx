@@ -5,19 +5,21 @@ import {
     useState,
     type JSX,
 } from "react";
-import { Settings } from "lucide-react";
 import { ThumbnailGrid } from "@/components/ThumbnailGrid";
 import { CompressionPanel } from "@/components/CompressionPanel";
 import { BatchCompressPreviewSheet } from "@/components/manage/BatchCompressPreviewSheet";
+import { TagClausePicker } from "@/components/TagClausePicker";
+import { TagQueryEditor } from "@/components/TagQueryEditor";
+import { TagScopeFilterDropdown } from "@/components/TagScopeFilterDropdown";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
-    Dialog,
-    DialogContent,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from "@/components/ui/dialog";
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuGroup,
+    DropdownMenuLabel,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -27,24 +29,41 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
-import { Slider } from "@/components/ui/slider";
 import { Spinner } from "@/components/ui/spinner";
+import { useTagFilterDraft } from "@/hooks/use-tag-filter-draft";
 import {
     compressManageCandidates,
     DEFAULT_JPEG_QUALITY,
     DEFAULT_VIDEO_CRF,
+    fileByteSize,
     filterCompressCandidatesByMinSize,
+    formatFileSize,
     isAlreadyCompressed,
-    MAX_VIDEO_CRF,
     MIN_SIZE_FILTER_PRESETS,
-    MIN_VIDEO_CRF,
     readCompressMinSizeBytes,
     sortCompressCandidatesBySize,
     writeCompressMinSizeBytes,
 } from "@/lib/compress";
 import { runCompressJob } from "@/lib/compress-job";
+import { mediaKindForFile } from "@/lib/media-kind";
+import {
+    countFavoritesInCandidates,
+    countFileKindsInCandidates,
+    countTagFilterClauses,
+    countTaggedInCandidates,
+    describeTagFilter,
+    emptyTagFilter,
+    filterFilesByTags,
+    GROUPED_TAG_FILTER_DROPDOWN_HINT,
+    isFlatTagFilterRoot,
+    isTagFilterActive,
+} from "@/lib/tags";
+import { VIDEO_COMPRESS_BATCH_MAX_LONG_EDGE } from "@/lib/transcode/compress-media";
 import { useCompressJobStore } from "@/stores/ui-store";
+import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
+import { useTagStore } from "@/stores/tag-store";
+import { ListFilter } from "lucide-react";
 import type { EnteFile } from "ente-media/file";
 
 const COMPRESS_FOOTER_INSET_PX = 220;
@@ -54,11 +73,37 @@ interface ManageCompressPanelProps {
     libraryLoaded: boolean;
 }
 
+const stageLabel = (stage: string): string => {
+    switch (stage) {
+        case "download":
+            return "Downloading";
+        case "compress":
+            return "Compressing";
+        case "upload":
+            return "Uploading";
+        case "skip":
+            return "Skipped";
+        case "done":
+            return "Done";
+        case "error":
+            return "Failed";
+        default:
+            return "Working";
+    }
+};
+
 export function ManageCompressPanel({
     files,
     libraryLoaded,
 }: ManageCompressPanelProps): JSX.Element {
     const compressAndUploadMedia = useLibraryStore((s) => s.compressAndUploadMedia);
+    const favoriteFileIds = useFavoritesStore((s) => s.favoriteFileIds);
+    const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
+    const includeInEffectsPresenceByName = useTagStore(
+        (s) => s.includeInEffectsPresenceByName,
+    );
+
+    const { filter, actions, setFilter } = useTagFilterDraft();
 
     const jobStatus = useCompressJobStore((s) => s.status);
     const jobProgress = useCompressJobStore((s) => s.progress);
@@ -74,8 +119,6 @@ export function ManageCompressPanel({
         readCompressMinSizeBytes,
     );
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-    const [videoCrf, setVideoCrf] = useState<number>(DEFAULT_VIDEO_CRF);
-    const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
     const [batchPreviewOpen, setBatchPreviewOpen] = useState<boolean>(false);
     const [resultMessage, setResultMessage] = useState<string | undefined>();
     const [compressTarget, setCompressTarget] = useState<EnteFile | undefined>();
@@ -84,9 +127,55 @@ export function ManageCompressPanel({
     const jobPaused = useRef<boolean>(false);
     const jobStopped = useRef<boolean>(false);
 
+    const libraryFileIds = useMemo(
+        (): Set<number> => new Set(files.map((file) => file.id)),
+        [files],
+    );
+
+    const taggedCount = useMemo(
+        (): number =>
+            countTaggedInCandidates(
+                libraryFileIds,
+                fileIdsByTag,
+                includeInEffectsPresenceByName,
+            ),
+        [fileIdsByTag, includeInEffectsPresenceByName, libraryFileIds],
+    );
+    const untaggedCount = libraryFileIds.size - taggedCount;
+    const favoritesCount = useMemo(
+        (): number =>
+            countFavoritesInCandidates(libraryFileIds, favoriteFileIds),
+        [favoriteFileIds, libraryFileIds],
+    );
+    const notFavoritesCount = libraryFileIds.size - favoritesCount;
+    const fileKindCounts = useMemo(
+        (): ReturnType<typeof countFileKindsInCandidates> =>
+            countFileKindsInCandidates(libraryFileIds, files),
+        [files, libraryFileIds],
+    );
+
+    const tagFiltered = useMemo(
+        () =>
+            filterFilesByTags(files, filter, fileIdsByTag, {
+                favoriteFileIds,
+                includeInEffectsPresenceByName,
+            }),
+        [
+            favoriteFileIds,
+            fileIdsByTag,
+            files,
+            filter,
+            includeInEffectsPresenceByName,
+        ],
+    );
+
     const baseCandidates = useMemo(
-        () => compressManageCandidates(files, includePreviouslyCompressed),
-        [files, includePreviouslyCompressed],
+        () =>
+            compressManageCandidates(
+                tagFiltered,
+                includePreviouslyCompressed,
+            ),
+        [includePreviouslyCompressed, tagFiltered],
     );
     const candidates = useMemo(
         () =>
@@ -114,6 +203,44 @@ export function ManageCompressPanel({
         () => candidates.filter((file) => activeSelectedIds.has(file.id)),
         [activeSelectedIds, candidates],
     );
+
+    const selectionSummary = useMemo((): string => {
+        if (selectedFiles.length === 0) {
+            return "Nothing selected";
+        }
+        let photos = 0;
+        let videos = 0;
+        let knownBytes = 0;
+        let unknown = 0;
+        for (const file of selectedFiles) {
+            const kind = mediaKindForFile(file);
+            if (kind === "video") {
+                videos += 1;
+            } else {
+                photos += 1;
+            }
+            const size = fileByteSize(file);
+            if (size > 0) {
+                knownBytes += size;
+            } else {
+                unknown += 1;
+            }
+        }
+        const parts: string[] = [];
+        if (photos > 0) {
+            parts.push(`${photos} photo${photos === 1 ? "" : "s"}`);
+        }
+        if (videos > 0) {
+            parts.push(`${videos} video${videos === 1 ? "" : "s"}`);
+        }
+        if (knownBytes > 0) {
+            parts.push(formatFileSize(knownBytes));
+        }
+        if (unknown > 0) {
+            parts.push(knownBytes > 0 ? "+ unknown" : "size unknown");
+        }
+        return parts.join(" · ");
+    }, [selectedFiles]);
 
     const toggleFile = useCallback((file: EnteFile): void => {
         setSelectedIds((current) => {
@@ -174,7 +301,12 @@ export function ManageCompressPanel({
         setJobError(undefined);
         setResultMessage(undefined);
         setJobStatus("running");
-        setJobProgress(0, activeSelectedIds.size);
+        setJobProgress({
+            current: 0,
+            total: activeSelectedIds.size,
+            stage: "download",
+            fileLabel: "",
+        });
         setBatchPreviewOpen(false);
 
         void runCompressJob({
@@ -182,11 +314,21 @@ export function ManageCompressPanel({
             fileIds: activeSelectedIds,
             includePreviouslyCompressed,
             quality: DEFAULT_JPEG_QUALITY,
-            videoCrf,
+            videoCrf: DEFAULT_VIDEO_CRF,
             minSizeBytes,
+            maxLongEdge: VIDEO_COMPRESS_BATCH_MAX_LONG_EDGE,
             signal: jobAbort.current.signal,
             shouldPause: () => jobPaused.current,
-            onProgress: setJobProgress,
+            onProgress: (update) => {
+                setJobProgress({
+                    current: update.current,
+                    total: update.total,
+                    stage: update.stage,
+                    fileLabel: update.fileLabel,
+                    ratio: update.ratio,
+                    encoder: update.encoder,
+                });
+            },
             compressFile: (fileId, options) =>
                 compressAndUploadMedia(fileId, options),
         })
@@ -235,7 +377,6 @@ export function ManageCompressPanel({
         minSizeBytes,
         setJobProgress,
         setJobStatus,
-        videoCrf,
     ]);
 
     const handleReviewCompression = (): void => {
@@ -265,13 +406,28 @@ export function ManageCompressPanel({
         resetJob();
     };
 
+    const jobRunning = jobStatus === "running";
+    const stageRatioPercent =
+        jobProgress.ratio !== undefined ?
+            Math.round(jobProgress.ratio * 100) :
+            undefined;
     const progressPercent =
         jobProgress.total > 0 ?
-            Math.round((jobProgress.current / jobProgress.total) * 100) :
+            Math.round(
+                ((jobProgress.current - (stageRatioPercent !== undefined ?
+                    (100 - stageRatioPercent) / 100 :
+                    0)) /
+                    jobProgress.total) *
+                    100,
+            ) :
             0;
-
-    const jobRunning = jobStatus === "running";
-    const settingsSummary = `Video CRF ${videoCrf}`;
+    const barPercent =
+        stageRatioPercent !== undefined && jobProgress.total > 0 ?
+            Math.round(
+                ((jobProgress.current - 1) / jobProgress.total) * 100 +
+                    stageRatioPercent / jobProgress.total,
+            ) :
+            progressPercent;
 
     const gridSelection = useMemo(
         () => ({
@@ -288,9 +444,123 @@ export function ManageCompressPanel({
         (preset) => preset.bytes === minSizeBytes,
     ) ?? MIN_SIZE_FILTER_PRESETS[0]!;
 
+    const clauseCount = countTagFilterClauses(filter.root);
+    const filterActive = isTagFilterActive(filter);
+    const isFlat = isFlatTagFilterRoot(filter.root);
+    const hasQueryContent =
+        clauseCount > 0 ||
+        filter.tagScope !== "all" ||
+        filter.favoritesScope !== "all" ||
+        filter.mediaScope !== "all" ||
+        filter.croppedScope !== "all";
+
+    const encoderHint =
+        jobProgress.encoder === "webcodecs" ?
+            "Hardware H.264" :
+            jobProgress.encoder === "ffmpeg" ?
+                "ffmpeg (CPU)" :
+                jobProgress.encoder === "photohoard" ?
+                    "AVIF/WebP" :
+                    undefined;
+
     return (
         <>
             <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-3">
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    <TagScopeFilterDropdown
+                        taggedCount={taggedCount}
+                        untaggedCount={untaggedCount}
+                        favoritesCount={favoritesCount}
+                        notFavoritesCount={notFavoritesCount}
+                        photoCount={fileKindCounts.photos}
+                        videoCount={fileKindCounts.videos}
+                        croppedCount={fileKindCounts.cropped}
+                        notCroppedCount={fileKindCounts.notCropped}
+                        tagScope={filter.tagScope}
+                        onTagScopeChange={actions.setTagScope}
+                        favoritesScope={filter.favoritesScope}
+                        onFavoritesScopeChange={actions.setFavoritesScope}
+                        mediaScope={filter.mediaScope}
+                        onMediaScopeChange={actions.setMediaScope}
+                        croppedScope={filter.croppedScope}
+                        onCroppedScopeChange={actions.setCroppedScope}
+                    />
+                    <TagClausePicker
+                        filter={filter}
+                        onSetTagFilterMode={actions.setTagFilterMode}
+                        onSetKitTagsMode={actions.setKitTagsMode}
+                        onSetRootOp={(op) => {
+                            actions.setGroupOp(filter.root.id, op);
+                        }}
+                        triggerLabel={
+                            clauseCount === 0 ?
+                                "Tags" :
+                                `${clauseCount} tag${clauseCount === 1 ? "" : "s"}`
+                        }
+                        triggerVariant={clauseCount > 0 ? "secondary" : "outline"}
+                        disabled={!isFlat || jobRunning}
+                    />
+                    <DropdownMenu>
+                        <DropdownMenuTrigger
+                            render={
+                                <Button
+                                    type="button"
+                                    variant={hasQueryContent ? "secondary" : "outline"}
+                                    size="icon-sm"
+                                    disabled={jobRunning}
+                                    aria-label="Edit tag query"
+                                >
+                                    <ListFilter />
+                                </Button>
+                            }
+                        />
+                        <DropdownMenuContent
+                            align="start"
+                            className="flex max-h-[min(80dvh,28rem)] w-[min(100vw-2rem,24rem)] flex-col overflow-x-hidden overflow-y-auto overscroll-contain p-2"
+                        >
+                            <DropdownMenuGroup className="flex min-h-0 flex-1 flex-col gap-3">
+                                <DropdownMenuLabel className="shrink-0 px-0">
+                                    Query builder
+                                </DropdownMenuLabel>
+                                <TagQueryEditor
+                                    filter={filter}
+                                    actions={actions}
+                                    taggedCount={taggedCount}
+                                    untaggedCount={untaggedCount}
+                                    favoritesCount={favoritesCount}
+                                    notFavoritesCount={notFavoritesCount}
+                                    photoCount={fileKindCounts.photos}
+                                    videoCount={fileKindCounts.videos}
+                                    croppedCount={fileKindCounts.cropped}
+                                    notCroppedCount={fileKindCounts.notCropped}
+                                />
+                            </DropdownMenuGroup>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                    {!isFlat ? (
+                        <p className="w-full text-xs text-muted-foreground">
+                            {GROUPED_TAG_FILTER_DROPDOWN_HINT}
+                        </p>
+                    ) : null}
+                </div>
+
+                {filterActive ? (
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <span className="text-muted-foreground">
+                            {describeTagFilter(filter)}
+                        </span>
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            size="xs"
+                            disabled={jobRunning}
+                            onClick={() => setFilter(emptyTagFilter())}
+                        >
+                            Clear
+                        </Button>
+                    </div>
+                ) : null}
+
                 <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
                     <p className="text-xs text-muted-foreground">
                         {candidates.length} compressible file
@@ -352,6 +622,7 @@ export function ManageCompressPanel({
                     files={candidates}
                     selection={gridSelection}
                     footerInsetPx={COMPRESS_FOOTER_INSET_PX}
+                    showFileSize
                 />
 
                 {resultMessage ? (
@@ -368,19 +639,9 @@ export function ManageCompressPanel({
             </div>
 
             <footer className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-30 flex flex-col gap-3 border-t border-border bg-background/95 px-4 py-3 backdrop-blur">
-                <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm text-muted-foreground">{settingsSummary}</p>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={jobRunning}
-                        onClick={() => setSettingsOpen(true)}
-                    >
-                        <Settings className="size-4" />
-                        Settings
-                    </Button>
-                </div>
+                {!jobRunning ? (
+                    <p className="text-sm text-muted-foreground">{selectionSummary}</p>
+                ) : null}
 
                 <div className="flex flex-wrap gap-2">
                     <Button
@@ -444,48 +705,31 @@ export function ManageCompressPanel({
 
                 {jobRunning ? (
                     <div className="flex flex-col gap-1">
-                        <Progress value={progressPercent} className="h-1" />
+                        <Progress
+                            value={Math.min(100, Math.max(0, barPercent))}
+                            className="h-1"
+                        />
                         <span className="flex items-center gap-2 text-xs text-muted-foreground">
                             <Spinner className="size-3" />
-                            Compressing {jobProgress.current} / {jobProgress.total}
+                            {jobProgress.current} / {jobProgress.total}
+                            {jobProgress.fileLabel ?
+                                ` · ${jobProgress.fileLabel}` :
+                                ""}
+                            {" · "}
+                            {stageLabel(jobProgress.stage)}
+                            {stageRatioPercent !== undefined ?
+                                ` ${stageRatioPercent}%` :
+                                ""}
+                            {encoderHint ? ` · ${encoderHint}` : ""}
                         </span>
                     </div>
                 ) : null}
             </footer>
 
-            <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-                <DialogContent className="sm:max-w-md">
-                    <DialogHeader>
-                        <DialogTitle>Compression settings</DialogTitle>
-                    </DialogHeader>
-                    <Field>
-                        <FieldLabel>Video CRF {videoCrf}</FieldLabel>
-                        <Slider
-                            min={MIN_VIDEO_CRF}
-                            max={MAX_VIDEO_CRF}
-                            value={[videoCrf]}
-                            disabled={jobRunning}
-                            onValueChange={(value) => {
-                                const next = Array.isArray(value) ? value[0] : value;
-                                if (next !== undefined) {
-                                    setVideoCrf(next);
-                                }
-                            }}
-                        />
-                    </Field>
-                    <DialogFooter>
-                        <Button type="button" onClick={() => setSettingsOpen(false)}>
-                            Done
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-
             <BatchCompressPreviewSheet
                 open={batchPreviewOpen}
                 files={selectedFiles}
                 minSizeLabel={minSizePreset.label}
-                videoCrf={videoCrf}
                 onClose={() => setBatchPreviewOpen(false)}
                 onConfirm={handleStartJob}
             />

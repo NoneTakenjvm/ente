@@ -54,6 +54,8 @@ interface ThumbnailGridProps {
     selection?: ThumbnailGridSelection;
     /** Bottom padding so the last row clears a fixed footer (px). */
     footerInsetPx?: number;
+    /** Compress picker: show size chips on cells. */
+    showFileSize?: boolean;
 }
 
 interface RowData {
@@ -61,6 +63,7 @@ interface RowData {
     layout: ThumbnailGridLayout;
     onOpenFile?: (file: EnteFile) => void;
     selection?: ThumbnailGridSelection;
+    showFileSize?: boolean;
 }
 
 const GridRow = memo(function GridRow({
@@ -68,7 +71,7 @@ const GridRow = memo(function GridRow({
     style,
     data,
 }: ListChildComponentProps<RowData>): JSX.Element {
-    const { files, layout, onOpenFile, selection } = data;
+    const { files, layout, onOpenFile, selection, showFileSize } = data;
     const start: number = index * layout.columns;
     const cells: JSX.Element[] = [];
     for (let column = 0; column < layout.columns; column += 1) {
@@ -87,6 +90,7 @@ const GridRow = memo(function GridRow({
                 isAlreadyCompressed={selection?.isAlreadyCompressed?.(file)}
                 disabled={selection?.disabled}
                 tapSelects={selection !== undefined}
+                showFileSize={showFileSize}
             />,
         );
     }
@@ -113,6 +117,7 @@ interface SizedGridProps {
     onOpenFile?: (file: EnteFile) => void;
     selection?: ThumbnailGridSelection;
     footerInsetPx: number;
+    showFileSize?: boolean;
     onScrollOffsetChange: (offset: number) => void;
     listRef: RefObject<FixedSizeList<RowData> | null>;
 }
@@ -125,6 +130,7 @@ function SizedGrid({
     onOpenFile,
     selection,
     footerInsetPx,
+    showFileSize,
     onScrollOffsetChange,
     listRef,
 }: SizedGridProps): JSX.Element {
@@ -134,8 +140,8 @@ function SizedGrid({
     );
     const rowCount: number = rowCountForFiles(files.length, layout.columns);
     const itemData: RowData = useMemo(
-        () => ({ files, layout, onOpenFile, selection }),
-        [files, layout, onOpenFile, selection],
+        () => ({ files, layout, onOpenFile, selection, showFileSize }),
+        [files, layout, onOpenFile, selection, showFileSize],
     );
 
     const itemKey = useCallback(
@@ -173,6 +179,7 @@ interface SizedMasonryGridProps {
     onOpenFile?: (file: EnteFile) => void;
     selection?: ThumbnailGridSelection;
     footerInsetPx: number;
+    showFileSize?: boolean;
     onScrollOffsetChange: (offset: number) => void;
     /** Generation that changes when id order changes; layout is reused otherwise. */
     viewOrderKey: string;
@@ -188,6 +195,7 @@ function SizedMasonryGrid({
     onOpenFile,
     selection,
     footerInsetPx,
+    showFileSize,
     onScrollOffsetChange,
     viewOrderKey,
 }: SizedMasonryGridProps): JSX.Element {
@@ -290,6 +298,7 @@ function SizedMasonryGrid({
                                 )}
                                 disabled={selection?.disabled}
                                 tapSelects={selection !== undefined}
+                                showFileSize={showFileSize}
                             />
                         </div>
                     );
@@ -357,6 +366,7 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
     onOpenFile,
     selection,
     footerInsetPx = 0,
+    showFileSize = false,
 }: ThumbnailGridProps): JSX.Element {
     const galleryColumns = useSettingsStore((s) => s.galleryColumns);
     const galleryThumbnailMode = useSettingsStore((s) => s.galleryThumbnailMode);
@@ -563,6 +573,7 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
                             onOpenFile={onOpenFile}
                             selection={selection}
                             footerInsetPx={footerInsetPx}
+                            showFileSize={showFileSize}
                             onScrollOffsetChange={handleScrollOffsetChange}
                             viewOrderKey={viewOrderKey}
                         />
@@ -575,6 +586,7 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
                             onOpenFile={onOpenFile}
                             selection={selection}
                             footerInsetPx={footerInsetPx}
+                            showFileSize={showFileSize}
                             onScrollOffsetChange={handleScrollOffsetChange}
                             listRef={listRef}
                         />

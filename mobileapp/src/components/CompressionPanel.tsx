@@ -6,25 +6,9 @@ import {
     useState,
     type JSX,
 } from "react";
-import { Settings } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-    Dialog,
-    DialogContent,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from "@/components/ui/dialog";
-import { Field, FieldLabel } from "@/components/ui/field";
 import { Progress } from "@/components/ui/progress";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select";
 import {
     Sheet,
     SheetContent,
@@ -33,17 +17,12 @@ import {
     SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Slider } from "@/components/ui/slider";
 import { Spinner } from "@/components/ui/spinner";
 import {
     DEFAULT_VIDEO_CRF,
     formatSizeDelta,
     isWorthReplacing,
-    MAX_VIDEO_CRF,
-    MIN_SIZE_FILTER_PRESETS,
-    MIN_VIDEO_CRF,
     readCompressMinSizeBytes,
-    writeCompressMinSizeBytes,
     CompressionSkippedError,
     type SizeDelta,
 } from "@/lib/compress";
@@ -52,6 +31,7 @@ import { mediaKindForFile, mimeTypeForFile } from "@/lib/media-kind";
 import {
     compressMediaBytes,
     VIDEO_COMPRESS_PREVIEW_MAX_LONG_EDGE,
+    type CompressEncoder,
     type CompressMediaResult,
 } from "@/lib/transcode/compress-media";
 import { useLibraryStore } from "@/stores/library-store";
@@ -71,6 +51,19 @@ interface CompressionPanelProps {
     onUploaded?: (file: EnteFile) => void;
 }
 
+const encoderLabel = (encoder: CompressEncoder | undefined): string | undefined => {
+    if (encoder === "webcodecs") {
+        return "Hardware H.264";
+    }
+    if (encoder === "ffmpeg") {
+        return "ffmpeg (CPU)";
+    }
+    if (encoder === "photohoard") {
+        return "AVIF/WebP";
+    }
+    return undefined;
+};
+
 export function CompressionPanel({
     file,
     onClose,
@@ -81,21 +74,18 @@ export function CompressionPanel({
     );
 
     const mediaKind = mediaKindForFile(file);
-    const usesFfmpeg = mediaKind === "gif" || mediaKind === "video";
 
     const [phase, setPhase] = useState<PanelPhase>("loading");
-    const [videoCrf, setVideoCrf] = useState<number>(DEFAULT_VIDEO_CRF);
-    const [minSizeBytes, setMinSizeBytes] = useState<number>(
-        readCompressMinSizeBytes,
-    );
-    const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
+    const [minSizeBytes] = useState<number>(readCompressMinSizeBytes);
     const [originalBytes, setOriginalBytes] = useState<Uint8Array | undefined>();
     const [compressedResult, setCompressedResult] = useState<
         CompressMediaResult | undefined
     >();
     const [originalUrl, setOriginalUrl] = useState<string | undefined>();
     const [compressedUrl, setCompressedUrl] = useState<string | undefined>();
+    const [loadProgress, setLoadProgress] = useState<number | undefined>();
     const [encodeProgress, setEncodeProgress] = useState<number | undefined>();
+    const [uploadProgress, setUploadProgress] = useState<number | undefined>();
     const [error, setError] = useState<string | undefined>();
 
     const encodeRequestId = useRef<number>(0);
@@ -116,7 +106,20 @@ export function CompressionPanel({
 
         const loadOriginal = async (): Promise<void> => {
             try {
-                const bytes = await loadMediaBytesForEdit(file);
+                setPhase("loading");
+                setLoadProgress(0);
+                const bytes = await loadMediaBytesForEdit(file, (progress) => {
+                    if (cancelled) {
+                        return;
+                    }
+                    const total =
+                        progress.total > 0 ? progress.total : progress.loaded;
+                    setLoadProgress(
+                        total > 0 ?
+                            Math.round((progress.loaded / total) * 100) :
+                            undefined,
+                    );
+                });
                 if (cancelled) {
                     return;
                 }
@@ -127,6 +130,7 @@ export function CompressionPanel({
                 );
                 setOriginalBytes(bytes);
                 setOriginalUrl(objectUrl);
+                setLoadProgress(100);
                 setPhase("encoding");
             } catch {
                 if (!cancelled) {
@@ -160,7 +164,7 @@ export function CompressionPanel({
             setError(undefined);
             try {
                 const result = await compressMediaBytes(file, originalBytes, {
-                    videoCrf,
+                    videoCrf: DEFAULT_VIDEO_CRF,
                     minSizeBytes,
                     maxLongEdge:
                         mediaKind === "video" ?
@@ -202,7 +206,9 @@ export function CompressionPanel({
                 setPhase("error");
                 setError(
                     encodeError instanceof CompressionSkippedError ?
-                        "Already under the minimum file size — skipped." :
+                        encodeError.message.includes("audio") ?
+                            "Could not keep audio — skipped." :
+                            "Already under the minimum file size — skipped." :
                         encodeError instanceof Error ?
                             encodeError.message :
                             "Could not encode preview",
@@ -215,7 +221,7 @@ export function CompressionPanel({
         return (): void => {
             cancelled = true;
         };
-    }, [file, mediaKind, minSizeBytes, originalBytes, videoCrf]);
+    }, [file, mediaKind, minSizeBytes, originalBytes]);
 
     useEffect(() => {
         return (): void => {
@@ -230,6 +236,7 @@ export function CompressionPanel({
             return;
         }
         setPhase("uploading");
+        setUploadProgress(0);
         setError(undefined);
 
         try {
@@ -238,6 +245,9 @@ export function CompressionPanel({
                     file.id,
                     compressedResult,
                     originalBytes.length,
+                    (ratio) => {
+                        setUploadProgress(Math.round(ratio * 100));
+                    },
                 );
             onUploaded?.(optimisticFile);
             setPhase("success");
@@ -265,266 +275,199 @@ export function CompressionPanel({
         originalBytes,
     ]);
 
-    const minSizePreset = MIN_SIZE_FILTER_PRESETS.find(
-        (preset) => preset.bytes === minSizeBytes,
-    ) ?? MIN_SIZE_FILTER_PRESETS[0]!;
-    const settingsSummary =
-        mediaKind === "video" ?
-            `Video CRF ${videoCrf}` :
-            `Skip under ${minSizePreset.label.replace(/\+$/u, "")}`;
-
     const previewFrameClassName =
         "flex min-h-48 w-full items-center justify-center rounded-md bg-muted";
+    const encodedWith = encoderLabel(compressedResult?.encoder);
 
     return (
-        <>
-            <Sheet
-                open
-                onOpenChange={(open) => {
-                    if (!open && phase !== "uploading") {
-                        onClose();
-                    }
-                }}
+        <Sheet
+            open
+            onOpenChange={(open) => {
+                if (!open && phase !== "uploading") {
+                    onClose();
+                }
+            }}
+        >
+            <SheetContent
+                side="bottom"
+                className="max-h-[95dvh] overflow-y-auto rounded-t-xl"
             >
-                <SheetContent
-                    side="bottom"
-                    className="max-h-[95dvh] overflow-y-auto rounded-t-xl"
-                >
-                    <SheetHeader>
-                        <SheetTitle>Compress media</SheetTitle>
-                    </SheetHeader>
+                <SheetHeader>
+                    <SheetTitle>Compress media</SheetTitle>
+                </SheetHeader>
 
-                    <div className="flex flex-col gap-4 px-4">
-                        {phase === "loading" ? (
+                <div className="flex flex-col gap-4 px-4">
+                    {phase === "loading" ? (
+                        <div className="flex flex-col gap-2">
                             <p className="flex items-center gap-2 text-sm text-muted-foreground">
                                 <Spinner />
-                                Loading original…
+                                Downloading original…
+                                {loadProgress !== undefined ?
+                                    ` ${loadProgress}%` :
+                                    ""}
                             </p>
-                        ) : null}
+                            {loadProgress !== undefined ? (
+                                <Progress value={loadProgress} className="w-full" />
+                            ) : (
+                                <div className="h-1.5 w-full animate-pulse rounded-full bg-primary/50" />
+                            )}
+                        </div>
+                    ) : null}
 
-                        {phase === "error" && error ? (
-                            <Alert variant="destructive">
-                                <AlertDescription>{error}</AlertDescription>
-                            </Alert>
-                        ) : null}
+                    {phase === "error" && error ? (
+                        <Alert variant="destructive">
+                            <AlertDescription>{error}</AlertDescription>
+                        </Alert>
+                    ) : null}
 
-                        {originalUrl ? (
-                            <div className="grid grid-cols-2 gap-3">
-                                <div className="flex flex-col gap-1">
+                    {originalUrl ? (
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="flex flex-col gap-1">
+                                <span className="text-xs text-muted-foreground">
+                                    Before
+                                </span>
+                                <div className={previewFrameClassName}>
+                                    {mediaKind === "video" ? (
+                                        <video
+                                            className="max-h-48 max-w-full object-contain"
+                                            src={originalUrl}
+                                            muted
+                                            playsInline
+                                        />
+                                    ) : (
+                                        <img
+                                            className="max-h-48 max-w-full object-contain"
+                                            src={originalUrl}
+                                            alt="Original"
+                                        />
+                                    )}
+                                </div>
+                                {sizeDelta ? (
                                     <span className="text-xs text-muted-foreground">
-                                        Before
+                                        {sizeDelta.originalLabel}
                                     </span>
-                                    <div className={previewFrameClassName}>
-                                        {mediaKind === "video" ? (
+                                ) : null}
+                            </div>
+                            <div className="flex flex-col gap-1">
+                                <span className="text-xs text-muted-foreground">
+                                    After
+                                </span>
+                                <div className={previewFrameClassName}>
+                                    {compressedUrl ? (
+                                        mediaKind === "video" ? (
                                             <video
                                                 className="max-h-48 max-w-full object-contain"
-                                                src={originalUrl}
+                                                src={compressedUrl}
                                                 muted
                                                 playsInline
                                             />
                                         ) : (
                                             <img
                                                 className="max-h-48 max-w-full object-contain"
-                                                src={originalUrl}
-                                                alt="Original"
+                                                src={compressedUrl}
+                                                alt="Compressed preview"
                                             />
-                                        )}
-                                    </div>
-                                    {sizeDelta ? (
-                                        <span className="text-xs text-muted-foreground">
-                                            {sizeDelta.originalLabel}
-                                        </span>
-                                    ) : null}
+                                        )
+                                    ) : (
+                                        <Skeleton className="h-40 w-full max-w-full" />
+                                    )}
                                 </div>
-                                <div className="flex flex-col gap-1">
+                                {sizeDelta ? (
                                     <span className="text-xs text-muted-foreground">
-                                        After
+                                        {sizeDelta.compressedLabel}
                                     </span>
-                                    <div className={previewFrameClassName}>
-                                        {compressedUrl ? (
-                                            mediaKind === "video" ? (
-                                                <video
-                                                    className="max-h-48 max-w-full object-contain"
-                                                    src={compressedUrl}
-                                                    muted
-                                                    playsInline
-                                                />
-                                            ) : (
-                                                <img
-                                                    className="max-h-48 max-w-full object-contain"
-                                                    src={compressedUrl}
-                                                    alt="Compressed preview"
-                                                />
-                                            )
-                                        ) : (
-                                            <Skeleton className="h-40 w-full max-w-full" />
-                                        )}
-                                    </div>
-                                    {sizeDelta ? (
-                                        <span className="text-xs text-muted-foreground">
-                                            {sizeDelta.compressedLabel}
-                                        </span>
-                                    ) : null}
-                                </div>
+                                ) : null}
                             </div>
-                        ) : null}
-
-                        {sizeDelta && phase !== "loading" ? (
-                            <p className="text-sm text-muted-foreground">
-                                {isWorthReplacing(
-                                    sizeDelta.originalBytes,
-                                    sizeDelta.compressedBytes,
-                                ) ?
-                                    <>
-                                        Saves {sizeDelta.savedLabel} (
-                                        {sizeDelta.savedPercent}%)
-                                    </> :
-                                    "Compressed output is larger — replace is disabled."}
-                            </p>
-                        ) : null}
-
-                        <div className="flex items-center justify-between gap-2">
-                            <p className="text-sm text-muted-foreground">
-                                {settingsSummary}
-                            </p>
-                            <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                disabled={phase === "uploading"}
-                                onClick={() => setSettingsOpen(true)}
-                            >
-                                <Settings className="size-4" />
-                                Settings
-                            </Button>
                         </div>
+                    ) : null}
 
-                        {phase === "encoding" ? (
-                            <div className="flex flex-col gap-2">
-                                <p className="text-sm text-muted-foreground">
-                                    Encoding preview…
-                                    {encodeProgress !== undefined ?
-                                        ` ${encodeProgress}%` :
-                                        ""}
-                                </p>
-                                {encodeProgress !== undefined ? (
-                                    <Progress
-                                        value={encodeProgress}
-                                        className="w-full"
-                                    />
-                                ) : (
-                                    <div className="h-1.5 w-full animate-pulse rounded-full bg-primary/50" />
-                                )}
-                            </div>
-                        ) : null}
+                    {sizeDelta && phase !== "loading" ? (
+                        <p className="text-sm text-muted-foreground">
+                            {isWorthReplacing(
+                                sizeDelta.originalBytes,
+                                sizeDelta.compressedBytes,
+                            ) ?
+                                <>
+                                    Saves {sizeDelta.savedLabel} (
+                                    {sizeDelta.savedPercent}%)
+                                    {encodedWith ? ` · ${encodedWith}` : ""}
+                                </> :
+                                "Compressed output is larger — replace is disabled."}
+                        </p>
+                    ) : null}
 
-                        {phase === "uploading" ? (
+                    {phase === "encoding" ? (
+                        <div className="flex flex-col gap-2">
+                            <p className="text-sm text-muted-foreground">
+                                Compressing…
+                                {encodeProgress !== undefined ?
+                                    ` ${encodeProgress}%` :
+                                    ""}
+                            </p>
+                            {encodeProgress !== undefined ? (
+                                <Progress
+                                    value={encodeProgress}
+                                    className="w-full"
+                                />
+                            ) : (
+                                <div className="h-1.5 w-full animate-pulse rounded-full bg-primary/50" />
+                            )}
+                        </div>
+                    ) : null}
+
+                    {phase === "uploading" ? (
+                        <div className="flex flex-col gap-2">
                             <p className="flex items-center gap-2 text-sm text-muted-foreground">
                                 <Spinner />
-                                Starting upload…
+                                Uploading…
+                                {uploadProgress !== undefined ?
+                                    ` ${uploadProgress}%` :
+                                    ""}
                             </p>
-                        ) : null}
+                            {uploadProgress !== undefined ? (
+                                <Progress
+                                    value={uploadProgress}
+                                    className="w-full"
+                                />
+                            ) : null}
+                        </div>
+                    ) : null}
 
-                        {phase === "success" ? (
-                            <Alert>
-                                <AlertDescription>
-                                    {usesFfmpeg ?
-                                        "Compressed version ready — uploading in the background." :
-                                        "Original replaced with compressed version."}
-                                </AlertDescription>
-                            </Alert>
-                        ) : null}
-                    </div>
+                    {phase === "success" ? (
+                        <Alert>
+                            <AlertDescription>
+                                Compressed version ready — uploading in the background.
+                            </AlertDescription>
+                        </Alert>
+                    ) : null}
+                </div>
 
-                    <SheetFooter className="flex-row justify-end gap-2">
-                        <Button
-                            type="button"
-                            variant="outline"
-                            onClick={onClose}
-                            disabled={phase === "uploading"}
-                        >
-                            {phase === "success" ? "Done" : "Cancel"}
-                        </Button>
-                        <Button
-                            type="button"
-                            onClick={handleUpload}
-                            disabled={
-                                phase !== "ready" ||
-                                !compressedResult ||
-                                (sizeDelta !== undefined &&
-                                    !isWorthReplacing(
-                                        sizeDelta.originalBytes,
-                                        sizeDelta.compressedBytes,
-                                    ))
-                            }
-                        >
-                            Compress and replace
-                        </Button>
-                    </SheetFooter>
-                </SheetContent>
-            </Sheet>
-
-            <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-                <DialogContent className="sm:max-w-md">
-                    <DialogHeader>
-                        <DialogTitle>Compression settings</DialogTitle>
-                    </DialogHeader>
-                    {mediaKind !== "video" ? (
-                        <Field>
-                            <FieldLabel>Minimum file size</FieldLabel>
-                            <Select
-                                value={String(minSizeBytes)}
-                                disabled={phase === "uploading"}
-                                onValueChange={(value) => {
-                                    const next = Number(value);
-                                    setMinSizeBytes(next);
-                                    writeCompressMinSizeBytes(next);
-                                }}
-                            >
-                                <SelectTrigger>
-                                    <SelectValue>{minSizePreset.label}</SelectValue>
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {MIN_SIZE_FILTER_PRESETS.map((preset) => (
-                                        <SelectItem
-                                            key={preset.bytes}
-                                            value={String(preset.bytes)}
-                                        >
-                                            {preset.label}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </Field>
-                    ) : (
-                        <Field>
-                            <FieldLabel>Video CRF {videoCrf}</FieldLabel>
-                            <Slider
-                                min={MIN_VIDEO_CRF}
-                                max={MAX_VIDEO_CRF}
-                                value={[videoCrf]}
-                                disabled={phase === "uploading" || !originalBytes}
-                                onValueChange={(value) => {
-                                    const next = Array.isArray(value) ?
-                                        value[0] :
-                                        value;
-                                    if (next !== undefined) {
-                                        setVideoCrf(next);
-                                    }
-                                }}
-                            />
-                        </Field>
-                    )}
-                    <DialogFooter>
-                        <Button
-                            type="button"
-                            onClick={() => setSettingsOpen(false)}
-                        >
-                            Done
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-        </>
+                <SheetFooter className="flex-row justify-end gap-2">
+                    <Button
+                        type="button"
+                        variant="outline"
+                        onClick={onClose}
+                        disabled={phase === "uploading"}
+                    >
+                        {phase === "success" ? "Done" : "Cancel"}
+                    </Button>
+                    <Button
+                        type="button"
+                        onClick={handleUpload}
+                        disabled={
+                            phase !== "ready" ||
+                            !compressedResult ||
+                            (sizeDelta !== undefined &&
+                                !isWorthReplacing(
+                                    sizeDelta.originalBytes,
+                                    sizeDelta.compressedBytes,
+                                ))
+                        }
+                    >
+                        Compress and replace
+                    </Button>
+                </SheetFooter>
+            </SheetContent>
+        </Sheet>
     );
 }

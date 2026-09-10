@@ -71,6 +71,9 @@ const buildPublicMagicData = (
 
 /**
  * Upload a compressed derivative (JPEG, AVIF, WebP, GIF, or MP4) of an existing file.
+ *
+ * {@link onProgress} reports a 0–1 upload-stage ratio (thumbnail prep, file PUT,
+ * thumb PUT + finalize).
  */
 export const uploadCompressedMedia = async (
     http: HttpClient,
@@ -79,6 +82,7 @@ export const uploadCompressedMedia = async (
     collection: Collection,
     title: string,
     organizerTags: string[] = ["compressed"],
+    onProgress?: (ratio: number) => void,
 ): Promise<EnteFile> => {
     const fileType =
         result.mimeType.startsWith("video/") ?
@@ -93,6 +97,7 @@ export const uploadCompressedMedia = async (
         result.duration,
     );
 
+    onProgress?.(0.05);
     let thumbnail: Uint8Array;
     if (fileType === FileType.video) {
         const frame = await extractVideoFrameJpeg(result.bytes, result.mimeType);
@@ -103,11 +108,13 @@ export const uploadCompressedMedia = async (
     } else {
         thumbnail = await generateImageThumbnail(result.bytes, result.mimeType);
     }
+    onProgress?.(0.12);
 
     const fileKey = await generateBlobOrStreamKey();
     const encryptedFile = await encryptStreamBytes(result.bytes, fileKey);
     const encryptedThumbnail = await encryptBlobBytes(thumbnail, fileKey);
     const encryptedMetadata = await encryptMetadataJSON(metadata, fileKey);
+    onProgress?.(0.15);
 
     const publicMagicData = buildPublicMagicData(
         result.width,
@@ -125,9 +132,20 @@ export const uploadCompressedMedia = async (
     const encryptedFileKey = await encryptBox(fileKey, collection.key);
 
     const fileUploadURL = await fetchUploadURL(http);
-    await putFile(http, fileUploadURL.url, encryptedFile.encryptedData);
+    await putFile(
+        http,
+        fileUploadURL.url,
+        encryptedFile.encryptedData,
+        onProgress ?
+            (loaded, total) => {
+                const putRatio = total > 0 ? loaded / total : 1;
+                onProgress(0.15 + putRatio * 0.75);
+            } :
+            undefined,
+    );
 
     const thumbnailUploadURL = await fetchUploadURL(http);
+    onProgress?.(0.92);
     await putFile(
         http,
         thumbnailUploadURL.url,
@@ -153,5 +171,6 @@ export const uploadCompressedMedia = async (
     };
 
     const remoteFile = await postEnteFile(http, newFileRequest);
+    onProgress?.(1);
     return decryptRemoteFile(remoteFile, collection.key);
 };

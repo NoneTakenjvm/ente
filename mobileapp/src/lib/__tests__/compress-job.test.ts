@@ -24,6 +24,7 @@ describe("runCompressJob", () => {
                 throw new CompressionSkippedError();
             }
         });
+        const stages: string[] = [];
 
         const result = await runCompressJob({
             files: [stubFile(1), stubFile(2), stubFile(3)],
@@ -32,12 +33,16 @@ describe("runCompressJob", () => {
             videoCrf: 28,
             signal: new AbortController().signal,
             shouldPause: () => false,
-            onProgress: () => undefined,
+            onProgress: (update) => {
+                stages.push(update.stage);
+            },
             compressFile,
         });
 
         expect(result.completed).toBe(2);
         expect(result.skipped).toBe(1);
         expect(result.failed).toBe(0);
+        expect(stages).toContain("skip");
+        expect(stages).toContain("done");
     });
 });

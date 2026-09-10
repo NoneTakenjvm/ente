@@ -65,22 +65,34 @@ const getFFmpeg = (): Promise<FFmpeg> => {
 };
 
 /**
- * Run an ffmpeg command on a blob and return the output file bytes.
+ * Run an ffmpeg command on one or more blobs and return the output file bytes.
+ *
+ * Placeholders in {@link args}: `INPUT` / `INPUT0` for the first blob, `INPUT1`
+ * … for further blobs, and `OUTPUT` for the write path.
  *
  * {@link onProgress} receives a 0–1 ratio when ffmpeg reports progress.
  */
 export const runFFmpeg = async (
     args: string[],
-    input: Blob,
+    input: Blob | Blob[],
     outputExtension: string,
     onProgress?: FFmpegProgressCallback,
-): Promise<Uint8Array> =>
-    taskQueue.add(async (): Promise<Uint8Array> => {
+): Promise<Uint8Array> => {
+    const inputs = Array.isArray(input) ? input : [input];
+    if (inputs.length === 0) {
+        throw new Error("ffmpeg requires at least one input");
+    }
+    return taskQueue.add(async (): Promise<Uint8Array> => {
         logJsHeap("ffmpeg:before");
         const ffmpeg = await getFFmpeg();
         const mountDir = "/mount";
-        const inputName = randomId("in_");
-        const inputPath = `${mountDir}/${inputName}`;
+        const inputFiles = inputs.map((blob, index) => {
+            const name = randomId(`in${index}_`);
+            return {
+                file: new File([blob], name),
+                path: `${mountDir}/${name}`,
+            };
+        });
         const outputPath = randomId("out_") + (outputExtension ? `.${outputExtension}` : "");
         const logs: string[] = [];
         const onLog = ({ message }: { message: string }): void => {
@@ -103,13 +115,22 @@ export const runFFmpeg = async (
             await ffmpeg.createDir(mountDir);
             await ffmpeg.mount(
                 FFFSType.WORKERFS,
-                { files: [new File([input], inputName)] },
+                { files: inputFiles.map((entry) => entry.file) },
                 mountDir,
             );
 
             const resolvedArgs = args.map((arg) => {
-                if (arg === "INPUT") {
-                    return inputPath;
+                if (arg === "INPUT" || arg === "INPUT0") {
+                    return inputFiles[0]!.path;
+                }
+                const indexed = /^INPUT(\d+)$/u.exec(arg);
+                if (indexed) {
+                    const index = Number(indexed[1]);
+                    const entry = inputFiles[index];
+                    if (!entry) {
+                        throw new Error(`ffmpeg missing input ${index}`);
+                    }
+                    return entry.path;
                 }
                 if (arg === "OUTPUT") {
                     return outputPath;
@@ -159,6 +180,7 @@ export const runFFmpeg = async (
             scheduleIdleTerminate();
         }
     }) as Promise<Uint8Array>;
+};
 
 /**
  * Extract a poster frame using the browser video decoder (reliable on mobile).

@@ -236,6 +236,11 @@ export const useLibraryBootstrap: (
                                                 kind === "gif" ?
                                                     "gif" :
                                                     "jpg",
+                                        encoder:
+                                            kind === "video" || kind === "gif" ?
+                                                "ffmpeg" :
+                                                "photohoard",
+                                        audio: "none",
                                     },
                                     originalByteLength,
                                 );

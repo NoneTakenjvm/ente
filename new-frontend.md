@@ -7,10 +7,17 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-10 |
-| **Last agent / session** | Kit presence best-fit among remaining |
+| **Last agent / session** | Compress follow-up shipped (`0.3.134`) |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
-| **Blockers** | ffmpeg WASM + full video bytes still heavy on the fallback path (Safari / no VideoEncoder) |
-| **Next recommended action** | Phone QA of `0.3.133` kit best-fit. Compress follow-up plan is locked in `mobileapp/scripts/compress-followup.md` (waiting for go). **Note:** working tree uncommitted since `85cffccd44`. |
+| **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable |
+| **Next recommended action** | Phone QA of `0.3.134` Compress: filters, footer mix/size, stage progress, hardware video path. **Note:** working tree uncommitted since `85cffccd44`. |
+
+**This session shipped:**
+1. **Compress follow-up** — WebCodecs keeps hardware H.264 when AAC fails (audio remux or skip); batch video long-edge cap 1920; independent gallery-style filters on Manage → Compress (always size-desc); per-stage progress (download/compress/upload with XHR PUT %); CRF slider removed; selection footer shows photo/video counts + size; size chips on compress thumbs only. Lint + build green; Playwright smoke OK. `APP_VERSION` → `0.3.134`. Plan: `mobileapp/scripts/compress-followup.md`.
+
+**Previous session shipped:**
+1. **Kit presence = best fit among remaining** — `APP_VERSION` → `0.3.133`.
+
 
 **This session shipped:**
 1. **Kit presence = best fit among remaining** — each shown file goes to the most-specific included kit it AND-matches (most tags, then id). Unchecked kits get 0 and drop out of the contest, so their photos fall to the next parent/sibling match. Replaces independent ONLY counts. Lint, 391 tests, build green. `APP_VERSION` → `0.3.133`.

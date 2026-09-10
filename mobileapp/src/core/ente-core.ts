@@ -414,6 +414,7 @@ export class EnteCore {
         collection: Collection,
         title: string,
         organizerTags: string[],
+        onProgress?: (ratio: number) => void,
     ): Promise<EnteFile> {
         const { uploadCompressedMedia: uploadCompressedMediaToRemote } =
             await import("./upload/upload-compressed-media");
@@ -424,6 +425,7 @@ export class EnteCore {
             collection,
             title,
             organizerTags,
+            onProgress,
         );
     }
 
@@ -463,6 +465,8 @@ export class EnteCore {
                 duration: result.duration ?? sourceFile.metadata.duration,
                 mimeType: "video/mp4",
                 extension: "mp4",
+                encoder: "ffmpeg",
+                audio: "aac",
             },
             collection,
             title,
