@@ -20,7 +20,7 @@ import { noteGalleryScrollActivity } from "@/lib/gallery-scroll-activity";
 import {
     computeMasonryLayout,
     masonryItemsInMarquee,
-    visibleMasonryItems,
+    visibleMasonryItemsFromColumns,
     type MasonryLayout,
 } from "@/lib/masonry-layout";
 import {
@@ -70,7 +70,26 @@ const GridRow = memo(function GridRow({
 }: ListChildComponentProps<RowData>): JSX.Element {
     const { files, layout, onOpenFile, selection } = data;
     const start: number = index * layout.columns;
-    const rowFiles: EnteFile[] = files.slice(start, start + layout.columns);
+    const cells: JSX.Element[] = [];
+    for (let column = 0; column < layout.columns; column += 1) {
+        const file = files[start + column];
+        if (!file) {
+            break;
+        }
+        cells.push(
+            <ThumbnailCell
+                key={file.id}
+                file={file}
+                size={layout.itemSize}
+                onOpen={onOpenFile}
+                isSelected={selection?.selectedIds.has(file.id)}
+                onToggleSelect={selection?.onToggle}
+                isAlreadyCompressed={selection?.isAlreadyCompressed?.(file)}
+                disabled={selection?.disabled}
+                tapSelects={selection !== undefined}
+            />,
+        );
+    }
 
     return (
         <div
@@ -81,19 +100,7 @@ const GridRow = memo(function GridRow({
                 gap: layout.gap,
             }}
         >
-            {rowFiles.map((file) => (
-                <ThumbnailCell
-                    key={file.id}
-                    file={file}
-                    size={layout.itemSize}
-                    onOpen={onOpenFile}
-                    isSelected={selection?.selectedIds.has(file.id)}
-                    onToggleSelect={selection?.onToggle}
-                    isAlreadyCompressed={selection?.isAlreadyCompressed?.(file)}
-                    disabled={selection?.disabled}
-                    tapSelects={selection !== undefined}
-                />
-            ))}
+            {cells}
         </div>
     );
 });
@@ -131,6 +138,11 @@ function SizedGrid({
         [files, layout, onOpenFile, selection],
     );
 
+    const itemKey = useCallback(
+        (index: number): number => files[index * layout.columns]?.id ?? index,
+        [files, layout.columns],
+    );
+
     return (
         <FixedSizeList
             ref={listRef}
@@ -140,7 +152,8 @@ function SizedGrid({
             itemCount={rowCount}
             itemSize={layout.rowHeight}
             itemData={itemData}
-            overscanCount={6}
+            itemKey={itemKey}
+            overscanCount={4}
             onScroll={(props) => {
                 noteGalleryScrollActivity();
                 onScrollOffsetChange(props.scrollOffset);
@@ -161,7 +174,11 @@ interface SizedMasonryGridProps {
     selection?: ThumbnailGridSelection;
     footerInsetPx: number;
     onScrollOffsetChange: (offset: number) => void;
+    /** Generation that changes when id order changes; layout is reused otherwise. */
+    viewOrderKey: string;
 }
+
+const MASONRY_OVERSCAN_PX = 480;
 
 function SizedMasonryGrid({
     files,
@@ -172,31 +189,28 @@ function SizedMasonryGrid({
     selection,
     footerInsetPx,
     onScrollOffsetChange,
+    viewOrderKey,
 }: SizedMasonryGridProps): JSX.Element {
     const [scrollTop, setScrollTop] = useState<number>(0);
     const pendingScrollTopRef = useRef<number>(0);
     const scrollRafRef = useRef<number | undefined>(undefined);
+    const scrollerRef = useRef<HTMLDivElement>(null);
 
-    const fileIdKey = files.map((file) => file.id).join(",");
     const placedLayout: MasonryLayout = useMemo(
         () => computeMasonryLayout(files, width, columns),
         // Placement depends on id order + geometry, not file object identity.
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- see fileIdKey
-        [columns, fileIdKey, width],
-    );
-    const layout: MasonryLayout = useMemo(
-        () => ({
-            ...placedLayout,
-            items: placedLayout.items.map((item, index) => ({
-                ...item,
-                file: files[index]!,
-            })),
-        }),
-        [files, placedLayout],
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- viewOrderKey
+        [columns, viewOrderKey, width],
     );
     const visibleItems = useMemo(
-        () => visibleMasonryItems(layout.items, scrollTop, height, 800),
-        [height, layout.items, scrollTop],
+        () =>
+            visibleMasonryItemsFromColumns(
+                placedLayout.itemsByColumn,
+                scrollTop,
+                height,
+                MASONRY_OVERSCAN_PX,
+            ),
+        [height, placedLayout.itemsByColumn, scrollTop],
     );
 
     useEffect(() => {
@@ -206,6 +220,18 @@ function SizedMasonryGrid({
             }
         };
     }, []);
+
+    useEffect(() => {
+        const node = scrollerRef.current;
+        if (!node) {
+            return;
+        }
+        const maxScroll = Math.max(0, node.scrollHeight - node.clientHeight);
+        const next = Math.min(node.scrollTop, maxScroll);
+        pendingScrollTopRef.current = next;
+        setScrollTop((prev) => (prev === next ? prev : next));
+        onScrollOffsetChange(next);
+    }, [height, onScrollOffsetChange, placedLayout.totalHeight, viewOrderKey]);
 
     const handleScroll = useCallback(
         (event: UIEvent<HTMLDivElement>): void => {
@@ -227,6 +253,7 @@ function SizedMasonryGrid({
 
     return (
         <div
+            ref={scrollerRef}
             className="overflow-y-auto"
             style={{ width, height }}
             onScroll={handleScroll}
@@ -234,36 +261,39 @@ function SizedMasonryGrid({
             <div
                 className="relative w-full"
                 style={{
-                    height: layout.totalHeight + footerInsetPx,
+                    height: placedLayout.totalHeight + footerInsetPx,
                 }}
             >
-                {visibleItems.map((item) => (
-                    <div
-                        key={item.fileId}
-                        className="absolute"
-                        style={{
-                            left: item.x,
-                            top: item.y,
-                            width: item.width,
-                            height: item.height,
-                        }}
-                    >
-                        <ThumbnailCell
-                            file={item.file}
-                            width={item.width}
-                            height={item.height}
-                            objectFit="contain"
-                            onOpen={onOpenFile}
-                            isSelected={selection?.selectedIds.has(item.fileId)}
-                            onToggleSelect={selection?.onToggle}
-                            isAlreadyCompressed={selection?.isAlreadyCompressed?.(
-                                item.file,
-                            )}
-                            disabled={selection?.disabled}
-                            tapSelects={selection !== undefined}
-                        />
-                    </div>
-                ))}
+                {visibleItems.map((item) => {
+                    const file = files[item.index] ?? item.file;
+                    return (
+                        <div
+                            key={item.fileId}
+                            className="absolute"
+                            style={{
+                                left: item.x,
+                                top: item.y,
+                                width: item.width,
+                                height: item.height,
+                            }}
+                        >
+                            <ThumbnailCell
+                                file={file}
+                                width={item.width}
+                                height={item.height}
+                                objectFit="contain"
+                                onOpen={onOpenFile}
+                                isSelected={selection?.selectedIds.has(item.fileId)}
+                                onToggleSelect={selection?.onToggle}
+                                isAlreadyCompressed={selection?.isAlreadyCompressed?.(
+                                    file,
+                                )}
+                                disabled={selection?.disabled}
+                                tapSelects={selection !== undefined}
+                            />
+                        </div>
+                    );
+                })}
             </div>
         </div>
     );
@@ -342,6 +372,14 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
     const handleScrollOffsetChange = useCallback((offset: number): void => {
         scrollTopRef.current = offset;
     }, []);
+
+    const viewOrderKey = useMemo(
+        () =>
+            galleryThumbnailMode === "fit" ?
+                files.map((file) => file.id).join(",") :
+                "",
+        [files, galleryThumbnailMode],
+    );
 
     const finishMarquee = useCallback(
         (endX: number, endY: number): void => {
@@ -526,6 +564,7 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
                             selection={selection}
                             footerInsetPx={footerInsetPx}
                             onScrollOffsetChange={handleScrollOffsetChange}
+                            viewOrderKey={viewOrderKey}
                         />
                     ) : (
                         <SizedGrid

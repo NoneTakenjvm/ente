@@ -1,6 +1,7 @@
 import {
     startTransition,
     useCallback,
+    useDeferredValue,
     useEffect,
     useMemo,
     useRef,
@@ -593,11 +594,20 @@ export default function GalleryPage(): JSX.Element {
         if (sourceUnchanged && sortUnchanged && prev.length > 0) {
             const remapped: EnteFile[] = [];
             const library = useLibraryStore.getState();
+            let changed = false;
             for (const file of prev) {
                 const updated = library.getFileById(file.id) ?? file;
-                if (!isFileArchivedLocally(updated)) {
-                    remapped.push(updated);
+                if (isFileArchivedLocally(updated)) {
+                    changed = true;
+                    continue;
                 }
+                if (updated !== file) {
+                    changed = true;
+                }
+                remapped.push(updated);
+            }
+            if (!changed) {
+                return prev;
             }
             libraryFilesCacheRef.current = remapped;
             return remapped;
@@ -781,7 +791,10 @@ export default function GalleryPage(): JSX.Element {
             );
         }
         if (updatedAtSort !== "none") {
-            return sortFilesByUpdatedAt(filteredFiles, updatedAtSort);
+            return reuseComputedOrder(
+                `updated:${updatedAtSort}`,
+                () => sortFilesByUpdatedAt(filteredFiles, updatedAtSort),
+            );
         }
         if (viewportFitSort !== "none") {
             return reuseComputedOrder(
@@ -806,10 +819,14 @@ export default function GalleryPage(): JSX.Element {
                 undefined,
         );
         const byId = new Map(filteredFiles.map((file) => [file.id, file]));
-        return orderedIds.flatMap((id) => {
+        const ordered: EnteFile[] = [];
+        for (const id of orderedIds) {
             const file = byId.get(id);
-            return file ? [file] : [];
-        });
+            if (file) {
+                ordered.push(file);
+            }
+        }
+        return ordered;
     }, [
         embeddingHydrated,
         filteredFiles,
@@ -831,10 +848,11 @@ export default function GalleryPage(): JSX.Element {
 
     const matchCount = filteredFiles.length;
 
-    const matchingFileIds = useMemo(
-        () => filteredFiles.map((file) => file.id),
-        [filteredFiles],
-    );
+    const deferredFiles = useDeferredValue(files);
+    // Keep the first non-empty paint immediate so cache load doesn't flash
+    // the empty state; later filter/sort updates can lag one frame.
+    const displayFiles =
+        files.length > 0 && deferredFiles.length === 0 ? files : deferredFiles;
 
     const [viewerFileId, setViewerFileId] = useState<number | undefined>();
 
@@ -848,19 +866,14 @@ export default function GalleryPage(): JSX.Element {
     const stampActive = useSelectionStore((s) => s.stampActive);
     const stampTags = useSelectionStore((s) => s.stampTags);
 
-    const visibleFileIds = useMemo(
-        () => new Set(files.map((file) => file.id)),
-        [files],
-    );
-
     // Keep the selection while select mode is on — tag edits often drop files
     // out of the active filter, and pruning would wipe a multi-select mid-edit.
     useEffect(() => {
         if (selectionEnabled) {
             return;
         }
-        pruneToVisible(visibleFileIds);
-    }, [pruneToVisible, selectionEnabled, visibleFileIds]);
+        pruneToVisible(new Set(files.map((file) => file.id)));
+    }, [files, pruneToVisible, selectionEnabled]);
 
     // Selection is one edit session for the current filter. Sort can change;
     // filter changes end the session. Leave-gallery cleanup is the unmount reset.
@@ -987,14 +1000,14 @@ export default function GalleryPage(): JSX.Element {
             <SyncBanner />
             <TagFilterBar
                 matchCount={matchCount}
-                matchingFileIds={matchingFileIds}
+                matchingFiles={filteredFiles}
             />
 
             {showFullPageLoader ? (
                 <PageLoader message="Loading your library…" />
             ) : (
                 <ThumbnailGrid
-                    files={files}
+                    files={displayFiles}
                     onOpenFile={
                         selectionEnabled || stampActive ?
                             undefined :
@@ -1010,7 +1023,7 @@ export default function GalleryPage(): JSX.Element {
 
             {viewerFileId !== undefined ? (
                 <PhotoViewer
-                    files={files}
+                    files={displayFiles}
                     initialFileId={viewerFileId}
                     onClose={handleCloseViewer}
                     onFileUpdated={handleFileUpdated}

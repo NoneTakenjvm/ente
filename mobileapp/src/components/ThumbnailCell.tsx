@@ -35,6 +35,25 @@ interface ThumbnailCellProps {
     tapSelects?: boolean;
 }
 
+/** Skip re-render when the same file is shown with the same chrome. */
+const thumbnailCellPropsAreEqual = (
+    prev: ThumbnailCellProps,
+    next: ThumbnailCellProps,
+): boolean =>
+    prev.file.id === next.file.id &&
+    prev.file.key === next.file.key &&
+    prev.file.metadata.fileType === next.file.metadata.fileType &&
+    prev.size === next.size &&
+    prev.width === next.width &&
+    prev.height === next.height &&
+    prev.objectFit === next.objectFit &&
+    prev.onOpen === next.onOpen &&
+    prev.isSelected === next.isSelected &&
+    prev.onToggleSelect === next.onToggleSelect &&
+    prev.isAlreadyCompressed === next.isAlreadyCompressed &&
+    prev.disabled === next.disabled &&
+    prev.tapSelects === next.tapSelects;
+
 export const ThumbnailCell = memo(function ThumbnailCell({
     file,
     size,
@@ -211,4 +230,4 @@ export const ThumbnailCell = memo(function ThumbnailCell({
             ) : null}
         </div>
     );
-});
+}, thumbnailCellPropsAreEqual);

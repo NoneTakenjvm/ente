@@ -22,14 +22,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
     countFavoritesInCandidates,
-    countManuallyCroppedInCandidates,
-    countNotFavoritesInCandidates,
-    countNotManuallyCroppedInCandidates,
-    countPhotosInCandidates,
-    countTaggedInCandidates,
+    countFileKindsInCandidates,
     countTagFilterClauses,
-    countUntaggedInCandidates,
-    countVideosInCandidates,
+    countTaggedInCandidates,
     describeTagFilter,
     isFlatTagFilterRoot,
     isTagFilterActive,
@@ -51,16 +46,17 @@ import { useSelectionStore } from "@/stores/selection-store";
 import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
 import { useUIStore } from "@/stores/ui-store";
+import type { EnteFile } from "ente-media/file";
 
 interface TagFilterBarProps {
     matchCount: number;
-    /** File ids currently matching the active filter (visible set). */
-    matchingFileIds: number[];
+    /** Files currently matching the active filter (visible set). */
+    matchingFiles: EnteFile[];
 }
 
 export function TagFilterBar({
     matchCount,
-    matchingFileIds,
+    matchingFiles,
 }: TagFilterBarProps): JSX.Element {
     const allFiles = useLibraryStore((s) => s.allFiles);
     const favoriteFileIds = useFavoritesStore((s) => s.favoriteFileIds);
@@ -146,12 +142,9 @@ export function TagFilterBar({
         void hydrateEmbeddings();
     }, [embeddingHydrated, hydrateEmbeddings, presets.length]);
 
-    const matchingFiles = useMemo(
-        () => {
-            const idSet = new Set(matchingFileIds);
-            return allFiles.filter((file) => idSet.has(file.id));
-        },
-        [allFiles, matchingFileIds],
+    const matchingFileIds = useMemo(
+        () => matchingFiles.map((file) => file.id),
+        [matchingFiles],
     );
 
     /**
@@ -168,24 +161,27 @@ export function TagFilterBar({
             return;
         }
         let cancelled = false;
-        countKitPresenceInWorker({
-            kits: presets,
-            libraryFiles: allFiles,
-            viewFiles: matchingFiles,
-            embeddings: embeddingEntries,
-            fileIdsByTag,
-            includeInKitNearnessByName,
-        })
-            .then((counts) => {
-                if (!cancelled) {
-                    setKitPresenceCountById(counts);
-                }
+        const timer = window.setTimeout(() => {
+            countKitPresenceInWorker({
+                kits: presets,
+                libraryFiles: allFiles,
+                viewFiles: matchingFiles,
+                embeddings: embeddingEntries,
+                fileIdsByTag,
+                includeInKitNearnessByName,
             })
-            .catch((error: unknown) => {
-                console.warn("Kit presence unavailable", error);
-            });
+                .then((counts) => {
+                    if (!cancelled) {
+                        setKitPresenceCountById(counts);
+                    }
+                })
+                .catch((error: unknown) => {
+                    console.warn("Kit presence unavailable", error);
+                });
+        }, 160);
         return (): void => {
             cancelled = true;
+            window.clearTimeout(timer);
         };
     }, [
         allFiles,
@@ -270,16 +266,6 @@ export function TagFilterBar({
         [allFiles],
     );
 
-    const untaggedCount = useMemo(
-        (): number =>
-            countUntaggedInCandidates(
-                libraryFileIds,
-                fileIdsByTag,
-                includeInEffectsPresenceByName,
-            ),
-        [libraryFileIds, fileIdsByTag, includeInEffectsPresenceByName],
-    );
-
     const taggedCount = useMemo(
         (): number =>
             countTaggedInCandidates(
@@ -289,6 +275,7 @@ export function TagFilterBar({
             ),
         [libraryFileIds, fileIdsByTag, includeInEffectsPresenceByName],
     );
+    const untaggedCount = libraryFileIds.size - taggedCount;
 
     const favoritesCount = useMemo(
         (): number =>
@@ -296,32 +283,18 @@ export function TagFilterBar({
         [libraryFileIds, favoriteFileIds],
     );
 
-    const notFavoritesCount = useMemo(
-        (): number =>
-            countNotFavoritesInCandidates(libraryFileIds, favoriteFileIds),
-        [libraryFileIds, favoriteFileIds],
-    );
+    const notFavoritesCount = libraryFileIds.size - favoritesCount;
 
-    const photoCount = useMemo(
-        (): number => countPhotosInCandidates(libraryFileIds, allFiles),
+    const fileKindCounts = useMemo(
+        (): ReturnType<typeof countFileKindsInCandidates> =>
+            countFileKindsInCandidates(libraryFileIds, allFiles),
         [libraryFileIds, allFiles],
     );
 
-    const videoCount = useMemo(
-        (): number => countVideosInCandidates(libraryFileIds, allFiles),
-        [libraryFileIds, allFiles],
-    );
-
-    const croppedCount = useMemo(
-        (): number => countManuallyCroppedInCandidates(libraryFileIds, allFiles),
-        [libraryFileIds, allFiles],
-    );
-
-    const notCroppedCount = useMemo(
-        (): number =>
-            countNotManuallyCroppedInCandidates(libraryFileIds, allFiles),
-        [libraryFileIds, allFiles],
-    );
+    const photoCount = fileKindCounts.photos;
+    const videoCount = fileKindCounts.videos;
+    const croppedCount = fileKindCounts.cropped;
+    const notCroppedCount = fileKindCounts.notCropped;
 
     const clauseCount = countTagFilterClauses(tagFilter.root);
     const isFlat = isFlatTagFilterRoot(tagFilter.root);

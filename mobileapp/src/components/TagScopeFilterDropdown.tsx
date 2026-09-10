@@ -1,6 +1,6 @@
-import { useMemo, useState, type JSX } from "react";
+import { useMemo, useState, type JSX, type ReactNode } from "react";
 import dynamic from "next/dynamic";
-import { Filter, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, Filter, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
     DropdownMenu,
@@ -35,6 +35,49 @@ import type { UpdatedAtSort } from "@/lib/updated-at-sort";
 import type { TagPreset } from "@/lib/tag-presets";
 import { cn } from "@/lib/utils";
 import { useTagStore } from "@/stores/tag-store";
+
+type SortSectionId =
+    "updatedAt" | "viewportFit" | "imageSize" | "tagFilterFit" | "relative" | "nearness";
+
+/**
+ * Collapsible Options → Sort block. Stays open while its sort is active;
+ * otherwise the title toggles the body.
+ */
+function SortSection({
+    title,
+    open,
+    onToggle,
+    children,
+}: {
+    title: string;
+    open: boolean;
+    onToggle: () => void;
+    children: ReactNode;
+}): JSX.Element {
+    return (
+        <DropdownMenuGroup>
+            <button
+                type="button"
+                className="flex w-full items-center justify-between rounded-md px-1.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent/50"
+                aria-expanded={open}
+                onClick={(event) => {
+                    event.preventDefault();
+                    onToggle();
+                }}
+            >
+                <span>{title}</span>
+                <ChevronDown
+                    className={cn(
+                        "size-3.5 shrink-0 transition-transform",
+                        open && "rotate-180",
+                    )}
+                    aria-hidden
+                />
+            </button>
+            {open ? children : null}
+        </DropdownMenuGroup>
+    );
+}
 
 /** Lazy to avoid a cycle: TagQueryEditor → TagScopeFilterDropdown → editor. */
 const NearnessFilterEditor = dynamic(
@@ -227,7 +270,33 @@ export function TagScopeFilterDropdown({
     const [nearnessEditorOpen, setNearnessEditorOpen] = useState<boolean>(false);
     const [kitPickerOpen, setKitPickerOpen] = useState<boolean>(false);
     const [kitQuery, setKitQuery] = useState<string>("");
+    const [manualOpenSections, setManualOpenSections] = useState<
+        ReadonlySet<SortSectionId>
+    >(() => new Set());
     const nearnessDraft = useTagFilterDraft(emptyTagFilter());
+
+    const isSortSectionOpen = (
+        id: SortSectionId,
+        forceOpen: boolean,
+    ): boolean => forceOpen || manualOpenSections.has(id);
+
+    const toggleSortSection = (
+        id: SortSectionId,
+        forceOpen: boolean,
+    ): void => {
+        if (forceOpen) {
+            return;
+        }
+        setManualOpenSections((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) {
+                next.delete(id);
+            } else {
+                next.add(id);
+            }
+            return next;
+        });
+    };
 
     const selectedKit = useMemo((): TagPreset | undefined => {
         if (!kitLikenessActive || !kitLikenessPresetId) {
@@ -473,210 +542,202 @@ export function TagScopeFilterDropdown({
         </>
     );
 
-    const nearnessPanel = showNearness ? (
-        <DropdownMenuGroup>
-            <DropdownMenuLabel>Filter nearness</DropdownMenuLabel>
-            {nearnessEditorOpen ? (
-                <NearnessFilterEditor
-                    draft={nearnessDraft}
-                    taggedCount={taggedCount}
-                    untaggedCount={untaggedCount}
-                    favoritesCount={favoritesCount}
-                    notFavoritesCount={notFavoritesCount}
-                    photoCount={photoCount}
-                    videoCount={videoCount}
-                    croppedCount={croppedCount}
-                    notCroppedCount={notCroppedCount}
-                    onDone={commitNearnessDraft}
-                    onBack={closeNearnessEditor}
-                />
-            ) : (
-                <div className="flex flex-col gap-1.5 px-1 pb-2">
-                    {filterNearnessActive && nearnessFilter ? (
-                        <>
-                            <p className="max-h-16 overflow-auto px-1.5 text-sm font-medium break-words">
-                                {describeTagFilter(nearnessFilter)}
-                            </p>
-                            <div className="flex flex-wrap gap-1.5 px-1">
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => onNearnessReapply?.()}
-                                    disabled={onNearnessReapply === undefined}
-                                >
-                                    Reapply
-                                </Button>
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={openNearnessEditor}
-                                >
-                                    Change
-                                </Button>
-                                <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() =>
-                                        onNearnessFilterChange?.(undefined)
-                                    }
-                                >
-                                    Off
-                                </Button>
-                            </div>
-                        </>
-                    ) : (
-                        <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="ml-1 self-start"
-                            onClick={openNearnessEditor}
-                        >
-                            Choose filter…
-                        </Button>
-                    )}
-                </div>
-            )}
-        </DropdownMenuGroup>
-    ) : null;
+    const nearnessBusy = nearnessEditorOpen || kitPickerOpen;
+    const nearnessSectionActive =
+        filterNearnessActive || kitLikenessActive || nearnessBusy;
 
-    const kitLikenessPanel = showKitLikeness ? (
-        <DropdownMenuGroup>
-            <DropdownMenuLabel>Kit likeness</DropdownMenuLabel>
-            {kitPickerOpen ? (
-                <div className="flex flex-col gap-2 px-1 pb-2">
-                    <Input
-                        value={kitQuery}
-                        onChange={(event) => setKitQuery(event.target.value)}
-                        placeholder="Search kits…"
-                        className="h-8"
-                        onKeyDown={(event) => event.stopPropagation()}
-                        onClick={(event) => event.stopPropagation()}
+    const nearnessPanel =
+        showNearness || showKitLikeness ? (
+            <div className="flex flex-col gap-1.5 px-1 pb-2">
+                {nearnessEditorOpen && showNearness ? (
+                    <NearnessFilterEditor
+                        draft={nearnessDraft}
+                        taggedCount={taggedCount}
+                        untaggedCount={untaggedCount}
+                        favoritesCount={favoritesCount}
+                        notFavoritesCount={notFavoritesCount}
+                        photoCount={photoCount}
+                        videoCount={videoCount}
+                        croppedCount={croppedCount}
+                        notCroppedCount={notCroppedCount}
+                        onDone={commitNearnessDraft}
+                        onBack={closeNearnessEditor}
                     />
-                    <div className="max-h-40 overflow-y-auto overscroll-contain">
-                        {kitPresets.length === 0 ? (
-                            <p className="px-1 py-2 text-xs text-muted-foreground">
-                                Create kits in Manage → Tags
-                            </p>
-                        ) : filteredKits.length === 0 ? (
-                            <p className="px-1 py-2 text-xs text-muted-foreground">
-                                No kits match
-                            </p>
-                        ) : (
-                            filteredKits.map((preset) => {
-                                const selected =
-                                    preset.id === kitLikenessPresetId;
-                                return (
-                                    <button
-                                        key={preset.id}
-                                        type="button"
-                                        className={
-                                            selected ?
-                                                "flex w-full items-center rounded-md bg-accent px-2 py-1.5 text-left text-sm text-accent-foreground" :
-                                                "flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/60"
-                                        }
-                                        onClick={() => {
-                                            onKitLikenessPresetIdChange?.(
-                                                preset.id,
-                                            );
-                                            closeKitPicker();
-                                        }}
-                                    >
-                                        <span className="truncate">
-                                            {kitLabel(preset)}
-                                        </span>
-                                    </button>
-                                );
-                            })
-                        )}
-                    </div>
-                    <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="self-start"
-                        onClick={closeKitPicker}
-                    >
-                        Back
-                    </Button>
-                </div>
-            ) : (
-                <div className="flex flex-col gap-1.5 px-1 pb-2">
-                    {selectedKit ? (
-                        <>
-                            <p className="truncate px-1.5 text-sm font-medium">
-                                {kitLabel(selectedKit)}
-                            </p>
-                            <div className="flex flex-wrap gap-1.5 px-1">
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => onNearnessReapply?.()}
-                                    disabled={onNearnessReapply === undefined}
-                                >
-                                    Reapply
-                                </Button>
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => {
-                                        setNearnessEditorOpen(false);
-                                        setKitPickerOpen(true);
-                                    }}
-                                >
-                                    Change
-                                </Button>
-                                <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() =>
-                                        onKitLikenessPresetIdChange?.(undefined)
-                                    }
-                                >
-                                    Off
-                                </Button>
-                            </div>
-                            {onKitLikenessRivalPenaltyChange ? (
-                                <label className="flex items-center gap-2 px-1.5 pt-0.5 text-xs text-muted-foreground">
-                                    <Switch
-                                        checked={
-                                            kitLikenessRivalPenalty ?? true
-                                        }
-                                        onCheckedChange={(checked) => {
-                                            onKitLikenessRivalPenaltyChange(
-                                                checked,
-                                            );
-                                        }}
-                                        aria-label="Rival kit penalties"
-                                    />
-                                    Rival kit penalties
-                                </label>
-                            ) : null}
-                        </>
-                    ) : (
+                ) : kitPickerOpen && showKitLikeness ? (
+                    <>
+                        <Input
+                            value={kitQuery}
+                            onChange={(event) =>
+                                setKitQuery(event.target.value)
+                            }
+                            placeholder="Search kits…"
+                            className="h-8"
+                            onKeyDown={(event) => event.stopPropagation()}
+                            onClick={(event) => event.stopPropagation()}
+                        />
+                        <div className="max-h-40 overflow-y-auto overscroll-contain">
+                            {kitPresets.length === 0 ? (
+                                <p className="px-1 py-2 text-xs text-muted-foreground">
+                                    Create kits in Manage → Tags
+                                </p>
+                            ) : filteredKits.length === 0 ? (
+                                <p className="px-1 py-2 text-xs text-muted-foreground">
+                                    No kits match
+                                </p>
+                            ) : (
+                                filteredKits.map((preset) => {
+                                    const selected =
+                                        preset.id === kitLikenessPresetId;
+                                    return (
+                                        <button
+                                            key={preset.id}
+                                            type="button"
+                                            className={
+                                                selected ?
+                                                    "flex w-full items-center rounded-md bg-accent px-2 py-1.5 text-left text-sm text-accent-foreground" :
+                                                    "flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/60"
+                                            }
+                                            onClick={() => {
+                                                onKitLikenessPresetIdChange?.(
+                                                    preset.id,
+                                                );
+                                                closeKitPicker();
+                                            }}
+                                        >
+                                            <span className="truncate">
+                                                {kitLabel(preset)}
+                                            </span>
+                                        </button>
+                                    );
+                                })
+                            )}
+                        </div>
                         <Button
                             type="button"
-                            variant="outline"
+                            variant="ghost"
                             size="sm"
-                            className="ml-1 self-start"
-                            onClick={() => {
-                                setNearnessEditorOpen(false);
-                                setKitPickerOpen(true);
-                            }}
+                            className="self-start"
+                            onClick={closeKitPicker}
                         >
-                            Choose kit…
+                            Back
                         </Button>
-                    )}
-                </div>
-            )}
-        </DropdownMenuGroup>
-    ) : null;
+                    </>
+                ) : selectedKit ? (
+                    <>
+                        <p className="truncate px-1.5 text-sm font-medium">
+                            {kitLabel(selectedKit)}
+                        </p>
+                        <div className="flex flex-wrap gap-1.5 px-1">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => onNearnessReapply?.()}
+                                disabled={onNearnessReapply === undefined}
+                            >
+                                Reapply
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                    setNearnessEditorOpen(false);
+                                    setKitPickerOpen(true);
+                                }}
+                            >
+                                Change
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                    onKitLikenessPresetIdChange?.(undefined)
+                                }
+                            >
+                                Off
+                            </Button>
+                        </div>
+                        {onKitLikenessRivalPenaltyChange ? (
+                            <label className="flex items-center gap-2 px-1.5 pt-0.5 text-xs text-muted-foreground">
+                                <Switch
+                                    checked={kitLikenessRivalPenalty ?? true}
+                                    onCheckedChange={(checked) => {
+                                        onKitLikenessRivalPenaltyChange(
+                                            checked,
+                                        );
+                                    }}
+                                    aria-label="Rival kit penalties"
+                                />
+                                Rival kit penalties
+                            </label>
+                        ) : null}
+                    </>
+                ) : filterNearnessActive && nearnessFilter ? (
+                    <>
+                        <p className="max-h-16 overflow-auto px-1.5 text-sm font-medium break-words">
+                            {describeTagFilter(nearnessFilter)}
+                        </p>
+                        <div className="flex flex-wrap gap-1.5 px-1">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => onNearnessReapply?.()}
+                                disabled={onNearnessReapply === undefined}
+                            >
+                                Reapply
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={openNearnessEditor}
+                            >
+                                Change
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                    onNearnessFilterChange?.(undefined)
+                                }
+                            >
+                                Off
+                            </Button>
+                        </div>
+                    </>
+                ) : (
+                    <div className="flex flex-wrap gap-1.5 px-1">
+                        {showKitLikeness ? (
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                    setNearnessEditorOpen(false);
+                                    setKitPickerOpen(true);
+                                }}
+                            >
+                                Choose kit
+                            </Button>
+                        ) : null}
+                        {showNearness ? (
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={openNearnessEditor}
+                            >
+                                Choose tags
+                            </Button>
+                        ) : null}
+                    </div>
+                )}
+            </div>
+        ) : null;
 
     const sortPanel = (
         <>
@@ -705,84 +766,121 @@ export function TagScopeFilterDropdown({
             </div>
             <DropdownMenuSeparator />
             {showUpdatedAt ? (
-                <DropdownMenuRadioGroup
-                    value={updateSort === "none" ? "" : updateSort}
-                    onValueChange={(value) => {
-                        if (isUpdatedAtSort(value)) {
-                            onUpdatedAtSortChange(value);
-                        }
-                    }}
+                <SortSection
+                    title="Updated At"
+                    open={isSortSectionOpen(
+                        "updatedAt",
+                        updateSort !== "none",
+                    )}
+                    onToggle={() =>
+                        toggleSortSection("updatedAt", updateSort !== "none")
+                    }
                 >
-                    <DropdownMenuLabel>Updated At</DropdownMenuLabel>
-                    <DropdownMenuRadioItem value="newest" closeOnClick>
-                        Newest
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="oldest" closeOnClick>
-                        Oldest
-                    </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
+                    <DropdownMenuRadioGroup
+                        value={updateSort === "none" ? "" : updateSort}
+                        onValueChange={(value) => {
+                            if (isUpdatedAtSort(value)) {
+                                onUpdatedAtSortChange(value);
+                            }
+                        }}
+                    >
+                        <DropdownMenuRadioItem value="newest" closeOnClick>
+                            Newest
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="oldest" closeOnClick>
+                            Oldest
+                        </DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                </SortSection>
             ) : null}
             {showUpdatedAt && showViewportFit ? <DropdownMenuSeparator /> : null}
             {showViewportFit ? (
-                <DropdownMenuRadioGroup
-                    value={fitSort === "none" ? "" : fitSort}
-                    onValueChange={(value) => {
-                        if (isViewportFitSort(value)) {
-                            onViewportFitSortChange(value);
-                        }
-                    }}
+                <SortSection
+                    title="Viewport fit"
+                    open={isSortSectionOpen("viewportFit", fitSort !== "none")}
+                    onToggle={() =>
+                        toggleSortSection("viewportFit", fitSort !== "none")
+                    }
                 >
-                    <DropdownMenuLabel>Viewport fit</DropdownMenuLabel>
-                    <DropdownMenuRadioItem value="best" closeOnClick>
-                        Best Fit
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="worst" closeOnClick>
-                        Worst Fit
-                    </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
+                    <DropdownMenuRadioGroup
+                        value={fitSort === "none" ? "" : fitSort}
+                        onValueChange={(value) => {
+                            if (isViewportFitSort(value)) {
+                                onViewportFitSortChange(value);
+                            }
+                        }}
+                    >
+                        <DropdownMenuRadioItem value="best" closeOnClick>
+                            Best Fit
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="worst" closeOnClick>
+                            Worst Fit
+                        </DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                </SortSection>
             ) : null}
             {(showUpdatedAt || showViewportFit) && showImageSize ?
                 <DropdownMenuSeparator /> :
                 null}
             {showImageSize ? (
-                <DropdownMenuRadioGroup
-                    value={sizeSort === "none" ? "" : sizeSort}
-                    onValueChange={(value) => {
-                        if (isImageSizeSort(value)) {
-                            onImageSizeSortChange(value);
-                        }
-                    }}
+                <SortSection
+                    title="Image size"
+                    open={isSortSectionOpen("imageSize", sizeSort !== "none")}
+                    onToggle={() =>
+                        toggleSortSection("imageSize", sizeSort !== "none")
+                    }
                 >
-                    <DropdownMenuLabel>Image size</DropdownMenuLabel>
-                    <DropdownMenuRadioItem value="largest" closeOnClick>
-                        Largest
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="smallest" closeOnClick>
-                        Smallest
-                    </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
+                    <DropdownMenuRadioGroup
+                        value={sizeSort === "none" ? "" : sizeSort}
+                        onValueChange={(value) => {
+                            if (isImageSizeSort(value)) {
+                                onImageSizeSortChange(value);
+                            }
+                        }}
+                    >
+                        <DropdownMenuRadioItem value="largest" closeOnClick>
+                            Largest
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="smallest" closeOnClick>
+                            Smallest
+                        </DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                </SortSection>
             ) : null}
             {(showUpdatedAt || showViewportFit || showImageSize) &&
             showTagFilterFit ?
                 <DropdownMenuSeparator /> :
                 null}
             {showTagFilterFit ? (
-                <DropdownMenuRadioGroup
-                    value={tagFitSort === "none" ? "" : tagFitSort}
-                    onValueChange={(value) => {
-                        if (isTagFilterFitSort(value)) {
-                            onTagFilterFitSortChange?.(value);
-                        }
-                    }}
+                <SortSection
+                    title="Tag filter fit"
+                    open={isSortSectionOpen(
+                        "tagFilterFit",
+                        tagFitSort !== "none",
+                    )}
+                    onToggle={() =>
+                        toggleSortSection(
+                            "tagFilterFit",
+                            tagFitSort !== "none",
+                        )
+                    }
                 >
-                    <DropdownMenuLabel>Tag filter fit</DropdownMenuLabel>
-                    <DropdownMenuRadioItem value="best" closeOnClick>
-                        Best fit
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="worst" closeOnClick>
-                        Worst fit
-                    </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
+                    <DropdownMenuRadioGroup
+                        value={tagFitSort === "none" ? "" : tagFitSort}
+                        onValueChange={(value) => {
+                            if (isTagFilterFitSort(value)) {
+                                onTagFilterFitSortChange?.(value);
+                            }
+                        }}
+                    >
+                        <DropdownMenuRadioItem value="best" closeOnClick>
+                            Best fit
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="worst" closeOnClick>
+                            Worst fit
+                        </DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                </SortSection>
             ) : null}
             {(showUpdatedAt ||
                 showViewportFit ||
@@ -792,7 +890,13 @@ export function TagScopeFilterDropdown({
                 <DropdownMenuSeparator /> :
                 null}
             {showRelative ? (
-                <>
+                <SortSection
+                    title="Relative"
+                    open={isSortSectionOpen("relative", relSort !== "none")}
+                    onToggle={() =>
+                        toggleSortSection("relative", relSort !== "none")
+                    }
+                >
                     <DropdownMenuRadioGroup
                         value={relSort === "none" ? "" : relSort}
                         onValueChange={(value) => {
@@ -801,7 +905,6 @@ export function TagScopeFilterDropdown({
                             }
                         }}
                     >
-                        <DropdownMenuLabel>Relative</DropdownMenuLabel>
                         <DropdownMenuRadioItem value="closest" closeOnClick>
                             Closest
                         </DropdownMenuRadioItem>
@@ -822,7 +925,7 @@ export function TagScopeFilterDropdown({
                             </Button>
                         </div>
                     ) : null}
-                </>
+                </SortSection>
             ) : null}
             {(showUpdatedAt ||
                 showViewportFit ||
@@ -832,9 +935,17 @@ export function TagScopeFilterDropdown({
             (showNearness || showKitLikeness) ?
                 <DropdownMenuSeparator /> :
                 null}
-            {nearnessPanel}
-            {showNearness && showKitLikeness ? <DropdownMenuSeparator /> : null}
-            {kitLikenessPanel}
+            {showNearness || showKitLikeness ? (
+                <SortSection
+                    title="Nearness"
+                    open={isSortSectionOpen("nearness", nearnessSectionActive)}
+                    onToggle={() =>
+                        toggleSortSection("nearness", nearnessSectionActive)
+                    }
+                >
+                    {nearnessPanel}
+                </SortSection>
+            ) : null}
         </>
     );
 

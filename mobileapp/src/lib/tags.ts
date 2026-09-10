@@ -363,10 +363,28 @@ export const tagIndexToMaps = (
 const intersectIds = (
     left: Set<number>,
     right: Set<number>,
-): Set<number> => new Set([...left].filter((id) => right.has(id)));
+): Set<number> => {
+    if (left.size === 0 || right.size === 0) {
+        return new Set();
+    }
+    const small = left.size <= right.size ? left : right;
+    const large = left.size <= right.size ? right : left;
+    const next = new Set<number>();
+    for (const id of small) {
+        if (large.has(id)) {
+            next.add(id);
+        }
+    }
+    return next;
+};
 
-const allFileIds = (files: EnteFile[]): Set<number> =>
-    new Set(files.map((file) => file.id));
+const allFileIds = (files: EnteFile[]): Set<number> => {
+    const ids = new Set<number>();
+    for (const file of files) {
+        ids.add(file.id);
+    }
+    return ids;
+};
 
 const untaggedIdsInCandidates = (
     candidateFileIds: Set<number>,
@@ -378,9 +396,13 @@ const untaggedIdsInCandidates = (
         fileIdsByTag,
         includeInEffectsPresenceByName,
     );
-    return new Set(
-        [...candidateFileIds].filter((id) => !taggedIds.has(id)),
-    );
+    const next = new Set<number>();
+    for (const id of candidateFileIds) {
+        if (!taggedIds.has(id)) {
+            next.add(id);
+        }
+    }
+    return next;
 };
 
 const taggedIdsInCandidates = (
@@ -408,12 +430,35 @@ const taggedIdsInCandidates = (
 const subtractIds = (
     universe: Set<number>,
     remove: Set<number>,
-): Set<number> => new Set([...universe].filter((id) => !remove.has(id)));
+): Set<number> => {
+    if (remove.size === 0) {
+        return universe;
+    }
+    const next = new Set<number>();
+    for (const id of universe) {
+        if (!remove.has(id)) {
+            next.add(id);
+        }
+    }
+    return next;
+};
 
 const unionIds = (
     left: Set<number>,
     right: Set<number>,
-): Set<number> => new Set([...left, ...right]);
+): Set<number> => {
+    if (left.size === 0) {
+        return right;
+    }
+    if (right.size === 0) {
+        return left;
+    }
+    const next = new Set(left);
+    for (const id of right) {
+        next.add(id);
+    }
+    return next;
+};
 
 const tagIdsInCandidates = (
     tag: string,
@@ -422,16 +467,24 @@ const tagIdsInCandidates = (
     fileIdsByTag: Map<string, Set<number>>,
     includeInEffectsPresenceByName?: ReadonlyMap<string, boolean>,
 ): Set<number> => {
-    const idsForTag = fileIdsByTag.get(tag) ?? new Set<number>();
-    const scoped = new Set(
-        [...idsForTag].filter((id) => candidateIds.has(id)),
-    );
     if (tag === UNTAGGED_FILTER) {
         return untaggedIdsInCandidates(
             candidateIds,
             fileIdsByTag,
             includeInEffectsPresenceByName,
         );
+    }
+    const idsForTag = fileIdsByTag.get(tag);
+    if (!idsForTag || idsForTag.size === 0) {
+        return new Set();
+    }
+    const small = idsForTag.size <= candidateIds.size ? idsForTag : candidateIds;
+    const large = idsForTag.size <= candidateIds.size ? candidateIds : idsForTag;
+    const scoped = new Set<number>();
+    for (const id of small) {
+        if (large.has(id)) {
+            scoped.add(id);
+        }
     }
     return scoped;
 };
@@ -562,21 +615,38 @@ export const evaluateTagFilterNode = (
         return matchingIds;
     }
 
-    const childSets = node.children.map((child) => evaluateTagFilterNode(
-        child,
-        candidateIds,
-        files,
-        fileIdsByTag,
-        includeInEffectsPresenceByName,
-    ));
-
     if (node.op === "or") {
-        return childSets.reduce((acc, set) => unionIds(acc, set), new Set<number>());
+        let matchingIds = new Set<number>();
+        for (const child of node.children) {
+            matchingIds = unionIds(
+                matchingIds,
+                evaluateTagFilterNode(
+                    child,
+                    candidateIds,
+                    files,
+                    fileIdsByTag,
+                    includeInEffectsPresenceByName,
+                ),
+            );
+        }
+        return matchingIds;
     }
-    return childSets.reduce(
-        (acc, set) => intersectIds(acc, set),
-        childSets[0],
-    );
+
+    // AND: narrow sequentially so later clauses scan a smaller id set.
+    let matchingIds = candidateIds;
+    for (const child of node.children) {
+        matchingIds = evaluateTagFilterNode(
+            child,
+            matchingIds,
+            files,
+            fileIdsByTag,
+            includeInEffectsPresenceByName,
+        );
+        if (matchingIds.size === 0) {
+            return matchingIds;
+        }
+    }
+    return matchingIds;
 };
 
 const applyTagScope = (
@@ -630,16 +700,15 @@ const applyMediaScope = (
     if (mediaScope === "all") {
         return matchingIds;
     }
-    const fileById = new Map(files.map((file) => [file.id, file] as const));
     const next = new Set<number>();
-    for (const id of matchingIds) {
-        const file = fileById.get(id);
-        if (!file) {
+    const wantVideo = mediaScope === "video";
+    for (const file of files) {
+        if (!matchingIds.has(file.id)) {
             continue;
         }
         const isVideo = file.metadata.fileType === FileType.video;
-        if (mediaScope === "video" ? isVideo : !isVideo) {
-            next.add(id);
+        if (isVideo === wantVideo) {
+            next.add(file.id);
         }
     }
     return next;
@@ -653,16 +722,14 @@ const applyCroppedScope = (
     if (croppedScope === "all") {
         return matchingIds;
     }
-    const fileById = new Map(files.map((file) => [file.id, file] as const));
     const next = new Set<number>();
-    for (const id of matchingIds) {
-        const file = fileById.get(id);
-        if (!file) {
+    const wantCropped = croppedScope === "cropped";
+    for (const file of files) {
+        if (!matchingIds.has(file.id)) {
             continue;
         }
-        const manuallyCropped = isManuallyCroppedFile(file);
-        if (croppedScope === "cropped" ? manuallyCropped : !manuallyCropped) {
-            next.add(id);
+        if (isManuallyCroppedFile(file) === wantCropped) {
+            next.add(file.id);
         }
     }
     return next;
@@ -717,6 +784,58 @@ const resolveMatchingIds = (
 };
 
 /**
+ * True when the filter is a flat AND of include-tag clauses with no scopes.
+ * The common gallery tap (one tag / one kit) hits this path.
+ */
+const isFlatIncludeAndFilter = (filter: TagFilterSelection): boolean => {
+    if (
+        filter.tagScope !== "all" ||
+        filter.favoritesScope !== "all" ||
+        filter.mediaScope !== "all" ||
+        filter.croppedScope !== "all" ||
+        filter.root.op !== "and" ||
+        filter.root.children.length === 0
+    ) {
+        return false;
+    }
+    for (const child of filter.root.children) {
+        if (!isTagFilterClause(child) || child.mode !== "include") {
+            return false;
+        }
+        if (child.tag === UNTAGGED_FILTER || child.tag === TAGGED_FILTER) {
+            return false;
+        }
+    }
+    return true;
+};
+
+/**
+ * Filter by intersecting tag posting lists, then one ordered pass.
+ * Does not allocate a Set of every library id.
+ */
+const filterFilesByIncludeAnd = (
+    files: EnteFile[],
+    clauses: TagFilterClauseNode[],
+    fileIdsByTag: Map<string, Set<number>>,
+): EnteFile[] => {
+    let matching: Set<number> | undefined;
+    for (const clause of clauses) {
+        const tagIds = fileIdsByTag.get(clause.tag);
+        if (!tagIds || tagIds.size === 0) {
+            return [];
+        }
+        matching = matching === undefined ? tagIds : intersectIds(matching, tagIds);
+        if (matching.size === 0) {
+            return [];
+        }
+    }
+    if (!matching) {
+        return files;
+    }
+    return files.filter((file) => matching.has(file.id));
+};
+
+/**
  * Keep files matching the tag filter selection.
  */
 export const filterFilesByTags = (
@@ -727,6 +846,14 @@ export const filterFilesByTags = (
 ): EnteFile[] => {
     if (!isTagFilterActive(filter)) {
         return files;
+    }
+
+    if (isFlatIncludeAndFilter(filter)) {
+        return filterFilesByIncludeAnd(
+            files,
+            filter.root.children as TagFilterClauseNode[],
+            fileIdsByTag,
+        );
     }
 
     const matchingIds = resolveMatchingIds(
@@ -899,6 +1026,43 @@ export const countNotFavoritesInCandidates = (
         }
     }
     return count;
+};
+
+/** Photo / video / crop counts from one pass over {@link files}. */
+export interface FileKindCounts {
+    photos: number;
+    videos: number;
+    cropped: number;
+    notCropped: number;
+}
+
+/**
+ * Count photos, videos, and manual-crop presence in one walk of {@link files}.
+ */
+export const countFileKindsInCandidates = (
+    candidateFileIds: Set<number>,
+    files: EnteFile[],
+): FileKindCounts => {
+    let photos = 0;
+    let videos = 0;
+    let cropped = 0;
+    let notCropped = 0;
+    for (const file of files) {
+        if (!candidateFileIds.has(file.id)) {
+            continue;
+        }
+        if (file.metadata.fileType === FileType.video) {
+            videos += 1;
+        } else {
+            photos += 1;
+        }
+        if (isManuallyCroppedFile(file)) {
+            cropped += 1;
+        } else {
+            notCropped += 1;
+        }
+    }
+    return { photos, videos, cropped, notCropped };
 };
 
 /** Number of photos (non-video) within a candidate id set. */
