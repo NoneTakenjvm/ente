@@ -7,13 +7,14 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-10 |
-| **Last agent / session** | PhotoViewer Image + Viewport size chip |
+| **Last agent / session** | Image quality content-over-res |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable |
-| **Next recommended action** | Phone QA: full viewer chrome shows Image + Viewport sizes (`0.3.149`). |
+| **Next recommended action** | Phone QA: rescan image quality (index v3), Sort Best — sharp mid-res should beat soft high-res (`0.3.150`). |
 
 **This session shipped:**
-1. **PhotoViewer size chip** — chrome overlay shows `Image: W×H` (from pub magic metadata) and `Viewport: W×H` (live device). `APP_VERSION` → `0.3.149`.
+1. **Image quality: content over megapixels** — thumb sharpness/grain/pixelation first; native resolution only soft ×[0.62–1.0] so crisp smaller files outrank soft large ones. Index **v3**. `APP_VERSION` → `0.3.150`.
+2. **PhotoViewer size chip** — chrome overlay shows `Image: W×H` (from pub magic metadata) and `Viewport: W×H` (live device). `APP_VERSION` → `0.3.149`.
 
 **Previous session shipped:**
 1. **Image quality score retune** — ranking is now `resolution × sharpness` (product) so soft/low-res cannot float into Best; mild grain/pixelation/crush only. Index **v2** invalidates prior scores (rescan required). `APP_VERSION` → `0.3.148`.
