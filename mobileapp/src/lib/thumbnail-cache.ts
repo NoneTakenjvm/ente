@@ -49,6 +49,9 @@ const loadingEntry: ThumbnailEntry = { status: "loading" };
 const cache: Map<number, ThumbnailEntry> = new Map();
 const listeners: Map<number, Set<() => void>> = new Map();
 
+/** Running total of ready thumbnail blob sizes (avoids scanning the map). */
+let sessionReadyBytes = 0;
+
 let inFlight = 0;
 /** Visible / subscribed cells — drained first. */
 const highQueue: Array<() => void> = [];
@@ -110,20 +113,29 @@ const notify = (fileId: number): void => {
 const hasSubscribers = (fileId: number): boolean =>
     (listeners.get(fileId)?.size ?? 0) > 0;
 
-const sessionBytesUsed = (): number => {
-    let total = 0;
-    for (const entry of cache.values()) {
-        if (entry.status === "ready" && entry.byteSize) {
-            total += entry.byteSize;
-        }
+const touchLastAccess = (fileId: number): void => {
+    const entry = cache.get(fileId);
+    if (entry?.status === "ready") {
+        entry.lastAccess = Date.now();
     }
-    return total;
+};
+
+const dropReadyBytes = (entry: ThumbnailEntry): void => {
+    if (entry.status === "ready" && entry.byteSize) {
+        sessionReadyBytes = Math.max(0, sessionReadyBytes - entry.byteSize);
+    }
 };
 
 const revokeEntryUrl = (entry: ThumbnailEntry): void => {
     if (entry.url) {
         URL.revokeObjectURL(entry.url);
     }
+};
+
+const discardCacheEntry = (fileId: number, entry: ThumbnailEntry): void => {
+    dropReadyBytes(entry);
+    revokeEntryUrl(entry);
+    cache.delete(fileId);
 };
 
 /**
@@ -136,8 +148,7 @@ const evictSessionUntilFit = (incomingBytes: number): void => {
             if (entry.status !== "ready" || hasSubscribers(fileId)) {
                 continue;
             }
-            revokeEntryUrl(entry);
-            cache.delete(fileId);
+            discardCacheEntry(fileId, entry);
         }
         return;
     }
@@ -153,14 +164,13 @@ const evictSessionUntilFit = (incomingBytes: number): void => {
             (a, b) => (a[1].lastAccess ?? 0) - (b[1].lastAccess ?? 0),
         );
 
-    let used = sessionBytesUsed();
+    let used = sessionReadyBytes;
     for (const [fileId, entry] of ranked) {
         if (used + incomingBytes <= SESSION_BUDGET_BYTES) {
             break;
         }
-        revokeEntryUrl(entry);
-        cache.delete(fileId);
         used -= entry.byteSize ?? 0;
+        discardCacheEntry(fileId, entry);
     }
 };
 
@@ -179,8 +189,7 @@ const emergencyEvict = (): void => {
     const dropCount = Math.max(1, Math.ceil(ranked.length * 0.1));
     for (let i = 0; i < dropCount && i < ranked.length; i++) {
         const [fileId, entry] = ranked[i]!;
-        revokeEntryUrl(entry);
-        cache.delete(fileId);
+        discardCacheEntry(fileId, entry);
     }
 };
 
@@ -215,12 +224,16 @@ const applyReadyNow = (fileId: number, bytes: Uint8Array): void => {
     evictSessionUntilFit(byteSize);
 
     const existing = cache.get(fileId);
-    if (existing?.url) {
-        URL.revokeObjectURL(existing.url);
+    if (existing) {
+        dropReadyBytes(existing);
+        if (existing.url) {
+            URL.revokeObjectURL(existing.url);
+        }
     }
 
     const blob = blobFromUint8Array(bytes, "image/jpeg");
     const url = URL.createObjectURL(blob);
+    sessionReadyBytes += byteSize;
     cache.set(fileId, {
         status: "ready",
         url,
@@ -292,6 +305,7 @@ export const subscribeThumbnail = (
         listeners.set(fileId, set);
     }
     set.add(listener);
+    touchLastAccess(fileId);
     return (): void => {
         set?.delete(listener);
         if (set?.size === 0) {
@@ -300,16 +314,8 @@ export const subscribeThumbnail = (
     };
 };
 
-export const getThumbnailEntry = (fileId: number): ThumbnailEntry => {
-    const entry = cache.get(fileId);
-    if (!entry) {
-        return idleEntry;
-    }
-    if (entry.status === "ready") {
-        entry.lastAccess = Date.now();
-    }
-    return entry;
-};
+export const getThumbnailEntry = (fileId: number): ThumbnailEntry =>
+    cache.get(fileId) ?? idleEntry;
 
 const loadThumbnail = (file: EnteFile): void => {
     const existing: ThumbnailEntry | undefined = cache.get(file.id);
@@ -427,8 +433,9 @@ export const primeThumbnailFromBytes = (
     mimeType = "image/jpeg",
 ): void => {
     const existing = cache.get(fileId);
-    if (existing?.url) {
-        URL.revokeObjectURL(existing.url);
+    if (existing) {
+        dropReadyBytes(existing);
+        revokeEntryUrl(existing);
     }
     cache.set(fileId, { status: "loading" });
     notify(fileId);
@@ -452,8 +459,9 @@ export const primeVideoThumbnailFromBytes = (
     videoBytes: Uint8Array,
 ): void => {
     const existing = cache.get(fileId);
-    if (existing?.url) {
-        URL.revokeObjectURL(existing.url);
+    if (existing) {
+        dropReadyBytes(existing);
+        revokeEntryUrl(existing);
     }
     cache.set(fileId, { status: "loading" });
     notify(fileId);
@@ -484,8 +492,7 @@ export const invalidateThumbnailCache = async (
     }
     const entry = cache.get(fileId);
     if (entry) {
-        revokeEntryUrl(entry);
-        cache.delete(fileId);
+        discardCacheEntry(fileId, entry);
         notify(fileId);
     }
     await deleteThumbnailCiphertext(fileId);
@@ -496,6 +503,7 @@ export const clearThumbnailCache = (): void => {
         revokeEntryUrl(entry);
     }
     cache.clear();
+    sessionReadyBytes = 0;
     listeners.clear();
     highQueue.length = 0;
     lowQueue.length = 0;

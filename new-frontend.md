@@ -7,12 +7,21 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-10 |
-| **Last agent / session** | Compression rework — WebCodecs H.264 + PhotoHoard images (`0.3.123`) |
+| **Last agent / session** | Options Sort panel: merge Nearness + collapsible sections |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | ffmpeg WASM + full video bytes still heavy on the fallback path (Safari / no VideoEncoder) |
-| **Next recommended action** | Phone QA of `0.3.123` compress: viewer + Manage batch — videos should use hardware H.264 when the browser allows it (ffmpeg if not); stills skip under 800 KB by default, otherwise AVIF q60 (or lossless WebP for graphics). Also still pending: phone QA of `0.3.122` kit likeness. **Note:** the working tree holds every change since commit `85cffccd44` (0.3.119 → 0.3.123) uncommitted — commit soon. |
+| **Next recommended action** | Phone QA of `0.3.126` Options → Sort: collapsed section headers, Nearness with Choose kit / Choose tags, auto-expand when that sort is on. Also still pending: phone QA of gallery perf / compress / kit likeness. **Note:** working tree uncommitted since `85cffccd44`. |
 
 **This session shipped:**
+1. **Options Sort UX** — merged Filter nearness + Kit likeness into one **Nearness** section (`Choose kit` / `Choose tags`); each Sort section is collapsible (title + chevron), auto-expanded while its sort is active (or while the nearness picker/editor is open). `APP_VERSION` → `0.3.126`.
+
+**Previous session shipped:**
+1. **Gallery filter/render speed pass 2** — fit layout is one pass with columns built during placement (visible cells look up the live file by index, so tag patches don’t clone the whole layout); thumbs no longer stamp LRU time on every React snapshot; session cache bytes are a running total; library list keeps identity when a revision bump didn’t change anything; Updated At reuses frozen order like the other sorts. Lint, 387 tests, build green. `APP_VERSION` → `0.3.125`.
+
+**Previous session shipped:**
+1. **Gallery filter/render speed** — tag tap no longer builds a Set of every library id (posting-list intersect + sequential AND); masonry no longer joins every file id on each scroll frame, and visible cells are found per-column instead of scanning the whole layout. Filter bar reuses the already-filtered file list, counts photo/video/crop in one pass, and debounces kit-presence packing. Grid updates are deferred so the chrome stays responsive. `APP_VERSION` → `0.3.124`.
+
+**Previous session shipped:**
 1. **Video compress via WebCodecs H.264** — `encodeH264WebCodecs` probes hardware `VideoEncoder` (avc1), draws frames with `requestVideoFrameCallback`, muxes with `mp4-muxer`, AAC when `AudioEncoder` + `MediaStreamTrackProcessor` exist. CRF 18–32 maps to bitrate. ffmpeg libx264 `ultrafast` remains the fallback. Preview still caps long edge at 1280. GIFs and the video editor are unchanged.
 2. **PhotoHoard image compress** — pixel-stat classifier (`compress-classify.ts`) routes to avif-q60 / q70 / q80 / lossless-webp. Skip floor is the existing min-size menu, default **800 KB**, persisted as `mobileapp-compress-min-size`. Worker: transferable buffers, `createImageBitmap` decode, native AVIF/WebP when the browser can, else `@jsquash/avif` / `@jsquash/webp`, JPEG fallback. Crop stays JPEG. JPEG quality slider removed.
 3. **Mime / titles / thumbs** — compressed stills upload as `.avif` / `.webp`; `generateImageThumbnail` takes source mime; viewer and Manage copy updated. Lint, 384 tests, build green. `APP_VERSION` → `0.3.123`.

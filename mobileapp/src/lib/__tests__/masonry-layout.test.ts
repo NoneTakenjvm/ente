@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { fileAspectRatio } from "@/lib/file-aspect-ratio";
-import { computeMasonryLayout } from "@/lib/masonry-layout";
+import {
+    computeMasonryLayout,
+    groupMasonryItemsByColumn,
+    visibleMasonryItemsFromColumns,
+} from "@/lib/masonry-layout";
 import type { EnteFile } from "ente-media/file";
 
 const fileWithDimensions = (id: number, w: number, h: number): EnteFile =>
@@ -50,5 +54,39 @@ describe("computeMasonryLayout", () => {
 
         expect(firstColumnItems).toHaveLength(2);
         expect(firstColumnItems[1].y).toBeGreaterThan(firstColumnItems[0].y);
+    });
+
+    it("groups every item into a column without duplicating", () => {
+        const files = [
+            fileWithDimensions(1, 100, 100),
+            fileWithDimensions(2, 100, 200),
+            fileWithDimensions(3, 100, 100),
+            fileWithDimensions(4, 200, 100),
+        ];
+        const layout = computeMasonryLayout(files, 320, 2);
+        const columnCount = layout.itemsByColumn.reduce(
+            (sum, column) => sum + column.length,
+            0,
+        );
+        expect(layout.itemsByColumn).toHaveLength(2);
+        expect(columnCount).toBe(layout.items.length);
+        expect(layout.items.map((item) => item.index)).toEqual([0, 1, 2, 3]);
+    });
+});
+
+describe("visibleMasonryItemsFromColumns", () => {
+    it("returns only items overlapping the viewport", () => {
+        const files = Array.from({ length: 20 }, (_, index) =>
+            fileWithDimensions(index + 1, 100, 100));
+        const layout = computeMasonryLayout(files, 320, 2);
+        const columns = groupMasonryItemsByColumn(layout.items);
+        const visible = visibleMasonryItemsFromColumns(columns, 0, 80, 0);
+
+        expect(visible.length).toBeGreaterThan(0);
+        expect(visible.length).toBeLessThan(layout.items.length);
+        for (const item of visible) {
+            expect(item.y).toBeLessThanOrEqual(80);
+            expect(item.y + item.height).toBeGreaterThanOrEqual(0);
+        }
     });
 });

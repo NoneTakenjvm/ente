@@ -10,6 +10,7 @@ import {
     filterFilesByTags,
     patchFilteredFilesForTagTouch,
     countFilesMatchingTagFilter,
+    countFileKindsInCandidates,
     isSystemTag,
     newTagFilterNodeId,
     tagIndexToMaps,
@@ -133,6 +134,25 @@ describe("tags", () => {
             fileIdsByTag,
         );
         expect(filtered.map((file) => file.id)).toEqual([2]);
+    });
+
+    it("countFileKindsInCandidates counts photo, video, and crop in one pass", () => {
+        const photo = fileWithTags(1, []);
+        const cropped = fileWithTags(2, ["cropped"]);
+        const video = {
+            ...fileWithTags(3, []),
+            metadata: { ...fileWithTags(3, []).metadata, fileType: 1 },
+        } as EnteFile;
+        const counts = countFileKindsInCandidates(
+            new Set([1, 2, 3]),
+            [photo, cropped, video],
+        );
+        expect(counts).toEqual({
+            photos: 2,
+            videos: 1,
+            cropped: 1,
+            notCropped: 2,
+        });
     });
 
     it("filterFilesByTags supports OR between include clauses", () => {

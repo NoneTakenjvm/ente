@@ -7,6 +7,8 @@ export interface MasonryItemLayout {
     fileId: number;
     file: EnteFile;
     key: number;
+    /** Index into the files array this layout was built from. */
+    index: number;
     x: number;
     y: number;
     width: number;
@@ -15,6 +17,8 @@ export interface MasonryItemLayout {
 
 export interface MasonryLayout {
     items: MasonryItemLayout[];
+    /** Same objects as {@link items}, grouped by column (increasing y). */
+    itemsByColumn: MasonryItemLayout[][];
     totalHeight: number;
     paddingInline: number;
     gap: number;
@@ -76,10 +80,14 @@ const computePlacedMasonryItems = <T>(
         columnHeights[column] += height + gap;
     }
 
+    let tallest = 0;
+    for (const columnHeight of columnHeights) {
+        if (columnHeight > tallest) {
+            tallest = columnHeight;
+        }
+    }
     const totalHeight =
-        items.length > 0 ?
-            Math.max(...columnHeights) - gap :
-            0;
+        items.length > 0 ? tallest - gap : 0;
 
     return {
         items,
@@ -97,29 +105,55 @@ export const computeMasonryLayout = (
     containerWidth: number,
     columns: GalleryColumnCount,
 ): MasonryLayout => {
-    const placed = computePlacedMasonryItems(
-        files.map((file) => ({
-            value: file,
-            key: file.id,
-            aspectRatio: fileAspectRatio(file),
-        })),
-        containerWidth,
-        columns,
+    const paddingInline = paddingInlineForWidth(containerWidth);
+    const gap = thumbnailGap;
+    const available = containerWidth - paddingInline * 2;
+    const columnWidth = (available - gap * (columns - 1)) / columns;
+    const columnHeights = Array.from({ length: columns }, () => 0);
+    const items: MasonryItemLayout[] = [];
+    const itemsByColumn: MasonryItemLayout[][] = Array.from(
+        { length: columns },
+        () => [],
     );
 
+    for (let index = 0; index < files.length; index += 1) {
+        const file = files[index]!;
+        const height = columnWidth / fileAspectRatio(file);
+        let column = 0;
+        for (let next = 1; next < columns; next += 1) {
+            if (columnHeights[next]! < columnHeights[column]!) {
+                column = next;
+            }
+        }
+        const item: MasonryItemLayout = {
+            fileId: file.id,
+            file,
+            key: file.id,
+            index,
+            x: paddingInline + column * (columnWidth + gap),
+            y: columnHeights[column]!,
+            width: columnWidth,
+            height,
+        };
+        items.push(item);
+        itemsByColumn[column]!.push(item);
+        columnHeights[column] += height + gap;
+    }
+
+    let tallest = 0;
+    for (const columnHeight of columnHeights) {
+        if (columnHeight > tallest) {
+            tallest = columnHeight;
+        }
+    }
+    const totalHeight = items.length > 0 ? tallest - gap : 0;
+
     return {
-        items: placed.items.map((item) => ({
-            fileId: item.value.id,
-            file: item.value,
-            key: item.value.id,
-            x: item.x,
-            y: item.y,
-            width: item.width,
-            height: item.height,
-        })),
-        totalHeight: placed.totalHeight,
-        paddingInline: placed.paddingInline,
-        gap: placed.gap,
+        items,
+        itemsByColumn,
+        totalHeight: Math.max(0, totalHeight),
+        paddingInline,
+        gap,
     };
 };
 
@@ -157,7 +191,94 @@ export const masonryItemsInMarquee = (
     return keys;
 };
 
-export const visibleMasonryItems = <T extends { y: number; height: number }>(
+/**
+ * Group masonry items into columns (same x). Placement order is increasing y
+ * within each column, so callers can binary-search the visible range.
+ */
+export const groupMasonryItemsByColumn = <
+    T extends { x: number; y: number; height: number },
+>(
+    items: T[],
+): T[][] => {
+    const columns: T[][] = [];
+    const indexByX = new Map<number, number>();
+    for (const item of items) {
+        let columnIndex = indexByX.get(item.x);
+        if (columnIndex === undefined) {
+            columnIndex = columns.length;
+            indexByX.set(item.x, columnIndex);
+            columns.push([item]);
+            continue;
+        }
+        columns[columnIndex]!.push(item);
+    }
+    return columns;
+};
+
+const firstIndexWhere = <T>(
+    items: readonly T[],
+    predicate: (item: T) => boolean,
+): number => {
+    let low = 0;
+    let high = items.length;
+    while (low < high) {
+        const mid = (low + high) >> 1;
+        if (predicate(items[mid]!)) {
+            high = mid;
+        } else {
+            low = mid + 1;
+        }
+    }
+    return low;
+};
+
+/**
+ * Visible slice of a y-increasing column (item.y + height is also increasing
+ * because each item is stacked with a gap).
+ */
+const visibleItemsInColumn = <T extends { y: number; height: number }>(
+    column: readonly T[],
+    minY: number,
+    maxY: number,
+): T[] => {
+    if (column.length === 0) {
+        return [];
+    }
+    const start = firstIndexWhere(
+        column,
+        (item) => item.y + item.height >= minY,
+    );
+    const end = firstIndexWhere(column, (item) => item.y > maxY);
+    if (start >= end) {
+        return [];
+    }
+    return column.slice(start, end);
+};
+
+/** Collect visible items from pre-grouped columns. */
+export const visibleMasonryItemsFromColumns = <
+    T extends { y: number; height: number },
+>(
+    columns: readonly (readonly T[])[],
+    scrollTop: number,
+    viewportHeight: number,
+    overscanPx = 200,
+): T[] => {
+    const minY = scrollTop - overscanPx;
+    const maxY = scrollTop + viewportHeight + overscanPx;
+    const visible: T[] = [];
+    for (const column of columns) {
+        const slice = visibleItemsInColumn(column, minY, maxY);
+        for (const item of slice) {
+            visible.push(item);
+        }
+    }
+    return visible;
+};
+
+export const visibleMasonryItems = <
+    T extends { x: number; y: number; height: number },
+>(
     items: T[],
     scrollTop: number,
     viewportHeight: number,
@@ -165,7 +286,15 @@ export const visibleMasonryItems = <T extends { y: number; height: number }>(
 ): T[] => {
     const minY = scrollTop - overscanPx;
     const maxY = scrollTop + viewportHeight + overscanPx;
-    return items.filter(
-        (item) => item.y + item.height >= minY && item.y <= maxY,
+    if (items.length < 64) {
+        return items.filter(
+            (item) => item.y + item.height >= minY && item.y <= maxY,
+        );
+    }
+    return visibleMasonryItemsFromColumns(
+        groupMasonryItemsByColumn(items),
+        scrollTop,
+        viewportHeight,
+        overscanPx,
     );
 };
