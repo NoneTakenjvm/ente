@@ -31,7 +31,8 @@ import {
     type TagFilterSelection,
 } from "@/lib/tags";
 import { bulkAddTags, bulkRemoveTags } from "@/lib/tag-bulk-actions";
-import { countKitPresenceInWorker } from "@/lib/kit-nearness-margins-job";
+import { countKitPresence, type KitPresenceEstimate } from "@/lib/kit-nearness-margins";
+import { estimateKitPresenceInWorker } from "@/lib/kit-nearness-margins-job";
 import {
     matchNearnessFilterToKitPreset,
     nearnessFilterFromKitTags,
@@ -109,6 +110,12 @@ export function TagFilterBar({
     const setKitLikenessRivalPenalty = useUIStore(
         (s) => s.setKitLikenessRivalPenalty,
     );
+    const excludedKitLikenessIds = useUIStore(
+        (s) => s.excludedKitLikenessIds,
+    );
+    const toggleKitLikenessExcluded = useUIStore(
+        (s) => s.toggleKitLikenessExcluded,
+    );
 
     const embeddingEntries = useEmbeddingIndexStore((s) => s.entries);
     const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
@@ -148,21 +155,20 @@ export function TagFilterBar({
     );
 
     /**
-     * Shown files that fit each kit, counted off-thread; empty until the
-     * worker answers (kit names show without a count meanwhile).
+     * Shown files that fit each kit. Tag probabilities come from the worker;
+     * counts are derived here so toggling a kit recounts immediately.
      */
-    const [kitPresenceCountById, setKitPresenceCountById] = useState<
-        ReadonlyMap<string, number>
-    >(new Map());
+    const [presenceEstimate, setPresenceEstimate] =
+        useState<KitPresenceEstimate | null>(null);
 
     useEffect(() => {
         if (!presets.length || !embeddingHydrated) {
-            setKitPresenceCountById(new Map());
+            setPresenceEstimate(null);
             return;
         }
         let cancelled = false;
         const timer = window.setTimeout(() => {
-            countKitPresenceInWorker({
+            estimateKitPresenceInWorker({
                 kits: presets,
                 libraryFiles: allFiles,
                 viewFiles: matchingFiles,
@@ -170,9 +176,9 @@ export function TagFilterBar({
                 fileIdsByTag,
                 includeInKitNearnessByName,
             })
-                .then((counts) => {
+                .then((estimate) => {
                     if (!cancelled) {
-                        setKitPresenceCountById(counts);
+                        setPresenceEstimate(estimate);
                     }
                 })
                 .catch((error: unknown) => {
@@ -190,6 +196,30 @@ export function TagFilterBar({
         fileIdsByTag,
         includeInKitNearnessByName,
         matchingFiles,
+        presets,
+    ]);
+
+    const kitPresenceCountById = useMemo((): ReadonlyMap<string, number> => {
+        if (!presets.length) {
+            return new Map();
+        }
+        const estimate = presenceEstimate ?? {
+            tagNames: [],
+            candidateIds: [],
+            tagProbabilities: new Float32Array(0),
+        };
+        return countKitPresence(
+            presets,
+            matchingFiles.map((file) => file.id),
+            fileIdsByTag,
+            estimate,
+            excludedKitLikenessIds,
+        );
+    }, [
+        excludedKitLikenessIds,
+        fileIdsByTag,
+        matchingFiles,
+        presenceEstimate,
         presets,
     ]);
 
@@ -409,6 +439,8 @@ export function TagFilterBar({
                             handleKitLikenessPresetIdChange
                         }
                         kitPresenceCountById={kitPresenceCountById}
+                        excludedKitLikenessIds={excludedKitLikenessIds}
+                        onToggleKitLikenessExcluded={toggleKitLikenessExcluded}
                         kitLikenessRivalPenalty={kitLikenessRivalPenalty}
                         onKitLikenessRivalPenaltyChange={
                             setKitLikenessRivalPenalty

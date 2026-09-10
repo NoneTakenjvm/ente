@@ -388,7 +388,11 @@ export default function GalleryPage(): JSX.Element {
         const rivalMedoidSets = useRivalPenalty ?
             useTagSpeedStore
                 .getState()
-                .presets.filter((entry) => entry.id !== matchedKit.id)
+                .presets.filter(
+                    (entry) =>
+                        entry.id !== matchedKit.id &&
+                        !ui.excludedKitLikenessIds.has(entry.id),
+                )
                 .map((entry) => {
                     if (!entry.tags.length) {
                         return [];

@@ -23,7 +23,14 @@ mapping in the pass-6 section)
 > "kit likeness" list) is a separate question with a separate section at the
 > end: the old winner-takes-all share was wrong by construction for nested
 > kits; independent per-kit counts from the pass-5 detectors replaced it in
-> `0.3.122`.
+> `0.3.122`. **Exact-tag / ONLY membership** was first measured with AND-tuned
+> genes and looked hopeless for gallery retrieval. A dedicated retune
+> (grid + GA, extras as hard negatives, a new “other-tag” exclusivity gene)
+> lifts first-screen 49 → 55 and exclusive AUC 68 → 77. The **dropdown
+> drowning** complaint is real and separate: AND counts make every parent
+> kit outrank its children (59/59 nested pairs); ONLY is the semantics that
+> fix it. **Shipped in `0.3.129` for the dropdown only** (exact-set θ=0.4);
+> gallery ranking stays AND. See the ONLY-retune section at the end.
 
 ## What the first pass actually was
 
@@ -1380,6 +1387,11 @@ hiding tags is the only way to test estimation). The table above is the
 all-unknown lower bound; tag-filtered views in the app are exact for the
 filter tags.
 
+**Dropdown ONLY (`0.3.129`)** — the list now counts exact tag sets, not AND
+product: a known extra tag in the kit vocabulary rejects the parent, and
+untagged stills use predicted-set equality at θ=0.4. Gallery ranking is
+unchanged (AND). See the ONLY-retune section.
+
 ### Reproducing pass 5
 
 ```powershell
@@ -1391,3 +1403,172 @@ npx tsx --tsconfig scripts/tsconfig.json scripts/kit-nearness-s2-pass5.ts
 The runner prints to stdout only and never writes the corpus or derived
 vectors. Families dropped after the first pass-5 run are listed in the script
 header; their numbers are in the ablation and dead-end lists above.
+
+## Exact-tag membership vs AND (2026-09-10)
+
+Runner: `scripts/kit-nearness-s2-exact-membership.ts` (~1 min, 5 seeds).
+Shipped scorer and splits (centroid λ=16 τ=0.02, whitened hard margin,
+per-tag logistic min, h1.5 t4). Membership today is AND: every kit tag,
+extras allowed. Exact = the photo's user-tag set *is* the kit's tags.
+
+AND baseline on this run matched the published numbers (ranking hard AUC
+92.9 vs 93.0; presence tag-product@0.5 MAE 5.7pp, ρ 0.82, top-1 94.7,
+ghosts 0.15).
+
+**How much of a kit is extras** (saved kits, ranking corpus, arity ≥ 2):
+high-arity kits are already almost exact (`k_0004` 5 tags, 1.8% extras;
+`k_0013`/`k_0004` style). Nested 2–3 tag kits are mostly supersets
+(`k_0022` 93.5% extras, `k_0018` 91.3%, `k_0011` 89%). CLIP centroids of
+AND vs exact members are nearly the same (cosine Δ 0.000–0.04) — extras
+still contain the kit tags, so they look like members.
+
+**Gallery ranking** (saved arity ≥ 2, seed-averaged; Δ vs AND/AND):
+
+
+| seeds / eval                         | hard AUC | hard AP | first-screen | Δ hard AUC          |
+| ------------------------------------ | -------- | ------- | ------------ | ------------------- |
+| AND / AND (shipped)                  | 92.9     | 61.0    | 76.1         | —                   |
+| exact centroid, extras out of c_hard / AND | 92.6 | 61.0    | 79.2         | **−0.3pp** [−0.6, −0.2] |
+| exact centroid, extras in c_hard / AND     | 92.4 | 60.6    | 79.0         | **−0.6pp** [−0.8, −0.4] |
+| AND / exact                          | 89.3     | 33.0    | 41.9         | −3.7pp              |
+| exact-hard / exact                   | 92.1     | 42.3    | 59.3         | −0.9pp              |
+
+
+Purer seeds do not help the current (AND) job. Treating extras as the
+thing to find is easy because they already sit in the top of the ranking
+(median percentile 15% under the shipped scorer). Treating extras as
+*negatives* (exact retrieval) cannot work well: they are visually the same
+as exact members, so first-screen and hard AP collapse even when AUC is
+recovered by stuffing extras into `c_hard`. One kit (`k_0021`) drops
+below 20 exact members.
+
+**Kit list order** (tagged counts, no CLIP): Spearman 0.70 on the ranking
+corpus (arity ≥ 2), **0.41** on the presence corpus (all 24 saved kits,
+single-tag included). AND top-3 on the ranking corpus is
+`k_0002` / `k_0001` / `k_0022`; exact top-3 is `k_0002` / `k_0001` /
+`k_0008` — nested kits collapse.
+
+**Kit presence estimator** vs exact truth (same views as the presence
+section):
+
+
+| estimator                         | truth | MAE  | ρ    | top-1 | ghosts |
+| --------------------------------- | ----- | ---- | ---- | ----- | ------ |
+| tag product @0.5 (shipped)        | AND   | 5.7  | 0.82 | 94.7  | 0.15   |
+| tag product @0.5 (shipped)        | exact | 8.1  | 0.29 | 66.5  | 3.33   |
+| predicted tag-set equals kit @0.5 | exact | 2.2  | 0.64 | 62.3  | 0.23   |
+
+
+The shipped detector is AND-like by construction (product over the kit's
+tags). Pointed at exact prevalence it ghosts nested parents. A hard
+predicted-set match calibrates the count (MAE 2.2pp, because exact
+prevalence is small) but ranks kits worse than the current AND list.
+
+**Do not ship from that run.** AND-tuned genes on an ONLY task are the
+wrong experiment. The follow-up retune is the next section.
+
+## ONLY retune — drowning, presence, ranking GA (2026-09-10)
+
+Runner: `scripts/kit-nearness-s2-only-tune.ts` (~3 min). The previous
+exact-membership run reused pass-5 genes. This one searches genes for
+ONLY (exact tag-set members; extras = kit tags plus more, treated as hard
+negatives) and measures the nested-kit drowning in the kit-likeness
+dropdown.
+
+### The drowning is by construction, not a bad λ
+
+The dropdown sorts by fit count, then more tags, then name. Under AND a
+parent kit `{A}` counts every photo of child `{A,B}`, so the parent
+**always** outranks the child. Presence corpus: **59/59 nested pairs**,
+parent AND count ≥ child. Spearman of AND vs ONLY list order is only
+0.54.
+
+Worked extras-inflation (AND rank → ONLY rank):
+
+- `k_0019` (2 tags): 1116 AND / 39 exact, rank **3 → 19** (96.5% extras)
+- `k_0023` (3): 583 / 22, rank **8 → 23**
+- `k_0025` (3): 992 / 64, rank **4 → 17**
+
+Those are the "sky drowns selfie" kits: a tag-set almost always applied
+*with more tags* looks huge under AND. High-arity almost-exact kits
+rise: `k_0024` 7→3, `k_0001` 9→4, `k_0013` 15→5. Under ONLY, the child
+outranks the parent in **23/59** pairs.
+
+This is a count definition, not a CLIP problem. On tagged photos the fix
+is `countFilesMatchingKitExact` (already used in tag-picker ONLY mode):
+a known extra tag means the photo does not fit.
+
+### Presence estimators vs ONLY truth (5 seeds, app-like views)
+
+`parentWins` = nested parent estimated > child. `child@5` = recall of
+arity≥2 kits that are truly in the exact top-5.
+
+
+| estimator | MAE | ρ | child@5 | parentWins | top-1 |
+| --- | --- | --- | --- | --- | --- |
+| AND product @0.5 (shipped, soft) | 8.5 | 0.35 | 41.3 | **100** | 66.5 |
+| AND product @0.5 hardened | 7.5 | 0.31 | 41.7 | 83.6 | 66.5 |
+| **exact-set @0.4** | 2.0 | 0.64 | **83.0** | 38.9 | 56.2 |
+| exclusive-hard in0.5 out0.4 | 2.0 | 0.64 | 80.1 | 38.6 | 65.8 |
+| kit logistic exact (natural) | 2.6 | 0.65 | 81.2 | 56.3 | **89.3** |
+| kit logistic exact @0.5 | 2.2 | 0.61 | 75.6 | **29.0** | 89.7 |
+
+The shipped detector, pointed at ONLY truth, still lets every parent beat
+every child. Predicted tag-set equality (or exclusive-hard: kit tags
+≥0.5 and other tags <0.4) roughly doubles specific-kit top-5 recall.
+Kit-level logistic on exact-vs-rest is the best top-1 but needs one model
+per kit.
+
+### Ranking GA / grid (ONLY task)
+
+New terms the AND tuner never had:
+
+- `m_extra = x · S⁻¹(c_exact − c_extras)` (centroid of AND-but-not-exact)
+- `m_excl = −max_{t ∉ kit} logodds_t(x)` (penalise extra tags)
+
+Score: `prod/σ + hP·m_partial/σ + hE·m_extra/σ + t·m_tag/σ + x·m_excl/σ`.
+Fitness = first-screen mix (0.4 AUC + 0.2 AP + 0.4 hard@12). 648-cell
+grid on seed 42, then GA pop 28 × 20 gens × 2 restarts. Confirm on 4
+seeds.
+
+
+| genes | hard AUC | excl AUC | hard AP | first-screen | Δ@12 vs AND-genes |
+| --- | --- | --- | --- | --- | --- |
+| shipped λ16 τ0.02 h1.5 t4 x0 | 91.3 | 67.7 | 35.5 | 49.1 | — |
+| extra-only hE3 | 90.3 | 77.0 | 36.1 | 50.7 | +1.6pp |
+| excl-tag x4, rest shipped | 93.1 | 80.0 | 40.2 | 52.4 | +3.2pp |
+| **grid** λ8 τ0.06 hP1.5 hE0 t4 x2 | 93.0 | 76.4 | 40.3 | 54.2 | **+5.0pp [3.4, 6.7]** |
+| **GA** λ7.5 τ0.07 hP1.5 hE0 t3.6 x1.8 | 93.1 | 76.6 | 40.4 | 54.7 | **+5.5pp [4.2, 6.9]** |
+
+GA ≈ grid. `hE=0` in both winners: stuffing extras into a second centroid
+does not beat penalising extra *tags*. Exclusive AUC (exact vs extras
+only) 67.7 → 76.6 — CLIP can tell them apart better with the tag term,
+but first-screen stays ~55 vs AND's ~76. Thumbnail S2 still cannot put
+exact members on screen as reliably as AND members.
+
+Proposed ONLY ranking default, rounded from the grid:
+
+```
+useCentroid: 1
+rivalLambda: 8
+rivalTau: 0.06
+hardWeight: 1.5
+tagWeight: 4
+exclTagWeight: 2   // new: −max extra-tag log-odds / σ
+```
+
+### If shipping ONLY
+
+1. **Dropdown / kit list (the drowning bug):** for known tags, a file
+fits kit `k` only when its user-tag set *equals* `k`'s tags. That is the
+whole fix for tagged photos. Untagged stills: predicted tag-set equals
+the kit (θ=0.4) or exclusive-hard; do not keep the AND product.
+2. **Gallery ranking:** switch seeds to exact members, `c_hard` =
+partial-tag photos (not extras), add `exclTagWeight=2`, drop λ to 8 and
+τ to 0.06. Expect first-screen ~55%, not 76.
+3. Do not reuse AND genes. Do not bring back a long in-app GA; the 6-gene
+grid already matches it.
+
+Not shipped in this session — product choice: AND list is wrong for
+nested kits; ONLY ranking is a weaker retrieval task. Owner should decide
+whether the dropdown fix is worth the ranking hit.

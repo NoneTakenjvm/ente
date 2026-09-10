@@ -202,6 +202,12 @@ interface UIState {
     kitLikenessRivalPenalty: boolean;
     setKitLikenessRivalPenalty: (enabled: boolean) => void;
     /**
+     * Kit preset ids omitted from rival penalties and pushed to the bottom
+     * of the Choose kit list. Session-only; still selectable as the active kit.
+     */
+    excludedKitLikenessIds: ReadonlySet<string>;
+    toggleKitLikenessExcluded: (presetId: string) => void;
+    /**
      * Bumped whenever nearness is (re)applied so the gallery can snapshot
      * order once — library/tag edits must not rebuild until reapply.
      */
@@ -382,6 +388,25 @@ export const useUIStore = create<UIState>((set) => ({
                 { nearnessEpoch: state.nearnessEpoch + 1 } :
                 {}),
         }));
+    },
+    excludedKitLikenessIds: new Set(),
+    toggleKitLikenessExcluded: (presetId: string): void => {
+        set((state) => {
+            const next = new Set(state.excludedKitLikenessIds);
+            if (next.has(presetId)) {
+                next.delete(presetId);
+            } else {
+                next.add(presetId);
+            }
+            return {
+                excludedKitLikenessIds: next,
+                ...(state.nearnessSource === "kit" &&
+                    state.nearnessFilter &&
+                    state.kitLikenessRivalPenalty ?
+                    { nearnessEpoch: state.nearnessEpoch + 1 } :
+                    {}),
+            };
+        });
     },
     nearnessEpoch: 0,
     setNearnessFilter: (

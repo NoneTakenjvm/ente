@@ -7,12 +7,33 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-10 |
-| **Last agent / session** | No-tag filter vs system tags |
+| **Last agent / session** | Kit presence best-fit among remaining |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | ffmpeg WASM + full video bytes still heavy on the fallback path (Safari / no VideoEncoder) |
-| **Next recommended action** | Phone QA of `0.3.127`: No tag / Has tag ignore `compressed`/`cropped`/`rotated`/`auto-cropped`. Also still pending: Options Sort UX (`0.3.126`) and gallery perf / compress / kit likeness. **Note:** working tree uncommitted since `85cffccd44`. |
+| **Next recommended action** | Phone QA of `0.3.133` kit best-fit. Compress follow-up plan is locked in `mobileapp/scripts/compress-followup.md` (waiting for go). **Note:** working tree uncommitted since `85cffccd44`. |
 
 **This session shipped:**
+1. **Kit presence = best fit among remaining** — each shown file goes to the most-specific included kit it AND-matches (most tags, then id). Unchecked kits get 0 and drop out of the contest, so their photos fall to the next parent/sibling match. Replaces independent ONLY counts. Lint, 391 tests, build green. `APP_VERSION` → `0.3.133`.
+
+**Previous session (diagnosis, nothing shipped):**
+1. **Why toggling barely moved other counts** — independent ONLY + shared sibling tags; most big-kit excludes changed zero other counts on the corpus.
+
+**Previous session shipped:**
+1. **Kit toggle recounts remaining kits** — counts are derived with `useMemo` from the exclude set (toggle no longer waits on the worker). Extra tags only veto a parent when a remaining *child* kit still uses them; the 0.4 CLIP threshold on unrelated remaining tags no longer blocks fallthrough. Unchecked kits stay 0. Lint, 391 tests, build green. `APP_VERSION` → `0.3.132`.
+
+**Previous session shipped:**
+1. **Excluded kits omitted from ONLY counts** — `APP_VERSION` → `0.3.131`.
+2. **Excluded kits skip presence counts** — zeros unchecked kits in the Choose kit list. `APP_VERSION` → `0.3.130`.
+3. **Kit likeness dropdown ONLY** — `countKitPresence` now fits a file only when its known + predicted tags *equal* the kit (θ=0.4). Nested parents no longer count child photos. Gallery ranking unchanged (AND). `APP_VERSION` → `0.3.129`. Lint, 389 tests, build green.
+
+**Previous session shipped:**
+1. **Kit likeness include/exclude** — checkbox per kit in Options → Sort → Choose kit; unchecked kits sort to the bottom (muted) and are skipped as rivals when scoring gallery nearness (session-only `excludedKitLikenessIds`). Still selectable as the active kit. `APP_VERSION` → `0.3.128`.
+
+**Previous session (research only, nothing shipped):**
+1. **ONLY kit likeness retune** — drowning is AND-by-construction (59/59 nested parents outrank children). GA/grid for exact membership: λ=8 τ=0.06 h=1.5 t=4 + extra-tag penalty x=2; first-screen 49→55, exclusive AUC 68→77. Dropdown visual estimator: exact-set @0.4 doubles specific-kit top-5 recall (42%→83%). Not shipped — owner decision. Notes: `scripts/kit-nearness-s2-research.md`; runner `scripts/kit-nearness-s2-only-tune.ts`.
+2. **Exact-tag kit likeness (AND genes)** — AND vs exact with shipped λ16 τ0.02 h1.5 t4. Exact seeds do not help AND ranking. Runner `scripts/kit-nearness-s2-exact-membership.ts`.
+
+**Previous session shipped:**
 1. **No-tag ignores system tags** — tagged/untagged presence skips `SYSTEM_TAGS`; compress/crop incremental index updates no longer add them; hydrate scrubs dirty persisted buckets. `APP_VERSION` → `0.3.127`.
 
 **Previous session shipped:**

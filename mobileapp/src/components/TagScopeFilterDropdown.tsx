@@ -13,6 +13,7 @@ import {
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { useTagFilterDraft } from "@/hooks/use-tag-filter-draft";
 import type {
@@ -148,11 +149,17 @@ interface TagScopeFilterDropdownProps {
     kitLikenessPresetId?: string;
     onKitLikenessPresetIdChange?: (presetId: string | undefined) => void;
     /**
-     * Shown files that fit each kit id. Independent per kit (a file can fit
-     * several), so the counts do not partition the view; kits without an
-     * estimate are absent.
+     * Shown files assigned to each kit as best fit (most-specific AND among
+     * remaining kits). A file counts for at most one kit; kits without a
+     * match stay at 0.
      */
     kitPresenceCountById?: ReadonlyMap<string, number>;
+    /**
+     * Kit ids excluded from rival penalties; listed at the bottom of Choose kit.
+     * Still selectable as the active likeness kit.
+     */
+    excludedKitLikenessIds?: ReadonlySet<string>;
+    onToggleKitLikenessExcluded?: (presetId: string) => void;
     /** Soft rival-kit steal penalty while Kit likeness is on (default on). */
     kitLikenessRivalPenalty?: boolean;
     onKitLikenessRivalPenaltyChange?: (enabled: boolean) => void;
@@ -221,6 +228,8 @@ export function TagScopeFilterDropdown({
     kitLikenessPresetId,
     onKitLikenessPresetIdChange,
     kitPresenceCountById,
+    excludedKitLikenessIds,
+    onToggleKitLikenessExcluded,
     kitLikenessRivalPenalty,
     onKitLikenessRivalPenaltyChange,
 }: TagScopeFilterDropdownProps): JSX.Element {
@@ -315,8 +324,13 @@ export function TagScopeFilterDropdown({
                     preset.tags.some((tag) =>
                         tag.toLowerCase().includes(query)),
             );
-        // Most fits first; equal counts favour the more specific kit.
+        // Included kits first (most fits → more specific → name); excluded last.
         matched.sort((a, b) => {
+            const excludedA = excludedKitLikenessIds?.has(a.id) === true;
+            const excludedB = excludedKitLikenessIds?.has(b.id) === true;
+            if (excludedA !== excludedB) {
+                return excludedA ? 1 : -1;
+            }
             const countA = kitPresenceCountById?.get(a.id) ?? -1;
             const countB = kitPresenceCountById?.get(b.id) ?? -1;
             if (countB !== countA) {
@@ -328,7 +342,12 @@ export function TagScopeFilterDropdown({
             return a.name.localeCompare(b.name);
         });
         return matched;
-    }, [kitPresenceCountById, kitPresets, kitQuery]);
+    }, [
+        excludedKitLikenessIds,
+        kitPresenceCountById,
+        kitPresets,
+        kitQuery,
+    ]);
 
     const kitLabel = (preset: TagPreset): string => {
         const count = kitPresenceCountById?.get(preset.id);
@@ -588,26 +607,51 @@ export function TagScopeFilterDropdown({
                                 filteredKits.map((preset) => {
                                     const selected =
                                         preset.id === kitLikenessPresetId;
+                                    const excluded =
+                                        excludedKitLikenessIds?.has(preset.id) ===
+                                        true;
                                     return (
-                                        <button
+                                        <div
                                             key={preset.id}
-                                            type="button"
                                             className={
                                                 selected ?
-                                                    "flex w-full items-center rounded-md bg-accent px-2 py-1.5 text-left text-sm text-accent-foreground" :
-                                                    "flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/60"
+                                                    "flex w-full items-center gap-2 rounded-md bg-accent px-2 py-1.5 text-sm text-accent-foreground" :
+                                                    excluded ?
+                                                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent/40" :
+                                                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/60"
                                             }
-                                            onClick={() => {
-                                                onKitLikenessPresetIdChange?.(
-                                                    preset.id,
-                                                );
-                                                closeKitPicker();
-                                            }}
                                         >
-                                            <span className="truncate">
+                                            {onToggleKitLikenessExcluded ? (
+                                                <Checkbox
+                                                    checked={!excluded}
+                                                    aria-label={
+                                                        excluded ?
+                                                            `Include ${preset.name}` :
+                                                            `Exclude ${preset.name}`
+                                                    }
+                                                    onClick={(event) =>
+                                                        event.stopPropagation()
+                                                    }
+                                                    onCheckedChange={() => {
+                                                        onToggleKitLikenessExcluded(
+                                                            preset.id,
+                                                        );
+                                                    }}
+                                                />
+                                            ) : null}
+                                            <button
+                                                type="button"
+                                                className="min-w-0 flex-1 truncate text-left"
+                                                onClick={() => {
+                                                    onKitLikenessPresetIdChange?.(
+                                                        preset.id,
+                                                    );
+                                                    closeKitPicker();
+                                                }}
+                                            >
                                                 {kitLabel(preset)}
-                                            </span>
-                                        </button>
+                                            </button>
+                                        </div>
                                     );
                                 })
                             )}
