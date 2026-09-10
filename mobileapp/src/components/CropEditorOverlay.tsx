@@ -25,12 +25,13 @@ import {
     encodeBakedCrop,
 } from "@/lib/crop-editor";
 import {
-    deviceViewerAspectRatio,
     maxAspectRatioCrop,
+    viewportTargetAspectRatio,
 } from "@/lib/viewport-fit";
 import { getLocalMediaOverride } from "@/lib/local-media-overrides";
 import { mimeTypeForFile } from "@/lib/media-kind";
 import { useLibraryStore } from "@/stores/library-store";
+import { useUIStore } from "@/stores/ui-store";
 import type { EnteFile } from "ente-media/file";
 
 const CROP_WORKSPACE_INSET_PX = 16;
@@ -54,6 +55,12 @@ export function CropEditorOverlay({
 }: CropEditorOverlayProps): JSX.Element {
     const cropAndReplaceFileOptimistic = useLibraryStore(
         (s) => s.cropAndReplaceFileOptimistic,
+    );
+    const viewportTargetWidth = useUIStore((s) => s.viewportTargetWidth);
+    const viewportTargetHeight = useUIStore((s) => s.viewportTargetHeight);
+    const targetAspect = viewportTargetAspectRatio(
+        viewportTargetWidth,
+        viewportTargetHeight,
     );
 
     const [workingBytes, setWorkingBytes] = useState<Uint8Array | undefined>();
@@ -171,7 +178,7 @@ export function CropEditorOverlay({
             workspaceSize.width,
             workspaceSize.height,
         );
-        const aspect = deviceViewerAspectRatio();
+        const aspect = targetAspect;
         const nextCrop = maxAspectRatioCrop(
             layout.width,
             layout.height,
@@ -182,7 +189,7 @@ export function CropEditorOverlay({
         setCrop(nextCrop);
         setCompletedCrop(convertToPixelCrop(nextCrop, layout.width, layout.height));
         setImageReady(true);
-    }, [workspaceSize]);
+    }, [targetAspect, workspaceSize]);
 
     useEffect(() => {
         const image = imageRef.current;
@@ -291,7 +298,7 @@ export function CropEditorOverlay({
                 return;
             }
             const image = imageRef.current;
-            const aspect = cropAspect ?? deviceViewerAspectRatio();
+            const aspect = cropAspect ?? targetAspect;
             if (!image || !crop || aspect <= 0) {
                 return;
             }
@@ -317,7 +324,7 @@ export function CropEditorOverlay({
                 ),
             );
         },
-        [crop, cropAspect],
+        [crop, cropAspect, targetAspect],
     );
 
     return (

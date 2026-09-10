@@ -25,8 +25,8 @@ import {
     videoCropChanged,
 } from "@/lib/crop-editor";
 import {
-    deviceViewerAspectRatio,
     maxAspectRatioCrop,
+    viewportTargetAspectRatio,
 } from "@/lib/viewport-fit";
 import { mimeTypeForFile } from "@/lib/media-kind";
 import { loadMediaBytesForEdit } from "@/lib/load-media-bytes";
@@ -39,6 +39,7 @@ import {
 } from "@/lib/video-edit";
 import { blobFromUint8Array } from "@/lib/bytes-blob";
 import { useLibraryStore } from "@/stores/library-store";
+import { useUIStore } from "@/stores/ui-store";
 import type { EnteFile } from "ente-media/file";
 
 const CROP_WORKSPACE_INSET_PX = 16;
@@ -73,6 +74,12 @@ export function VideoEditorOverlay({
 }: VideoEditorOverlayProps): JSX.Element {
     const editVideoAndReplaceFileOptimistic = useLibraryStore(
         (s) => s.editVideoAndReplaceFileOptimistic,
+    );
+    const viewportTargetWidth = useUIStore((s) => s.viewportTargetWidth);
+    const viewportTargetHeight = useUIStore((s) => s.viewportTargetHeight);
+    const targetAspect = viewportTargetAspectRatio(
+        viewportTargetWidth,
+        viewportTargetHeight,
     );
 
     const [workingBytes, setWorkingBytes] = useState<Uint8Array | undefined>();
@@ -205,13 +212,13 @@ export function VideoEditorOverlay({
         const nextCrop = maxAspectRatioCrop(
             layout.width,
             layout.height,
-            deviceViewerAspectRatio(),
+            targetAspect,
         );
         setDisplayLayout(layout);
         setCrop(nextCrop);
         setCompletedCrop(convertToPixelCrop(nextCrop, layout.width, layout.height));
         setVideoReady(true);
-    }, [workspaceSize]);
+    }, [targetAspect, workspaceSize]);
 
     useEffect(() => {
         const video = videoRef.current;

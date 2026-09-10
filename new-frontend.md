@@ -7,12 +7,15 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-10 |
-| **Last agent / session** | Responsive Tools vs individual buttons |
+| **Last agent / session** | Configurable viewport size for fit + crop |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable |
-| **Next recommended action** | Phone QA: Tools wrench below `md`, individual icons at `md+` (`0.3.143`). |
+| **Next recommended action** | Phone QA: Viewport fit W×H + Use device; crop seeds from target; PhotoViewer live size chip (`0.3.144`). |
 
 **This session shipped:**
+1. **Configurable viewport size** — session-only W×H in Options → Viewport fit (defaults to device; Use device reset). Fit sort + crop/video seed use target aspect. PhotoViewer chrome shows live device W×H chip. `APP_VERSION` → `0.3.144`.
+
+**Previous session shipped:**
 1. **Responsive Tools chrome** — below `md` keep Gallery Tools wrench dropdown; at `md+` show individual Query / Select / Stamp / Rotate icon buttons (albums: Select / Stamp / Rotate). Restored `TagQueryBuilderPanel` for wide layout. `APP_VERSION` → `0.3.143`.
 
 **Previous session shipped:**

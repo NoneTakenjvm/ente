@@ -46,8 +46,8 @@ import {
 } from "@/lib/sort-files";
 import { sortFilesByUpdatedAt } from "@/lib/updated-at-sort";
 import {
-    deviceViewerAspectRatio,
     sortFilesByViewportFit,
+    viewportTargetAspectRatio,
 } from "@/lib/viewport-fit";
 import { sortFilesByImageSize } from "@/lib/image-size-sort";
 import {
@@ -150,6 +150,8 @@ export default function GalleryPage(): JSX.Element {
     const mediaShuffledFileIds = useUIStore((s) => s.mediaShuffledFileIds);
     const reconcileMediaShuffle = useUIStore((s) => s.reconcileMediaShuffle);
     const viewportFitSort = useUIStore((s) => s.viewportFitSort);
+    const viewportTargetWidth = useUIStore((s) => s.viewportTargetWidth);
+    const viewportTargetHeight = useUIStore((s) => s.viewportTargetHeight);
     const updatedAtSort = useUIStore((s) => s.updatedAtSort);
     const imageSizeSort = useUIStore((s) => s.imageSizeSort);
     const tagFilterFitSort = useUIStore((s) => s.tagFilterFitSort);
@@ -183,22 +185,10 @@ export default function GalleryPage(): JSX.Element {
         void hydrateEmbeddings();
     }, [embeddingHydrated, hydrateEmbeddings, relativeSort]);
 
-    const [viewerAspect, setViewerAspect] = useState<number>(
-        () => (typeof window === "undefined" ? 1 : deviceViewerAspectRatio()),
+    const viewerAspect = viewportTargetAspectRatio(
+        viewportTargetWidth,
+        viewportTargetHeight,
     );
-
-    useEffect(() => {
-        const updateAspect = (): void => {
-            setViewerAspect(deviceViewerAspectRatio());
-        };
-        updateAspect();
-        window.addEventListener("resize", updateAspect);
-        window.visualViewport?.addEventListener("resize", updateAspect);
-        return (): void => {
-            window.removeEventListener("resize", updateAspect);
-            window.visualViewport?.removeEventListener("resize", updateAspect);
-        };
-    }, []);
 
     // Drop a stale inactive filter object (e.g. empty after edits elsewhere).
     useEffect(() => {
@@ -810,7 +800,7 @@ export default function GalleryPage(): JSX.Element {
         }
         if (viewportFitSort !== "none") {
             return reuseComputedOrder(
-                `viewport:${viewportFitSort}:${viewerAspect}`,
+                `viewport:${viewportFitSort}:${viewportTargetWidth}x${viewportTargetHeight}`,
                 () =>
                     sortFilesByViewportFit(
                         filteredFiles,
@@ -855,6 +845,8 @@ export default function GalleryPage(): JSX.Element {
         tagFilterFitSort,
         updatedAtSort,
         viewportFitSort,
+        viewportTargetHeight,
+        viewportTargetWidth,
         viewerAspect,
     ]);
 
