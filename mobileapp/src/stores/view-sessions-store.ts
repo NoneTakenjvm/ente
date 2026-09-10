@@ -15,6 +15,7 @@ import {
     toPersistedSession,
     VIEW_SESSION_RESUME_MS,
     type ActiveViewSession,
+    type ViewOpenKind,
     type ViewSession,
 } from "@/lib/view-sessions";
 
@@ -22,7 +23,7 @@ const VIEW_SESSIONS_SAVE_DEBOUNCE_MS = 1500;
 
 interface OpenViewState {
     fileId: number;
-    appended: boolean;
+    kind: ViewOpenKind;
 }
 
 interface ViewSessionsState {
@@ -167,7 +168,7 @@ const createViewSessionsStore: StateCreator<ViewSessionsState> = (
         const result = beginViewOnSession(activeSession, fileId, openedAt);
         openView = {
             fileId,
-            appended: result.kind === "appended",
+            kind: result.kind,
         };
         const sessions = upsertActiveIntoList(get().sessions, result.session);
         set({ activeSession: result.session, sessions });
@@ -181,13 +182,13 @@ const createViewSessionsStore: StateCreator<ViewSessionsState> = (
         if (!activeSession || openView?.fileId !== fileId) {
             return;
         }
-        const appended = openView.appended;
+        const kind = openView.kind;
         openView = undefined;
         const next = endViewOnSession(
             activeSession,
             fileId,
             closedAt,
-            appended,
+            kind,
         );
         const sessions = upsertActiveIntoList(get().sessions, next);
         set({ activeSession: next, sessions });

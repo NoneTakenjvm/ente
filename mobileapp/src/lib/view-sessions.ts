@@ -111,8 +111,10 @@ export const recomputeSessionAggregates = (
 
 export type BeginViewResult =
     | { kind: "appended"; session: ActiveViewSession } |
-    { kind: "consecutive"; session: ActiveViewSession } |
-    { kind: "noop"; session: ActiveViewSession };
+    { kind: "consecutive"; session: ActiveViewSession };
+
+/** How the matching `beginView` recorded this open — drives close behaviour. */
+export type ViewOpenKind = BeginViewResult["kind"];
 
 /**
  * Record a qualifying view open. Consecutive same-file opens do not append.
@@ -150,9 +152,9 @@ export const endViewOnSession = (
     session: ActiveViewSession,
     fileId: number,
     closedAt: number,
-    appended: boolean,
+    kind: ViewOpenKind,
 ): ActiveViewSession => {
-    if (!appended) {
+    if (kind === "consecutive") {
         return {
             ...session,
             endTime: Math.max(session.endTime, closedAt),
@@ -198,6 +200,9 @@ export const remapSessionFileId = (
     return recomputeSessionAggregates({ ...session, views });
 };
 
+/**
+ * Apply {@link remapSessionFileId} to every session in the list.
+ */
 export const remapSessionsFileId = (
     sessions: ViewSession[],
     fromFileId: number,

@@ -7,12 +7,15 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-10 |
-| **Last agent / session** | Image quality content-over-res |
+| **Last agent / session** | Audit all changes + push CI |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable |
-| **Next recommended action** | Phone QA: rescan image quality (index v3), Sort Best — sharp mid-res should beat soft high-res (`0.3.150`). |
+| **Next recommended action** | Phone QA: hard-refresh Manage footer `0.3.151`; rescan image quality (index v3), Sort Best. |
 
 **This session shipped:**
+1. **AGENTS.md audit of unpushed batch** — view-sessions close uses `ViewOpenKind` (not boolean); JSDoc/`[Note:]` on remap + quality hydrate; commit + push + Deploy CI. `APP_VERSION` → `0.3.151`.
+
+**Previous session shipped:**
 1. **Image quality: content over megapixels** — thumb sharpness/grain/pixelation first; native resolution only soft ×[0.62–1.0] so crisp smaller files outrank soft large ones. Index **v3**. `APP_VERSION` → `0.3.150`.
 2. **PhotoViewer size chip** — chrome overlay shows `Image: W×H` (from pub magic metadata) and `Viewport: W×H` (live device). `APP_VERSION` → `0.3.149`.
 

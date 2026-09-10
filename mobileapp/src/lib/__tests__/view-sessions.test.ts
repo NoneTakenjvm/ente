@@ -20,11 +20,11 @@ describe("view-sessions", () => {
         const first = beginViewOnSession(session, 10, 1100);
         expect(first.kind).toBe("appended");
         session = first.session;
-        session = endViewOnSession(session, 10, 1500, true);
+        session = endViewOnSession(session, 10, 1500, "appended");
 
         const again = beginViewOnSession(session, 10, 2000);
         expect(again.kind).toBe("consecutive");
-        session = endViewOnSession(again.session, 10, 2500, false);
+        session = endViewOnSession(again.session, 10, 2500, "consecutive");
         expect(session.views).toHaveLength(1);
         expect(session.totalViews).toBe(1);
         expect(session.endTime).toBe(2500);
@@ -33,11 +33,11 @@ describe("view-sessions", () => {
     it("appends when the same file returns after another", () => {
         let session = createEmptySession(1000, "s1");
         session = beginViewOnSession(session, 10, 1100).session;
-        session = endViewOnSession(session, 10, 1200, true);
+        session = endViewOnSession(session, 10, 1200, "appended");
         session = beginViewOnSession(session, 20, 1300).session;
-        session = endViewOnSession(session, 20, 1400, true);
+        session = endViewOnSession(session, 20, 1400, "appended");
         session = beginViewOnSession(session, 10, 1500).session;
-        session = endViewOnSession(session, 10, 1600, true);
+        session = endViewOnSession(session, 10, 1600, "appended");
         expect(session.views.map((v) => v.fileId)).toEqual([10, 20, 10]);
         expect(session.uniqueFileIds).toEqual([10, 20]);
         expect(session.totalViews).toBe(3);
