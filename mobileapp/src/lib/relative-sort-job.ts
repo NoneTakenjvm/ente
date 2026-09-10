@@ -6,14 +6,18 @@ interface RelativeSortWorkerRequest {
     mode: RelativePackedMode;
     seed: number;
     startFileId?: number;
-    ids: Int32Array;
+    /**
+     * File ids as Float64 — Ente ids exceed Int32 range; Int32 truncation made
+     * the worker return ids that never matched the gallery (identity order).
+     */
+    ids: Float64Array;
     packed: Float32Array;
     dim: number;
 }
 
 interface RelativeSortWorkerResponse {
     requestId: number;
-    orderIds?: Int32Array;
+    orderIds?: Float64Array;
     error?: string;
 }
 
@@ -47,21 +51,30 @@ export const sortRelativeIdsInWorker = (
             worker = createWorker();
         }
         const requestId = ++requestCounter;
-        const idBuffer = Int32Array.from(ids);
+        const idBuffer = Float64Array.from(ids);
         const handleMessage = (
             event: MessageEvent<RelativeSortWorkerResponse>,
         ): void => {
             if (event.data.requestId !== requestId) {
                 return;
             }
-            worker?.removeEventListener("message", handleMessage);
+            cleanup();
             if (event.data.error || !event.data.orderIds) {
                 reject(new Error(event.data.error ?? "Relative sort failed"));
                 return;
             }
             resolve([...event.data.orderIds]);
         };
+        const handleError = (event: ErrorEvent): void => {
+            cleanup();
+            reject(new Error(event.message || "Relative sort worker failed"));
+        };
+        const cleanup = (): void => {
+            worker?.removeEventListener("message", handleMessage);
+            worker?.removeEventListener("error", handleError);
+        };
         worker.addEventListener("message", handleMessage);
+        worker.addEventListener("error", handleError);
         const request: RelativeSortWorkerRequest = {
             requestId,
             mode,
@@ -71,5 +84,14 @@ export const sortRelativeIdsInWorker = (
             packed,
             dim,
         };
-        worker.postMessage(request, [idBuffer.buffer, packed.buffer]);
+        try {
+            worker.postMessage(request, [idBuffer.buffer, packed.buffer]);
+        } catch (error: unknown) {
+            cleanup();
+            reject(
+                error instanceof Error ?
+                    error :
+                    new Error("Relative sort post failed"),
+            );
+        }
     });

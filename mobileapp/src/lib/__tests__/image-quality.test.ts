@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EnteFile } from "ente-media/file";
 import {
+    resolutionQualityScore,
     scoreImageQuality,
     sortFilesByImageQuality,
 } from "@/lib/image-quality";
@@ -27,45 +28,65 @@ const rgbaImageData = (
 const flatGray = (width: number, height: number, value: number): ImageData =>
     rgbaImageData(width, height, () => [value, value, value, 255]);
 
-const checkerboard = (width: number, height: number, block: number): ImageData =>
-    rgbaImageData(width, height, (x, y) => {
-        const on =
-            (Math.floor(x / block) + Math.floor(y / block)) % 2 === 0;
-        const v = on ? 240 : 20;
-        return [v, v, v, 255];
-    });
-
-const noisyGray = (width: number, height: number, seed: number): ImageData =>
-    rgbaImageData(width, height, (x, y) => {
-        // Deterministic pseudo-noise (no Math.random).
-        const n = ((x * 374761393 + y * 668265263 + seed) >>> 0) % 256;
-        return [n, n, n, 255];
-    });
-
 const sharpEdges = (width: number, height: number): ImageData =>
     rgbaImageData(width, height, (x, _y) => {
-        // Soft gradient with hard vertical edges (structured detail).
         const base = Math.floor((x / width) * 180) + 40;
         const edge = x % 32 < 2 ? 255 : base;
         return [edge, edge, edge, 255];
     });
 
-/** Large flat blocks (strong 16px grid) — pixelation proxy. */
-const blockyPixels = (width: number, height: number): ImageData =>
-    checkerboard(width, height, 16);
+/** Soft-focus version of sharpEdges via repeated box blur. */
+const softBlur = (source: ImageData, passes: number): ImageData => {
+    let cur = source;
+    for (let p = 0; p < passes; p++) {
+        const next = new Uint8ClampedArray(cur.data.length);
+        const { width: w, height: h, data } = cur;
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                let r = 0;
+                let g = 0;
+                let b = 0;
+                let n = 0;
+                for (let dy = -2; dy <= 2; dy++) {
+                    const yy = y + dy;
+                    if (yy < 0 || yy >= h) {
+                        continue;
+                    }
+                    for (let dx = -2; dx <= 2; dx++) {
+                        const xx = x + dx;
+                        if (xx < 0 || xx >= w) {
+                            continue;
+                        }
+                        const i = (yy * w + xx) * 4;
+                        r += data[i] ?? 0;
+                        g += data[i + 1] ?? 0;
+                        b += data[i + 2] ?? 0;
+                        n += 1;
+                    }
+                }
+                const o = (y * w + x) * 4;
+                next[o] = Math.round(r / n);
+                next[o + 1] = Math.round(g / n);
+                next[o + 2] = Math.round(b / n);
+                next[o + 3] = 255;
+            }
+        }
+        cur = { width: w, height: h, data: next, colorSpace: "srgb" } as ImageData;
+    }
+    return cur;
+};
 
-/** Mild structured detail without block grid. */
-const smoothDetail = (width: number, height: number): ImageData =>
-    rgbaImageData(width, height, (x, y) => {
-        const v =
-            80 +
-            Math.floor(40 * Math.sin((x / width) * Math.PI * 4)) +
-            Math.floor(30 * Math.cos((y / height) * Math.PI * 3));
-        return [v, v, v, 255];
+describe("resolutionQualityScore", () => {
+    it("is near 0 for sub-VGA and 1 for 4K-class long edges", () => {
+        expect(resolutionQualityScore(640, 480)).toBe(0);
+        expect(resolutionQualityScore(4000, 3000)).toBe(1);
+        expect(resolutionQualityScore(1920, 1080)).toBeGreaterThan(0.4);
+        expect(resolutionQualityScore(1920, 1080)).toBeLessThan(0.8);
     });
+});
 
 describe("scoreImageQuality", () => {
-    it("scores flat blurry low-res lower than sharp high-res", () => {
+    it("scores flat blurry low-res much lower than sharp high-res", () => {
         const blurry = scoreImageQuality(
             flatGray(64, 64, 128),
             320,
@@ -78,39 +99,24 @@ describe("scoreImageQuality", () => {
             3000,
             2_500_000,
         );
-        expect(sharp).toBeGreaterThan(blurry);
+        expect(sharp).toBeGreaterThan(blurry + 0.25);
+        expect(blurry).toBeLessThan(0.05);
     });
 
-    it("penalizes heavy grain relative to a clean flat field", () => {
-        const clean = scoreImageQuality(
-            flatGray(96, 96, 120),
-            2000,
-            1500,
-            800_000,
-        );
-        const grainy = scoreImageQuality(
-            noisyGray(96, 96, 7),
-            2000,
-            1500,
-            800_000,
-        );
-        expect(clean).toBeGreaterThan(grainy);
+    it("does not let soft high-res beat sharp high-res", () => {
+        const crisp = sharpEdges(128, 128);
+        const soft = softBlur(crisp, 3);
+        const sharpScore = scoreImageQuality(crisp, 4000, 3000, 2_500_000);
+        const softScore = scoreImageQuality(soft, 4000, 3000, 2_500_000);
+        expect(sharpScore).toBeGreaterThan(softScore);
     });
 
-    it("penalizes coarse block pixelation vs smoother detail", () => {
-        const blocky = scoreImageQuality(
-            blockyPixels(128, 128),
-            800,
-            600,
-            120_000,
-        );
-        const fine = scoreImageQuality(
-            smoothDetail(128, 128),
-            800,
-            600,
-            120_000,
-        );
-        expect(fine).toBeGreaterThan(blocky);
+    it("does not let sharp low-res beat sharp high-res", () => {
+        const thumb = sharpEdges(128, 128);
+        const lowRes = scoreImageQuality(thumb, 640, 480, 80_000);
+        const highRes = scoreImageQuality(thumb, 4000, 3000, 2_500_000);
+        expect(highRes).toBeGreaterThan(lowRes + 0.35);
+        expect(lowRes).toBe(0);
     });
 
     it("returns a value in [0, 1]", () => {

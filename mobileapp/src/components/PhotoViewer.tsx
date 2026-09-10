@@ -62,6 +62,7 @@ import {
 } from "@/lib/media-kind";
 import { toRenderableImageBlob } from "@/lib/renderable-image";
 import { cn } from "@/lib/utils";
+import { filePixelSize } from "@/lib/file-aspect-ratio";
 import { deviceViewerSize } from "@/lib/viewport-fit";
 import { VIEW_SESSION_QUALIFY_MS } from "@/lib/view-sessions";
 import {
@@ -456,6 +457,7 @@ export function PhotoViewer({
 
     const file = sessionFiles[currentIndex];
     const mediaKind = file ? mediaKindForFile(file) : null;
+    const imagePixelSize = file ? filePixelSize(file) : undefined;
     const isVideo = file?.metadata.fileType === FileType.video;
     const relativeSort = useUIStore((s) => s.relativeSort);
     const relativeStartFileId = useUIStore((s) => s.relativeStartFileId);
@@ -2275,15 +2277,21 @@ export function PhotoViewer({
                     </div>
                 </div>
                 {chromeVisible && !cropMode && deviceViewportLabel ? (
-                    <span
+                    <div
                         className={cn(
-                            "pointer-events-none absolute left-3 z-20 rounded bg-black/60 px-1.5 py-0.5 text-[10px] leading-none text-white tabular-nums",
+                            "pointer-events-none absolute left-3 z-20 flex flex-col gap-0.5 rounded bg-black/60 px-1.5 py-1 text-[10px] leading-tight text-white tabular-nums",
                             isVideo ? "bottom-40" : "bottom-24",
                         )}
                         aria-hidden
                     >
-                        {deviceViewportLabel}
-                    </span>
+                        {imagePixelSize ? (
+                            <span>
+                                Image: {imagePixelSize.width}×
+                                {imagePixelSize.height}
+                            </span>
+                        ) : null}
+                        <span>Viewport: {deviceViewportLabel}</span>
+                    </div>
                 ) : null}
             </div>
 
