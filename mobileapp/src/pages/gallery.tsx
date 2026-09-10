@@ -169,6 +169,7 @@ export default function GalleryPage(): JSX.Element {
     const initialLoadDone = useLibraryBootstrap();
     const gallerySortBy = useSettingsStore((s) => s.gallerySortBy);
     const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
+    const embeddingCount = useEmbeddingIndexStore((s) => s.entries.size);
     const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.hydrate);
     const qualityEntries = useQualityIndexStore((s) => s.entries);
     const qualityHydrated = useQualityIndexStore((s) => s.isHydrated);
@@ -204,12 +205,22 @@ export default function GalleryPage(): JSX.Element {
         void hydrateEmbeddings();
     }, [embeddingHydrated, hydrateEmbeddings, tagFilterFitSort]);
 
+    // Wait for library bootstrap so the session cache key exists before hydrate.
     useEffect(() => {
-        if (relativeSort === "none" || embeddingHydrated) {
+        if (
+            relativeSort === "none" ||
+            embeddingHydrated ||
+            !initialLoadDone
+        ) {
             return;
         }
         void hydrateEmbeddings();
-    }, [embeddingHydrated, hydrateEmbeddings, relativeSort]);
+    }, [
+        embeddingHydrated,
+        hydrateEmbeddings,
+        initialLoadDone,
+        relativeSort,
+    ]);
 
     const viewerAspect = viewportTargetAspectRatio(
         viewportTargetWidth,
@@ -520,10 +531,12 @@ export default function GalleryPage(): JSX.Element {
         number[]
     >([]);
     const relativeJobRef = useRef(0);
+    const relativeInsufficientToastKeyRef = useRef("");
 
     useEffect(() => {
         if (relativeSort === "none" || !embeddingHydrated) {
             relativeJobRef.current += 1;
+            relativeInsufficientToastKeyRef.current = "";
             setFrozenRelativeOrderIds([]);
             return;
         }
@@ -576,9 +589,17 @@ export default function GalleryPage(): JSX.Element {
         };
 
         if (withEmbeddingIds.length < 2) {
+            const toastKey = `${relativeSort}:${withEmbeddingIds.length}:${embeddingCount}`;
+            if (relativeInsufficientToastKeyRef.current !== toastKey) {
+                relativeInsufficientToastKeyRef.current = toastKey;
+                toast.message(
+                    "Need at least 2 CLIP-embedded photos in this view. Run Manage → Settings → Scan CLIP embeddings.",
+                );
+            }
             applyOrder(filtered.map((file) => file.id));
             return;
         }
+        relativeInsufficientToastKeyRef.current = "";
 
         const packed = packRelativeEmbeddings(withEmbeddingIds, embeddings);
         void sortRelativeIdsInWorker(
@@ -601,10 +622,11 @@ export default function GalleryPage(): JSX.Element {
                 );
             });
     }, [
-        relativeSort,
-        relativeSeed,
-        relativeStartFileId,
+        embeddingCount,
         embeddingHydrated,
+        relativeSeed,
+        relativeSort,
+        relativeStartFileId,
         sortLibraryFiles,
     ]);
 

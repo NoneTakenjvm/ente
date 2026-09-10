@@ -7,12 +7,15 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-10 |
-| **Last agent / session** | Image quality sort |
+| **Last agent / session** | Fix relative sort |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable |
-| **Next recommended action** | Phone QA: Manage → Settings → Scan image quality, then Options → Sort → Image quality Worst/Best (`0.3.145`). |
+| **Next recommended action** | Phone QA: Relative Closest/Furthest reorder + Set Relative closes viewer (`0.3.146`). |
 
 **This session shipped:**
+1. **Relative sort fix** — hydrate embeddings after library bootstrap; rebuild frozen CLIP snake when embedding count changes; toast if &lt;2 embedded photos in view; Set Relative pins tip and closes viewer (removed rematch effect). `APP_VERSION` → `0.3.146`.
+
+**Previous session shipped:**
 1. **Image quality sort** — Manage → Settings thumbnail scan persists per-file 0–1 quality scores (resolution + sharpness/grain/pixelation/bpp from thumbs). Options → Sort → Image quality (Worst / Best); unscanned last. Encrypted `qualityIndex` KV + worker job. `APP_VERSION` → `0.3.145`.
 
 **Previous session shipped:**

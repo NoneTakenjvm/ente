@@ -568,20 +568,6 @@ export function PhotoViewer({
     }, [isVideo, videoMuted, videoVolume, file?.id, activeSlideMedia?.status]);
 
     useEffect(() => {
-        if (relativeStartFileId === undefined) {
-            return;
-        }
-        const currentId = viewerFileIdRef.current;
-        setSessionFiles(files);
-        const index = files.findIndex((entry) => entry.id === currentId);
-        if (index >= 0) {
-            setCurrentIndex(index);
-        }
-        // Rematch viewer order after pinning a relative tip (files already rebuilt).
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- tip change only
-    }, [relativeStartFileId]);
-
-    useEffect(() => {
         if (initialIndex !== undefined) {
             if (
                 initialIndex >= 0 &&
@@ -2095,8 +2081,8 @@ export function PhotoViewer({
                             size="sm"
                             className="h-8 shrink-0 px-2 text-xs"
                             onClick={() => {
-                                resetChromeTimer();
                                 setRelativeStartFileId(file.id);
+                                onClose();
                             }}
                             aria-pressed={file.id === relativeStartFileId}
                         >
