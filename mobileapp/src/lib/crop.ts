@@ -10,6 +10,7 @@ import {
     MIN_JPEG_QUALITY,
     type EncodeJpegResult,
 } from "@/lib/compress";
+import { arrayBufferFromUint8Array } from "@/lib/bytes-blob";
 import type {
     CompressWorkerRequest,
     CompressWorkerResponse,
@@ -346,13 +347,15 @@ const encodeCroppedJpegInWorker = (
         };
 
         compressWorker.addEventListener("message", onMessage);
+        const buffer = arrayBufferFromUint8Array(bytes);
         const request: CompressWorkerRequest = {
             id,
-            bytes,
+            bytes: new Uint8Array(buffer),
             quality,
             cropRect,
+            output: "jpeg",
         };
-        compressWorker.postMessage(request);
+        compressWorker.postMessage(request, [buffer]);
     });
 
 /**

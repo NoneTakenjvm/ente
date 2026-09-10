@@ -55,6 +55,9 @@ export const mimeTypeForFile = (file: EnteFile): string => {
     if (extension === "webp") {
         return "image/webp";
     }
+    if (extension === "avif") {
+        return "image/avif";
+    }
     if (isHEICExtension(extension)) {
         return "image/heic";
     }

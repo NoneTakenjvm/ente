@@ -424,6 +424,7 @@ export const loadDecryptedThumbnailBytes = async (
 export const primeThumbnailFromBytes = (
     fileId: number,
     imageBytes: Uint8Array,
+    mimeType = "image/jpeg",
 ): void => {
     const existing = cache.get(fileId);
     if (existing?.url) {
@@ -434,7 +435,7 @@ export const primeThumbnailFromBytes = (
 
     void (async (): Promise<void> => {
         try {
-            const thumbBytes = await generateImageThumbnail(imageBytes);
+            const thumbBytes = await generateImageThumbnail(imageBytes, mimeType);
             scheduleSetReady(fileId, thumbBytes);
         } catch {
             cache.set(fileId, { status: "error" });

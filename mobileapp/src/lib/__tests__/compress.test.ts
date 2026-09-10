@@ -7,6 +7,8 @@ import {
     canCompressMedia,
     compressManageCandidates,
     compressedReplaceTitle,
+    encodeCompressedStillFromBytes,
+    CompressionSkippedError,
     filterCompressCandidatesByMinSize,
     fileByteSize,
     formatSizeDelta,
@@ -15,6 +17,8 @@ import {
     isWorthReplacing,
     resolveMarqueeDragIntent,
     sortCompressCandidatesBySize,
+    MIN_SIZE_FILTER_PRESETS,
+    DEFAULT_MIN_SIZE_BYTES,
     COMPRESSED_TAG,
 } from "@/lib/compress";
 
@@ -123,10 +127,16 @@ describe("compress", () => {
         expect(delta.originalLabel).toContain("MB");
     });
 
-    it("compressedReplaceTitle swaps extension for images", () => {
+    it("compressedReplaceTitle defaults images to avif", () => {
         expect(compressedReplaceTitle(fileWithTags(1, FileType.image, []))).toBe(
-            "vacation.jpg",
+            "vacation.avif",
         );
+    });
+
+    it("compressedReplaceTitle uses the encoded extension when given", () => {
+        expect(
+            compressedReplaceTitle(fileWithTags(1, FileType.image, []), "webp"),
+        ).toBe("vacation.webp");
     });
 
     it("compressedReplaceTitle keeps gif extension", () => {
@@ -178,8 +188,22 @@ describe("compress", () => {
         expect(resolveMarqueeDragIntent(4, 4, 12)).toBe("pending");
     });
 
+    it("MIN_SIZE_FILTER_PRESETS includes the 800 KB PhotoHoard floor", () => {
+        expect(
+            MIN_SIZE_FILTER_PRESETS.some(
+                (preset) => preset.bytes === DEFAULT_MIN_SIZE_BYTES,
+            ),
+        ).toBe(true);
+    });
+
     it("fileByteSize reads info.fileSize", () => {
         expect(fileByteSize(fileWithTags(1, FileType.image, [], "a.jpg", 42))).toBe(42);
         expect(fileByteSize(fileWithTags(1, FileType.image, [], "a.jpg"))).toBe(0);
+    });
+
+    it("encodeCompressedStillFromBytes skips files under the size floor", async () => {
+        await expect(
+            encodeCompressedStillFromBytes(new Uint8Array(100), 800 * 1024),
+        ).rejects.toBeInstanceOf(CompressionSkippedError);
     });
 });

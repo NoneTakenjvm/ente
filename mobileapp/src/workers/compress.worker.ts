@@ -4,13 +4,24 @@ import decodeJpeg from "@jsquash/jpeg/decode";
 import encodeJpeg from "@jsquash/jpeg/encode";
 import decodePng from "@jsquash/png/decode";
 import decodeWebp from "@jsquash/webp/decode";
+import encodeWebp from "@jsquash/webp/encode";
+import encodeAvif from "@jsquash/avif/encode";
+import {
+    ANALYSIS_MAX,
+    analyzeImageData,
+    avifQualityForPreset,
+    mimeTypeForPreset,
+    routeFromFeatures,
+    type CompressImagePreset,
+} from "@/lib/compress-classify";
+import { arrayBufferFromUint8Array } from "@/lib/bytes-blob";
 import type {
     CompressWorkerRequest,
     CompressWorkerResponse,
     CropRect,
 } from "@/workers/compress-worker-types";
 
-type ImageFormat = "jpeg" | "png" | "webp" | "gif" | "heic" | "unknown";
+type ImageFormat = "jpeg" | "png" | "webp" | "gif" | "heic" | "avif" | "unknown";
 
 const detectFormat = (bytes: Uint8Array): ImageFormat => {
     if (
@@ -51,11 +62,37 @@ const detectFormat = (bytes: Uint8Array): ImageFormat => {
     ) {
         return "gif";
     }
+    if (bytes.length >= 12) {
+        const brand = String.fromCharCode(
+            bytes[4] ?? 0,
+            bytes[5] ?? 0,
+            bytes[6] ?? 0,
+            bytes[7] ?? 0,
+        );
+        if (brand === "ftyp") {
+            const subtype = String.fromCharCode(
+                bytes[8] ?? 0,
+                bytes[9] ?? 0,
+                bytes[10] ?? 0,
+                bytes[11] ?? 0,
+            );
+            if (subtype.startsWith("avif") || subtype.startsWith("avis")) {
+                return "avif";
+            }
+            if (
+                subtype.startsWith("heic") ||
+                subtype.startsWith("heix") ||
+                subtype.startsWith("mif1")
+            ) {
+                return "heic";
+            }
+        }
+    }
     return "unknown";
 };
 
 const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer =>
-    bytes.slice().buffer;
+    arrayBufferFromUint8Array(bytes);
 
 const mimeForFormat = (format: ImageFormat): string => {
     switch (format) {
@@ -69,13 +106,18 @@ const mimeForFormat = (format: ImageFormat): string => {
             return "image/gif";
         case "heic":
             return "image/heic";
+        case "avif":
+            return "image/avif";
         default:
             return "application/octet-stream";
     }
 };
 
-const decodeViaBitmap = async (bytes: Uint8Array, format: ImageFormat): Promise<ImageData> => {
-    const blob = new Blob([bytes.slice()], { type: mimeForFormat(format) });
+const decodeViaBitmap = async (
+    bytes: Uint8Array,
+    format: ImageFormat,
+): Promise<ImageData> => {
+    const blob = new Blob([toArrayBuffer(bytes)], { type: mimeForFormat(format) });
     const bitmap = await createImageBitmap(blob);
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
     const context = canvas.getContext("2d");
@@ -92,17 +134,21 @@ const decodeToImageData = async (
     bytes: Uint8Array,
     format: ImageFormat,
 ): Promise<ImageData> => {
-    const buffer = toArrayBuffer(bytes);
-    if (format === "jpeg") {
-        return decodeJpeg(buffer);
+    try {
+        return await decodeViaBitmap(bytes, format);
+    } catch {
+        const buffer = toArrayBuffer(bytes);
+        if (format === "jpeg") {
+            return decodeJpeg(buffer);
+        }
+        if (format === "png") {
+            return decodePng(buffer);
+        }
+        if (format === "webp") {
+            return decodeWebp(buffer);
+        }
+        throw new Error("Could not decode image");
     }
-    if (format === "png") {
-        return decodePng(buffer);
-    }
-    if (format === "webp") {
-        return decodeWebp(buffer);
-    }
-    return decodeViaBitmap(bytes, format);
 };
 
 const cropImageData = async (
@@ -128,6 +174,29 @@ const cropImageData = async (
     return croppedContext.getImageData(0, 0, width, height);
 };
 
+const downsampleForAnalysis = async (source: ImageData): Promise<ImageData> => {
+    const longEdge = Math.max(source.width, source.height);
+    if (longEdge <= ANALYSIS_MAX) {
+        return source;
+    }
+    const scale = ANALYSIS_MAX / longEdge;
+    const width = Math.max(1, Math.round(source.width * scale));
+    const height = Math.max(1, Math.round(source.height * scale));
+    const canvas = new OffscreenCanvas(source.width, source.height);
+    const context = canvas.getContext("2d");
+    if (!context) {
+        throw new Error("OffscreenCanvas unavailable");
+    }
+    context.putImageData(source, 0, 0);
+    const scaled = new OffscreenCanvas(width, height);
+    const scaledContext = scaled.getContext("2d");
+    if (!scaledContext) {
+        throw new Error("OffscreenCanvas unavailable");
+    }
+    scaledContext.drawImage(canvas, 0, 0, width, height);
+    return scaledContext.getImageData(0, 0, width, height);
+};
+
 const qualitySteps = (targetPercent: number): number[] => {
     const steps: number[] = [];
     for (let quality = targetPercent; quality >= 45; quality -= 10) {
@@ -136,7 +205,7 @@ const qualitySteps = (targetPercent: number): number[] => {
     return steps;
 };
 
-const encodeAtQuality = async (
+const encodeAtJpegQuality = async (
     imageData: ImageData,
     qualityPercent: number,
 ): Promise<Uint8Array> => {
@@ -144,39 +213,24 @@ const encodeAtQuality = async (
     return new Uint8Array(buffer);
 };
 
-const encodeImage = async (
-    bytes: Uint8Array,
+const encodeJpegImage = async (
+    imageData: ImageData,
     quality: number,
-    cropRect: CropRect | undefined,
+    originalLength: number,
     preferSmaller: boolean,
-): Promise<{
-    bytes: Uint8Array;
-    width: number;
-    height: number;
-    encodeQuality: number;
-}> => {
-    const format = detectFormat(bytes);
-    let imageData = await decodeToImageData(bytes, format);
-
-    if (cropRect) {
-        imageData = await cropImageData(imageData, cropRect);
-    }
-
+): Promise<{ bytes: Uint8Array; encodeQuality: number }> => {
     const targetPercent = Math.round(Math.min(95, Math.max(45, quality * 100)));
-    const steps = preferSmaller ?
-        qualitySteps(targetPercent) :
-        [targetPercent];
-
+    const steps = preferSmaller ? qualitySteps(targetPercent) : [targetPercent];
     let bestBytes: Uint8Array | undefined;
     let bestQuality = targetPercent;
 
     for (const stepQuality of steps) {
-        const encoded = await encodeAtQuality(imageData, stepQuality);
+        const encoded = await encodeAtJpegQuality(imageData, stepQuality);
         if (!bestBytes || encoded.length < bestBytes.length) {
             bestBytes = encoded;
             bestQuality = stepQuality;
         }
-        if (preferSmaller && encoded.length < bytes.length) {
+        if (preferSmaller && encoded.length < originalLength) {
             bestBytes = encoded;
             bestQuality = stepQuality;
             break;
@@ -186,13 +240,118 @@ const encodeImage = async (
     if (!bestBytes) {
         throw new Error("JPEG encode failed");
     }
+    return { bytes: bestBytes, encodeQuality: bestQuality };
+};
 
-    return {
-        bytes: bestBytes,
-        width: imageData.width,
-        height: imageData.height,
-        encodeQuality: bestQuality,
-    };
+let nativeAvif: boolean | undefined;
+
+const canEncodeAvifNative = async (): Promise<boolean> => {
+    if (nativeAvif !== undefined) {
+        return nativeAvif;
+    }
+    try {
+        const canvas = new OffscreenCanvas(2, 2);
+        const blob = await canvas.convertToBlob({ type: "image/avif", quality: 0.6 });
+        nativeAvif = blob.type.includes("avif");
+    } catch {
+        nativeAvif = false;
+    }
+    return nativeAvif;
+};
+
+const encodeAvifNative = async (
+    imageData: ImageData,
+    quality: number,
+): Promise<Uint8Array> => {
+    const canvas = new OffscreenCanvas(imageData.width, imageData.height);
+    const context = canvas.getContext("2d");
+    if (!context) {
+        throw new Error("OffscreenCanvas unavailable");
+    }
+    context.putImageData(imageData, 0, 0);
+    const blob = await canvas.convertToBlob({
+        type: "image/avif",
+        quality: quality / 100,
+    });
+    if (!blob.type.includes("avif")) {
+        throw new Error("Native AVIF encode unavailable");
+    }
+    return new Uint8Array(await blob.arrayBuffer());
+};
+
+const encodeAvifImage = async (
+    imageData: ImageData,
+    quality: number,
+): Promise<Uint8Array> => {
+    if (await canEncodeAvifNative()) {
+        try {
+            return await encodeAvifNative(imageData, quality);
+        } catch {
+            // fall through to WASM
+        }
+    }
+    const buffer = await encodeAvif(imageData, { quality, speed: 8 });
+    return new Uint8Array(buffer);
+};
+
+const encodeLosslessWebpNative = async (imageData: ImageData): Promise<Uint8Array> => {
+    const canvas = new OffscreenCanvas(imageData.width, imageData.height);
+    const context = canvas.getContext("2d");
+    if (!context) {
+        throw new Error("OffscreenCanvas unavailable");
+    }
+    context.putImageData(imageData, 0, 0);
+    const blob = await canvas.convertToBlob({ type: "image/webp", quality: 1 });
+    if (!blob.type.includes("webp")) {
+        throw new Error("Native WebP encode unavailable");
+    }
+    return new Uint8Array(await blob.arrayBuffer());
+};
+
+const encodeLosslessWebp = async (imageData: ImageData): Promise<Uint8Array> => {
+    try {
+        return await encodeLosslessWebpNative(imageData);
+    } catch {
+        const buffer = await encodeWebp(imageData, { lossless: 1 });
+        return new Uint8Array(buffer);
+    }
+};
+
+const encodePreset = async (
+    imageData: ImageData,
+    preset: Exclude<CompressImagePreset, "skip">,
+): Promise<{ bytes: Uint8Array; mimeType: string; extension: string; encoder: string }> => {
+    const { mimeType, extension } = mimeTypeForPreset(preset);
+    if (preset === "lossless-webp") {
+        const bytes = await encodeLosslessWebp(imageData);
+        return { bytes, mimeType, extension, encoder: "webp" };
+    }
+    const quality = avifQualityForPreset(preset) ?? 60;
+    try {
+        const bytes = await encodeAvifImage(imageData, quality);
+        return { bytes, mimeType, extension, encoder: "avif" };
+    } catch {
+        const jpeg = await encodeJpegImage(imageData, 0.85, Number.POSITIVE_INFINITY, false);
+        return {
+            bytes: jpeg.bytes,
+            mimeType: "image/jpeg",
+            extension: "jpg",
+            encoder: "mozjpeg",
+        };
+    }
+};
+
+const transferResponse = (response: CompressWorkerResponse): void => {
+    if (response.bytes) {
+        const buffer = toArrayBuffer(response.bytes);
+        const transferred: CompressWorkerResponse = {
+            ...response,
+            bytes: new Uint8Array(buffer),
+        };
+        self.postMessage(transferred, { transfer: [buffer] });
+        return;
+    }
+    self.postMessage(response);
 };
 
 self.onmessage = async (
@@ -204,18 +363,64 @@ self.onmessage = async (
         quality,
         cropRect,
         preferSmaller = false,
+        output = cropRect ? "jpeg" : "auto",
+        minSizeBytes = 0,
     }: CompressWorkerRequest = event.data;
     try {
-        const result = await encodeImage(bytes, quality, cropRect, preferSmaller);
-        const response: CompressWorkerResponse = {
+        const format = detectFormat(bytes);
+        let imageData = await decodeToImageData(bytes, format);
+        if (cropRect) {
+            imageData = await cropImageData(imageData, cropRect);
+        }
+
+        if (output === "jpeg") {
+            const encoded = await encodeJpegImage(
+                imageData,
+                quality,
+                bytes.length,
+                preferSmaller,
+            );
+            transferResponse({
+                id,
+                bytes: encoded.bytes,
+                width: imageData.width,
+                height: imageData.height,
+                encodeQuality: encoded.encodeQuality,
+                encoder: "mozjpeg",
+                mimeType: "image/jpeg",
+                extension: "jpg",
+            });
+            return;
+        }
+
+        const analysis = await downsampleForAnalysis(imageData);
+        const features = analyzeImageData(
+            analysis,
+            bytes.length,
+            imageData.width,
+            imageData.height,
+        );
+        const decision = routeFromFeatures(features, minSizeBytes);
+        if (decision.preset === "skip") {
+            transferResponse({
+                id,
+                skipped: true,
+                width: imageData.width,
+                height: imageData.height,
+            });
+            return;
+        }
+
+        const encoded = await encodePreset(imageData, decision.preset);
+        transferResponse({
             id,
-            bytes: result.bytes,
-            width: result.width,
-            height: result.height,
-            encodeQuality: result.encodeQuality,
-            encoder: "mozjpeg",
-        };
-        self.postMessage(response);
+            bytes: encoded.bytes,
+            width: imageData.width,
+            height: imageData.height,
+            encoder: encoded.encoder,
+            mimeType: encoded.mimeType,
+            extension: encoded.extension,
+        });
     } catch (error: unknown) {
         const response: CompressWorkerResponse = {
             id,

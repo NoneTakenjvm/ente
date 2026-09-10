@@ -19,6 +19,13 @@ import {
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Progress } from "@/components/ui/progress";
 import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
+import {
     Sheet,
     SheetContent,
     SheetFooter,
@@ -29,15 +36,15 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { Spinner } from "@/components/ui/spinner";
 import {
-    DEFAULT_JPEG_QUALITY,
     DEFAULT_VIDEO_CRF,
-    encodeJpegFromBytes,
     formatSizeDelta,
     isWorthReplacing,
-    MAX_JPEG_QUALITY,
-    MIN_JPEG_QUALITY,
     MAX_VIDEO_CRF,
+    MIN_SIZE_FILTER_PRESETS,
     MIN_VIDEO_CRF,
+    readCompressMinSizeBytes,
+    writeCompressMinSizeBytes,
+    CompressionSkippedError,
     type SizeDelta,
 } from "@/lib/compress";
 import { loadMediaBytesForEdit } from "@/lib/load-media-bytes";
@@ -72,14 +79,15 @@ export function CompressionPanel({
     const compressAndReplaceMediaOptimistic = useLibraryStore(
         (s) => s.compressAndReplaceMediaOptimistic,
     );
-    const compressAndUploadFile = useLibraryStore((s) => s.compressAndUploadFile);
 
     const mediaKind = mediaKindForFile(file);
     const usesFfmpeg = mediaKind === "gif" || mediaKind === "video";
 
     const [phase, setPhase] = useState<PanelPhase>("loading");
-    const [quality, setQuality] = useState<number>(DEFAULT_JPEG_QUALITY);
     const [videoCrf, setVideoCrf] = useState<number>(DEFAULT_VIDEO_CRF);
+    const [minSizeBytes, setMinSizeBytes] = useState<number>(
+        readCompressMinSizeBytes,
+    );
     const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
     const [originalBytes, setOriginalBytes] = useState<Uint8Array | undefined>();
     const [compressedResult, setCompressedResult] = useState<
@@ -151,29 +159,23 @@ export function CompressionPanel({
             setEncodeProgress(undefined);
             setError(undefined);
             try {
-                const result = usesFfmpeg ?
-                    await compressMediaBytes(file, originalBytes, {
-                        quality,
-                        videoCrf,
-                        maxLongEdge:
-                            mediaKind === "video" ?
-                                VIDEO_COMPRESS_PREVIEW_MAX_LONG_EDGE :
-                                undefined,
-                        onProgress: (ratio) => {
-                            if (
-                                cancelled ||
-                                requestId !== encodeRequestId.current
-                            ) {
-                                return;
-                            }
-                            setEncodeProgress(Math.round(ratio * 100));
-                        },
-                    }) :
-                    {
-                        ...(await encodeJpegFromBytes(originalBytes, quality)),
-                        mimeType: "image/jpeg",
-                        extension: "jpg",
-                    } satisfies CompressMediaResult;
+                const result = await compressMediaBytes(file, originalBytes, {
+                    videoCrf,
+                    minSizeBytes,
+                    maxLongEdge:
+                        mediaKind === "video" ?
+                            VIDEO_COMPRESS_PREVIEW_MAX_LONG_EDGE :
+                            undefined,
+                    onProgress: (ratio) => {
+                        if (
+                            cancelled ||
+                            requestId !== encodeRequestId.current
+                        ) {
+                            return;
+                        }
+                        setEncodeProgress(Math.round(ratio * 100));
+                    },
+                });
 
                 if (cancelled || requestId !== encodeRequestId.current) {
                     return;
@@ -196,11 +198,14 @@ export function CompressionPanel({
                 if (cancelled || requestId !== encodeRequestId.current) {
                     return;
                 }
+                setCompressedResult(undefined);
                 setPhase("error");
                 setError(
-                    encodeError instanceof Error ?
-                        encodeError.message :
-                        "Could not encode preview",
+                    encodeError instanceof CompressionSkippedError ?
+                        "Already under the minimum file size — skipped." :
+                        encodeError instanceof Error ?
+                            encodeError.message :
+                            "Could not encode preview",
                 );
             }
         };
@@ -210,7 +215,7 @@ export function CompressionPanel({
         return (): void => {
             cancelled = true;
         };
-    }, [file, mediaKind, originalBytes, quality, usesFfmpeg, videoCrf]);
+    }, [file, mediaKind, minSizeBytes, originalBytes, videoCrf]);
 
     useEffect(() => {
         return (): void => {
@@ -228,30 +233,6 @@ export function CompressionPanel({
         setError(undefined);
 
         try {
-            if (!usesFfmpeg) {
-                void compressAndUploadFile(
-                    file.id,
-                    compressedResult.bytes,
-                    {
-                        width: compressedResult.width,
-                        height: compressedResult.height,
-                    },
-                )
-                    .then((uploaded) => {
-                        setPhase("success");
-                        onUploaded?.(uploaded);
-                    })
-                    .catch((uploadError: unknown) => {
-                        setPhase("error");
-                        setError(
-                            uploadError instanceof Error ?
-                                uploadError.message :
-                                "Upload failed",
-                        );
-                    });
-                return;
-            }
-
             const { optimisticFile, finalize } =
                 compressAndReplaceMediaOptimistic(
                     file.id,
@@ -278,19 +259,19 @@ export function CompressionPanel({
         }
     }, [
         compressAndReplaceMediaOptimistic,
-        compressAndUploadFile,
         compressedResult,
         file.id,
         onUploaded,
         originalBytes,
-        usesFfmpeg,
     ]);
 
-    const qualityPercent = Math.round(quality * 100);
+    const minSizePreset = MIN_SIZE_FILTER_PRESETS.find(
+        (preset) => preset.bytes === minSizeBytes,
+    ) ?? MIN_SIZE_FILTER_PRESETS[0]!;
     const settingsSummary =
         mediaKind === "video" ?
             `Video CRF ${videoCrf}` :
-            `JPEG quality ${qualityPercent}%`;
+            `Skip under ${minSizePreset.label.replace(/\+$/u, "")}`;
 
     const previewFrameClassName =
         "flex min-h-48 w-full items-center justify-center rounded-md bg-muted";
@@ -490,21 +471,30 @@ export function CompressionPanel({
                     </DialogHeader>
                     {mediaKind !== "video" ? (
                         <Field>
-                            <FieldLabel>Quality {qualityPercent}%</FieldLabel>
-                            <Slider
-                                min={MIN_JPEG_QUALITY * 100}
-                                max={MAX_JPEG_QUALITY * 100}
-                                value={[qualityPercent]}
-                                disabled={phase === "uploading" || !originalBytes}
+                            <FieldLabel>Minimum file size</FieldLabel>
+                            <Select
+                                value={String(minSizeBytes)}
+                                disabled={phase === "uploading"}
                                 onValueChange={(value) => {
-                                    const next = Array.isArray(value) ?
-                                        value[0] :
-                                        value;
-                                    if (next !== undefined) {
-                                        setQuality(next / 100);
-                                    }
+                                    const next = Number(value);
+                                    setMinSizeBytes(next);
+                                    writeCompressMinSizeBytes(next);
                                 }}
-                            />
+                            >
+                                <SelectTrigger>
+                                    <SelectValue>{minSizePreset.label}</SelectValue>
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {MIN_SIZE_FILTER_PRESETS.map((preset) => (
+                                        <SelectItem
+                                            key={preset.bytes}
+                                            value={String(preset.bytes)}
+                                        >
+                                            {preset.label}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
                         </Field>
                     ) : (
                         <Field>

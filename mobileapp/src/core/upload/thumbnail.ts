@@ -46,9 +46,10 @@ const compressedJPEGData = async (
  * Generate a JPEG thumbnail from image bytes.
  */
 export const generateImageThumbnail = async (
-    jpegBytes: Uint8Array,
+    imageBytes: Uint8Array,
+    mimeType = "image/jpeg",
 ): Promise<Uint8Array> => {
-    const blob = new Blob([Uint8Array.from(jpegBytes)], { type: "image/jpeg" });
+    const blob = new Blob([imageBytes as BlobPart], { type: mimeType });
     const bitmap = await createImageBitmap(blob);
     const { width, height } = scaledImageDimensions(
         bitmap.width,

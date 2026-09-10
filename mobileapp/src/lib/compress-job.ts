@@ -10,12 +10,13 @@ export interface CompressJobOptions {
     includePreviouslyCompressed?: boolean;
     quality: number;
     videoCrf: number;
+    minSizeBytes?: number;
     signal: AbortSignal;
     shouldPause: () => boolean;
     onProgress: (current: number, total: number) => void;
     compressFile: (
         fileId: number,
-        options: { quality: number; videoCrf: number },
+        options: { quality: number; videoCrf: number; minSizeBytes?: number },
     ) => Promise<unknown>;
 }
 
@@ -63,6 +64,7 @@ export const runCompressJob = async (
             await options.compressFile(file.id, {
                 quality: options.quality,
                 videoCrf: options.videoCrf,
+                minSizeBytes: options.minSizeBytes,
             });
             result.completed += 1;
         } catch (error: unknown) {

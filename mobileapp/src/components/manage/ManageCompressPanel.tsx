@@ -35,12 +35,12 @@ import {
     DEFAULT_VIDEO_CRF,
     filterCompressCandidatesByMinSize,
     isAlreadyCompressed,
-    MAX_JPEG_QUALITY,
     MAX_VIDEO_CRF,
-    MIN_JPEG_QUALITY,
     MIN_SIZE_FILTER_PRESETS,
     MIN_VIDEO_CRF,
+    readCompressMinSizeBytes,
     sortCompressCandidatesBySize,
+    writeCompressMinSizeBytes,
 } from "@/lib/compress";
 import { runCompressJob } from "@/lib/compress-job";
 import { useCompressJobStore } from "@/stores/ui-store";
@@ -70,9 +70,10 @@ export function ManageCompressPanel({
 
     const [includePreviouslyCompressed, setIncludePreviouslyCompressed] =
         useState<boolean>(false);
-    const [minSizeBytes, setMinSizeBytes] = useState<number>(0);
+    const [minSizeBytes, setMinSizeBytes] = useState<number>(
+        readCompressMinSizeBytes,
+    );
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-    const [quality, setQuality] = useState<number>(DEFAULT_JPEG_QUALITY);
     const [videoCrf, setVideoCrf] = useState<number>(DEFAULT_VIDEO_CRF);
     const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
     const [batchPreviewOpen, setBatchPreviewOpen] = useState<boolean>(false);
@@ -180,8 +181,9 @@ export function ManageCompressPanel({
             files: candidates,
             fileIds: activeSelectedIds,
             includePreviouslyCompressed,
-            quality,
+            quality: DEFAULT_JPEG_QUALITY,
             videoCrf,
+            minSizeBytes,
             signal: jobAbort.current.signal,
             shouldPause: () => jobPaused.current,
             onProgress: setJobProgress,
@@ -230,7 +232,7 @@ export function ManageCompressPanel({
         includePreviouslyCompressed,
         setJobError,
         jobStatus,
-        quality,
+        minSizeBytes,
         setJobProgress,
         setJobStatus,
         videoCrf,
@@ -268,9 +270,8 @@ export function ManageCompressPanel({
             Math.round((jobProgress.current / jobProgress.total) * 100) :
             0;
 
-    const qualityPercent = Math.round(quality * 100);
     const jobRunning = jobStatus === "running";
-    const settingsSummary = `JPEG ${qualityPercent}% · Video CRF ${videoCrf}`;
+    const settingsSummary = `Video CRF ${videoCrf}`;
 
     const gridSelection = useMemo(
         () => ({
@@ -326,7 +327,9 @@ export function ManageCompressPanel({
                         value={String(minSizeBytes)}
                         disabled={jobRunning}
                         onValueChange={(value) => {
-                            setMinSizeBytes(Number(value));
+                            const next = Number(value);
+                            setMinSizeBytes(next);
+                            writeCompressMinSizeBytes(next);
                         }}
                     >
                         <SelectTrigger className="w-full">
@@ -456,21 +459,6 @@ export function ManageCompressPanel({
                         <DialogTitle>Compression settings</DialogTitle>
                     </DialogHeader>
                     <Field>
-                        <FieldLabel>JPEG quality {qualityPercent}%</FieldLabel>
-                        <Slider
-                            min={MIN_JPEG_QUALITY * 100}
-                            max={MAX_JPEG_QUALITY * 100}
-                            value={[qualityPercent]}
-                            disabled={jobRunning}
-                            onValueChange={(value) => {
-                                const next = Array.isArray(value) ? value[0] : value;
-                                if (next !== undefined) {
-                                    setQuality(next / 100);
-                                }
-                            }}
-                        />
-                    </Field>
-                    <Field>
                         <FieldLabel>Video CRF {videoCrf}</FieldLabel>
                         <Slider
                             min={MIN_VIDEO_CRF}
@@ -496,7 +484,7 @@ export function ManageCompressPanel({
             <BatchCompressPreviewSheet
                 open={batchPreviewOpen}
                 files={selectedFiles}
-                quality={quality}
+                minSizeLabel={minSizePreset.label}
                 videoCrf={videoCrf}
                 onClose={() => setBatchPreviewOpen(false)}
                 onConfirm={handleStartJob}

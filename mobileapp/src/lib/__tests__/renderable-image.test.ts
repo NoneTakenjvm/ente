@@ -32,6 +32,9 @@ describe("mimeTypeForFile", () => {
         expect(mimeTypeForFile(fileWithName(FileType.image, "a.webp"))).toBe(
             "image/webp",
         );
+        expect(mimeTypeForFile(fileWithName(FileType.image, "a.avif"))).toBe(
+            "image/avif",
+        );
     });
 });
 
