@@ -56,6 +56,8 @@ interface ThumbnailGridProps {
     footerInsetPx?: number;
     /** Compress picker: show size chips on cells. */
     showFileSize?: boolean;
+    /** Draft quick-rotate degrees by file id. */
+    previewRotationById?: Record<number, 90 | 180 | 270>;
 }
 
 interface RowData {
@@ -64,6 +66,7 @@ interface RowData {
     onOpenFile?: (file: EnteFile) => void;
     selection?: ThumbnailGridSelection;
     showFileSize?: boolean;
+    previewRotationById?: Record<number, 90 | 180 | 270>;
 }
 
 const GridRow = memo(function GridRow({
@@ -71,7 +74,8 @@ const GridRow = memo(function GridRow({
     style,
     data,
 }: ListChildComponentProps<RowData>): JSX.Element {
-    const { files, layout, onOpenFile, selection, showFileSize } = data;
+    const { files, layout, onOpenFile, selection, showFileSize, previewRotationById } =
+        data;
     const start: number = index * layout.columns;
     const cells: JSX.Element[] = [];
     for (let column = 0; column < layout.columns; column += 1) {
@@ -91,6 +95,7 @@ const GridRow = memo(function GridRow({
                 disabled={selection?.disabled}
                 tapSelects={selection !== undefined}
                 showFileSize={showFileSize}
+                previewRotationDegrees={previewRotationById?.[file.id]}
             />,
         );
     }
@@ -118,6 +123,7 @@ interface SizedGridProps {
     selection?: ThumbnailGridSelection;
     footerInsetPx: number;
     showFileSize?: boolean;
+    previewRotationById?: Record<number, 90 | 180 | 270>;
     onScrollOffsetChange: (offset: number) => void;
     listRef: RefObject<FixedSizeList<RowData> | null>;
 }
@@ -131,6 +137,7 @@ function SizedGrid({
     selection,
     footerInsetPx,
     showFileSize,
+    previewRotationById,
     onScrollOffsetChange,
     listRef,
 }: SizedGridProps): JSX.Element {
@@ -140,8 +147,15 @@ function SizedGrid({
     );
     const rowCount: number = rowCountForFiles(files.length, layout.columns);
     const itemData: RowData = useMemo(
-        () => ({ files, layout, onOpenFile, selection, showFileSize }),
-        [files, layout, onOpenFile, selection, showFileSize],
+        () => ({
+            files,
+            layout,
+            onOpenFile,
+            selection,
+            showFileSize,
+            previewRotationById,
+        }),
+        [files, layout, onOpenFile, previewRotationById, selection, showFileSize],
     );
 
     const itemKey = useCallback(
@@ -180,6 +194,7 @@ interface SizedMasonryGridProps {
     selection?: ThumbnailGridSelection;
     footerInsetPx: number;
     showFileSize?: boolean;
+    previewRotationById?: Record<number, 90 | 180 | 270>;
     onScrollOffsetChange: (offset: number) => void;
     /** Generation that changes when id order changes; layout is reused otherwise. */
     viewOrderKey: string;
@@ -196,6 +211,7 @@ function SizedMasonryGrid({
     selection,
     footerInsetPx,
     showFileSize,
+    previewRotationById,
     onScrollOffsetChange,
     viewOrderKey,
 }: SizedMasonryGridProps): JSX.Element {
@@ -299,6 +315,9 @@ function SizedMasonryGrid({
                                 disabled={selection?.disabled}
                                 tapSelects={selection !== undefined}
                                 showFileSize={showFileSize}
+                                previewRotationDegrees={
+                                    previewRotationById?.[item.fileId]
+                                }
                             />
                         </div>
                     );
@@ -367,6 +386,7 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
     selection,
     footerInsetPx = 0,
     showFileSize = false,
+    previewRotationById,
 }: ThumbnailGridProps): JSX.Element {
     const galleryColumns = useSettingsStore((s) => s.galleryColumns);
     const galleryThumbnailMode = useSettingsStore((s) => s.galleryThumbnailMode);
@@ -574,6 +594,7 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
                             selection={selection}
                             footerInsetPx={footerInsetPx}
                             showFileSize={showFileSize}
+                            previewRotationById={previewRotationById}
                             onScrollOffsetChange={handleScrollOffsetChange}
                             viewOrderKey={viewOrderKey}
                         />
@@ -587,6 +608,7 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
                             selection={selection}
                             footerInsetPx={footerInsetPx}
                             showFileSize={showFileSize}
+                            previewRotationById={previewRotationById}
                             onScrollOffsetChange={handleScrollOffsetChange}
                             listRef={listRef}
                         />

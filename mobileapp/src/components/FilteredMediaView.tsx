@@ -67,6 +67,10 @@ export function FilteredMediaView({
     const pruneToVisible = useSelectionStore((s) => s.pruneToVisible);
     const stampActive = useSelectionStore((s) => s.stampActive);
     const stampTags = useSelectionStore((s) => s.stampTags);
+    const rotateActive = useSelectionStore((s) => s.rotateActive);
+    const pendingRotations = useSelectionStore((s) => s.pendingRotations);
+    const bumpRotate = useSelectionStore((s) => s.bumpRotate);
+    const rotateBusy = useSelectionStore((s) => s.rotateBusy);
 
     const fileIds = useMemo(
         () => files.map((file) => file.id),
@@ -133,10 +137,16 @@ export function FilteredMediaView({
                 selectedIds,
                 stampActive,
                 stampTags,
+                rotateActive,
+                bumpRotate,
                 toggleSelection,
                 selectMany,
+                disabled: rotateBusy,
             }),
         [
+            bumpRotate,
+            rotateActive,
+            rotateBusy,
             selectMany,
             selectedIds,
             selectionEnabled,
@@ -147,13 +157,19 @@ export function FilteredMediaView({
     );
 
     const footerInsetPx =
-        stampActive || (selectionEnabled && selectedIds.length > 0) ?
+        stampActive ||
+        rotateActive ||
+        (selectionEnabled && selectedIds.length > 0) ?
             SELECTION_FOOTER_INSET_PX :
             0;
 
     const handleOpenFile = useCallback((file: EnteFile): void => {
-        const { enabled, stampActive: stamping } = useSelectionStore.getState();
-        if (enabled || stamping) {
+        const {
+            enabled,
+            stampActive: stamping,
+            rotateActive: rotating,
+        } = useSelectionStore.getState();
+        if (enabled || stamping || rotating) {
             return;
         }
         setViewerFileId(file.id);
@@ -177,12 +193,15 @@ export function FilteredMediaView({
             <ThumbnailGrid
                 files={displayFiles}
                 onOpenFile={
-                    selectionEnabled || stampActive ?
+                    selectionEnabled || stampActive || rotateActive ?
                         undefined :
                         handleOpenFile
                 }
                 selection={gridSelection}
                 footerInsetPx={footerInsetPx}
+                previewRotationById={
+                    rotateActive ? pendingRotations : undefined
+                }
             />
             {viewerFileId !== undefined ? (
                 <PhotoViewer

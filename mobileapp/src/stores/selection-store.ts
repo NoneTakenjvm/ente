@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import type { RotationDegrees } from "@/lib/rotate";
+import { nextPendingRotation } from "@/lib/rotate-draft";
 
 /** How the stamp tool picks what to apply: a whole kit, or individual tags. */
 export type StampPickMode = "kit" | "tag";
@@ -8,7 +10,7 @@ interface SelectionState {
     selectedIds: number[];
     /**
      * Stamp tool: pick tags/kits, then tap photos to apply.
-     * Mutually exclusive with selection mode.
+     * Mutually exclusive with selection and rotate modes.
      */
     stampActive: boolean;
     stampTags: string[];
@@ -16,6 +18,15 @@ interface SelectionState {
     stampPickMode: StampPickMode;
     /** Tag picker sheet for the stamp tool (opened on enter when empty in tag mode). */
     stampSheetOpen: boolean;
+    /**
+     * Quick rotate: tap images to draft +90° CW; Apply uploads.
+     * Mutually exclusive with selection and stamp.
+     */
+    rotateActive: boolean;
+    /** Pending clockwise degrees per file id (omitted when 0°). */
+    pendingRotations: Record<number, RotationDegrees>;
+    /** True while Apply is uploading rotations (locks the grid). */
+    rotateBusy: boolean;
     setEnabled: (enabled: boolean) => void;
     toggle: (fileId: number) => void;
     selectMany: (fileIds: number[], mode: "add" | "toggle") => void;
@@ -28,6 +39,11 @@ interface SelectionState {
     setStampPickMode: (mode: StampPickMode) => void;
     setStampSheetOpen: (open: boolean) => void;
     clearStamp: () => void;
+    setRotateActive: (active: boolean) => void;
+    bumpRotate: (fileId: number) => void;
+    clearPendingRotations: () => void;
+    removePendingRotation: (fileId: number) => void;
+    setRotateBusy: (busy: boolean) => void;
     reset: () => void;
 }
 
@@ -38,6 +54,9 @@ const initialState = {
     stampTags: [] as string[],
     stampPickMode: "kit" as StampPickMode,
     stampSheetOpen: false,
+    rotateActive: false,
+    pendingRotations: {} as Record<number, RotationDegrees>,
+    rotateBusy: false,
 };
 
 export const useSelectionStore = create<SelectionState>((set, get) => ({
@@ -50,6 +69,9 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
                 selectedIds: [],
                 stampActive: false,
                 stampSheetOpen: false,
+                rotateActive: false,
+                pendingRotations: {},
+                rotateBusy: false,
             });
             return;
         }
@@ -57,6 +79,9 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
             enabled: true,
             stampActive: false,
             stampSheetOpen: false,
+            rotateActive: false,
+            pendingRotations: {},
+            rotateBusy: false,
             selectedIds: get().selectedIds,
         });
     },
@@ -94,6 +119,9 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
             enabled: true,
             stampActive: false,
             stampSheetOpen: false,
+            rotateActive: false,
+            pendingRotations: {},
+            rotateBusy: false,
             selectedIds: [...new Set(fileIds)],
         });
     },
@@ -119,6 +147,9 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
                 stampActive: true,
                 enabled: false,
                 selectedIds: [],
+                rotateActive: false,
+                pendingRotations: {},
+                rotateBusy: false,
                 stampSheetOpen:
                     stampTags.length === 0 && stampPickMode === "tag",
             });
@@ -170,6 +201,56 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
             stampTags: [],
             stampPickMode: "kit",
             stampSheetOpen: false,
+        });
+    },
+
+    setRotateActive: (active: boolean): void => {
+        if (active) {
+            set({
+                rotateActive: true,
+                enabled: false,
+                selectedIds: [],
+                stampActive: false,
+                stampSheetOpen: false,
+                pendingRotations: {},
+                rotateBusy: false,
+            });
+            return;
+        }
+        set({ rotateActive: false, pendingRotations: {}, rotateBusy: false });
+    },
+
+    setRotateBusy: (busy: boolean): void => {
+        set({ rotateBusy: busy });
+    },
+
+    bumpRotate: (fileId: number): void => {
+        set((state) => {
+            const nextDegrees = nextPendingRotation(
+                state.pendingRotations[fileId],
+            );
+            const pendingRotations = { ...state.pendingRotations };
+            if (nextDegrees === undefined) {
+                delete pendingRotations[fileId];
+            } else {
+                pendingRotations[fileId] = nextDegrees;
+            }
+            return { pendingRotations };
+        });
+    },
+
+    clearPendingRotations: (): void => {
+        set({ pendingRotations: {} });
+    },
+
+    removePendingRotation: (fileId: number): void => {
+        set((state) => {
+            if (state.pendingRotations[fileId] === undefined) {
+                return state;
+            }
+            const pendingRotations = { ...state.pendingRotations };
+            delete pendingRotations[fileId];
+            return { pendingRotations };
         });
     },
 

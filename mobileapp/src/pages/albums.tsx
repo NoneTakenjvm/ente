@@ -16,10 +16,10 @@ import {
     type MediaViewOrder,
 } from "@/components/FilteredMediaView";
 import { PageLoader } from "@/components/PageLoader";
+import { GalleryToolsMenu } from "@/components/GalleryToolsMenu";
 import { SelectionActionFooter } from "@/components/SelectionActionFooter";
-import { SelectionModeToggle } from "@/components/SelectionModeToggle";
-import { StampModeToggle } from "@/components/StampModeToggle";
 import { StampToolFooter } from "@/components/StampToolFooter";
+import { RotateToolFooter } from "@/components/RotateToolFooter";
 import { SyncBanner } from "@/components/SyncBanner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -362,8 +362,7 @@ export default function AlbumsPage(): JSX.Element {
                         >
                             Select all
                         </Button>
-                        <StampModeToggle />
-                        <SelectionModeToggle />
+                        <GalleryToolsMenu />
                         <Button
                             type="button"
                             variant={viewOrder === "shuffled" ? "secondary" : "outline"}
@@ -473,6 +472,7 @@ export default function AlbumsPage(): JSX.Element {
 
             <SelectionActionFooter />
             <StampToolFooter />
+            <RotateToolFooter />
         </AppShell>
     );
 }

@@ -8,7 +8,7 @@ import {
 } from "react";
 import { TagClausePicker } from "@/components/TagClausePicker";
 import { TagPickerSheet } from "@/components/TagPickerSheet";
-import { TagQueryBuilderPanel } from "@/components/TagQueryBuilderPanel";
+import { GalleryToolsMenu } from "@/components/GalleryToolsMenu";
 import { TagScopeFilterDropdown } from "@/components/TagScopeFilterDropdown";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,8 +39,6 @@ import {
     nearnessFilterFromKitTags,
 } from "@/lib/tag-presets";
 import { Shuffle } from "lucide-react";
-import { SelectionModeToggle } from "@/components/SelectionModeToggle";
-import { StampModeToggle } from "@/components/StampModeToggle";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
@@ -478,20 +476,19 @@ export function TagFilterBar({
                         <Shuffle className="size-3.5 shrink-0" />
                         <span>Randomise</span>
                     </Button>
-                    <TagQueryBuilderPanel
-                        hasQueryContent={hasQueryContent}
-                        clauseCount={clauseCount}
-                        favoritesCount={favoritesCount}
-                        notFavoritesCount={notFavoritesCount}
-                        taggedCount={taggedCount}
-                        untaggedCount={untaggedCount}
-                        photoCount={photoCount}
-                        videoCount={videoCount}
-                        croppedCount={croppedCount}
-                        notCroppedCount={notCroppedCount}
+                    <GalleryToolsMenu
+                        query={{
+                            hasQueryContent,
+                            favoritesCount,
+                            notFavoritesCount,
+                            taggedCount,
+                            untaggedCount,
+                            photoCount,
+                            videoCount,
+                            croppedCount,
+                            notCroppedCount,
+                        }}
                     />
-                    <StampModeToggle />
-                    <SelectionModeToggle />
                 </div>
                 {filterActive ? (
                     <div className="flex flex-wrap items-center justify-between gap-2 text-xs">

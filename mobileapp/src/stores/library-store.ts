@@ -1344,10 +1344,17 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         }
 
         const bytes = await getEnteCore().getDecryptedFile(file);
-        const { rotateImageBytes, rotatedUploadTitle } = await import("@/lib/rotate");
+        const { toRenderableImageBlob } = await import(
+            "@/lib/renderable-image"
+        );
+        const renderable = await toRenderableImageBlob(file, bytes);
+        const sourceBytes = new Uint8Array(await renderable.arrayBuffer());
+        const { rotateImageBytes, rotatedUploadTitle } = await import(
+            "@/lib/rotate"
+        );
         const rotated = await rotateImageBytes(
-            bytes,
-            mimeTypeForFile(file),
+            sourceBytes,
+            renderable.type || "image/jpeg",
             degrees,
         );
         const uploaded = await getEnteCore().uploadRotatedImage(

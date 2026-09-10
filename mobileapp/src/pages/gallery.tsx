@@ -15,6 +15,7 @@ import { AppShell } from "@/components/AppShell";
 import { PageLoader } from "@/components/PageLoader";
 import { SelectionActionFooter } from "@/components/SelectionActionFooter";
 import { StampToolFooter } from "@/components/StampToolFooter";
+import { RotateToolFooter } from "@/components/RotateToolFooter";
 import { SyncBanner } from "@/components/SyncBanner";
 import { TagFilterBar } from "@/components/TagFilterBar";
 import { ThumbnailGrid } from "@/components/ThumbnailGrid";
@@ -876,6 +877,10 @@ export default function GalleryPage(): JSX.Element {
     const resetSelection = useSelectionStore((s) => s.reset);
     const stampActive = useSelectionStore((s) => s.stampActive);
     const stampTags = useSelectionStore((s) => s.stampTags);
+    const rotateActive = useSelectionStore((s) => s.rotateActive);
+    const pendingRotations = useSelectionStore((s) => s.pendingRotations);
+    const bumpRotate = useSelectionStore((s) => s.bumpRotate);
+    const rotateBusy = useSelectionStore((s) => s.rotateBusy);
 
     // Keep the selection while select mode is on — tag edits often drop files
     // out of the active filter, and pruning would wipe a multi-select mid-edit.
@@ -894,8 +899,12 @@ export default function GalleryPage(): JSX.Element {
             return;
         }
         selectionFilterRef.current = tagFilter;
-        if (useSelectionStore.getState().enabled) {
+        const state = useSelectionStore.getState();
+        if (state.enabled) {
             setSelectionEnabled(false);
+        }
+        if (state.rotateActive) {
+            state.setRotateActive(false);
         }
     }, [setSelectionEnabled, tagFilter]);
 
@@ -912,10 +921,16 @@ export default function GalleryPage(): JSX.Element {
                 selectedIds,
                 stampActive,
                 stampTags,
+                rotateActive,
+                bumpRotate,
                 toggleSelection,
                 selectMany,
+                disabled: rotateBusy,
             }),
         [
+            bumpRotate,
+            rotateActive,
+            rotateBusy,
             selectMany,
             selectedIds,
             selectionEnabled,
@@ -926,7 +941,9 @@ export default function GalleryPage(): JSX.Element {
     );
 
     const footerInsetPx =
-        stampActive || (selectionEnabled && selectedIds.length > 0) ?
+        stampActive ||
+        rotateActive ||
+        (selectionEnabled && selectedIds.length > 0) ?
             SELECTION_FOOTER_INSET_PX :
             0;
 
@@ -938,8 +955,12 @@ export default function GalleryPage(): JSX.Element {
     }, [router]);
 
     const handleOpenFile = useCallback((file: EnteFile): void => {
-        const { enabled, stampActive: stamping } = useSelectionStore.getState();
-        if (enabled || stamping) {
+        const {
+            enabled,
+            stampActive: stamping,
+            rotateActive: rotating,
+        } = useSelectionStore.getState();
+        if (enabled || stamping || rotating) {
             return;
         }
         setViewerFileId(file.id);
@@ -1020,17 +1041,21 @@ export default function GalleryPage(): JSX.Element {
                 <ThumbnailGrid
                     files={displayFiles}
                     onOpenFile={
-                        selectionEnabled || stampActive ?
+                        selectionEnabled || stampActive || rotateActive ?
                             undefined :
                             handleOpenFile
                     }
                     selection={gridSelection}
                     footerInsetPx={footerInsetPx}
+                    previewRotationById={
+                        rotateActive ? pendingRotations : undefined
+                    }
                 />
             )}
 
             <SelectionActionFooter />
             <StampToolFooter />
+            <RotateToolFooter />
 
             {viewerFileId !== undefined ? (
                 <PhotoViewer
