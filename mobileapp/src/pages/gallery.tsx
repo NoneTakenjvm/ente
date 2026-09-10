@@ -50,6 +50,7 @@ import {
     viewportTargetAspectRatio,
 } from "@/lib/viewport-fit";
 import { sortFilesByImageSize } from "@/lib/image-size-sort";
+import { sortFilesByImageQuality } from "@/lib/image-quality";
 import {
     packRelativeEmbeddings,
     sortFilesByRelative,
@@ -80,6 +81,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
+import { useQualityIndexStore } from "@/stores/quality-index-store";
 import { useSelectionStore } from "@/stores/selection-store";
 import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
@@ -154,6 +156,7 @@ export default function GalleryPage(): JSX.Element {
     const viewportTargetHeight = useUIStore((s) => s.viewportTargetHeight);
     const updatedAtSort = useUIStore((s) => s.updatedAtSort);
     const imageSizeSort = useUIStore((s) => s.imageSizeSort);
+    const imageQualitySort = useUIStore((s) => s.imageQualitySort);
     const tagFilterFitSort = useUIStore((s) => s.tagFilterFitSort);
     const relativeSort = useUIStore((s) => s.relativeSort);
     const relativeSeed = useUIStore((s) => s.relativeSeed);
@@ -167,9 +170,32 @@ export default function GalleryPage(): JSX.Element {
     const gallerySortBy = useSettingsStore((s) => s.gallerySortBy);
     const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
     const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.hydrate);
+    const qualityEntries = useQualityIndexStore((s) => s.entries);
+    const qualityHydrated = useQualityIndexStore((s) => s.isHydrated);
+    const hydrateQuality = useQualityIndexStore((s) => s.hydrate);
 
     const nearnessActive =
         nearnessFilter !== undefined && isTagFilterActive(nearnessFilter);
+
+    useEffect(() => {
+        if (imageQualitySort === "none" || qualityHydrated) {
+            return;
+        }
+        void hydrateQuality();
+    }, [hydrateQuality, imageQualitySort, qualityHydrated]);
+
+    useEffect(() => {
+        if (
+            imageQualitySort === "none" ||
+            !qualityHydrated ||
+            qualityEntries.size > 0
+        ) {
+            return;
+        }
+        toast.message(
+            "Run Manage → Settings → Scan image quality to score the library.",
+        );
+    }, [imageQualitySort, qualityEntries.size, qualityHydrated]);
 
     useEffect(() => {
         if (tagFilterFitSort === "none" || embeddingHydrated) {
@@ -719,6 +745,7 @@ export default function GalleryPage(): JSX.Element {
             viewportFitSort !== "none" ||
             updatedAtSort !== "none" ||
             imageSizeSort !== "none" ||
+            imageQualitySort !== "none" ||
             tagFilterFitActive ||
             relativeActive ||
             nearnessActive
@@ -736,6 +763,7 @@ export default function GalleryPage(): JSX.Element {
         viewportFitSort,
         updatedAtSort,
         imageSizeSort,
+        imageQualitySort,
     ]);
 
     const computedOrderCacheRef = useRef<{
@@ -792,6 +820,17 @@ export default function GalleryPage(): JSX.Element {
                 () => sortFilesByImageSize(filteredFiles, imageSizeSort),
             );
         }
+        if (imageQualitySort !== "none") {
+            return reuseComputedOrder(
+                `quality:${imageQualitySort}:${qualityHydrated ? "1" : "0"}:${qualityEntries.size}`,
+                () =>
+                    sortFilesByImageQuality(
+                        filteredFiles,
+                        imageQualitySort,
+                        qualityEntries,
+                    ),
+            );
+        }
         if (updatedAtSort !== "none") {
             return reuseComputedOrder(
                 `updated:${updatedAtSort}`,
@@ -834,11 +873,14 @@ export default function GalleryPage(): JSX.Element {
         filteredFiles,
         frozenNearnessOrderIds,
         frozenRelativeOrderIds,
+        imageQualitySort,
         imageSizeSort,
         nearnessActive,
         mediaShuffledFileIds,
         mediaShuffleSeed,
         mediaViewOrder,
+        qualityEntries,
+        qualityHydrated,
         relativeActive,
         tagFilter,
         tagFilterFitActive,

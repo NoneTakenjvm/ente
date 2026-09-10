@@ -7,6 +7,7 @@ export type KvKey =
     "files" |
     "tagIndex" |
     "phashIndex" |
+    "qualityIndex" |
     "embeddingIndex" |
     "tagOutbox" |
     "favoriteOutbox" |

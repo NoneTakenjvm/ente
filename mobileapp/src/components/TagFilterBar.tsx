@@ -42,6 +42,7 @@ import { Shuffle } from "lucide-react";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
+import { useQualityIndexStore } from "@/stores/quality-index-store";
 import { useSelectionStore } from "@/stores/selection-store";
 import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
@@ -96,6 +97,8 @@ export function TagFilterBar({
     const setUpdatedAtSort = useUIStore((s) => s.setUpdatedAtSort);
     const imageSizeSort = useUIStore((s) => s.imageSizeSort);
     const setImageSizeSort = useUIStore((s) => s.setImageSizeSort);
+    const imageQualitySort = useUIStore((s) => s.imageQualitySort);
+    const setImageQualitySort = useUIStore((s) => s.setImageQualitySort);
     const tagFilterFitSort = useUIStore((s) => s.tagFilterFitSort);
     const setTagFilterFitSort = useUIStore((s) => s.setTagFilterFitSort);
     const relativeSort = useUIStore((s) => s.relativeSort);
@@ -121,6 +124,15 @@ export function TagFilterBar({
     const embeddingEntries = useEmbeddingIndexStore((s) => s.entries);
     const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
     const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.hydrate);
+    const qualityHydrated = useQualityIndexStore((s) => s.isHydrated);
+    const hydrateQuality = useQualityIndexStore((s) => s.hydrate);
+
+    useEffect(() => {
+        if (imageQualitySort === "none" || qualityHydrated) {
+            return;
+        }
+        void hydrateQuality();
+    }, [hydrateQuality, imageQualitySort, qualityHydrated]);
 
     useEffect(() => {
         if (tagFilterFitSort === "none" || embeddingHydrated) {
@@ -421,6 +433,8 @@ export function TagFilterBar({
                         onUpdatedAtSortChange={setUpdatedAtSort}
                         imageSizeSort={imageSizeSort}
                         onImageSizeSortChange={setImageSizeSort}
+                        imageQualitySort={imageQualitySort}
+                        onImageQualitySortChange={setImageQualitySort}
                         tagFilterFitSort={tagFilterFitSort}
                         onTagFilterFitSortChange={
                             tagFilterFitAvailable ?

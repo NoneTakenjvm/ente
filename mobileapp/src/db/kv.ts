@@ -125,6 +125,32 @@ export const saveEncryptedPhashIndex = async (
     );
 };
 
+/** fileId → combined quality score in [0, 1] (higher = better). */
+export interface PersistedQualityIndex {
+    version: 1;
+    entries: Record<number, number>;
+}
+
+export const loadEncryptedQualityIndex = async (
+    cacheKey: string,
+): Promise<PersistedQualityIndex | undefined> => {
+    const payload = await getEncrypted("qualityIndex");
+    if (!payload) {
+        return undefined;
+    }
+    return decryptCachePayload<PersistedQualityIndex>(payload, cacheKey);
+};
+
+export const saveEncryptedQualityIndex = async (
+    index: PersistedQualityIndex,
+    cacheKey: string,
+): Promise<void> => {
+    await putEncrypted(
+        "qualityIndex",
+        await encryptCachePayload(index, cacheKey),
+    );
+};
+
 export interface PersistedTagOutboxEntry {
     fileId: number;
     intendedTags: string[];

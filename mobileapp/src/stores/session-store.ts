@@ -98,6 +98,9 @@ const resetDependentStores = (): void => {
     void import("./phash-index-store").then(({ usePhashIndexStore }) => {
         usePhashIndexStore.getState().reset();
     });
+    void import("./quality-index-store").then(({ useQualityIndexStore }) => {
+        useQualityIndexStore.getState().reset();
+    });
     void import("./embedding-index-store").then(({ useEmbeddingIndexStore }) => {
         useEmbeddingIndexStore.getState().reset();
     });
