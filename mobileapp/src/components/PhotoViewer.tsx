@@ -62,6 +62,7 @@ import {
 } from "@/lib/media-kind";
 import { toRenderableImageBlob } from "@/lib/renderable-image";
 import { cn } from "@/lib/utils";
+import { VIEW_SESSION_QUALIFY_MS } from "@/lib/view-sessions";
 import {
     forgetSessionVideoUrl,
     invalidateVideoCache,
@@ -93,6 +94,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { useTagStore } from "@/stores/tag-store";
 import { useUIStore } from "@/stores/ui-store";
 import { useVideoPlaybackStore } from "@/stores/video-playback-store";
+import { useViewSessionsStore } from "@/stores/view-sessions-store";
 import type { EnteFile } from "ente-media/file";
 import { toast } from "sonner";
 
@@ -107,12 +109,35 @@ interface CarouselDragStart {
 }
 interface PhotoViewerProps {
     files: EnteFile[];
-    initialFileId: number;
+    /** Preferred when the file list may contain duplicate ids (e.g. Recents). */
+    initialIndex?: number;
+    initialFileId?: number;
     onClose: () => void;
     onFileUpdated?: (file: EnteFile) => void;
     albumCoverFileId?: number;
     onSetAlbumCover?: (fileId: number) => void;
+    /** Hide mutation chrome (tags, crop, delete, favourite, …). */
+    readOnly?: boolean;
 }
+
+const resolveViewerStartIndex = (
+    files: EnteFile[],
+    initialIndex: number | undefined,
+    initialFileId: number | undefined,
+): number => {
+    if (
+        initialIndex !== undefined &&
+        initialIndex >= 0 &&
+        initialIndex < files.length
+    ) {
+        return initialIndex;
+    }
+    if (initialFileId !== undefined) {
+        const index = files.findIndex((entry) => entry.id === initialFileId);
+        return index >= 0 ? index : 0;
+    }
+    return 0;
+};
 
 type SlideStatus = "idle" | "loading" | "ready" | "error";
 
@@ -316,17 +341,17 @@ const primeVideoFirstFrame = (video: HTMLVideoElement): void => {
 
 export function PhotoViewer({
     files,
+    initialIndex,
     initialFileId,
     onClose,
     onFileUpdated,
     albumCoverFileId,
     onSetAlbumCover,
+    readOnly = false,
 }: PhotoViewerProps): JSX.Element {
     const [sessionFiles, setSessionFiles] = useState<EnteFile[]>(files);
-    const [currentIndex, setCurrentIndex] = useState<number>(() => {
-        const index = sessionFiles.findIndex((entry) => entry.id === initialFileId);
-        return index >= 0 ? index : 0;
-    });
+    const [currentIndex, setCurrentIndex] = useState<number>(() =>
+        resolveViewerStartIndex(sessionFiles, initialIndex, initialFileId));
     const [mediaByFileId, setMediaByFileId] = useState<
         Map<number, SlideMedia>
     >(() => new Map());
@@ -377,7 +402,10 @@ export function PhotoViewer({
     const mediaByteSizesRef = useRef<Map<number, number>>(new Map());
     const loadingIdsRef = useRef<Set<number>>(new Set());
     const mediaLoadersRef = useRef<Map<number, SlideLoader>>(new Map());
-    const viewerFileIdRef = useRef<number>(initialFileId);
+    const viewerFileIdRef = useRef<number>(
+        sessionFiles[resolveViewerStartIndex(sessionFiles, initialIndex, initialFileId)]
+            ?.id ?? initialFileId ?? 0,
+    );
     const currentIndexRef = useRef<number>(currentIndex);
     const sessionFilesRef = useRef<EnteFile[]>(sessionFiles);
     const tagBaselineRef = useRef<string[]>([]);
@@ -438,6 +466,7 @@ export function PhotoViewer({
         return vector?.length === KIT_EMBEDDING_DIMS;
     });
     const showSetRelative =
+        !readOnly &&
         relativeSort !== "none" &&
         file !== undefined &&
         !isEnteVideoFile(file) &&
@@ -487,6 +516,32 @@ export function PhotoViewer({
     const displayTags = stagedTags ?? tags;
     const activeSlideMedia = file ? mediaByFileId.get(file.id) : undefined;
 
+    // Record qualifying full-screen views for Recents (skip read-only replay).
+    useEffect((): (() => void) | void => {
+        if (readOnly || cropMode || !file) {
+            return;
+        }
+        if (activeSlideMedia?.status !== "ready") {
+            return;
+        }
+        const fileId = file.id;
+        const timer = window.setTimeout(() => {
+            if (!viewerActiveRef.current) {
+                return;
+            }
+            const still =
+                sessionFilesRef.current[currentIndexRef.current]?.id === fileId;
+            if (!still) {
+                return;
+            }
+            useViewSessionsStore.getState().beginView(fileId);
+        }, VIEW_SESSION_QUALIFY_MS);
+        return (): void => {
+            window.clearTimeout(timer);
+            useViewSessionsStore.getState().endView(fileId);
+        };
+    }, [activeSlideMedia?.status, cropMode, file, readOnly]);
+
     useEffect((): void => {
         if (file?.metadata.fileType === FileType.video) {
             requestThumbnail(file);
@@ -525,6 +580,23 @@ export function PhotoViewer({
     }, [relativeStartFileId]);
 
     useEffect(() => {
+        if (initialIndex !== undefined) {
+            if (
+                initialIndex >= 0 &&
+                initialIndex < sessionFiles.length &&
+                initialIndex !== currentIndexRef.current
+            ) {
+                setCurrentIndex(initialIndex);
+                const nextFile = sessionFiles[initialIndex];
+                if (nextFile) {
+                    viewerFileIdRef.current = nextFile.id;
+                }
+            }
+            return;
+        }
+        if (initialFileId === undefined) {
+            return;
+        }
         if (initialFileId === viewerFileIdRef.current) {
             return;
         }
@@ -533,7 +605,7 @@ export function PhotoViewer({
         if (index >= 0) {
             setCurrentIndex(index);
         }
-    }, [initialFileId, sessionFiles]);
+    }, [initialFileId, initialIndex, sessionFiles]);
 
     useEffect(() => {
         if (!file || sessionFiles.some((entry) => entry.id === file.id)) {
@@ -2042,25 +2114,27 @@ export function PhotoViewer({
                         >
                             <ChevronRight />
                         </Button>
-                        <Button
-                            type="button"
-                            variant={isFavorite ? "secondary" : "ghost"}
-                            size="icon-sm"
-                            onClick={() => {
-                                resetChromeTimer();
-                                handleToggleFavorite();
-                            }}
-                            disabled={favoriteBusy || favoritePending}
-                            aria-label={
-                                isFavorite ?
-                                    "Remove from favourites" :
-                                    "Add to favourites"
-                            }
-                            aria-pressed={isFavorite}
-                        >
-                            <Heart className={cn(isFavorite && "fill-current")} />
-                        </Button>
-                        {canRevertEdit ? (
+                        {!readOnly ? (
+                            <Button
+                                type="button"
+                                variant={isFavorite ? "secondary" : "ghost"}
+                                size="icon-sm"
+                                onClick={() => {
+                                    resetChromeTimer();
+                                    handleToggleFavorite();
+                                }}
+                                disabled={favoriteBusy || favoritePending}
+                                aria-label={
+                                    isFavorite ?
+                                        "Remove from favourites" :
+                                        "Add to favourites"
+                                }
+                                aria-pressed={isFavorite}
+                            >
+                                <Heart className={cn(isFavorite && "fill-current")} />
+                            </Button>
+                        ) : null}
+                        {!readOnly && canRevertEdit ? (
                             <Button
                                 type="button"
                                 variant="ghost"
@@ -2075,7 +2149,7 @@ export function PhotoViewer({
                                 <Undo2 />
                             </Button>
                         ) : null}
-                        {onSetAlbumCover ? (
+                        {!readOnly && onSetAlbumCover ? (
                             <Button
                                 type="button"
                                 variant={
@@ -2094,7 +2168,7 @@ export function PhotoViewer({
                                 <Image />
                             </Button>
                         ) : null}
-                        {(canCrop(file) || canCropVideo(file)) ? (
+                        {!readOnly && (canCrop(file) || canCropVideo(file)) ? (
                             <Button
                                 type="button"
                                 variant="ghost"
@@ -2112,52 +2186,56 @@ export function PhotoViewer({
                                 <Crop />
                             </Button>
                         ) : null}
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon-sm"
-                            onClick={() => {
-                                resetChromeTimer();
-                                setShowDeleteConfirm(true);
-                            }}
-                            aria-label="Delete"
-                        >
-                            <Trash2 />
-                        </Button>
-                        <DropdownMenu
-                            onOpenChange={() => {
-                                resetChromeTimer();
-                            }}
-                        >
-                            <DropdownMenuTrigger
-                                render={
-                                    <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="icon-sm"
-                                        aria-label="More actions"
-                                    />
-                                }
+                        {!readOnly ? (
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-sm"
+                                onClick={() => {
+                                    resetChromeTimer();
+                                    setShowDeleteConfirm(true);
+                                }}
+                                aria-label="Delete"
                             >
-                                <MoreVertical />
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-44">
-                                <DropdownMenuGroup>
-                                    <DropdownMenuItem
-                                        disabled={archiveBusy}
-                                        onClick={() => {
-                                            resetChromeTimer();
-                                            handleToggleArchive();
-                                        }}
-                                    >
-                                        {isArchived ?
-                                            <ArchiveRestore data-icon="inline-start" /> :
-                                            <Archive data-icon="inline-start" />}
-                                        {isArchived ? "Unarchive" : "Archive"}
-                                    </DropdownMenuItem>
-                                </DropdownMenuGroup>
-                            </DropdownMenuContent>
-                        </DropdownMenu>
+                                <Trash2 />
+                            </Button>
+                        ) : null}
+                        {!readOnly ? (
+                            <DropdownMenu
+                                onOpenChange={() => {
+                                    resetChromeTimer();
+                                }}
+                            >
+                                <DropdownMenuTrigger
+                                    render={
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="icon-sm"
+                                            aria-label="More actions"
+                                        />
+                                    }
+                                >
+                                    <MoreVertical />
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-44">
+                                    <DropdownMenuGroup>
+                                        <DropdownMenuItem
+                                            disabled={archiveBusy}
+                                            onClick={() => {
+                                                resetChromeTimer();
+                                                handleToggleArchive();
+                                            }}
+                                        >
+                                            {isArchived ?
+                                                <ArchiveRestore data-icon="inline-start" /> :
+                                                <Archive data-icon="inline-start" />}
+                                            {isArchived ? "Unarchive" : "Archive"}
+                                        </DropdownMenuItem>
+                                    </DropdownMenuGroup>
+                                </DropdownMenuContent>
+                            </DropdownMenu>
+                        ) : null}
                     </div>
                 </div>
             </div>
@@ -2220,24 +2298,26 @@ export function PhotoViewer({
                     />
                 ) : null}
                 <div className="flex h-8 shrink-0 items-center gap-1.5">
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="shrink-0"
-                        disabled={tagSaveBusy}
-                        onClick={() => {
-                            resetChromeTimer();
-                            beginTagDraft();
-                        }}
-                    >
-                        {tagSaveBusy ? <Spinner /> : <Tag />}
-                        Tags
-                    </Button>
+                    {!readOnly ? (
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="shrink-0"
+                            disabled={tagSaveBusy}
+                            onClick={() => {
+                                resetChromeTimer();
+                                beginTagDraft();
+                            }}
+                        >
+                            {tagSaveBusy ? <Spinner /> : <Tag />}
+                            Tags
+                        </Button>
+                    ) : null}
                     <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overflow-y-hidden overscroll-x-contain">
                         {displayTags.length === 0 ? (
                             <span className="shrink-0 text-xs text-muted-foreground">
-                                No tags
+                                {readOnly ? "" : "No tags"}
                             </span>
                         ) : (
                             displayTags.map((tag) => (
@@ -2274,56 +2354,62 @@ export function PhotoViewer({
                 ) : null}
             </div>
 
-            <TagPickerSheet
-                open={showTagPicker}
-                appliedTags={displayTags}
-                knownTags={knownTags}
-                error={tagError}
-                batchSelectionHint="Tap tags to stage changes. Closing saves."
-                onOpenChange={(open) => {
-                    if (open) {
-                        beginTagDraft();
-                        return;
-                    }
-                    void flushTagDraft();
-                }}
-                onAddTag={handleAddTag}
-                onRemoveTag={handleRemoveTag}
-            />
-            {cropMode && file && isVideo ? (
+            {!readOnly ? (
+                <TagPickerSheet
+                    open={showTagPicker}
+                    appliedTags={displayTags}
+                    knownTags={knownTags}
+                    error={tagError}
+                    batchSelectionHint="Tap tags to stage changes. Closing saves."
+                    onOpenChange={(open) => {
+                        if (open) {
+                            beginTagDraft();
+                            return;
+                        }
+                        void flushTagDraft();
+                    }}
+                    onAddTag={handleAddTag}
+                    onRemoveTag={handleRemoveTag}
+                />
+            ) : null}
+            {!readOnly && cropMode && file && isVideo ? (
                 <VideoEditorOverlay
                     file={file}
                     onCancel={() => setCropMode(false)}
                     onSaved={handleEditSaved}
                 />
             ) : null}
-            {cropMode && file && !isVideo ? (
+            {!readOnly && cropMode && file && !isVideo ? (
                 <CropEditorOverlay
                     file={file}
                     onCancel={() => setCropMode(false)}
                     onSaved={handleEditSaved}
                 />
             ) : null}
-            <ConfirmDeleteModal
-                open={showDeleteConfirm}
-                isWorking={deleteBusy}
-                onCancel={() => {
-                    if (!deleteBusy) {
-                        setShowDeleteConfirm(false);
-                    }
-                }}
-                onConfirm={handleConfirmDelete}
-            />
-            <ConfirmRevertEditModal
-                open={showRevertConfirm}
-                isWorking={revertBusy}
-                onCancel={() => {
-                    if (!revertBusy) {
-                        setShowRevertConfirm(false);
-                    }
-                }}
-                onConfirm={handleRevertLastEdit}
-            />
+            {!readOnly ? (
+                <ConfirmDeleteModal
+                    open={showDeleteConfirm}
+                    isWorking={deleteBusy}
+                    onCancel={() => {
+                        if (!deleteBusy) {
+                            setShowDeleteConfirm(false);
+                        }
+                    }}
+                    onConfirm={handleConfirmDelete}
+                />
+            ) : null}
+            {!readOnly ? (
+                <ConfirmRevertEditModal
+                    open={showRevertConfirm}
+                    isWorking={revertBusy}
+                    onCancel={() => {
+                        if (!revertBusy) {
+                            setShowRevertConfirm(false);
+                        }
+                    }}
+                    onConfirm={handleRevertLastEdit}
+                />
+            ) : null}
         </div>
     );
 }

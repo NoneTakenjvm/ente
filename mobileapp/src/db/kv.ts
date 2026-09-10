@@ -1,5 +1,6 @@
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
+import type { ViewSession } from "@/lib/view-sessions";
 import {
     decryptCachePayload,
     encryptCachePayload,
@@ -432,4 +433,28 @@ export const loadAllEmbeddingChunks = async (
         }
     }
     return map;
+};
+
+export interface PersistedViewSessions {
+    sessions: ViewSession[];
+}
+
+export const loadEncryptedViewSessions = async (
+    cacheKey: string,
+): Promise<PersistedViewSessions | undefined> => {
+    const payload = await getEncrypted("viewSessions");
+    if (!payload) {
+        return undefined;
+    }
+    return decryptCachePayload<PersistedViewSessions>(payload, cacheKey);
+};
+
+export const saveEncryptedViewSessions = async (
+    data: PersistedViewSessions,
+    cacheKey: string,
+): Promise<void> => {
+    await putEncrypted(
+        "viewSessions",
+        await encryptCachePayload(data, cacheKey),
+    );
 };

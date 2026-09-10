@@ -7,12 +7,15 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-10 |
-| **Last agent / session** | Quick rotate + Tools menu |
+| **Last agent / session** | Recently viewed sessions |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable |
-| **Next recommended action** | Phone QA: Tools menu + quick rotate draft/Apply (`0.3.140`). |
+| **Next recommended action** | Phone QA: Recents tab + session tracking (`0.3.142`). |
 
 **This session shipped:**
+1. **Recently viewed sessions** — Recents tab (Albums→Recents→Manage); encrypted local `viewSessions` store; PhotoViewer records >1s full views (gallery/album); 1h resume; session list + view-only chronological detail with deleted placeholders + duplicate carousel slots (`initialIndex` + `readOnly`). Crop/replace remaps file ids. Delete session from session view header. Unit tests + Playwright `scripts/e2e-recents.ts` green. `APP_VERSION` → `0.3.142`.
+
+**Previous session shipped:**
 1. **Quick rotate + Tools menu** — Gallery Tools dropdown (Query builder / Select / Stamp / Rotate); draft +90° CW taps with CSS preview; Apply uploads sequentially via `rotateAndUploadFile` (now goes through `toRenderableImageBlob` so HEIC works in Chromium); Discard / 4th tap clears. Albums get Tools without query. Playwright e2e green on `/dev-login`. `APP_VERSION` → `0.3.140`.
 
 **Previous session shipped:**
