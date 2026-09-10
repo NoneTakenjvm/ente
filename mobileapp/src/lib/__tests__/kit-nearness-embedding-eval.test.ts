@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-    clampKitEmbeddingNearnessGenome,
     DEFAULT_KIT_EMBEDDING_GENOME,
+    KIT_NEARNESS_TUNE_VERSION,
+    clampKitEmbeddingNearnessGenome,
     parseKitNearnessTuneResult,
 } from "@/lib/kit-nearness-embedding-genome";
 import {
@@ -18,6 +19,12 @@ const axis = (dim: number, dims = 512): number[] => {
 };
 
 describe("kit-nearness-embedding-genome", () => {
+    it("default genome is centroid with S2 rival settings", () => {
+        expect(DEFAULT_KIT_EMBEDDING_GENOME.useCentroid).toBe(1);
+        expect(DEFAULT_KIT_EMBEDDING_GENOME.rivalLambda).toBe(16);
+        expect(DEFAULT_KIT_EMBEDDING_GENOME.rivalTau).toBe(0.02);
+    });
+
     it("clamps and rounds genes", () => {
         const genome = clampKitEmbeddingNearnessGenome({
             rivalTau: 99,
@@ -42,9 +49,24 @@ describe("kit-nearness-embedding-genome", () => {
             baselineFitness: 0.7,
             tunedAt: 1,
             memberCount: 40,
+            tuneVersion: KIT_NEARNESS_TUNE_VERSION,
         });
         expect(parsed?.fitness).toBe(0.8);
         expect(parsed?.memberCount).toBe(40);
+        expect(parsed?.tuneVersion).toBe(KIT_NEARNESS_TUNE_VERSION);
+    });
+
+    it("drops tunes without the current version", () => {
+        const parsed = parseKitNearnessTuneResult({
+            genome: DEFAULT_KIT_EMBEDDING_GENOME,
+            fitness: 0.8,
+            holdoutAuc: 0.75,
+            holdoutTopK: 0.6,
+            baselineFitness: 0.7,
+            tunedAt: 1,
+            memberCount: 40,
+        });
+        expect(parsed).toBeUndefined();
     });
 });
 

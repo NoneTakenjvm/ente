@@ -63,7 +63,7 @@ describe("buildAnonymisedKitNearnessCorpus", () => {
 
         expect(corpus.version).toBe(KIT_NEARNESS_CORPUS_VERSION);
         expect(corpus.privacyNotice).toBe(KIT_NEARNESS_CORPUS_PRIVACY_NOTICE);
-        expect(corpus.embeddingModelId).toBe("Xenova/clip-vit-base-patch16");
+        expect(corpus.embeddingModelId).toBe("Xenova/mobileclip_s2");
         expect(corpus.embeddingDims).toBe(512);
         expect(corpus.photos).toHaveLength(3);
         expect(corpus.kits).toHaveLength(1);
@@ -99,11 +99,87 @@ describe("buildAnonymisedKitNearnessCorpus", () => {
             "privacyNotice",
             "version",
         ]);
-        expect(parsed.embeddingModelId).toBe("Xenova/clip-vit-base-patch16");
+        expect(parsed.embeddingModelId).toBe("Xenova/mobileclip_s2");
         expect(parsed.embeddingDims).toBe(512);
         for (const kit of parsed.derivedKits) {
             expect(Object.keys(kit).sort()).toEqual(["count", "id", "tags"]);
         }
+    });
+
+    it("packs tile vectors into one matrix and records offsets per photo", () => {
+        const tile = (fill: number): Float32Array =>
+            new Float32Array(512).fill(fill);
+        const twoTiles = new Float32Array(2 * 512);
+        twoTiles.set(tile(0.25), 0);
+        twoTiles.set(tile(0.5), 512);
+        const corpus = buildAnonymisedKitNearnessCorpus({
+            files: [
+                fileWithTags(1, ["beach"]),
+                fileWithTags(2, ["beach"]),
+                fileWithTags(3, ["beach"]),
+            ],
+            phashEntries: new Map(),
+            kits: [],
+            tileEmbeddings: new Map([
+                [1, { rows: 1, columns: 2, vectors: twoTiles }],
+                [3, { rows: 1, columns: 1, vectors: tile(0.75) }],
+                // Wrong shape — must be dropped, not exported half-packed.
+                [2, { rows: 2, columns: 2, vectors: tile(1) }],
+            ]),
+            random: makeRandom(5),
+        });
+
+        expect(corpus.tileLayout).toBe("thirds-v1");
+        expect(corpus.tileVectors).toHaveLength(3 * 512);
+        const withTiles = corpus.photos.filter((photo) => photo.tiles);
+        expect(withTiles).toHaveLength(2);
+        // Offsets index the concatenated matrix in (shuffled) photo order.
+        for (const photo of withTiles) {
+            const { offset, rows, columns } = photo.tiles!;
+            const expected = rows * columns === 2 ? 0.25 : 0.75;
+            expect(corpus.tileVectors![offset * 512]).toBe(expected);
+        }
+        const [first, second] = [...withTiles].sort(
+            (a, b) => a.tiles!.offset - b.tiles!.offset,
+        );
+        expect(first!.tiles!.offset).toBe(0);
+        expect(second!.tiles!.offset).toBe(
+            first!.tiles!.rows * first!.tiles!.columns,
+        );
+
+        const json = serializeAnonymisedKitNearnessCorpus(corpus, "c-tiles.f32");
+        const parsed = JSON.parse(json) as {
+            tileLayout?: string;
+            tileRows?: number;
+            tileSidecar?: string;
+            photos: Array<{ tiles?: Record<string, unknown> }>;
+        };
+        expect(parsed.tileLayout).toBe("thirds-v1");
+        expect(parsed.tileRows).toBe(3);
+        expect(parsed.tileSidecar).toBe("c-tiles.f32");
+        expect(json).not.toContain("tileVectors");
+        for (const photo of parsed.photos) {
+            if (photo.tiles) {
+                expect(Object.keys(photo.tiles).sort()).toEqual([
+                    "columns",
+                    "offset",
+                    "rows",
+                ]);
+            }
+        }
+    });
+
+    it("omits tile fields entirely when no photo has tiles", () => {
+        const corpus = buildAnonymisedKitNearnessCorpus({
+            files: [fileWithTags(1, ["beach"])],
+            phashEntries: new Map(),
+            kits: [],
+            random: makeRandom(1),
+        });
+        expect(corpus.tileLayout).toBeUndefined();
+        expect(corpus.tileVectors).toBeUndefined();
+        const json = serializeAnonymisedKitNearnessCorpus(corpus);
+        expect(json).not.toContain("tile");
     });
 
     it("skips untagged files even when hashed", () => {

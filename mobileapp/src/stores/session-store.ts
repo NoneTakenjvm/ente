@@ -44,6 +44,11 @@ const resetDependentStores = (): void => {
     void import("@/lib/kit-embedding").then(({ terminateKitEmbeddingWorker }) => {
         terminateKitEmbeddingWorker();
     });
+    void import("@/lib/kit-nearness-margins-job").then(
+        ({ terminateKitMarginsWorker }) => {
+            terminateKitMarginsWorker();
+        },
+    );
     void import("@/lib/organizer-config-save-queue").then(
         ({ resetOrganizerConfigSaveQueue }) => {
             resetOrganizerConfigSaveQueue();

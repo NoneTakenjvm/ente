@@ -6,13 +6,42 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-09-09 |
-| **Last agent / session** | Sort panel global None |
+| **Last updated** | 2026-09-10 |
+| **Last agent / session** | Kit presence — "kit likeness" list now counts fits per kit from the pass-5 tag detectors (research + shipped, `0.3.122`) |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | Phone heap still limited — ffmpeg WASM + full video bytes are inherently heavy |
-| **Next recommended action** | Hard-refresh → `0.3.115`; Options → Sort has one global None. |
+| **Next recommended action** | Phone QA of `0.3.122`: open Options → Kit likeness on a few views (untagged shoot, a tag filter, whole library) — kit names appear at once, counts arrive after the worker's first training pass (one model per kit tag, ~1–1.5 s each), then instantly on later view changes; nested kits should now both read high. Also still pending: phone QA of `0.3.120` pass-5 ordering. Tile pilot stays as is (owner decision). **Note:** the working tree holds every change since commit `85cffccd44` (0.3.119 → 0.3.122) uncommitted — commit soon. |
 
 **This session shipped:**
+1. **Kit presence research** — `scripts/kit-presence-s2.ts` measures how well per-photo kit scores recover which kits are in a view, against the tag labels, on views that mimic the app (whole set, tag-filtered, kit-filtered, 60-photo id windows, random) over 5 dup-safe splits. Old winner-takes-all: 12.5pp MAE, Spearman 0.14, top kit right 32%, 1.8 kits ≥30% shown <10% per view. Soft partition (softmax over medoid distances) barely helps and misses more kits — any score summing to 1 over kits splits photos between nested kits. Independent per-kit prevalence from the shipped pass-5 per-tag detectors: 5.5pp MAE, ρ 0.84, top kit right 95%, 0.06 missed; hardened to a count, ghosts fall 0.74 → 0.15 per view. Written up in `scripts/kit-nearness-s2-research.md` § "Kit presence".
+2. **Kit likeness list = per-kit fit counts** — `tagPresenceProbabilities` (shipped balanced tag models with the class-balance shift `log(n₊/n₋)` removed) and `countKitPresence` (a file fits when the product of its tag probabilities ≥ 0.5; known tags count as 1, unembedded files fit only through known tags; counts independent per kit) in `kit-nearness-margins.ts`; `presence` request in the margins worker sharing the cached whitening + tag models; `countKitPresenceInWorker` job; `TagFilterBar` posts the shown files per view change, dropdown shows `Kit (count)` sorted by count then tag count. Removed `rankKitsByBestFitShareEmbedding` / `formatKitFitPercent`. 3 new unit tests; lint, 368 tests, build green. `APP_VERSION` → `0.3.122`.
+3. **Incident, recovered** — a `git checkout -- src/lib/kit-nearness-sort.ts` during test triage reverted that file to the 2026-09-09 commit, dropping the uncommitted `0.3.119`/`0.3.120` edits (τ 0.02 / λ 16 constants and `kitEmbeddingRivalWeights`). Reconstructed from the compiled `.next` chunk of the `0.3.121` build plus this session's reads; verified the CLIP section matches the compiled module, tests and build green. The dHash section could not be cross-checked but had no known edits since the commit.
+
+**Previous session shipped:**
+1. **S2 kit nearness pass 6, batch 2 — research only, negative result** — owner scanned 5,882 tagged photos (all succeeded, ~135 ms/photo, 108,640 tile rows); `scripts/kit-nearness-s2-pass6.ts` slots tile-aware per-tag detectors into the shipped scorer under the pass-5 leakage-free protocol (global detector on tiles, MIL from zero / warm-started, naive instance labels, tile-mean and tile-max views alone and concatenated with the global vector, 4-corner-tile ablation, per-tag hybrid, additive dual terms). Pre-registered gates failed: the 11% "inconsistent" tag 86.8 → 88.2 AUC at best, the 62% "tiny" tag 91.6 → 92.2; MIL detectors are 2–7pp *below* the global ones and the global detector applied to crops collapses (distribution shift). Best tile-augmented scorer: +0.4–0.7pp hard AUC (CIs clear of zero on 4 confirmation seeds and the reserved test), first-screen never significant — at 13–18× scan cost and, for the significant variant, all tiles stored plus in-browser MIL. Verdict: do not ship. Also found: `floor(shortEdge/3)` in the tile layout adds a near-duplicate 4th column on most photos (18.5 tiles/photo vs ~14) — harmless for the result, noted for anyone reviving tiles. No `mobileapp/` source changes; no version bump.
+
+**Previous session shipped:**
+1. **S2 kit nearness pass 6, batch 1 — tile pilot** — diagnostic first: the residual pass-5 error is concentrated on two tags (`t_0005` detector 87%, `t_0004` 91%; the rest 94–97.5%), the owner confirms both are small in frame, and the S2 preprocessor centre-crops so edge items are never seen. Shipped a dev-only pilot: `kit-tile-layout.ts` (1/3-shortest-edge square grid covering the frame, 12–15 tiles per photo), `embed-tiles` in the CLIP worker (decode once, crop, one ORT batch, transferred `Float32Array`), encrypted per-file `tileEmbeddings` object store (DB v6), `kit-tile-embedding-job.ts` (resumable, tagged photos first, Stop/Resume/Clear in Manage → Developer), corpus export v4 with `tiles` offsets + float32 sidecar download. No ranking change; phone build unaffected. 5 new tests; lint, 366 tests, build green. `APP_VERSION` → `0.3.121`.
+
+**Previous session shipped:**
+1. **S2 kit nearness pass 5 in the app** — `kit-nearness-margins.ts` (packed-array whitening, per-tag logistic models, scorer), `kit-nearness-margins.worker.ts` (off-thread, per-session cache of whitening + tag models, terminated on logout), `kit-nearness-margins-job.ts` (training sample from embedded tagged stills capped at 3000, labels from the tag index, production score reused from `kitEmbeddingDistanceCompetitive`). Gallery shows the production order immediately and swaps in the learned order when the worker answers; falls back to production for no matched kit, exclusivity off, single-tag kits, thin samples (< 8 examples), or worker failure. Parity harness on the corpus: shipped code = research pick within noise (hard AUC 93.0 / 93.3 on confirmation / reserved; +5.0pp vs pass 4, CI clear of zero). 12 new unit tests; lint, 361 tests, build green. `APP_VERSION` → `0.3.120`.
+
+**Previous session shipped:**
+1. **S2 kit nearness pass 5 (research only)** — same leakage-free protocol as pass 4. Whitened (shrunk-LDA) hard-negative margin + class-balanced logistic regression per kit tag trained in whitened coordinates, min over tags. Saved-kit hard AUC 84.5 → 93.0 (pass 4: 88.0), first-screen 56.6 → 76.4; +4.9pp / +6.0pp over pass 4 with CIs clear of zero, 0 kits hurt; confirmed on reserved test (+4.5pp) and dup-threshold 2/10 stress runs. Ablations, dead ends, production recipe, measured costs and fallbacks written up. Runner `mobileapp/scripts/kit-nearness-s2-pass5.ts` (~2 min per run). Superseded pass-4 recommendation; pass-4 integration map still applies.
+
+**Previous session shipped:**
+1. **S2 pass-4 implementation handoff (docs only)** — exact formula, reproducible protocol, privacy constraints, dead ends, integration map, fallbacks, tuner implications, remaining research and definition of done. Pass-4 runner now preserves the handoff when regenerating results.
+
+**Previous session shipped:**
+1. **S2 kit nearness pass 4 (research only)** — leakage-free global/dHash-grouped splits; full-pool retrieval metrics; 223 scoring cells; fixed 8/8 negative + weakest-tag margins confirmed on a reserved train/validation/test split. Saved-kit hard AUC 84.4% → 88.3%; full first-screen 57.8% → 71.9%. Notes: `mobileapp/scripts/kit-nearness-s2-research.md`.
+
+**Previous session shipped:**
+1. **S2 kit nearness default** — CLIP centroid, rival λ=16, τ=0.02; gene cap 24; holdout grid tuner (no GA); old per-kit tunes dropped (`tuneVersion: 2`). Research: `mobileapp/scripts/kit-nearness-s2-research.md`. `APP_VERSION` → `0.3.119`.
+
+**Previous session shipped:**
+1. **S2 load order** — WASM fp32 first so a failed WebGPU `InferenceSession.create` cannot poison Transformers.js `wasmInitPromise` (the identical `156035816` on every backend). WebGPU fp32 is an upgrade after ORT is up. Skip q8. Guard embedding/phash hydrate until the cache key exists. `APP_VERSION` → `0.3.118`.
+
+**Previous session shipped:**
 1. **Sort panel global None** — removed per-section None radios; one top None clears all Options sorts (including nearness/kit). `APP_VERSION` → `0.3.115`.
 
 **Previous session shipped:**

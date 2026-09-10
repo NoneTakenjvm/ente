@@ -60,10 +60,17 @@ import { buildKitEmbeddingPrototypes } from "@/lib/kit-nearness-embedding-eval";
 import { DEFAULT_KIT_EMBEDDING_GENOME } from "@/lib/kit-nearness-embedding-genome";
 import {
     MAX_KIT_SEEDS,
+    kitEmbeddingDistanceCompetitive,
+    kitEmbeddingRivalWeights,
     listKitSeedFiles,
     pickKitEmbeddingMedoids,
     sortFilesByKitEmbeddingCompetitive,
 } from "@/lib/kit-nearness-sort";
+import {
+    buildKitMarginsRanking,
+    rankByKitMarginsInWorker,
+    type KitMarginsRankingInput,
+} from "@/lib/kit-nearness-margins-job";
 import { matchNearnessFilterToKitPreset } from "@/lib/tag-presets";
 import { imageFilesForPhash } from "@/lib/similarity-job";
 import { runKitEmbeddingJob } from "@/lib/kit-embedding";
@@ -317,11 +324,18 @@ export default function GalleryPage(): JSX.Element {
     /**
      * Nearness order snapshotted at apply/reapply (epoch bump).
      * Reads library via getState so stamping does not rebuild.
+     *
+     * `orderIds` is the production competitive order, shown immediately.
+     * `marginsInput` is set when the learned kit margins apply; the effect
+     * below ranks them in a worker and swaps the order in once it lands.
      */
-    const frozenNearnessOrderIds = useMemo((): number[] => {
+    const frozenNearness = useMemo((): {
+        orderIds: number[];
+        marginsInput?: KitMarginsRankingInput;
+    } => {
         const filter = useUIStore.getState().nearnessFilter;
         if (!filter || !isTagFilterActive(filter) || !embeddingHydrated) {
-            return [];
+            return { orderIds: [] };
         }
         const library = sortLibraryFiles(
             dedupeFilesById(useLibraryStore.getState().allFiles).filter(
@@ -356,7 +370,7 @@ export default function GalleryPage(): JSX.Element {
             selectedGenome,
         );
         if (!selectedMedoids.length) {
-            return [];
+            return { orderIds: [] };
         }
         const filtered = filterFilesByTags(
             library,
@@ -391,19 +405,83 @@ export default function GalleryPage(): JSX.Element {
                 })
                 .filter((medoids) => medoids.length > 0) :
             [];
-        return sortFilesByKitEmbeddingCompetitive(
+        const scoreOptions = {
+            lambda: selectedGenome.rivalLambda,
+            tau: selectedGenome.rivalTau,
+        };
+        const orderIds = sortFilesByKitEmbeddingCompetitive(
             filtered,
             selectedMedoids,
             rivalMedoidSets,
             embeddings,
-            {
-                lambda: selectedGenome.rivalLambda,
-                tau: selectedGenome.rivalTau,
-            },
+            scoreOptions,
         ).map((file) => file.id);
+        if (!matchedKit || !useRivalPenalty) {
+            return { orderIds };
+        }
+        const rivalWeights = kitEmbeddingRivalWeights(
+            selectedMedoids,
+            rivalMedoidSets,
+            scoreOptions.tau,
+        );
+        return {
+            orderIds,
+            marginsInput: {
+                kitTags: matchedKit.tags,
+                libraryFiles: library,
+                candidateFiles: filtered,
+                embeddings,
+                fileIdsByTag: tagState.fileIdsByTag,
+                includeInKitNearnessByName: tagState.includeInKitNearnessByName,
+                productionScore: (fileId) =>
+                    -kitEmbeddingDistanceCompetitive(
+                        fileId,
+                        selectedMedoids,
+                        rivalMedoidSets,
+                        embeddings,
+                        { ...scoreOptions, rivalWeights },
+                    ),
+            },
+        };
         // nearnessEpoch is the intentional rebuild trigger.
         // eslint-disable-next-line react-hooks/exhaustive-deps -- snapshot only on apply
     }, [nearnessEpoch, nearnessFilter, embeddingHydrated, sortLibraryFiles]);
+
+    /**
+     * Learned kit margins ranked off the gallery thread; empty until the
+     * worker answers (production order shows meanwhile) or when they do not
+     * apply. Worker failure keeps the production order.
+     */
+    const [learnedNearnessOrderIds, setLearnedNearnessOrderIds] = useState<
+        number[]
+    >([]);
+
+    useEffect(() => {
+        setLearnedNearnessOrderIds([]);
+        const ranking =
+            frozenNearness.marginsInput &&
+            buildKitMarginsRanking(frozenNearness.marginsInput);
+        if (!ranking) {
+            return;
+        }
+        let cancelled = false;
+        rankByKitMarginsInWorker(ranking)
+            .then((orderIds) => {
+                if (!cancelled) {
+                    startTransition(() => setLearnedNearnessOrderIds(orderIds));
+                }
+            })
+            .catch((error: unknown) => {
+                console.warn("Kit nearness margins unavailable", error);
+            });
+        return (): void => {
+            cancelled = true;
+        };
+    }, [frozenNearness]);
+
+    const frozenNearnessOrderIds = learnedNearnessOrderIds.length ?
+        learnedNearnessOrderIds :
+        frozenNearness.orderIds;
 
     /**
      * Relative snake snapshotted when mode/seed changes (or embeddings hydrate).

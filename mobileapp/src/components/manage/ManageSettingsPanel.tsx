@@ -24,13 +24,20 @@ import {
 import { getEnteCore } from "@/core";
 import { isLocalDevToolsVisible } from "@/lib/dev-flags";
 import {
+    getKitEmbeddingBatchFallbackReason,
     getKitEmbeddingWebGpuSkipReason,
+    KIT_EMBEDDING_MODEL_ID,
     runKitEmbeddingJob,
     stripVideoEmbeddings,
 } from "@/lib/kit-embedding";
+import type { KitTileEmbeddingCoverage } from "@/lib/kit-tile-embedding-job";
+import { KIT_TILE_LAYOUT_ID } from "@/lib/kit-tile-layout";
 import { isEnteVideoFile } from "@/lib/media-kind";
 import { imageFilesForPhash } from "@/lib/similarity-job";
+import { isTagIncludedInKitNearness } from "@/lib/tag-types";
+import { extractUserTags } from "@/lib/tags";
 import { isFileArchivedLocally } from "@/lib/visibility-outbox";
+import type { EnteFile } from "ente-media/file";
 import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { usePhashIndexStore } from "@/stores/phash-index-store";
@@ -55,6 +62,26 @@ const clipBatchSizeOptions: number[] = [
     ...CLIP_EMBEDDING_BATCH_SIZE_OPTIONS,
 ];
 
+/** Non-archived stills carrying at least one kit-nearness tag (the corpus). */
+const kitNearnessTaggedFileIds = (
+    files: readonly EnteFile[],
+    includeInKitNearnessByName: ReadonlyMap<string, boolean>,
+): Set<number> =>
+    new Set(
+        files
+            .filter(
+                (file) =>
+                    !isEnteVideoFile(file) &&
+                    !isFileArchivedLocally(file) &&
+                    extractUserTags(file).some((tag) =>
+                        isTagIncludedInKitNearness(
+                            tag,
+                            includeInKitNearnessByName,
+                        )),
+            )
+            .map((file) => file.id),
+    );
+
 export function ManageSettingsPanel(): JSX.Element {
     const videoAutoPlay = useSettingsStore((s) => s.videoAutoPlay);
     const videoLoop = useSettingsStore((s) => s.videoLoop);
@@ -76,7 +103,14 @@ export function ManageSettingsPanel(): JSX.Element {
     const [clipRuntime, setClipRuntime] = useState<string>("");
     const clipAbort = useRef<AbortController | undefined>(undefined);
     const clipPaused = useRef(false);
-    const clipWebGpuToastShown = useRef(false);
+    const clipSmokeToastShown = useRef(false);
+    const clipBatchFallbackToastShown = useRef(false);
+    const [tileJobStatus, setTileJobStatus] =
+        useState<BackgroundJobStatus>("idle");
+    const [tileCoverage, setTileCoverage] = useState<
+        KitTileEmbeddingCoverage | undefined
+    >(undefined);
+    const tileAbort = useRef<AbortController | undefined>(undefined);
 
     const allFiles = useLibraryStore((s) => s.allFiles);
     const allFilesCount = allFiles.length;
@@ -88,6 +122,9 @@ export function ManageSettingsPanel(): JSX.Element {
     const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
     const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.hydrate);
     const setEmbeddingEntries = useEmbeddingIndexStore((s) => s.setEntries);
+    const includeInKitNearnessByName = useTagStore(
+        (s) => s.includeInKitNearnessByName,
+    );
 
     const clipCandidateCount = useMemo(
         () => imageFilesForPhash(allFiles, userId).length,
@@ -98,6 +135,49 @@ export function ManageSettingsPanel(): JSX.Element {
     useEffect(() => {
         setShowDevTools(isLocalDevToolsVisible());
     }, []);
+
+    // Tile pilot coverage for the Developer card (local builds only).
+    useEffect(() => {
+        if (
+            !showDevTools ||
+            !embeddingHydrated ||
+            allFiles.length === 0 ||
+            tileJobStatus === "running"
+        ) {
+            return;
+        }
+        let cancelled = false;
+        void import("@/lib/kit-tile-embedding-job")
+            .then(({ kitTileEmbeddingCoverage }) =>
+                kitTileEmbeddingCoverage({
+                    files: allFiles,
+                    userId,
+                    embeddings: embeddingEntries,
+                    priorityFileIds: kitNearnessTaggedFileIds(
+                        allFiles,
+                        includeInKitNearnessByName,
+                    ),
+                }))
+            .then((coverage) => {
+                if (!cancelled) {
+                    setTileCoverage(coverage);
+                }
+            })
+            .catch((error: unknown) => {
+                console.warn("[kit-tiles] coverage failed", error);
+            });
+        return (): void => {
+            cancelled = true;
+        };
+    }, [
+        showDevTools,
+        embeddingHydrated,
+        allFiles,
+        userId,
+        embeddingEntries,
+        includeInKitNearnessByName,
+        tileJobStatus,
+    ]);
 
     useEffect(() => {
         if (embeddingHydrated) {
@@ -129,7 +209,8 @@ export function ManageSettingsPanel(): JSX.Element {
         clipAbort.current?.abort();
         clipAbort.current = new AbortController();
         clipPaused.current = false;
-        clipWebGpuToastShown.current = false;
+        clipSmokeToastShown.current = false;
+        clipBatchFallbackToastShown.current = false;
         setClipJobStatus("running");
         setClipRuntime("");
         const candidates = imageFilesForPhash(allFiles, userId);
@@ -152,20 +233,40 @@ export function ManageSettingsPanel(): JSX.Element {
             shouldPause: () => clipPaused.current,
             onProgress: (progress) => {
                 if (progress.device) {
-                    const label =
-                        progress.device === "webgpu" ?
-                            `WebGPU batch×${progress.batchSize ?? "?"}` :
-                            `WASM batch×${progress.batchSize ?? "?"}`;
+                    const mode =
+                        progress.batchMode === "sequential" ?
+                            "sequential" :
+                            `batch×${progress.batchSize ?? "?"}`;
+                    const dtype = progress.dtype ?? "?";
+                    const label = `${progress.device === "webgpu" ? "WebGPU" : "WASM"} ${dtype} · ${mode}`;
                     setClipRuntime(label);
-                    if (
-                        progress.device === "wasm" &&
-                        !clipWebGpuToastShown.current
-                    ) {
-                        clipWebGpuToastShown.current = true;
-                        const reason = getKitEmbeddingWebGpuSkipReason();
-                        if (reason) {
-                            toast.message(`WebGPU unavailable — ${reason}`);
+                    if (!clipSmokeToastShown.current) {
+                        clipSmokeToastShown.current = true;
+                        if (progress.device === "webgpu") {
+                            toast.success(
+                                `MobileCLIP-S2 on WebGPU (${dtype})`,
+                            );
+                        } else {
+                            const reason = getKitEmbeddingWebGpuSkipReason();
+                            toast.message(
+                                reason ?
+                                    `MobileCLIP-S2 on WASM — ${reason}` :
+                                    "MobileCLIP-S2 on WASM",
+                            );
                         }
+                    }
+                    if (
+                        progress.batchMode === "sequential" &&
+                        (progress.batchSize ?? 1) > 1 &&
+                        !clipBatchFallbackToastShown.current
+                    ) {
+                        clipBatchFallbackToastShown.current = true;
+                        const reason = getKitEmbeddingBatchFallbackReason();
+                        toast.message(
+                            reason ?
+                                `S2 batch failed — sequential (${reason})` :
+                                "S2 batch failed — running sequential",
+                        );
                     }
                 }
                 if (progress.phase === "embed") {
@@ -209,6 +310,49 @@ export function ManageSettingsPanel(): JSX.Element {
         clipAbort.current?.abort();
         setClipJobStatus("paused");
     };
+
+    const handleStartTileJob = (): void => {
+        if (tileJobStatus === "running") {
+            return;
+        }
+        tileAbort.current?.abort();
+        tileAbort.current = new AbortController();
+        const { signal } = tileAbort.current;
+        setTileJobStatus("running");
+        void import("@/lib/kit-tile-embedding-job")
+            .then(({ runKitTileEmbeddingJob }) =>
+                runKitTileEmbeddingJob({
+                    files: allFiles,
+                    userId,
+                    embeddings: embeddingEntries,
+                    priorityFileIds: kitNearnessTaggedFileIds(
+                        allFiles,
+                        includeInKitNearnessByName,
+                    ),
+                    signal,
+                    onProgress: setTileCoverage,
+                }))
+            .then(() => {
+                setTileJobStatus(signal.aborted ? "paused" : "done");
+            })
+            .catch((error: unknown) => {
+                setTileJobStatus("error");
+                toast.error(
+                    error instanceof Error ? error.message : "Tile scan failed",
+                );
+            });
+    };
+
+    const handleClearTiles = async (): Promise<void> => {
+        const { clearTileEmbeddings } = await import("@/db/tile-embeddings");
+        await clearTileEmbeddings();
+        setTileJobStatus("idle");
+        setTileCoverage(
+            (coverage) =>
+                coverage && { ...coverage, completed: 0, priorityCompleted: 0 },
+        );
+        toast.message("Tile embeddings cleared");
+    };
     const runForceResync = async (): Promise<void> => {
         if (forceResyncing || syncStatus === "syncing") {
             return;
@@ -238,30 +382,17 @@ export function ManageSettingsPanel(): JSX.Element {
                 buildAnonymisedKitNearnessCorpus,
                 downloadAnonymisedKitNearnessCorpus,
             } = await import("@/lib/kit-nearness-corpus-export");
-            const { extractUserTags } = await import("@/lib/tags");
-            const { isTagIncludedInKitNearness } = await import(
-                "@/lib/tag-types"
+            const { getTileEmbeddingsFor } = await import(
+                "@/db/tile-embeddings"
             );
             const phashStore = usePhashIndexStore.getState();
             if (!phashStore.isHydrated) {
                 await phashStore.hydrate();
             }
             const files = useLibraryStore.getState().allFiles;
-            const includeInKitNearnessByName =
-                useTagStore.getState().includeInKitNearnessByName;
-            const onlyFileIds = new Set(
-                files
-                    .filter(
-                        (file) =>
-                            !isEnteVideoFile(file) &&
-                            !isFileArchivedLocally(file) &&
-                            extractUserTags(file).some((tag) =>
-                                isTagIncludedInKitNearness(
-                                    tag,
-                                    includeInKitNearnessByName,
-                                )),
-                    )
-                    .map((file) => file.id),
+            const onlyFileIds = kitNearnessTaggedFileIds(
+                files,
+                includeInKitNearnessByName,
             );
             const embeddings = await runKitEmbeddingJob({
                 files,
@@ -283,6 +414,12 @@ export function ManageSettingsPanel(): JSX.Element {
                 },
             });
             setEmbeddingEntries(embeddings);
+            setCorpusExportLabel("Reading tiles…");
+            const tileEmbeddings = await getTileEmbeddingsFor(
+                onlyFileIds,
+                KIT_EMBEDDING_MODEL_ID,
+                KIT_TILE_LAYOUT_ID,
+            );
             setCorpusExportLabel("Building export…");
             const corpus = buildAnonymisedKitNearnessCorpus({
                 files,
@@ -290,6 +427,7 @@ export function ManageSettingsPanel(): JSX.Element {
                 kits: useTagSpeedStore.getState().presets,
                 includeInKitNearnessByName,
                 embeddings,
+                tileEmbeddings,
             });
             if (!corpus.photos.length) {
                 toast.message(
@@ -300,9 +438,10 @@ export function ManageSettingsPanel(): JSX.Element {
             const withVectors = corpus.photos.filter(
                 (photo) => photo.embedding?.length,
             ).length;
+            const withTiles = corpus.photos.filter((photo) => photo.tiles).length;
             downloadAnonymisedKitNearnessCorpus(corpus);
             toast.success(
-                `Exported ${corpus.photos.length} photos (${withVectors} with CLIP), ${corpus.kits.length} kits`,
+                `Exported ${corpus.photos.length} photos (${withVectors} with CLIP, ${withTiles} with tiles), ${corpus.kits.length} kits`,
             );
         } catch (error: unknown) {
             const message =
@@ -529,15 +668,13 @@ export function ManageSettingsPanel(): JSX.Element {
                 <CardHeader>
                     <CardTitle>Kit nearness (CLIP)</CardTitle>
                     <CardDescription>
-                        Explicit on-device scan (not automatic). Embeddings power
-                        kit nearness ranking via CLIP medoids; vectors stay
-                        encrypted in this browser and already-scanned photos are
-                        skipped. Videos are never scanned or ranked (poster
-                        thumbnail ≠ content). Model: CLIP ViT-B/16. Uses WebGPU
-                        (`fp16`) when available, else WASM (`q8`). Batch size is
-                        images per GPU/CPU forward. Auto is 2 on phones / 6 on
-                        desktop (WebGPU), or 1 / 2 on WASM. Two batches stay in
-                        flight so decode overlaps the GPU.
+                        Smoke test: MobileCLIP-S2 (`{KIT_EMBEDDING_MODEL_ID}`).
+                        Changing model drops the old ViT-B/16 index — rescan
+                        required. Loads WASM fp32 first, then upgrades to
+                        WebGPU fp32 if the FastViT graph runs. Status line shows the backend that actually
+                        loaded; “sequential” means a batched GPU forward failed
+                        and images run one at a time (still a valid smoke).
+                        Videos are never scanned.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-3">
@@ -640,21 +777,75 @@ export function ManageSettingsPanel(): JSX.Element {
                             CLIP embeddings + remapped tag ids — no images or
                             real tag names). First run downloads a ~150MB CLIP
                             model; keep this tab open until the JSON downloads.
+                            Tile pilot: embeds a 1/3-scale square grid per
+                            thumbnail (≈12–15 forwards per photo) for stills that
+                            already have a CLIP vector, tagged photos first; the
+                            export then adds a float32 sidecar.
                         </CardDescription>
                     </CardHeader>
-                    <CardContent>
-                        <Button
-                            type="button"
-                            variant="outline"
-                            disabled={corpusExporting}
-                            onClick={() => {
-                                void exportKitNearnessCorpus();
-                            }}
-                        >
-                            {corpusExporting ?
-                                corpusExportLabel :
-                                "Export kit-nearness corpus"}
-                        </Button>
+                    <CardContent className="flex flex-col gap-3">
+                        <p className="text-sm text-muted-foreground">
+                            {tileCoverage ?
+                                `Tiles: ${tileCoverage.priorityCompleted.toLocaleString()} / ${tileCoverage.priorityTotal.toLocaleString()} tagged · ${tileCoverage.completed.toLocaleString()} / ${tileCoverage.total.toLocaleString()} all` :
+                                "Tiles: loading…"}
+                            {tileJobStatus === "running" ? " · scanning" : null}
+                            {tileJobStatus === "paused" ? " · stopped" : null}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                disabled={
+                                    tileJobStatus === "running" ||
+                                    !tileCoverage ||
+                                    tileCoverage.completed >= tileCoverage.total
+                                }
+                                onClick={handleStartTileJob}
+                            >
+                                {tileCoverage &&
+                                tileCoverage.completed >= tileCoverage.total ?
+                                    "Tiles complete" :
+                                    tileJobStatus === "paused" ?
+                                        "Resume tile scan" :
+                                        "Scan tiles"}
+                            </Button>
+                            {tileJobStatus === "running" ? (
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={() => {
+                                        tileAbort.current?.abort();
+                                    }}
+                                >
+                                    Stop
+                                </Button>
+                            ) : null}
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                disabled={
+                                    tileJobStatus === "running" ||
+                                    !tileCoverage?.completed
+                                }
+                                onClick={() => {
+                                    void handleClearTiles();
+                                }}
+                            >
+                                Clear tiles
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                disabled={corpusExporting}
+                                onClick={() => {
+                                    void exportKitNearnessCorpus();
+                                }}
+                            >
+                                {corpusExporting ?
+                                    corpusExportLabel :
+                                    "Export kit-nearness corpus"}
+                            </Button>
+                        </div>
                     </CardContent>
                 </Card>
             ) : null}

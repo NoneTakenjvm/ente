@@ -1,6 +1,6 @@
 import { deleteDB, openDB, type IDBPDatabase } from "idb";
 
-const dbVersion = 5;
+const dbVersion = 6;
 
 export type KvKey =
     | "collections" |
@@ -72,6 +72,21 @@ export interface EmbeddingChunkRecord {
     decryptionHeader: string;
 }
 
+/**
+ * Tile CLIP vectors for one photo (kit nearness tile pilot, local builds).
+ * {@link encryptedData} is the cacheKey-wrapped float32 matrix
+ * `rows × columns × dims`, row-major in {@link kitTileGrid} order.
+ */
+export interface TileEmbeddingRecord {
+    fileId: number;
+    modelId: string;
+    layout: string;
+    rows: number;
+    columns: number;
+    encryptedData: ArrayBuffer;
+    decryptionHeader: string;
+}
+
 export interface OrganizerDB {
     kv: {
         key: KvKey;
@@ -96,6 +111,10 @@ export interface OrganizerDB {
     embeddingChunks: {
         key: number;
         value: EmbeddingChunkRecord;
+    };
+    tileEmbeddings: {
+        key: number;
+        value: TileEmbeddingRecord;
     };
     meta: {
         key: string;
@@ -131,6 +150,9 @@ const openOrganizerDB = (userId: number): Promise<IDBPDatabase<OrganizerDB>> =>
             }
             if (!db.objectStoreNames.contains("embeddingChunks")) {
                 db.createObjectStore("embeddingChunks", { keyPath: "chunkId" });
+            }
+            if (!db.objectStoreNames.contains("tileEmbeddings")) {
+                db.createObjectStore("tileEmbeddings", { keyPath: "fileId" });
             }
             if (!db.objectStoreNames.contains("meta")) {
                 db.createObjectStore("meta");

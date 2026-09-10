@@ -33,7 +33,6 @@ import type { RelativeSort } from "@/lib/relative-sort";
 import type { TagFilterFitSort } from "@/lib/tag-filter-fit-sort";
 import type { UpdatedAtSort } from "@/lib/updated-at-sort";
 import type { TagPreset } from "@/lib/tag-presets";
-import { formatKitFitPercent } from "@/lib/kit-nearness-sort";
 import { cn } from "@/lib/utils";
 import { useTagStore } from "@/stores/tag-store";
 
@@ -99,16 +98,18 @@ interface TagScopeFilterDropdownProps {
      */
     nearnessSource?: "kit" | "filter";
     /**
-     * Gallery-only: kit likeness picker (claim % on visible set). Selecting a
-     * kit sets the nearness filter to that kit; shares the nearness sort path.
+     * Gallery-only: kit likeness picker. Selecting a kit sets the nearness
+     * filter to that kit; shares the nearness sort path.
      */
     kitLikenessPresets?: TagPreset[];
     kitLikenessPresetId?: string;
     onKitLikenessPresetIdChange?: (presetId: string | undefined) => void;
     /**
-     * Best-fit share of CLIP-embedded visible files per kit id (0..1).
+     * Shown files that fit each kit id. Independent per kit (a file can fit
+     * several), so the counts do not partition the view; kits without an
+     * estimate are absent.
      */
-    kitLikenessFitShareById?: ReadonlyMap<string, number>;
+    kitPresenceCountById?: ReadonlyMap<string, number>;
     /** Soft rival-kit steal penalty while Kit likeness is on (default on). */
     kitLikenessRivalPenalty?: boolean;
     onKitLikenessRivalPenaltyChange?: (enabled: boolean) => void;
@@ -176,7 +177,7 @@ export function TagScopeFilterDropdown({
     kitLikenessPresets,
     kitLikenessPresetId,
     onKitLikenessPresetIdChange,
-    kitLikenessFitShareById,
+    kitPresenceCountById,
     kitLikenessRivalPenalty,
     onKitLikenessRivalPenaltyChange,
 }: TagScopeFilterDropdownProps): JSX.Element {
@@ -245,23 +246,24 @@ export function TagScopeFilterDropdown({
                     preset.tags.some((tag) =>
                         tag.toLowerCase().includes(query)),
             );
+        // Most fits first; equal counts favour the more specific kit.
         matched.sort((a, b) => {
-            const shareA = kitLikenessFitShareById?.get(a.id) ?? 0;
-            const shareB = kitLikenessFitShareById?.get(b.id) ?? 0;
-            if (shareB !== shareA) {
-                return shareB - shareA;
+            const countA = kitPresenceCountById?.get(a.id) ?? -1;
+            const countB = kitPresenceCountById?.get(b.id) ?? -1;
+            if (countB !== countA) {
+                return countB - countA;
+            }
+            if (b.tags.length !== a.tags.length) {
+                return b.tags.length - a.tags.length;
             }
             return a.name.localeCompare(b.name);
         });
         return matched;
-    }, [kitLikenessFitShareById, kitPresets, kitQuery]);
+    }, [kitPresenceCountById, kitPresets, kitQuery]);
 
     const kitLabel = (preset: TagPreset): string => {
-        const share = kitLikenessFitShareById?.get(preset.id);
-        if (share === undefined) {
-            return preset.name;
-        }
-        return `${preset.name} (${formatKitFitPercent(share)})`;
+        const count = kitPresenceCountById?.get(preset.id);
+        return count === undefined ? preset.name : `${preset.name} (${count})`;
     };
 
     const openNearnessEditor = (): void => {

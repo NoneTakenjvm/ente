@@ -621,9 +621,9 @@ export function ManageTagsPanel(): JSX.Element {
                     <CardTitle>Tag presets</CardTitle>
                     <CardDescription>
                         Named kits for stamp / nearness. Tune nearness runs a
-                        deep holdout search on that kit’s CLIP embeddings
-                        (~3–6 min) and keeps kit-specific params only when they
-                        beat the global default.
+                        short holdout grid on that kit’s CLIP embeddings and
+                        keeps kit-specific params only when they beat the
+                        global default.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-4">
