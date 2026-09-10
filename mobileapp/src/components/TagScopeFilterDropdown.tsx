@@ -6,7 +6,6 @@ import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuGroup,
-    DropdownMenuLabel,
     DropdownMenuRadioGroup,
     DropdownMenuRadioItem,
     DropdownMenuSeparator,
@@ -37,14 +36,23 @@ import type { TagPreset } from "@/lib/tag-presets";
 import { cn } from "@/lib/utils";
 import { useTagStore } from "@/stores/tag-store";
 
-type SortSectionId =
-    "updatedAt" | "viewportFit" | "imageSize" | "tagFilterFit" | "relative" | "nearness";
+type OptionsSectionId =
+    "tagPresence" |
+    "favourites" |
+    "manualCrop" |
+    "mediaType" |
+    "updatedAt" |
+    "viewportFit" |
+    "imageSize" |
+    "tagFilterFit" |
+    "relative" |
+    "nearness";
 
 /**
- * Collapsible Options → Sort block. Stays open while its sort is active;
- * otherwise the title toggles the body.
+ * Collapsible Options block (Sort or Filter). Stays open while its choice is
+ * active; otherwise the title toggles the body.
  */
-function SortSection({
+function OptionsSection({
     title,
     open,
     onToggle,
@@ -149,9 +157,8 @@ interface TagScopeFilterDropdownProps {
     kitLikenessPresetId?: string;
     onKitLikenessPresetIdChange?: (presetId: string | undefined) => void;
     /**
-     * Shown files assigned to each kit as best fit (most-specific AND among
-     * remaining kits). A file counts for at most one kit; kits without a
-     * match stay at 0.
+     * Shown files assigned to each kit as closest fit. Every file counts for
+     * exactly one remaining kit; excluded kits stay at 0.
      */
     kitPresenceCountById?: ReadonlyMap<string, number>;
     /**
@@ -280,17 +287,17 @@ export function TagScopeFilterDropdown({
     const [kitPickerOpen, setKitPickerOpen] = useState<boolean>(false);
     const [kitQuery, setKitQuery] = useState<string>("");
     const [manualOpenSections, setManualOpenSections] = useState<
-        ReadonlySet<SortSectionId>
+        ReadonlySet<OptionsSectionId>
     >(() => new Set());
     const nearnessDraft = useTagFilterDraft(emptyTagFilter());
 
-    const isSortSectionOpen = (
-        id: SortSectionId,
+    const isOptionsSectionOpen = (
+        id: OptionsSectionId,
         forceOpen: boolean,
     ): boolean => forceOpen || manualOpenSections.has(id);
 
-    const toggleSortSection = (
-        id: SortSectionId,
+    const toggleOptionsSection = (
+        id: OptionsSectionId,
         forceOpen: boolean,
     ): void => {
         if (forceOpen) {
@@ -439,125 +446,184 @@ export function TagScopeFilterDropdown({
 
     const filterPanel = (
         <>
-            <DropdownMenuRadioGroup
-                value={tagScope}
-                onValueChange={(value) => {
-                    if (isTagScope(value)) {
-                        handleScopeChange(value);
-                    }
-                }}
-            >
-                <DropdownMenuLabel>Tag presence</DropdownMenuLabel>
-                <DropdownMenuRadioItem value="all" closeOnClick>
-                    All
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="tagged" closeOnClick>
-                    <span className="flex w-full items-center justify-between gap-2">
-                        Any tag
-                        <span className="text-xs tabular-nums text-muted-foreground">
-                            {taggedCount}
-                        </span>
-                    </span>
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="untagged" closeOnClick>
-                    <span className="flex w-full items-center justify-between gap-2">
-                        No tag
-                        <span className="text-xs tabular-nums text-muted-foreground">
-                            {untaggedCount}
-                        </span>
-                    </span>
-                </DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
+            <div className="px-1 pb-1">
+                <Button
+                    type="button"
+                    variant={filterActive ? "outline" : "secondary"}
+                    size="sm"
+                    className="w-full"
+                    aria-pressed={!filterActive}
+                    disabled={!filterActive}
+                    onClick={() => {
+                        handleScopeChange("all");
+                        handleFavoritesScopeChange("all");
+                        handleCroppedScopeChange("all");
+                        handleMediaScopeChange("all");
+                    }}
+                >
+                    Clear
+                </Button>
+            </div>
             <DropdownMenuSeparator />
-            <DropdownMenuRadioGroup
-                value={favoritesScope}
-                onValueChange={(value) => {
-                    if (isFavoritesScope(value)) {
-                        handleFavoritesScopeChange(value);
-                    }
-                }}
+            <OptionsSection
+                title="Tag presence"
+                open={isOptionsSectionOpen(
+                    "tagPresence",
+                    tagScope !== "all",
+                )}
+                onToggle={() =>
+                    toggleOptionsSection("tagPresence", tagScope !== "all")
+                }
             >
-                <DropdownMenuLabel>Favourites</DropdownMenuLabel>
-                <DropdownMenuRadioItem value="all" closeOnClick>
-                    All
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="favorites" closeOnClick>
-                    <span className="flex w-full items-center justify-between gap-2">
-                        Favourite
-                        <span className="text-xs tabular-nums text-muted-foreground">
-                            {favoritesCount}
+                <DropdownMenuRadioGroup
+                    value={tagScope}
+                    onValueChange={(value) => {
+                        if (isTagScope(value)) {
+                            handleScopeChange(value);
+                        }
+                    }}
+                >
+                    <DropdownMenuRadioItem value="all" closeOnClick>
+                        All
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="tagged" closeOnClick>
+                        <span className="flex w-full items-center justify-between gap-2">
+                            Any tag
+                            <span className="text-xs tabular-nums text-muted-foreground">
+                                {taggedCount}
+                            </span>
                         </span>
-                    </span>
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="not-favorites" closeOnClick>
-                    <span className="flex w-full items-center justify-between gap-2">
-                        Not favourite
-                        <span className="text-xs tabular-nums text-muted-foreground">
-                            {notFavoritesCount}
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="untagged" closeOnClick>
+                        <span className="flex w-full items-center justify-between gap-2">
+                            No tag
+                            <span className="text-xs tabular-nums text-muted-foreground">
+                                {untaggedCount}
+                            </span>
                         </span>
-                    </span>
-                </DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
+                    </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+            </OptionsSection>
             <DropdownMenuSeparator />
-            <DropdownMenuRadioGroup
-                value={croppedScope}
-                onValueChange={(value) => {
-                    if (isCroppedScope(value)) {
-                        handleCroppedScopeChange(value);
-                    }
-                }}
+            <OptionsSection
+                title="Favourites"
+                open={isOptionsSectionOpen(
+                    "favourites",
+                    favoritesScope !== "all",
+                )}
+                onToggle={() =>
+                    toggleOptionsSection(
+                        "favourites",
+                        favoritesScope !== "all",
+                    )
+                }
             >
-                <DropdownMenuLabel>Manual crop</DropdownMenuLabel>
-                <DropdownMenuRadioItem value="all" closeOnClick>
-                    All
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="cropped" closeOnClick>
-                    <span className="flex w-full items-center justify-between gap-2">
-                        Cropped
-                        <span className="text-xs tabular-nums text-muted-foreground">
-                            {croppedCount}
+                <DropdownMenuRadioGroup
+                    value={favoritesScope}
+                    onValueChange={(value) => {
+                        if (isFavoritesScope(value)) {
+                            handleFavoritesScopeChange(value);
+                        }
+                    }}
+                >
+                    <DropdownMenuRadioItem value="all" closeOnClick>
+                        All
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="favorites" closeOnClick>
+                        <span className="flex w-full items-center justify-between gap-2">
+                            Favourite
+                            <span className="text-xs tabular-nums text-muted-foreground">
+                                {favoritesCount}
+                            </span>
                         </span>
-                    </span>
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="not-cropped" closeOnClick>
-                    <span className="flex w-full items-center justify-between gap-2">
-                        Not cropped
-                        <span className="text-xs tabular-nums text-muted-foreground">
-                            {notCroppedCount}
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="not-favorites" closeOnClick>
+                        <span className="flex w-full items-center justify-between gap-2">
+                            Not favourite
+                            <span className="text-xs tabular-nums text-muted-foreground">
+                                {notFavoritesCount}
+                            </span>
                         </span>
-                    </span>
-                </DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
+                    </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+            </OptionsSection>
             <DropdownMenuSeparator />
-            <DropdownMenuRadioGroup
-                value={mediaScope}
-                onValueChange={(value) => {
-                    if (isMediaScope(value)) {
-                        handleMediaScopeChange(value);
-                    }
-                }}
+            <OptionsSection
+                title="Manual crop"
+                open={isOptionsSectionOpen(
+                    "manualCrop",
+                    croppedScope !== "all",
+                )}
+                onToggle={() =>
+                    toggleOptionsSection("manualCrop", croppedScope !== "all")
+                }
             >
-                <DropdownMenuLabel>Media type</DropdownMenuLabel>
-                <DropdownMenuRadioItem value="all" closeOnClick>
-                    All
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="photo" closeOnClick>
-                    <span className="flex w-full items-center justify-between gap-2">
-                        Photo
-                        <span className="text-xs tabular-nums text-muted-foreground">
-                            {photoCount}
+                <DropdownMenuRadioGroup
+                    value={croppedScope}
+                    onValueChange={(value) => {
+                        if (isCroppedScope(value)) {
+                            handleCroppedScopeChange(value);
+                        }
+                    }}
+                >
+                    <DropdownMenuRadioItem value="all" closeOnClick>
+                        All
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="cropped" closeOnClick>
+                        <span className="flex w-full items-center justify-between gap-2">
+                            Cropped
+                            <span className="text-xs tabular-nums text-muted-foreground">
+                                {croppedCount}
+                            </span>
                         </span>
-                    </span>
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="video" closeOnClick>
-                    <span className="flex w-full items-center justify-between gap-2">
-                        Video
-                        <span className="text-xs tabular-nums text-muted-foreground">
-                            {videoCount}
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="not-cropped" closeOnClick>
+                        <span className="flex w-full items-center justify-between gap-2">
+                            Not cropped
+                            <span className="text-xs tabular-nums text-muted-foreground">
+                                {notCroppedCount}
+                            </span>
                         </span>
-                    </span>
-                </DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
+                    </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+            </OptionsSection>
+            <DropdownMenuSeparator />
+            <OptionsSection
+                title="Media type"
+                open={isOptionsSectionOpen("mediaType", mediaScope !== "all")}
+                onToggle={() =>
+                    toggleOptionsSection("mediaType", mediaScope !== "all")
+                }
+            >
+                <DropdownMenuRadioGroup
+                    value={mediaScope}
+                    onValueChange={(value) => {
+                        if (isMediaScope(value)) {
+                            handleMediaScopeChange(value);
+                        }
+                    }}
+                >
+                    <DropdownMenuRadioItem value="all" closeOnClick>
+                        All
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="photo" closeOnClick>
+                        <span className="flex w-full items-center justify-between gap-2">
+                            Photo
+                            <span className="text-xs tabular-nums text-muted-foreground">
+                                {photoCount}
+                            </span>
+                        </span>
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="video" closeOnClick>
+                        <span className="flex w-full items-center justify-between gap-2">
+                            Video
+                            <span className="text-xs tabular-nums text-muted-foreground">
+                                {videoCount}
+                            </span>
+                        </span>
+                    </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+            </OptionsSection>
         </>
     );
 
@@ -810,14 +876,14 @@ export function TagScopeFilterDropdown({
             </div>
             <DropdownMenuSeparator />
             {showUpdatedAt ? (
-                <SortSection
+                <OptionsSection
                     title="Updated At"
-                    open={isSortSectionOpen(
+                    open={isOptionsSectionOpen(
                         "updatedAt",
                         updateSort !== "none",
                     )}
                     onToggle={() =>
-                        toggleSortSection("updatedAt", updateSort !== "none")
+                        toggleOptionsSection("updatedAt", updateSort !== "none")
                     }
                 >
                     <DropdownMenuRadioGroup
@@ -835,15 +901,15 @@ export function TagScopeFilterDropdown({
                             Oldest
                         </DropdownMenuRadioItem>
                     </DropdownMenuRadioGroup>
-                </SortSection>
+                </OptionsSection>
             ) : null}
             {showUpdatedAt && showViewportFit ? <DropdownMenuSeparator /> : null}
             {showViewportFit ? (
-                <SortSection
+                <OptionsSection
                     title="Viewport fit"
-                    open={isSortSectionOpen("viewportFit", fitSort !== "none")}
+                    open={isOptionsSectionOpen("viewportFit", fitSort !== "none")}
                     onToggle={() =>
-                        toggleSortSection("viewportFit", fitSort !== "none")
+                        toggleOptionsSection("viewportFit", fitSort !== "none")
                     }
                 >
                     <DropdownMenuRadioGroup
@@ -861,17 +927,17 @@ export function TagScopeFilterDropdown({
                             Worst Fit
                         </DropdownMenuRadioItem>
                     </DropdownMenuRadioGroup>
-                </SortSection>
+                </OptionsSection>
             ) : null}
             {(showUpdatedAt || showViewportFit) && showImageSize ?
                 <DropdownMenuSeparator /> :
                 null}
             {showImageSize ? (
-                <SortSection
+                <OptionsSection
                     title="Image size"
-                    open={isSortSectionOpen("imageSize", sizeSort !== "none")}
+                    open={isOptionsSectionOpen("imageSize", sizeSort !== "none")}
                     onToggle={() =>
-                        toggleSortSection("imageSize", sizeSort !== "none")
+                        toggleOptionsSection("imageSize", sizeSort !== "none")
                     }
                 >
                     <DropdownMenuRadioGroup
@@ -889,21 +955,21 @@ export function TagScopeFilterDropdown({
                             Smallest
                         </DropdownMenuRadioItem>
                     </DropdownMenuRadioGroup>
-                </SortSection>
+                </OptionsSection>
             ) : null}
             {(showUpdatedAt || showViewportFit || showImageSize) &&
             showTagFilterFit ?
                 <DropdownMenuSeparator /> :
                 null}
             {showTagFilterFit ? (
-                <SortSection
+                <OptionsSection
                     title="Tag filter fit"
-                    open={isSortSectionOpen(
+                    open={isOptionsSectionOpen(
                         "tagFilterFit",
                         tagFitSort !== "none",
                     )}
                     onToggle={() =>
-                        toggleSortSection(
+                        toggleOptionsSection(
                             "tagFilterFit",
                             tagFitSort !== "none",
                         )
@@ -924,7 +990,7 @@ export function TagScopeFilterDropdown({
                             Worst fit
                         </DropdownMenuRadioItem>
                     </DropdownMenuRadioGroup>
-                </SortSection>
+                </OptionsSection>
             ) : null}
             {(showUpdatedAt ||
                 showViewportFit ||
@@ -934,11 +1000,11 @@ export function TagScopeFilterDropdown({
                 <DropdownMenuSeparator /> :
                 null}
             {showRelative ? (
-                <SortSection
+                <OptionsSection
                     title="Relative"
-                    open={isSortSectionOpen("relative", relSort !== "none")}
+                    open={isOptionsSectionOpen("relative", relSort !== "none")}
                     onToggle={() =>
-                        toggleSortSection("relative", relSort !== "none")
+                        toggleOptionsSection("relative", relSort !== "none")
                     }
                 >
                     <DropdownMenuRadioGroup
@@ -969,7 +1035,7 @@ export function TagScopeFilterDropdown({
                             </Button>
                         </div>
                     ) : null}
-                </SortSection>
+                </OptionsSection>
             ) : null}
             {(showUpdatedAt ||
                 showViewportFit ||
@@ -980,15 +1046,15 @@ export function TagScopeFilterDropdown({
                 <DropdownMenuSeparator /> :
                 null}
             {showNearness || showKitLikeness ? (
-                <SortSection
+                <OptionsSection
                     title="Nearness"
-                    open={isSortSectionOpen("nearness", nearnessSectionActive)}
+                    open={isOptionsSectionOpen("nearness", nearnessSectionActive)}
                     onToggle={() =>
-                        toggleSortSection("nearness", nearnessSectionActive)
+                        toggleOptionsSection("nearness", nearnessSectionActive)
                     }
                 >
                     {nearnessPanel}
-                </SortSection>
+                </OptionsSection>
             ) : null}
         </>
     );

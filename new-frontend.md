@@ -7,22 +7,23 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-10 |
-| **Last agent / session** | Compress follow-up shipped (`0.3.134`) |
+| **Last agent / session** | Fast optimistic favourites |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable |
-| **Next recommended action** | Phone QA of `0.3.134` Compress: filters, footer mix/size, stage progress, hardware video path. **Note:** working tree uncommitted since `85cffccd44`. |
+| **Next recommended action** | Phone QA: favourite toggle should feel instant on large libraries (`0.3.137`). Also prior `0.3.136` Options Filter UX. **Note:** working tree uncommitted since `85cffccd44`. |
 
 **This session shipped:**
-1. **Compress follow-up** — WebCodecs keeps hardware H.264 when AAC fails (audio remux or skip); batch video long-edge cap 1920; independent gallery-style filters on Manage → Compress (always size-desc); per-stage progress (download/compress/upload with XHR PUT %); CRF slider removed; selection footer shows photo/video counts + size; size chips on compress thumbs only. Lint + build green; Playwright smoke OK. `APP_VERSION` → `0.3.134`. Plan: `mobileapp/scripts/compress-followup.md`.
+1. **Fast optimistic favourites** — star/unstar patches `favoriteFileIds` in O(1) for owned files (no full-library `deriveFavoriteFileIDs`); pending+ids in one store update; gallery skips favourite-store subscription unless Favourites filter is active; filter-bar count deferred. Lint, favorites tests, build green. `APP_VERSION` → `0.3.137`.
 
 **Previous session shipped:**
-1. **Kit presence = best fit among remaining** — `APP_VERSION` → `0.3.133`.
+1. **Options Filter UX** — same collapsible pattern as Sort: Clear at the top (resets all scopes to All); Tag presence / Favourites / Manual crop / Media type collapse behind title+chevron and auto-expand when that scope isn’t All. Shared `OptionsSection` helper. `APP_VERSION` → `0.3.136`.
 
+**Previous session shipped:**
+1. **Kit presence never orphans** — every shown file is assigned to the closest remaining kit by mean tag presence (known=1, else CLIP p). No AND gate. Ties: more tags, then id. Counts always partition the view. Lint, 394 tests, build green. `APP_VERSION` → `0.3.135`.
 
-**This session shipped:**
-1. **Kit presence = best fit among remaining** — each shown file goes to the most-specific included kit it AND-matches (most tags, then id). Unchecked kits get 0 and drop out of the contest, so their photos fall to the next parent/sibling match. Replaces independent ONLY counts. Lint, 391 tests, build green. `APP_VERSION` → `0.3.133`.
-
-**Previous session (diagnosis, nothing shipped):**
+**Previous session shipped:**
+1. **Compress follow-up** — WebCodecs keeps hardware H.264 when AAC fails (audio remux or skip); batch video long-edge cap 1920; independent gallery-style filters on Manage → Compress (always size-desc); per-stage progress (download/compress/upload with XHR PUT %); CRF slider removed; selection footer shows photo/video counts + size; size chips on compress thumbs only. Lint + build green; Playwright smoke OK. `APP_VERSION` → `0.3.134`. Plan: `mobileapp/scripts/compress-followup.md`.
+2. **Kit presence = best fit among remaining** — `APP_VERSION` → `0.3.133`.
 1. **Why toggling barely moved other counts** — independent ONLY + shared sibling tags; most big-kit excludes changed zero other counts on the corpus.
 
 **Previous session shipped:**

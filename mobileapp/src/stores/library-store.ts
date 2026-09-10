@@ -983,7 +983,6 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         const { collections, allFiles } = get();
         const favoritesStore = useFavoritesStore.getState();
 
-        favoritesStore.addPending(file.id);
         favoritesStore.applyOptimisticFavorite(
             file,
             userId,
@@ -1789,7 +1788,6 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         }
 
         for (const file of files) {
-            favoritesStore.addPending(file.id);
             favoritesStore.applyOptimisticFavorite(
                 file,
                 userId,

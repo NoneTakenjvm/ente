@@ -275,13 +275,18 @@ describe("countKitPresence", () => {
         tagProbabilities: Float32Array.from([1, 0.9, 0.3, 1, 0.4, 0.9]),
     };
 
-    it("assigns each file to the most-specific AND match", () => {
+    it("assigns every file to the closest remaining kit", () => {
         const counts = countKitPresence(kits, [1, 2, 3, 4], fileIdsByTag, estimate);
-        // File 1: known {a,b} → ab. File 2: known {a}, b=0.9, c=0.3 → ab.
-        // File 3: a known, b=0.4, c=0.9 → abc beats ab. File 4: nothing.
+        // File 1: known {a,b} → ab (mean 1 > abc 2/3).
+        // File 2: a=1,b=0.9,c=0.3 → ab.
+        // File 3: a=1,b=0.4,c=0.9 → abc (mean ~0.77 > ab 0.7).
+        // File 4: all 0 → abc (most tags among ties).
         expect(counts.get("ab")).toBe(2);
-        expect(counts.get("abc")).toBe(1);
+        expect(counts.get("abc")).toBe(2);
         expect(counts.get("z")).toBe(0);
+        expect(
+            [...counts.values()].reduce((sum, n) => sum + n, 0),
+        ).toBe(4);
     });
 
     it("lets a nested child take the photo from its parent", () => {
@@ -292,7 +297,8 @@ describe("countKitPresence", () => {
             {
                 ...estimate,
                 candidateIds: [2],
-                tagProbabilities: Float32Array.from([1, 0.9, 0.8]),
+                // ab mean 0.95; abc mean ≈0.95 → more tags wins.
+                tagProbabilities: Float32Array.from([1, 0.9, 0.95]),
             },
         );
         expect(counts.get("ab")).toBe(0);
@@ -328,7 +334,7 @@ describe("countKitPresence", () => {
         expect(parent.get("abc")).toBe(0);
         expect(parent.get("ab")).toBe(1);
 
-        // Equal-specificity siblings: one winner (lower id).
+        // Equal scores on single-tag siblings: lower id wins.
         const overlapping = [
             { id: "a", tags: ["a"] },
             { id: "b", tags: ["b"] },
@@ -350,7 +356,56 @@ describe("countKitPresence", () => {
         expect(siblings.get("b")).toBe(0);
     });
 
-    it("does not let an unrelated remaining kit block fallthrough", () => {
+    it("never orphans a file while any kit remains", () => {
+        const counts = countKitPresence(
+            [{ id: "z", tags: ["z"] }],
+            [1, 2, 3, 4],
+            fileIdsByTag,
+            estimate,
+        );
+        expect(counts.get("z")).toBe(4);
+    });
+
+    it("partitions the whole view for any non-empty remaining kit set", () => {
+        const view = [1, 2, 3, 4, 5, 6];
+        const emptyEstimate = {
+            tagNames: [] as string[],
+            candidateIds: [] as number[],
+            tagProbabilities: new Float32Array(0),
+        };
+        for (const excluded of [
+            undefined,
+            new Set<string>(),
+            new Set(["abc"]),
+            new Set(["abc", "z"]),
+            new Set(["ab", "abc"]),
+        ]) {
+            const counts = countKitPresence(
+                kits,
+                view,
+                fileIdsByTag,
+                emptyEstimate,
+                excluded,
+            );
+            const remaining = kits.filter(
+                (kit) => kit.tags.length > 0 && !excluded?.has(kit.id),
+            );
+            expect(remaining.length).toBeGreaterThan(0);
+            expect(
+                [...counts.values()].reduce((sum, n) => sum + n, 0),
+            ).toBe(view.length);
+            for (const kit of remaining) {
+                expect(counts.get(kit.id)).toBeGreaterThanOrEqual(0);
+            }
+            if (excluded) {
+                for (const id of excluded) {
+                    expect(counts.get(id)).toBe(0);
+                }
+            }
+        }
+    });
+
+    it("does not let an unrelated remaining kit steal a better parent match", () => {
         const withC = new Map(fileIdsByTag);
         withC.set("c", new Set([1]));
         const kitsWithD = [

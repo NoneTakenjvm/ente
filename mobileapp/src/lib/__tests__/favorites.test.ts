@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 import { FileType } from "ente-media/file-type";
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
-import { deriveFavoriteFileIDs, isFileFavorited, mergePendingFavoriteUpdates } from "@/lib/favorites";
+import {
+    applyFavoriteUpdateToIds,
+    createUnsyncedFavoriteUpdate,
+    deriveFavoriteFileIDs,
+    isFileFavorited,
+    mergePendingFavoriteUpdates,
+} from "@/lib/favorites";
 
 const userId = 1;
 const favoritesCollectionId = 99;
@@ -67,5 +73,46 @@ describe("favorites", () => {
         expect([...merged.keys()].sort()).toEqual([10, 12]);
         expect(merged.get(10)?.isFavorite).toBe(true);
         expect(merged.get(12)?.isFavorite).toBe(false);
+    });
+
+    it("applyFavoriteUpdateToIds patches owned files without touching siblings", () => {
+        const galleryFile = fileWithHash(10, 5, "abc");
+        const other = fileWithHash(11, 5, "def");
+        const baseline = new Set([11]);
+        const { update } = createUnsyncedFavoriteUpdate(
+            galleryFile,
+            userId,
+            true,
+        );
+
+        const next = applyFavoriteUpdateToIds(
+            baseline,
+            update,
+            userId,
+            [galleryFile, other],
+        );
+
+        expect(next.has(10)).toBe(true);
+        expect(next.has(11)).toBe(true);
+        expect(baseline.has(10)).toBe(false);
+    });
+
+    it("applyFavoriteUpdateToIds clears owned favourite on unfavourite", () => {
+        const galleryFile = fileWithHash(10, 5, "abc");
+        const { update } = createUnsyncedFavoriteUpdate(
+            galleryFile,
+            userId,
+            false,
+        );
+
+        const next = applyFavoriteUpdateToIds(
+            new Set([10, 20]),
+            update,
+            userId,
+            [galleryFile],
+        );
+
+        expect(next.has(10)).toBe(false);
+        expect(next.has(20)).toBe(true);
     });
 });
