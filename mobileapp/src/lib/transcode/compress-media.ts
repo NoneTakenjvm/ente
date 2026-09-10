@@ -2,11 +2,14 @@ import type { EnteFile } from "ente-media/file";
 import {
     DEFAULT_JPEG_QUALITY,
     DEFAULT_VIDEO_CRF,
-    encodeJpegFromBytes,
-    type EncodeJpegResult,
+    encodeCompressedStillFromBytes,
 } from "@/lib/compress";
 import { runFFmpeg, type FFmpegProgressCallback } from "@/lib/ffmpeg";
 import { mediaKindForFile, mimeTypeForFile } from "@/lib/media-kind";
+import {
+    encodeH264WebCodecs,
+    evenOutputSize,
+} from "@/lib/transcode/webcodecs-h264";
 
 export interface CompressMediaResult {
     bytes: Uint8Array;
@@ -20,6 +23,7 @@ export interface CompressMediaResult {
 export interface CompressMediaOptions {
     quality: number;
     videoCrf: number;
+    minSizeBytes?: number;
     /**
      * When set, scale video so the long edge is at most this many pixels
      * (even dimensions). Used for faster previews / smaller outputs.
@@ -42,17 +46,58 @@ const blobFromBytes = (bytes: Uint8Array, mimeType: string): Blob =>
 const evenScaleFilter = (maxLongEdge: number): string =>
     `scale='trunc(min(${maxLongEdge}\\,iw)/2)*2':-2`;
 
+const videoOutputSize = (
+    file: EnteFile,
+    maxLongEdge?: number,
+): { width: number; height: number } => {
+    const sourceW = Number(file.pubMagicMetadata?.data?.w) || 0;
+    const sourceH = Number(file.pubMagicMetadata?.data?.h) || 0;
+    if (sourceW <= 0 || sourceH <= 0) {
+        return { width: sourceW, height: sourceH };
+    }
+    return evenOutputSize(sourceW, sourceH, maxLongEdge);
+};
+
+const compressVideoWithFfmpeg = async (
+    bytes: Uint8Array,
+    mimeType: string,
+    videoCrf: number,
+    maxLongEdge: number | undefined,
+    onProgress?: FFmpegProgressCallback,
+): Promise<Uint8Array> => {
+    const vf =
+        maxLongEdge && maxLongEdge > 0 ?
+            ["-vf", evenScaleFilter(maxLongEdge)] :
+            [];
+    return runFFmpeg(
+        [
+            "-i", "INPUT",
+            ...vf,
+            "-c:v", "libx264",
+            "-crf", String(videoCrf),
+            "-preset", "ultrafast",
+            "-c:a", "aac",
+            "-movflags", "+faststart",
+            "OUTPUT",
+        ],
+        blobFromBytes(bytes, mimeType),
+        "mp4",
+        onProgress,
+    );
+};
+
 /**
  * Compress library media bytes for a derived upload copy.
  *
- * Video encodes use libx264 {@code ultrafast} for mobile wall-clock speed.
+ * Videos try hardware {@link VideoEncoder} H.264 first, then ffmpeg libx264
+ * {@code ultrafast}.
  */
 export const compressMediaBytes = async (
     file: EnteFile,
     bytes: Uint8Array,
     options: Partial<CompressMediaOptions> = {},
 ): Promise<CompressMediaResult> => {
-    const { quality, videoCrf, maxLongEdge, onProgress } = {
+    const { quality, videoCrf, maxLongEdge, minSizeBytes = 0, onProgress } = {
         ...defaultOptions,
         ...options,
     };
@@ -60,47 +105,40 @@ export const compressMediaBytes = async (
     const mimeType = mimeTypeForFile(file);
 
     if (kind === "video") {
-        const vf =
-            maxLongEdge && maxLongEdge > 0 ?
-                ["-vf", evenScaleFilter(maxLongEdge)] :
-                [];
-        const output = await runFFmpeg(
-            [
-                "-i", "INPUT",
-                ...vf,
-                "-c:v", "libx264",
-                "-crf", String(videoCrf),
-                "-preset", "ultrafast",
-                "-c:a", "aac",
-                "-movflags", "+faststart",
-                "OUTPUT",
-            ],
-            blobFromBytes(bytes, mimeType),
-            "mp4",
-            onProgress,
-        );
-        const sourceW = Number(file.pubMagicMetadata?.data?.w) || 0;
-        const sourceH = Number(file.pubMagicMetadata?.data?.h) || 0;
-        let width = sourceW;
-        let height = sourceH;
-        if (maxLongEdge && maxLongEdge > 0 && sourceW > 0 && sourceH > 0) {
-            const longEdge = Math.max(sourceW, sourceH);
-            if (longEdge > maxLongEdge) {
-                const scale = maxLongEdge / longEdge;
-                width = Math.max(2, Math.round(sourceW * scale));
-                height = Math.max(2, Math.round(sourceH * scale));
-                width -= width % 2;
-                height -= height % 2;
-            }
+        try {
+            const encoded = await encodeH264WebCodecs({
+                bytes,
+                mimeType,
+                videoCrf,
+                maxLongEdge,
+                onProgress,
+            });
+            return {
+                bytes: encoded.bytes,
+                width: encoded.width,
+                height: encoded.height,
+                duration: encoded.duration,
+                mimeType: "video/mp4",
+                extension: "mp4",
+            };
+        } catch {
+            const output = await compressVideoWithFfmpeg(
+                bytes,
+                mimeType,
+                videoCrf,
+                maxLongEdge,
+                onProgress,
+            );
+            const size = videoOutputSize(file, maxLongEdge);
+            return {
+                bytes: output,
+                width: size.width,
+                height: size.height,
+                duration: file.metadata.duration,
+                mimeType: "video/mp4",
+                extension: "mp4",
+            };
         }
-        return {
-            bytes: output,
-            width,
-            height,
-            duration: file.metadata.duration,
-            mimeType: "video/mp4",
-            extension: "mp4",
-        };
     }
 
     if (kind === "gif") {
@@ -124,13 +162,13 @@ export const compressMediaBytes = async (
         };
     }
 
-    const encoded: EncodeJpegResult = await encodeJpegFromBytes(bytes, quality);
+    const encoded = await encodeCompressedStillFromBytes(bytes, minSizeBytes);
     onProgress?.(1);
     return {
         bytes: encoded.bytes,
         width: encoded.width,
         height: encoded.height,
-        mimeType: "image/jpeg",
-        extension: "jpg",
+        mimeType: encoded.mimeType,
+        extension: encoded.extension,
     };
 };

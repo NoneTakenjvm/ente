@@ -70,7 +70,7 @@ const buildPublicMagicData = (
 });
 
 /**
- * Upload a compressed derivative (JPEG, GIF, or MP4) of an existing file.
+ * Upload a compressed derivative (JPEG, AVIF, WebP, GIF, or MP4) of an existing file.
  */
 export const uploadCompressedMedia = async (
     http: HttpClient,
@@ -101,7 +101,7 @@ export const uploadCompressedMedia = async (
         const frame = await extractVideoFrameJpeg(result.bytes, "image/gif");
         thumbnail = await generateImageThumbnail(frame);
     } else {
-        thumbnail = await generateImageThumbnail(result.bytes);
+        thumbnail = await generateImageThumbnail(result.bytes, result.mimeType);
     }
 
     const fileKey = await generateBlobOrStreamKey();

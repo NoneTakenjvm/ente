@@ -16,7 +16,7 @@ import type { EnteFile } from "ente-media/file";
 interface BatchCompressPreviewSheetProps {
     open: boolean;
     files: EnteFile[];
-    quality: number;
+    minSizeLabel: string;
     videoCrf: number;
     onClose: () => void;
     onConfirm: () => void;
@@ -35,7 +35,7 @@ const formatBytes = (bytes: number): string => {
 export function BatchCompressPreviewSheet({
     open,
     files,
-    quality,
+    minSizeLabel,
     videoCrf,
     onClose,
     onConfirm,
@@ -45,8 +45,7 @@ export function BatchCompressPreviewSheet({
         [files],
     );
 
-    const qualityPercent = Math.round(quality * 100);
-    const settingsSummary = `JPEG ${qualityPercent}% · Video CRF ${videoCrf}`;
+    const settingsSummary = `Skip under ${minSizeLabel.replace(/\+$/u, "")} · Video CRF ${videoCrf}`;
 
     const sizeSummary = formatSizeDelta(totalBytes, Math.round(totalBytes * 0.7));
 

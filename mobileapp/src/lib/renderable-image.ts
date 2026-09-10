@@ -38,6 +38,9 @@ const mimeTypeForImageName = (fileName: string, bytes: Uint8Array): string => {
     if (extension === "webp") {
         return "image/webp";
     }
+    if (extension === "avif") {
+        return "image/avif";
+    }
     if (extension === "gif") {
         return "image/gif";
     }
@@ -50,6 +53,9 @@ const mimeTypeForImageName = (fileName: string, bytes: Uint8Array): string => {
     }
     if (detected === "webp") {
         return "image/webp";
+    }
+    if (detected === "avif") {
+        return "image/avif";
     }
     if (detected === "gif") {
         return "image/gif";

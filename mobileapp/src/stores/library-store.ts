@@ -187,7 +187,7 @@ interface LibraryState {
     ) => Promise<EnteFile>;
     compressAndUploadMedia: (
         fileId: number,
-        options?: { quality?: number; videoCrf?: number },
+        options?: { quality?: number; videoCrf?: number; minSizeBytes?: number },
         precomputed?: CompressMediaResult,
     ) => Promise<EnteFile>;
     compressAndReplaceMediaOptimistic: (
@@ -1134,7 +1134,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
 
     compressAndUploadMedia: async (
         fileId: number,
-        options?: { quality?: number; videoCrf?: number },
+        options?: { quality?: number; videoCrf?: number; minSizeBytes?: number },
         precomputed?: CompressMediaResult,
     ): Promise<EnteFile> => {
         const { allFiles } = get();
@@ -1214,7 +1214,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 primeVideoThumbnailFromBytes(fileId, result.bytes);
             });
         } else {
-            primeThumbnailFromBytes(fileId, result.bytes);
+            primeThumbnailFromBytes(fileId, result.bytes, result.mimeType);
         }
 
         const finalize = (async (): Promise<EnteFile> => {
@@ -1255,7 +1255,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                             height: dimensions.height,
                         },
                         sourceCollection,
-                        compressedReplaceTitle(source),
+                        compressedReplaceTitle(source, result.extension),
                         buildCompressedOrganizerTags(source),
                     );
                     return replaceSourceWithCompressed(
