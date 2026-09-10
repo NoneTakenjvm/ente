@@ -89,6 +89,7 @@ import {
 import { useLibraryStore } from "@/stores/library-store";
 import { usePhashIndexStore } from "@/stores/phash-index-store";
 import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
+import { useQualityIndexStore } from "@/stores/quality-index-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { usePhashJobStore, useUIStore } from "@/stores/ui-store";
 
@@ -138,6 +139,8 @@ export default function ManagePage(): JSX.Element {
     const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
     const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.hydrate);
 
+    const hydrateQuality = useQualityIndexStore((s) => s.hydrate);
+
     const phashJobStatus = usePhashJobStore((s) => s.status);
     const phashProgress = usePhashJobStore((s) => s.progress);
     const setPhashJobStatus = usePhashJobStore((s) => s.setStatus);
@@ -176,6 +179,7 @@ export default function ManagePage(): JSX.Element {
         afterSync: async (): Promise<void> => {
             await hydratePhash();
             await hydrateEmbeddings();
+            await hydrateQuality();
         },
     });
 

@@ -41,11 +41,13 @@ import type { EnteFile } from "ente-media/file";
 import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { usePhashIndexStore } from "@/stores/phash-index-store";
+import { useQualityIndexStore } from "@/stores/quality-index-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
 import type { BackgroundJobStatus } from "@/stores/ui-store";
+import { runImageQualityJob } from "@/lib/image-quality-job";
 
 const columnOptions: number[] = Array.from(
     { length: MAX_GALLERY_COLUMNS - MIN_GALLERY_COLUMNS + 1 },
@@ -105,6 +107,14 @@ export function ManageSettingsPanel(): JSX.Element {
     const clipPaused = useRef(false);
     const clipSmokeToastShown = useRef(false);
     const clipBatchFallbackToastShown = useRef(false);
+    const [qualityJobStatus, setQualityJobStatus] =
+        useState<BackgroundJobStatus>("idle");
+    const [qualityProgress, setQualityProgress] = useState({
+        current: 0,
+        total: 0,
+    });
+    const qualityAbort = useRef<AbortController | undefined>(undefined);
+    const qualityPaused = useRef(false);
     const [tileJobStatus, setTileJobStatus] =
         useState<BackgroundJobStatus>("idle");
     const [tileCoverage, setTileCoverage] = useState<
@@ -122,6 +132,10 @@ export function ManageSettingsPanel(): JSX.Element {
     const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
     const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.hydrate);
     const setEmbeddingEntries = useEmbeddingIndexStore((s) => s.setEntries);
+    const qualityEntries = useQualityIndexStore((s) => s.entries);
+    const qualityHydrated = useQualityIndexStore((s) => s.isHydrated);
+    const hydrateQuality = useQualityIndexStore((s) => s.hydrate);
+    const setQualityEntries = useQualityIndexStore((s) => s.setEntries);
     const includeInKitNearnessByName = useTagStore(
         (s) => s.includeInKitNearnessByName,
     );
@@ -131,6 +145,8 @@ export function ManageSettingsPanel(): JSX.Element {
         [allFiles, userId],
     );
     const clipIndexedCount = embeddingEntries.size;
+    const qualityCandidateCount = clipCandidateCount;
+    const qualityIndexedCount = qualityEntries.size;
 
     useEffect(() => {
         setShowDevTools(isLocalDevToolsVisible());
@@ -185,6 +201,13 @@ export function ManageSettingsPanel(): JSX.Element {
         }
         void hydrateEmbeddings();
     }, [embeddingHydrated, hydrateEmbeddings]);
+
+    useEffect(() => {
+        if (qualityHydrated) {
+            return;
+        }
+        void hydrateQuality();
+    }, [qualityHydrated, hydrateQuality]);
 
     // Drop any stale video poster vectors once the library is known.
     useEffect(() => {
@@ -309,6 +332,68 @@ export function ManageSettingsPanel(): JSX.Element {
         clipPaused.current = true;
         clipAbort.current?.abort();
         setClipJobStatus("paused");
+    };
+
+    const handleStartQualityJob = (): void => {
+        if (qualityJobStatus === "running") {
+            return;
+        }
+        qualityAbort.current?.abort();
+        qualityAbort.current = new AbortController();
+        qualityPaused.current = false;
+        setQualityJobStatus("running");
+        const candidates = imageFilesForPhash(allFiles, userId);
+        const pending = candidates.filter((file) => !qualityEntries.has(file.id));
+        setQualityProgress({ current: 0, total: pending.length });
+        if (pending.length === 0) {
+            setQualityJobStatus("done");
+            toast.message("Image quality scan already complete");
+            return;
+        }
+        void runImageQualityJob({
+            files: allFiles,
+            userId,
+            entries: qualityEntries,
+            signal: qualityAbort.current.signal,
+            shouldPause: () => qualityPaused.current,
+            onProgress: (current, total) => {
+                setQualityProgress({ current, total });
+            },
+        })
+            .then((entries) => {
+                setQualityEntries(entries);
+                if (
+                    qualityAbort.current?.signal.aborted &&
+                    qualityPaused.current
+                ) {
+                    setQualityJobStatus("paused");
+                    return;
+                }
+                setQualityJobStatus("done");
+                toast.success(
+                    `Image quality scan complete — ${entries.size} scored`,
+                );
+            })
+            .catch((error: unknown) => {
+                if (qualityAbort.current?.signal.aborted) {
+                    setQualityJobStatus(
+                        qualityPaused.current ? "paused" : "idle",
+                    );
+                    return;
+                }
+                setQualityJobStatus("error");
+                toast.error(
+                    error instanceof Error ?
+                        error.message :
+                        "Image quality scan failed",
+                );
+            });
+    };
+
+    const handlePauseQualityJob = (): void => {
+        qualityPaused.current = true;
+        qualityAbort.current?.abort();
+        setQualityJobStatus("paused");
     };
 
     const handleStartTileJob = (): void => {
@@ -759,6 +844,63 @@ export function ManageSettingsPanel(): JSX.Element {
                                 type="button"
                                 variant="outline"
                                 onClick={handlePauseClipJob}
+                            >
+                                Pause
+                            </Button>
+                        ) : null}
+                    </div>
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>Image quality</CardTitle>
+                    <CardDescription>
+                        Score stills for grain, pixelation, blur, and low
+                        resolution from thumbnails. Used by Options → Sort →
+                        Image quality. Videos are never scanned.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-3">
+                    <p className="text-sm text-muted-foreground">
+                        {qualityHydrated ?
+                            `${(
+                                qualityJobStatus === "running" ?
+                                    qualityIndexedCount +
+                                    qualityProgress.current :
+                                    qualityIndexedCount
+                            ).toLocaleString()} / ${qualityCandidateCount.toLocaleString()} images scored` :
+                            "Loading quality index…"}
+                        {qualityJobStatus === "running" &&
+                        qualityProgress.total > 0 ?
+                            ` · scanning ${qualityProgress.current}/${qualityProgress.total}` :
+                            null}
+                        {qualityJobStatus === "paused" ? " · paused" : null}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            disabled={
+                                qualityJobStatus === "running" ||
+                                !qualityHydrated ||
+                                (qualityIndexedCount >= qualityCandidateCount &&
+                                    qualityCandidateCount > 0)
+                            }
+                            onClick={handleStartQualityJob}
+                        >
+                            {qualityIndexedCount >= qualityCandidateCount &&
+                            qualityCandidateCount > 0 ?
+                                "Scan complete" :
+                                qualityJobStatus === "paused" ?
+                                    "Resume quality scan" :
+                                    "Scan image quality"}
+                        </Button>
+                        {qualityJobStatus === "running" ? (
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={handlePauseQualityJob}
                             >
                                 Pause
                             </Button>

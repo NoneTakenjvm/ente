@@ -28,6 +28,7 @@ import {
     isTagFilterActive,
 } from "@/lib/tags";
 import type { ViewportFitSort } from "@/lib/viewport-fit";
+import type { ImageQualitySort } from "@/lib/image-quality";
 import type { ImageSizeSort } from "@/lib/image-size-sort";
 import type { RelativeSort } from "@/lib/relative-sort";
 import type { TagFilterFitSort } from "@/lib/tag-filter-fit-sort";
@@ -45,6 +46,7 @@ type OptionsSectionId =
     "updatedAt" |
     "viewportFit" |
     "imageSize" |
+    "imageQuality" |
     "tagFilterFit" |
     "relative" |
     "nearness";
@@ -124,6 +126,9 @@ interface TagScopeFilterDropdownProps {
     /** Gallery-only: reorder by pixel area (not a hide-filter). */
     imageSizeSort?: ImageSizeSort;
     onImageSizeSortChange?: (mode: ImageSizeSort) => void;
+    /** Gallery-only: reorder by persisted image quality score. */
+    imageQualitySort?: ImageQualitySort;
+    onImageQualitySortChange?: (mode: ImageQualitySort) => void;
     /**
      * Gallery-only: CLIP fit to the active tag/kit filter. Pass a change
      * handler only when tag clauses are active (caller gates visibility).
@@ -194,6 +199,9 @@ const isUpdatedAtSort = (value: unknown): value is UpdatedAtSort =>
 const isImageSizeSort = (value: unknown): value is ImageSizeSort =>
     value === "none" || value === "largest" || value === "smallest";
 
+const isImageQualitySort = (value: unknown): value is ImageQualitySort =>
+    value === "none" || value === "worst" || value === "best";
+
 const isTagFilterFitSort = (value: unknown): value is TagFilterFitSort =>
     value === "none" || value === "best" || value === "worst";
 
@@ -223,6 +231,8 @@ export function TagScopeFilterDropdown({
     onUpdatedAtSortChange,
     imageSizeSort,
     onImageSizeSortChange,
+    imageQualitySort,
+    onImageQualitySortChange,
     tagFilterFitSort,
     onTagFilterFitSortChange,
     relativeSort,
@@ -297,6 +307,8 @@ export function TagScopeFilterDropdown({
     const updateSort = updatedAtSort ?? "none";
     const showImageSize = onImageSizeSortChange !== undefined;
     const sizeSort = imageSizeSort ?? "none";
+    const showImageQuality = onImageQualitySortChange !== undefined;
+    const qualitySort = imageQualitySort ?? "none";
     const showTagFilterFit = onTagFilterFitSortChange !== undefined;
     const tagFitSort = tagFilterFitSort ?? "none";
     const showRelative = onRelativeSortChange !== undefined;
@@ -319,6 +331,7 @@ export function TagScopeFilterDropdown({
         showViewportFit ||
         showUpdatedAt ||
         showImageSize ||
+        showImageQuality ||
         showTagFilterFit ||
         showRelative ||
         showNearness ||
@@ -447,6 +460,7 @@ export function TagScopeFilterDropdown({
         fitSort !== "none" ||
         updateSort !== "none" ||
         sizeSort !== "none" ||
+        qualitySort !== "none" ||
         tagFitSort !== "none" ||
         relSort !== "none" ||
         filterNearnessActive ||
@@ -905,6 +919,7 @@ export function TagScopeFilterDropdown({
                         onUpdatedAtSortChange?.("none");
                         onViewportFitSortChange?.("none");
                         onImageSizeSortChange?.("none");
+                        onImageQualitySortChange?.("none");
                         onTagFilterFitSortChange?.("none");
                         onRelativeSortChange?.("none");
                         onNearnessFilterChange?.(undefined);
@@ -1063,6 +1078,44 @@ export function TagScopeFilterDropdown({
                 </OptionsSection>
             ) : null}
             {(showUpdatedAt || showViewportFit || showImageSize) &&
+            showImageQuality ?
+                <DropdownMenuSeparator /> :
+                null}
+            {showImageQuality ? (
+                <OptionsSection
+                    title="Image quality"
+                    open={isOptionsSectionOpen(
+                        "imageQuality",
+                        qualitySort !== "none",
+                    )}
+                    onToggle={() =>
+                        toggleOptionsSection(
+                            "imageQuality",
+                            qualitySort !== "none",
+                        )
+                    }
+                >
+                    <DropdownMenuRadioGroup
+                        value={qualitySort === "none" ? "" : qualitySort}
+                        onValueChange={(value) => {
+                            if (isImageQualitySort(value)) {
+                                onImageQualitySortChange?.(value);
+                            }
+                        }}
+                    >
+                        <DropdownMenuRadioItem value="worst" closeOnClick>
+                            Worst
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="best" closeOnClick>
+                            Best
+                        </DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                </OptionsSection>
+            ) : null}
+            {(showUpdatedAt ||
+                showViewportFit ||
+                showImageSize ||
+                showImageQuality) &&
             showTagFilterFit ?
                 <DropdownMenuSeparator /> :
                 null}
@@ -1100,6 +1153,7 @@ export function TagScopeFilterDropdown({
             {(showUpdatedAt ||
                 showViewportFit ||
                 showImageSize ||
+                showImageQuality ||
                 showTagFilterFit) &&
             showRelative ?
                 <DropdownMenuSeparator /> :
@@ -1145,6 +1199,7 @@ export function TagScopeFilterDropdown({
             {(showUpdatedAt ||
                 showViewportFit ||
                 showImageSize ||
+                showImageQuality ||
                 showTagFilterFit ||
                 showRelative) &&
             (showNearness || showKitLikeness) ?
