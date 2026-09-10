@@ -86,7 +86,7 @@ describe("resolutionQualityScore", () => {
 });
 
 describe("scoreImageQuality", () => {
-    it("scores flat blurry low-res much lower than sharp high-res", () => {
+    it("scores flat blurry much lower than sharp content", () => {
         const blurry = scoreImageQuality(
             flatGray(64, 64, 128),
             320,
@@ -100,7 +100,6 @@ describe("scoreImageQuality", () => {
             2_500_000,
         );
         expect(sharp).toBeGreaterThan(blurry + 0.25);
-        expect(blurry).toBeLessThan(0.05);
     });
 
     it("does not let soft high-res beat sharp high-res", () => {
@@ -111,12 +110,20 @@ describe("scoreImageQuality", () => {
         expect(sharpScore).toBeGreaterThan(softScore);
     });
 
-    it("does not let sharp low-res beat sharp high-res", () => {
+    it("lets sharp mid-res beat soft high-res (content over megapixels)", () => {
+        const crisp = sharpEdges(128, 128);
+        const soft = softBlur(crisp, 4);
+        const sharpMid = scoreImageQuality(crisp, 1600, 1200, 600_000);
+        const softHuge = scoreImageQuality(soft, 4000, 3000, 2_500_000);
+        expect(sharpMid).toBeGreaterThan(softHuge);
+    });
+
+    it("still prefers the same crisp content at higher native res", () => {
         const thumb = sharpEdges(128, 128);
-        const lowRes = scoreImageQuality(thumb, 640, 480, 80_000);
+        const lowRes = scoreImageQuality(thumb, 800, 600, 120_000);
         const highRes = scoreImageQuality(thumb, 4000, 3000, 2_500_000);
-        expect(highRes).toBeGreaterThan(lowRes + 0.35);
-        expect(lowRes).toBe(0);
+        expect(highRes).toBeGreaterThan(lowRes);
+        expect(lowRes).toBeGreaterThan(0.3);
     });
 
     it("returns a value in [0, 1]", () => {

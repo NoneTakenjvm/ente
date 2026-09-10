@@ -10,7 +10,7 @@ export type ImageQualitySort = "none" | "worst" | "best";
  * Persisted index schema version. Bump when the score formula changes so old
  * scores are discarded and Manage → Scan must run again.
  */
-export const QUALITY_INDEX_VERSION = 2 as const;
+export const QUALITY_INDEX_VERSION = 3 as const;
 
 const BLOCK = 16;
 /** Long-edge px where resolution score reaches 0 / 1. */
@@ -52,9 +52,10 @@ export const resolutionQualityScore = (
 /**
  * Combined quality in `[0, 1]` (higher = better).
  *
- * Primary signal is **resolution × structured sharpness** (product), so low-res
- * or soft thumbs cannot float to the top of Best. Grain and pixelation are
- * mild extra penalties only.
+ * Primary signal is **what the pixels look like at analysis size** (structured
+ * sharpness, minus grain/pixelation) — a proxy for “how does this look when
+ * shown at a common size?”. Native resolution is only a soft multiplier so a
+ * sharp smaller file can outrank a soft larger one.
  *
  * {@link imageData} should already be capped at {@link QUALITY_ANALYSIS_MAX}.
  */
@@ -71,6 +72,8 @@ export const scoreImageQuality = (
     const bpp = fileBytes > 0 ? (fileBytes * 8) / pixels : 0;
 
     const resolutionScore = resolutionQualityScore(ow, oh);
+    // Soft floor: tiny files still lose some ground, but never zero out a crisp thumb.
+    const resolutionFactor = 0.62 + 0.38 * resolutionScore;
 
     const w = imageData.width;
     const h = imageData.height;
@@ -188,13 +191,14 @@ export const scoreImageQuality = (
             clamp((1.4 - bpp) / 1.4, 0, 1) :
             0;
 
-    // Resolution × sharpness is the ranking spine. Extra defects are mild.
-    const score =
-        resolutionScore *
+    // Content first (how the thumb looks at a common size), then soft res.
+    const contentScore =
         (0.08 + 0.92 * sharpnessScore) *
-        (1 - 0.35 * grainPenalty) *
-        (1 - 0.35 * pixelationPenalty) *
+        (1 - 0.4 * grainPenalty) *
+        (1 - 0.4 * pixelationPenalty) *
         (1 - 0.3 * crushPenalty);
+
+    const score = contentScore * resolutionFactor;
 
     return clamp(Number(score.toFixed(4)), 0, 1);
 };
