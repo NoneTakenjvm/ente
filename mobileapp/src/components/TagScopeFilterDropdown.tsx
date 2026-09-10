@@ -35,6 +35,7 @@ import type { UpdatedAtSort } from "@/lib/updated-at-sort";
 import type { TagPreset } from "@/lib/tag-presets";
 import { cn } from "@/lib/utils";
 import { useTagStore } from "@/stores/tag-store";
+import { useUIStore } from "@/stores/ui-store";
 
 type OptionsSectionId =
     "tagPresence" |
@@ -245,6 +246,47 @@ export function TagScopeFilterDropdown({
     const setFavoritesScope = useTagStore((s) => s.setFavoritesScope);
     const setMediaScope = useTagStore((s) => s.setMediaScope);
     const setCroppedScope = useTagStore((s) => s.setCroppedScope);
+    const viewportTargetWidth = useUIStore((s) => s.viewportTargetWidth);
+    const viewportTargetHeight = useUIStore((s) => s.viewportTargetHeight);
+    const setViewportTargetSize = useUIStore((s) => s.setViewportTargetSize);
+    const resetViewportTargetToDevice = useUIStore(
+        (s) => s.resetViewportTargetToDevice,
+    );
+    const [viewportWidthDraft, setViewportWidthDraft] = useState(
+        () => String(useUIStore.getState().viewportTargetWidth),
+    );
+    const [viewportHeightDraft, setViewportHeightDraft] = useState(
+        () => String(useUIStore.getState().viewportTargetHeight),
+    );
+
+    const commitViewportWidth = (): void => {
+        const parsed = Number.parseInt(viewportWidthDraft, 10);
+        if (!Number.isFinite(parsed) || parsed < 1) {
+            setViewportWidthDraft(String(viewportTargetWidth));
+            return;
+        }
+        const next = Math.max(1, Math.round(parsed));
+        setViewportTargetSize(next, viewportTargetHeight);
+        setViewportWidthDraft(String(next));
+    };
+
+    const commitViewportHeight = (): void => {
+        const parsed = Number.parseInt(viewportHeightDraft, 10);
+        if (!Number.isFinite(parsed) || parsed < 1) {
+            setViewportHeightDraft(String(viewportTargetHeight));
+            return;
+        }
+        const next = Math.max(1, Math.round(parsed));
+        setViewportTargetSize(viewportTargetWidth, next);
+        setViewportHeightDraft(String(next));
+    };
+
+    const handleUseDeviceViewport = (): void => {
+        resetViewportTargetToDevice();
+        const size = useUIStore.getState();
+        setViewportWidthDraft(String(size.viewportTargetWidth));
+        setViewportHeightDraft(String(size.viewportTargetHeight));
+    };
     const tagScope = controlledScope ?? storeFilter.tagScope;
     const favoritesScope = controlledFavoritesScope ?? storeFilter.favoritesScope;
     const mediaScope = controlledMediaScope ?? storeFilter.mediaScope;
@@ -927,6 +969,69 @@ export function TagScopeFilterDropdown({
                             Worst Fit
                         </DropdownMenuRadioItem>
                     </DropdownMenuRadioGroup>
+                    <div className="mt-2 flex flex-col gap-1.5 px-2 pb-1">
+                        <div className="flex items-center gap-1.5">
+                            <label className="flex min-w-0 flex-1 items-center gap-1 text-xs text-muted-foreground">
+                                <span className="shrink-0">W</span>
+                                <Input
+                                    type="number"
+                                    inputMode="numeric"
+                                    min={1}
+                                    step={1}
+                                    value={viewportWidthDraft}
+                                    onChange={(event) =>
+                                        setViewportWidthDraft(event.target.value)
+                                    }
+                                    onBlur={commitViewportWidth}
+                                    onKeyDown={(event) => {
+                                        event.stopPropagation();
+                                        if (event.key === "Enter") {
+                                            event.currentTarget.blur();
+                                        }
+                                    }}
+                                    onClick={(event) => event.stopPropagation()}
+                                    className="h-7 px-1.5 text-xs tabular-nums"
+                                    aria-label="Target viewport width"
+                                />
+                            </label>
+                            <label className="flex min-w-0 flex-1 items-center gap-1 text-xs text-muted-foreground">
+                                <span className="shrink-0">H</span>
+                                <Input
+                                    type="number"
+                                    inputMode="numeric"
+                                    min={1}
+                                    step={1}
+                                    value={viewportHeightDraft}
+                                    onChange={(event) =>
+                                        setViewportHeightDraft(event.target.value)
+                                    }
+                                    onBlur={commitViewportHeight}
+                                    onKeyDown={(event) => {
+                                        event.stopPropagation();
+                                        if (event.key === "Enter") {
+                                            event.currentTarget.blur();
+                                        }
+                                    }}
+                                    onClick={(event) => event.stopPropagation()}
+                                    className="h-7 px-1.5 text-xs tabular-nums"
+                                    aria-label="Target viewport height"
+                                />
+                            </label>
+                        </div>
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 justify-start px-1 text-xs text-muted-foreground"
+                            onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                handleUseDeviceViewport();
+                            }}
+                        >
+                            Use device
+                        </Button>
+                    </div>
                 </OptionsSection>
             ) : null}
             {(showUpdatedAt || showViewportFit) && showImageSize ?

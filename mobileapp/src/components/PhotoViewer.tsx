@@ -62,6 +62,7 @@ import {
 } from "@/lib/media-kind";
 import { toRenderableImageBlob } from "@/lib/renderable-image";
 import { cn } from "@/lib/utils";
+import { deviceViewerSize } from "@/lib/viewport-fit";
 import { VIEW_SESSION_QUALIFY_MS } from "@/lib/view-sessions";
 import {
     forgetSessionVideoUrl,
@@ -375,6 +376,7 @@ export function PhotoViewer({
     const [carouselAnimating, setCarouselAnimating] = useState<boolean>(false);
     const [viewportWidth, setViewportWidth] = useState<number>(0);
     const [viewportHeight, setViewportHeight] = useState<number>(0);
+    const [deviceViewportLabel, setDeviceViewportLabel] = useState<string>("");
     const [chromeVisible, setChromeVisible] = useState<boolean>(true);
     const [videoScrubbing, setVideoScrubbing] = useState<boolean>(false);
     const coarsePointer = useCoarsePointer();
@@ -628,6 +630,23 @@ export function PhotoViewer({
         observer.observe(viewport);
         return (): void => {
             observer.disconnect();
+        };
+    }, []);
+
+    useEffect(() => {
+        const updateDeviceSize = (): void => {
+            const size = deviceViewerSize();
+            setDeviceViewportLabel(`${size.width}×${size.height}`);
+        };
+        updateDeviceSize();
+        window.addEventListener("resize", updateDeviceSize);
+        window.visualViewport?.addEventListener("resize", updateDeviceSize);
+        return (): void => {
+            window.removeEventListener("resize", updateDeviceSize);
+            window.visualViewport?.removeEventListener(
+                "resize",
+                updateDeviceSize,
+            );
         };
     }, []);
 
@@ -2269,6 +2288,17 @@ export function PhotoViewer({
                         {slideOffsets.map((offset) => renderSlide(offset))}
                     </div>
                 </div>
+                {chromeVisible && !cropMode && deviceViewportLabel ? (
+                    <span
+                        className={cn(
+                            "pointer-events-none absolute left-3 z-20 rounded bg-black/60 px-1.5 py-0.5 text-[10px] leading-none text-white tabular-nums",
+                            isVideo ? "bottom-40" : "bottom-24",
+                        )}
+                        aria-hidden
+                    >
+                        {deviceViewportLabel}
+                    </span>
+                ) : null}
             </div>
 
             <div

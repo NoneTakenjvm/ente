@@ -5,22 +5,49 @@ import { fileAspectRatio } from "@/lib/file-aspect-ratio";
 /** Gallery reorder by how well each file matches the viewer aspect. */
 export type ViewportFitSort = "none" | "best" | "worst";
 
+/** CSS pixel size of the visual viewport (or window when unavailable). */
+export type ViewerSize = { width: number; height: number };
+
+/**
+ * Live visual-viewport size on this device (CSS px).
+ *
+ * Uses the visual viewport when available so mobile browser chrome is excluded.
+ * SSR-safe: returns `{ width: 1, height: 1 }` when `window` is missing.
+ */
+export const deviceViewerSize = (): ViewerSize => {
+    if (typeof window === "undefined") {
+        return { width: 1, height: 1 };
+    }
+    const viewport = window.visualViewport;
+    const width = Math.round(viewport?.width ?? window.innerWidth);
+    const height = Math.round(viewport?.height ?? window.innerHeight);
+    if (width <= 0 || height <= 0) {
+        return { width: 1, height: 1 };
+    }
+    return { width, height };
+};
+
+/**
+ * Aspect ratio (width / height) for a configured or live viewport size.
+ */
+export const viewportTargetAspectRatio = (
+    width: number,
+    height: number,
+): number => {
+    if (width <= 0 || height <= 0) {
+        return 1;
+    }
+    return width / height;
+};
+
 /**
  * Aspect ratio (width / height) of the photo viewer media area on this device.
  *
  * Uses the visual viewport when available so mobile browser chrome is excluded.
  */
 export const deviceViewerAspectRatio = (): number => {
-    if (typeof window === "undefined") {
-        return 1;
-    }
-    const viewport = window.visualViewport;
-    const width = viewport?.width ?? window.innerWidth;
-    const height = viewport?.height ?? window.innerHeight;
-    if (width <= 0 || height <= 0) {
-        return 1;
-    }
-    return width / height;
+    const { width, height } = deviceViewerSize();
+    return viewportTargetAspectRatio(width, height);
 };
 
 /**

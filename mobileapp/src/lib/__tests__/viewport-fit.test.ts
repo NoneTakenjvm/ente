@@ -5,6 +5,7 @@ import {
     sortFilesByViewportFit,
     viewportBlankFraction,
     viewportCropFraction,
+    viewportTargetAspectRatio,
 } from "@/lib/viewport-fit";
 
 const fileWithAspect = (id: number, width: number, height: number): EnteFile =>
@@ -14,6 +15,17 @@ const fileWithAspect = (id: number, width: number, height: number): EnteFile =>
     }) as EnteFile;
 
 describe("viewport-fit", () => {
+    it("viewportTargetAspectRatio returns width/height for valid sizes", () => {
+        expect(viewportTargetAspectRatio(390, 844)).toBeCloseTo(390 / 844);
+        expect(viewportTargetAspectRatio(16, 9)).toBeCloseTo(16 / 9);
+    });
+
+    it("viewportTargetAspectRatio falls back to 1 for non-positive sizes", () => {
+        expect(viewportTargetAspectRatio(0, 100)).toBe(1);
+        expect(viewportTargetAspectRatio(100, 0)).toBe(1);
+        expect(viewportTargetAspectRatio(-1, 10)).toBe(1);
+    });
+
     it("maxAspectRatioCrop fills height when the image is wider than the target", () => {
         // Display 400×300 (4:3), target 9:16 portrait ≈ 0.5625
         expect(maxAspectRatioCrop(400, 300, 9 / 16)).toEqual({
