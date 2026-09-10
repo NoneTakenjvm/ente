@@ -7,12 +7,15 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-10 |
-| **Last agent / session** | Recently viewed sessions |
+| **Last agent / session** | Responsive Tools vs individual buttons |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable |
-| **Next recommended action** | Phone QA: Recents tab + session tracking (`0.3.142`). |
+| **Next recommended action** | Phone QA: Tools wrench below `md`, individual icons at `md+` (`0.3.143`). |
 
 **This session shipped:**
+1. **Responsive Tools chrome** — below `md` keep Gallery Tools wrench dropdown; at `md+` show individual Query / Select / Stamp / Rotate icon buttons (albums: Select / Stamp / Rotate). Restored `TagQueryBuilderPanel` for wide layout. `APP_VERSION` → `0.3.143`.
+
+**Previous session shipped:**
 1. **Recently viewed sessions** — Recents tab (Albums→Recents→Manage); encrypted local `viewSessions` store; PhotoViewer records >1s full views (gallery/album); 1h resume; session list + view-only chronological detail with deleted placeholders + duplicate carousel slots (`initialIndex` + `readOnly`). Crop/replace remaps file ids. Delete session from session view header. Unit tests + Playwright `scripts/e2e-recents.ts` green. `APP_VERSION` → `0.3.142`.
 
 **Previous session shipped:**

@@ -10,6 +10,7 @@ import {
     TagQueryBuilderContent,
     type TagQueryBuilderContentProps,
 } from "@/components/TagQueryBuilderContent";
+import { TagQueryBuilderPanel } from "@/components/TagQueryBuilderPanel";
 import { Button } from "@/components/ui/button";
 import {
     DropdownMenu,
@@ -31,12 +32,12 @@ import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useUIStore } from "@/stores/ui-store";
 
 type GalleryToolsMenuProps = {
-    /** When set, include Query builder submenu (gallery filter bar). */
+    /** When set, include Query builder (gallery filter bar). */
     query?: TagQueryBuilderContentProps & { hasQueryContent: boolean };
 };
 
 /**
- * Collapses Select / Stamp / Rotate (and optional Query builder) into one menu.
+ * Gallery/album tools: wrench dropdown below `md`, individual icon buttons at `md+`.
  */
 export function GalleryToolsMenu({ query }: GalleryToolsMenuProps): JSX.Element {
     const selectionEnabled = useSelectionStore((s) => s.enabled);
@@ -76,97 +77,180 @@ export function GalleryToolsMenu({ query }: GalleryToolsMenuProps): JSX.Element 
     };
 
     return (
-        <DropdownMenu>
-            <DropdownMenuTrigger
-                render={
-                    <Button
-                        type="button"
-                        variant={triggerActive ? "secondary" : "outline"}
-                        size="icon-sm"
-                        aria-label="Gallery tools"
-                        aria-pressed={anyToolActive}
-                        title="Tools — select, stamp, rotate, query"
-                    >
-                        <Wrench />
-                    </Button>
-                }
-            />
-            <DropdownMenuContent align="end" className="min-w-48">
-                <DropdownMenuGroup>
-                    <DropdownMenuLabel>Tools</DropdownMenuLabel>
-                    {query ? (
-                        <DropdownMenuSub>
-                            <DropdownMenuSubTrigger
-                                className={cn(
-                                    query.hasQueryContent && "font-medium",
-                                )}
+        <>
+            <div className="md:hidden">
+                <DropdownMenu>
+                    <DropdownMenuTrigger
+                        render={
+                            <Button
+                                type="button"
+                                variant={triggerActive ? "secondary" : "outline"}
+                                size="icon-sm"
+                                aria-label="Gallery tools"
+                                aria-pressed={anyToolActive}
+                                title="Tools — select, stamp, rotate, query"
                             >
-                                <ListFilter />
-                                Query builder
-                            </DropdownMenuSubTrigger>
-                            <DropdownMenuSubContent
-                                className="flex max-h-[min(80dvh,28rem)] w-[min(100vw-2rem,24rem)] flex-col overflow-x-hidden overflow-y-auto overscroll-contain p-2"
-                                side="bottom"
-                                align="end"
+                                <Wrench />
+                            </Button>
+                        }
+                    />
+                    <DropdownMenuContent align="end" className="min-w-48">
+                        <DropdownMenuGroup>
+                            <DropdownMenuLabel>Tools</DropdownMenuLabel>
+                            {query ? (
+                                <DropdownMenuSub>
+                                    <DropdownMenuSubTrigger
+                                        className={cn(
+                                            query.hasQueryContent &&
+                                                "font-medium",
+                                        )}
+                                    >
+                                        <ListFilter />
+                                        Query builder
+                                    </DropdownMenuSubTrigger>
+                                    <DropdownMenuSubContent
+                                        className="flex max-h-[min(80dvh,28rem)] w-[min(100vw-2rem,24rem)] flex-col overflow-x-hidden overflow-y-auto overscroll-contain p-2"
+                                        side="bottom"
+                                        align="end"
+                                    >
+                                        <DropdownMenuLabel className="shrink-0 px-0">
+                                            Query builder
+                                        </DropdownMenuLabel>
+                                        <TagQueryBuilderContent
+                                            taggedCount={query.taggedCount}
+                                            untaggedCount={query.untaggedCount}
+                                            favoritesCount={
+                                                query.favoritesCount
+                                            }
+                                            notFavoritesCount={
+                                                query.notFavoritesCount
+                                            }
+                                            photoCount={query.photoCount}
+                                            videoCount={query.videoCount}
+                                            croppedCount={query.croppedCount}
+                                            notCroppedCount={
+                                                query.notCroppedCount
+                                            }
+                                        />
+                                    </DropdownMenuSubContent>
+                                </DropdownMenuSub>
+                            ) : null}
+                            {query ? <DropdownMenuSeparator /> : null}
+                            <DropdownMenuItem
+                                onClick={() => {
+                                    setEnabled(!selectionEnabled);
+                                }}
                             >
-                                <DropdownMenuLabel className="shrink-0 px-0">
-                                    Query builder
-                                </DropdownMenuLabel>
-                                <TagQueryBuilderContent
-                                    taggedCount={query.taggedCount}
-                                    untaggedCount={query.untaggedCount}
-                                    favoritesCount={query.favoritesCount}
-                                    notFavoritesCount={query.notFavoritesCount}
-                                    photoCount={query.photoCount}
-                                    videoCount={query.videoCount}
-                                    croppedCount={query.croppedCount}
-                                    notCroppedCount={query.notCroppedCount}
-                                />
-                            </DropdownMenuSubContent>
-                        </DropdownMenuSub>
-                    ) : null}
-                    {query ? <DropdownMenuSeparator /> : null}
-                    <DropdownMenuItem
-                        onClick={() => {
-                            setEnabled(!selectionEnabled);
-                        }}
-                    >
-                        <Check />
-                        Select
-                        {selectionEnabled ? (
-                            <span className="ml-auto text-xs text-muted-foreground">
-                                On
-                            </span>
-                        ) : null}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                        onClick={() => {
-                            activateStamp();
-                        }}
-                    >
-                        <Stamp />
-                        Stamp
-                        {stampActive ? (
-                            <span className="ml-auto text-xs text-muted-foreground">
-                                On
-                            </span>
-                        ) : null}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                        onClick={() => {
-                            setRotateActive(!rotateActive);
-                        }}
-                    >
-                        <RotateCw />
-                        Rotate
-                        {rotateActive ? (
-                            <span className="ml-auto text-xs text-muted-foreground">
-                                On
-                            </span>
-                        ) : null}
-                    </DropdownMenuItem>
-                </DropdownMenuGroup>
-            </DropdownMenuContent>
-        </DropdownMenu>
+                                <Check />
+                                Select
+                                {selectionEnabled ? (
+                                    <span className="ml-auto text-xs text-muted-foreground">
+                                        On
+                                    </span>
+                                ) : null}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                                onClick={() => {
+                                    activateStamp();
+                                }}
+                            >
+                                <Stamp />
+                                Stamp
+                                {stampActive ? (
+                                    <span className="ml-auto text-xs text-muted-foreground">
+                                        On
+                                    </span>
+                                ) : null}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                                onClick={() => {
+                                    setRotateActive(!rotateActive);
+                                }}
+                            >
+                                <RotateCw />
+                                Rotate
+                                {rotateActive ? (
+                                    <span className="ml-auto text-xs text-muted-foreground">
+                                        On
+                                    </span>
+                                ) : null}
+                            </DropdownMenuItem>
+                        </DropdownMenuGroup>
+                    </DropdownMenuContent>
+                </DropdownMenu>
+            </div>
+
+            <div className="hidden items-center gap-1 md:flex">
+                {query ? (
+                    <TagQueryBuilderPanel
+                        hasQueryContent={query.hasQueryContent}
+                        taggedCount={query.taggedCount}
+                        untaggedCount={query.untaggedCount}
+                        favoritesCount={query.favoritesCount}
+                        notFavoritesCount={query.notFavoritesCount}
+                        photoCount={query.photoCount}
+                        videoCount={query.videoCount}
+                        croppedCount={query.croppedCount}
+                        notCroppedCount={query.notCroppedCount}
+                    />
+                ) : null}
+                <Button
+                    type="button"
+                    variant={selectionEnabled ? "secondary" : "outline"}
+                    size="icon-sm"
+                    aria-label={
+                        selectionEnabled ?
+                            "Exit selection mode" :
+                            "Select media"
+                    }
+                    aria-pressed={selectionEnabled}
+                    onClick={() => {
+                        setEnabled(!selectionEnabled);
+                    }}
+                >
+                    <Check />
+                </Button>
+                <Button
+                    type="button"
+                    variant={stampActive ? "secondary" : "outline"}
+                    size="icon-sm"
+                    aria-label={
+                        stampActive ?
+                            "Exit stamp tool" :
+                            "Stamp tags onto photos"
+                    }
+                    aria-pressed={stampActive}
+                    title={
+                        stampActive ?
+                            "Exit stamp" :
+                            "Stamp — pick tags, tap photos"
+                    }
+                    onClick={activateStamp}
+                >
+                    <Stamp />
+                </Button>
+                <Button
+                    type="button"
+                    variant={rotateActive ? "secondary" : "outline"}
+                    size="icon-sm"
+                    aria-label={
+                        rotateActive ?
+                            "Exit rotate tool" :
+                            "Quick rotate photos"
+                    }
+                    aria-pressed={rotateActive}
+                    title={
+                        rotateActive ?
+                            "Exit rotate" :
+                            "Rotate — tap photos +90°, then Apply"
+                    }
+                    onClick={() => {
+                        setRotateActive(!rotateActive);
+                    }}
+                >
+                    <RotateCw />
+                </Button>
+            </div>
+        </>
     );
 }
