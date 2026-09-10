@@ -22,12 +22,14 @@ export type KitEmbeddingNearnessGenome = {
     minSeparation: number;
     /**
      * Prototype mode: ≥0.5 → mean centroid of seeds; &lt;0.5 → densest medoids.
-     * Continuous so the GA can treat it as a gene; clamped to 0 or 1 on bake.
+     * Continuous in the type so a search can treat it as a gene; baked to 0 or 1.
      */
     useCentroid: number;
 };
 
 /** Persisted tune outcome for one kit (only kept when it beats the default). */
+export const KIT_NEARNESS_TUNE_VERSION = 2;
+
 export type KitNearnessTuneResult = {
     genome: KitEmbeddingNearnessGenome;
     fitness: number;
@@ -37,6 +39,8 @@ export type KitNearnessTuneResult = {
     /** Epoch ms when the tune finished. */
     tunedAt: number;
     memberCount: number;
+    /** Required on persist; old blobs without it are ignored. */
+    tuneVersion: number;
 };
 
 export const DEFAULT_KIT_EMBEDDING_GENOME: KitEmbeddingNearnessGenome = {
@@ -44,7 +48,7 @@ export const DEFAULT_KIT_EMBEDDING_GENOME: KitEmbeddingNearnessGenome = {
     rivalLambda: KIT_EMBEDDING_RIVAL_LAMBDA,
     maxMedoids: MAX_KIT_EMBEDDING_MEDOIDS,
     minSeparation: KIT_EMBEDDING_MEDOID_MIN_SEPARATION,
-    useCentroid: 0,
+    useCentroid: 1,
 };
 
 /** Minimum fitness lift over the default genome before we persist a tune. */
@@ -62,7 +66,7 @@ export type KitEmbeddingGeneSpec = {
 
 export const KIT_EMBEDDING_GENE_SPECS: readonly KitEmbeddingGeneSpec[] = [
     { key: "rivalTau", lo: 0.02, hi: 0.4, integer: false },
-    { key: "rivalLambda", lo: 0, hi: 8, integer: false },
+    { key: "rivalLambda", lo: 0, hi: 24, integer: false },
     { key: "maxMedoids", lo: 1, hi: 5, integer: true },
     { key: "minSeparation", lo: 0.02, hi: 0.22, integer: false },
     { key: "useCentroid", lo: 0, hi: 1, integer: true },
@@ -112,7 +116,9 @@ export const parseKitNearnessTuneResult = (
     const baselineFitness = Number(row.baselineFitness);
     const tunedAt = Number(row.tunedAt);
     const memberCount = Number(row.memberCount);
+    const tuneVersion = Number(row.tuneVersion);
     if (
+        tuneVersion !== KIT_NEARNESS_TUNE_VERSION ||
         !Number.isFinite(fitness) ||
         !Number.isFinite(holdoutAuc) ||
         !Number.isFinite(holdoutTopK) ||
@@ -130,6 +136,7 @@ export const parseKitNearnessTuneResult = (
         baselineFitness,
         tunedAt,
         memberCount: Math.round(memberCount),
+        tuneVersion,
     };
 };
 

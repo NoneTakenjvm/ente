@@ -10,6 +10,8 @@ export const initSessionCacheKey = async (masterKey: string): Promise<string> =>
     return sessionCacheKey;
 };
 
+export const hasSessionCacheKey = (): boolean => sessionCacheKey !== undefined;
+
 export const getSessionCacheKey = (): string => {
     if (!sessionCacheKey) {
         throw new Error("Cache key not initialized — login required");

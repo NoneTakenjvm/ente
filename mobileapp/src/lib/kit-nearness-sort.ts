@@ -594,12 +594,6 @@ export const rankKitsByBestFitShare = (
 };
 
 /**
- * Format a 0..1 share as a whole-number percent for kit labels.
- */
-export const formatKitFitPercent = (share: number): string =>
-    `${Math.round(Math.max(0, Math.min(1, share)) * 100)}%`;
-
-/**
  * Reorder by competitive kit nearness (selected + soft rival penalty).
  *
  * When there are no selected medoids, returns a shallow copy unchanged.
@@ -651,12 +645,16 @@ export const sortFilesByKitNearnessCompetitive = (
 
 /**
  * Softmax-style scale for CLIP kit–kit distinctiveness (cosine distance 0..2).
- * Tuned loosely to corpus separations (~0.05–0.3 between kit centroids).
+ * Smaller τ lets even similar rival kits compete. S2 research (savedAll
+ * rivals): 0.02 beat 0.06 on hard AUC with no easy-AUC collapse.
  */
-export const KIT_EMBEDDING_RIVAL_TAU = 0.12;
+export const KIT_EMBEDDING_RIVAL_TAU = 0.02;
 
-/** Multiplier on the strongest rival steal penalty (CLIP path). */
-export const KIT_EMBEDDING_RIVAL_LAMBDA = 4;
+/**
+ * Multiplier on the strongest rival steal penalty (CLIP path).
+ * S2 pass 3b on production rivals: 16 is the plateau start; 24 is +0.3pp more.
+ */
+export const KIT_EMBEDDING_RIVAL_LAMBDA = 16;
 
 /**
  * Max CLIP visual modes per kit / tag-filter fit set.
@@ -985,6 +983,25 @@ export const kitEmbeddingDistanceCompetitive = (
 };
 
 /**
+ * Per-rival steal weights for {@link kitEmbeddingDistanceCompetitive}:
+ * distinctiveness of each rival medoid set from the selected one. Computed
+ * once per kit so every candidate scored against it reuses them; rivals
+ * without medoids weigh 0.
+ */
+export const kitEmbeddingRivalWeights = (
+    selectedMedoids: readonly (readonly number[])[],
+    rivalMedoidSets: readonly (readonly (readonly number[])[])[],
+    tau: number = KIT_EMBEDDING_RIVAL_TAU,
+): number[] =>
+    rivalMedoidSets.map((rival) =>
+        rival.length ?
+            kitDistinctiveness(
+                kitEmbeddingMedoidSetDistance(selectedMedoids, rival),
+                tau,
+            ) :
+            0);
+
+/**
  * Reorder gallery by CLIP competitive nearness (lowest distance first).
  *
  * Videos are appended in original order after ranked stills — never scored by
@@ -1012,14 +1029,11 @@ export const sortFilesByKitEmbeddingCompetitive = (
             stills.push(file);
         }
     }
-    const tau = options?.tau ?? KIT_EMBEDDING_RIVAL_TAU;
-    const rivalWeights = rivalMedoidSets.map((rival) =>
-        rival.length ?
-            kitDistinctiveness(
-                kitEmbeddingMedoidSetDistance(selectedMedoids, rival),
-                tau,
-            ) :
-            0);
+    const rivalWeights = kitEmbeddingRivalWeights(
+        selectedMedoids,
+        rivalMedoidSets,
+        options?.tau,
+    );
     const scoreOptions = { ...options, rivalWeights };
     stills.sort((a, b) => {
         const scoreA = kitEmbeddingDistanceCompetitive(
@@ -1042,98 +1056,4 @@ export const sortFilesByKitEmbeddingCompetitive = (
         return a.id - b.id;
     });
     return [...stills, ...videos];
-};
-
-/**
- * Rank kits by how often each is the nearest CLIP medoid-set for an embedded file.
- *
- * Medoids are built from kit members in `seedFiles` (typically the full library).
- * Claim shares are counted over embedded files in `scoreFiles` (typically the
- * currently shown gallery). Using the same list for both leaves all shares at 0%
- * when the visible set contains no tagged kit seeds.
- *
- * @param seedFiles files used to find kit prototypes; defaults to `scoreFiles`
- */
-export const rankKitsByBestFitShareEmbedding = (
-    kits: readonly { id: string; tags: readonly string[] }[],
-    scoreFiles: readonly EnteFile[],
-    embeddings: ReadonlyMap<number, number[]>,
-    seedFiles: readonly EnteFile[] = scoreFiles,
-): KitBestFitShare[] => {
-    if (!kits.length) {
-        return [];
-    }
-
-    const medoidsByKit = new Map<string, (readonly number[])[]>();
-    for (const kit of kits) {
-        const seeds = listKitSeedFiles(seedFiles, kit.tags);
-        const medoids = pickKitEmbeddingMedoids(
-            seeds.map((file) => file.id),
-            embeddings,
-        );
-        medoidsByKit.set(
-            kit.id,
-            medoids.map((medoid) => medoid.vector),
-        );
-    }
-
-    const winCounts = new Map<string, number>();
-    for (const kit of kits) {
-        winCounts.set(kit.id, 0);
-    }
-
-    let scored = 0;
-    for (const file of scoreFiles) {
-        if (isEnteVideoFile(file) || !embeddings.has(file.id)) {
-            continue;
-        }
-        let bestId: string | undefined;
-        let bestDistance = Number.POSITIVE_INFINITY;
-        for (const kit of kits) {
-            const medoids = medoidsByKit.get(kit.id) ?? [];
-            if (!medoids.length) {
-                continue;
-            }
-            const distance = kitEmbeddingMinDistance(
-                file.id,
-                medoids,
-                embeddings,
-            );
-            if (!Number.isFinite(distance)) {
-                continue;
-            }
-            if (
-                bestId === undefined ||
-                distance < bestDistance ||
-                (distance === bestDistance && kit.id < bestId)
-            ) {
-                bestDistance = distance;
-                bestId = kit.id;
-            }
-        }
-        if (bestId === undefined) {
-            continue;
-        }
-        scored += 1;
-        winCounts.set(bestId, (winCounts.get(bestId) ?? 0) + 1);
-    }
-
-    const ranked: KitBestFitShare[] = kits.map((kit) => {
-        const winCount = winCounts.get(kit.id) ?? 0;
-        return {
-            presetId: kit.id,
-            winCount,
-            share: scored > 0 ? winCount / scored : 0,
-        };
-    });
-    ranked.sort((a, b) => {
-        if (b.share !== a.share) {
-            return b.share - a.share;
-        }
-        if (b.winCount !== a.winCount) {
-            return b.winCount - a.winCount;
-        }
-        return a.presetId.localeCompare(b.presetId);
-    });
-    return ranked;
 };

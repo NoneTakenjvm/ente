@@ -4,7 +4,6 @@ import {
     blendedNearnessDistance,
     buildKitEmbeddingCentroid,
     fileMatchesKitTags,
-    formatKitFitPercent,
     kitDistance,
     kitDistinctiveness,
     kitNearnessDistance,
@@ -13,7 +12,6 @@ import {
     pickKitEmbeddingMedoids,
     pickKitMedoids,
     rankKitsByBestFitShare,
-    rankKitsByBestFitShareEmbedding,
     sortFilesByKitEmbeddingCompetitive,
     sortFilesByKitNearness,
     sortFilesByKitNearnessCompetitive,
@@ -375,7 +373,6 @@ describe("rankKitsByBestFitShare", () => {
         expect(ranked.map((row) => row.presetId)).toEqual(["a", "b"]);
         expect(ranked[0]!.winCount + ranked[1]!.winCount).toBe(5);
         expect(ranked[0]!.share).toBeGreaterThan(ranked[1]!.share);
-        expect(formatKitFitPercent(0.2)).toBe("20%");
     });
 
     it("returns 0 share when kits have no hashed seeds", () => {
@@ -453,38 +450,5 @@ describe("CLIP kit embedding nearness", () => {
         expect(c).toBeDefined();
         expect(c!.length).toBe(512);
         expect(Math.abs(c![0]! - c![1]!)).toBeLessThan(1e-5);
-    });
-
-    it("rankKitsByBestFitShareEmbedding seeds from library, scores visible set", () => {
-        const kitSeed = pad512(1, 0);
-        const visibleNear = pad512(0.95, 0.05);
-        const visibleFar = pad512(0, 1);
-        const library = [
-            fileWithTags(1, ["beach"]),
-            fileWithTags(10, []),
-            fileWithTags(20, []),
-        ];
-        const visible = [library[1]!, library[2]!];
-        const embeddings = new Map<number, number[]>([
-            [1, kitSeed],
-            [10, visibleNear],
-            [20, visibleFar],
-        ]);
-        // Seeds only in library — visible set has no kit members.
-        const rankedEmptySeeds = rankKitsByBestFitShareEmbedding(
-            [{ id: "beach", tags: ["beach"] }],
-            visible,
-            embeddings,
-        );
-        expect(rankedEmptySeeds[0]!.share).toBe(0);
-
-        const ranked = rankKitsByBestFitShareEmbedding(
-            [{ id: "beach", tags: ["beach"] }],
-            visible,
-            embeddings,
-            library,
-        );
-        expect(ranked[0]!.share).toBe(1);
-        expect(ranked[0]!.winCount).toBe(2);
     });
 });

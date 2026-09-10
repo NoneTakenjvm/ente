@@ -36,7 +36,7 @@ import {
     type TagFilterSelection,
 } from "@/lib/tags";
 import { bulkAddTags, bulkRemoveTags } from "@/lib/tag-bulk-actions";
-import { rankKitsByBestFitShareEmbedding } from "@/lib/kit-nearness-sort";
+import { countKitPresenceInWorker } from "@/lib/kit-nearness-margins-job";
 import {
     matchNearnessFilterToKitPreset,
     nearnessFilterFromKitTags,
@@ -68,6 +68,9 @@ export function TagFilterBar({
     const tagFilter = useTagStore((s) => s.tagFilter);
     const includeInEffectsPresenceByName = useTagStore(
         (s) => s.includeInEffectsPresenceByName,
+    );
+    const includeInKitNearnessByName = useTagStore(
+        (s) => s.includeInKitNearnessByName,
     );
     const setTagFilterMode = useTagStore((s) => s.setTagFilterMode);
     const setKitTagsMode = useTagStore((s) => s.setKitTagsMode);
@@ -151,22 +154,45 @@ export function TagFilterBar({
         [allFiles, matchingFileIds],
     );
 
-    // Medoids from the full library; claim % among the currently shown set.
-    const kitLikenessFitShareById = useMemo((): ReadonlyMap<string, number> => {
+    /**
+     * Shown files that fit each kit, counted off-thread; empty until the
+     * worker answers (kit names show without a count meanwhile).
+     */
+    const [kitPresenceCountById, setKitPresenceCountById] = useState<
+        ReadonlyMap<string, number>
+    >(new Map());
+
+    useEffect(() => {
         if (!presets.length || !embeddingHydrated) {
-            return new Map();
+            setKitPresenceCountById(new Map());
+            return;
         }
-        const ranked = rankKitsByBestFitShareEmbedding(
-            presets,
-            matchingFiles,
-            embeddingEntries,
-            allFiles,
-        );
-        return new Map(ranked.map((row) => [row.presetId, row.share]));
+        let cancelled = false;
+        countKitPresenceInWorker({
+            kits: presets,
+            libraryFiles: allFiles,
+            viewFiles: matchingFiles,
+            embeddings: embeddingEntries,
+            fileIdsByTag,
+            includeInKitNearnessByName,
+        })
+            .then((counts) => {
+                if (!cancelled) {
+                    setKitPresenceCountById(counts);
+                }
+            })
+            .catch((error: unknown) => {
+                console.warn("Kit presence unavailable", error);
+            });
+        return (): void => {
+            cancelled = true;
+        };
     }, [
         allFiles,
         embeddingEntries,
         embeddingHydrated,
+        fileIdsByTag,
+        includeInKitNearnessByName,
         matchingFiles,
         presets,
     ]);
@@ -409,7 +435,7 @@ export function TagFilterBar({
                         onKitLikenessPresetIdChange={
                             handleKitLikenessPresetIdChange
                         }
-                        kitLikenessFitShareById={kitLikenessFitShareById}
+                        kitPresenceCountById={kitPresenceCountById}
                         kitLikenessRivalPenalty={kitLikenessRivalPenalty}
                         onKitLikenessRivalPenaltyChange={
                             setKitLikenessRivalPenalty

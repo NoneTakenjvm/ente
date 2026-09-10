@@ -41,6 +41,33 @@ describe("tag-presets", () => {
         ]);
     });
 
+    it("presetsFromPersisted drops unversioned nearness tunes", () => {
+        const presets = presetsFromPersisted([
+            {
+                id: "a",
+                name: "Trip",
+                tags: ["vietnam"],
+                nearnessTune: {
+                    genome: {
+                        rivalTau: 0.12,
+                        rivalLambda: 4,
+                        maxMedoids: 3,
+                        minSeparation: 0.08,
+                        useCentroid: 0,
+                    },
+                    fitness: 0.9,
+                    holdoutAuc: 0.8,
+                    holdoutTopK: 0.7,
+                    baselineFitness: 0.6,
+                    tunedAt: 1,
+                    memberCount: 40,
+                },
+            },
+        ]);
+        expect(presets).toHaveLength(1);
+        expect(presets[0]?.nearnessTune).toBeUndefined();
+    });
+
     it("normalizePresetTags dedupes", () => {
         expect(normalizePresetTags([" a ", "a", "b"])).toEqual(["a", "b"]);
     });

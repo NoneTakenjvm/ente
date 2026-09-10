@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { StateCreator } from "zustand";
 import type { PhashEntry } from "@/lib/crop-match";
+import { hasSessionCacheKey } from "@/lib/cache-key";
 import { hydratePhashIndex } from "@/lib/similarity-job";
 
 interface PhashIndexState {
@@ -16,6 +17,9 @@ const createPhashIndexStore: StateCreator<PhashIndexState> = (set) => ({
     isHydrated: false,
 
     hydrate: async (): Promise<void> => {
+        if (!hasSessionCacheKey()) {
+            return;
+        }
         const entries = await hydratePhashIndex();
         set({ entries, isHydrated: true });
     },

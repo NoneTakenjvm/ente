@@ -2,7 +2,9 @@
  * On-device CLIP image embeddings for kit nearness ranking.
  *
  * Inference runs in {@link ../workers/clip-embedding.worker.ts} (Transformers.js
- * + Xenova CLIP ViT-B/16). Prefers WebGPU `fp16`, falls back to WASM `q8`.
+ * + Xenova MobileCLIP-S2 vision tower). Loads WASM `fp32` first (ORT init),
+ * then upgrades to WebGPU `fp32` if the FastViT graph runs. Quantized S2 is
+ * skipped — the Xenova config pins vision to fp32.
  * Scan uses an ORT **batch size** (Auto or 4/8/12/16): multiple thumbnails go
  * through one forward pass. Up to two batches stay in flight so JPEG decode of
  * the next overlaps GPU work on the current. Embeddings are flushed to IDB as
@@ -37,15 +39,18 @@ import { isEnteVideoFile } from "@/lib/media-kind";
 import type { EnteFile } from "ente-media/file";
 import { useSettingsStore } from "@/stores/settings-store";
 import type {
+    ClipEmbeddingBatchMode,
     ClipEmbeddingDevice,
+    ClipEmbeddingDtype,
     ClipEmbeddingEmbedBatchDoneMessage,
     ClipEmbeddingInbound,
     ClipEmbeddingInitDoneMessage,
     ClipEmbeddingOutbound,
+    ClipEmbeddingTileTiming,
 } from "@/workers/clip-embedding-worker-types";
 
 /** Model id baked into corpus exports so offline eval stays consistent. */
-export const KIT_EMBEDDING_MODEL_ID = "Xenova/clip-vit-base-patch16";
+export const KIT_EMBEDDING_MODEL_ID = "Xenova/mobileclip_s2";
 
 export const KIT_EMBEDDING_DIMS = 512;
 
@@ -58,6 +63,9 @@ const writeChunkSize = 64;
 const progressMinIntervalMs = 200;
 
 let activeDevice: KitEmbeddingDevice | undefined;
+let activeDtype: ClipEmbeddingDtype | undefined;
+let activeBatchMode: ClipEmbeddingBatchMode | undefined;
+let batchFallbackReason: string | undefined;
 /** Why WebGPU was skipped / failed (for Settings toast + console). */
 let webGpuSkipReason: string | undefined;
 
@@ -79,7 +87,25 @@ type PendingInit = {
     reject: (error: Error) => void;
 };
 
+/** Row-major tile vectors for one thumbnail (`rows × columns × 512`). */
+export type KitTileEmbeddings = {
+    rows: number;
+    columns: number;
+    vectors: Float32Array;
+};
+
+export type KitTileEmbeddingResult = {
+    tiles: KitTileEmbeddings;
+    timing?: ClipEmbeddingTileTiming;
+};
+
+type PendingTiles = {
+    resolve: (result: KitTileEmbeddingResult) => void;
+    reject: (error: Error) => void;
+};
+
 const pendingBatches = new Map<number, PendingEmbedBatch>();
+const pendingTiles = new Map<number, PendingTiles>();
 let pendingInit: PendingInit | undefined;
 
 const isCoarsePointerMobile = (): boolean => {
@@ -120,6 +146,18 @@ export const resolveKitEmbeddingBatchSize = (
 export const getKitEmbeddingDevice = (): KitEmbeddingDevice | undefined =>
     activeDevice;
 
+/** Weight dtype actually loaded after init. */
+export const getKitEmbeddingDtype = (): ClipEmbeddingDtype | undefined =>
+    activeDtype;
+
+/** Last ORT issue mode (`batched` once a multi-image forward succeeds). */
+export const getKitEmbeddingBatchMode = ():
+    ClipEmbeddingBatchMode | undefined => activeBatchMode;
+
+/** Set when a true batch forward failed and the worker serialised. */
+export const getKitEmbeddingBatchFallbackReason = (): string | undefined =>
+    batchFallbackReason;
+
 /** Human-readable reason when the session fell back to WASM. */
 export const getKitEmbeddingWebGpuSkipReason = (): string | undefined =>
     webGpuSkipReason;
@@ -144,6 +182,7 @@ const attachMessageRouter = (worker: Worker): void => {
                 return;
             }
             activeDevice = done.device;
+            activeDtype = done.dtype;
             webGpuSkipReason = done.webGpuSkipReason;
             if (webGpuSkipReason && done.device === "wasm") {
                 console.warn(
@@ -151,6 +190,9 @@ const attachMessageRouter = (worker: Worker): void => {
                     webGpuSkipReason,
                 );
             }
+            console.warn(
+                `[kit-embedding] ${KIT_EMBEDDING_MODEL_ID} device=${done.device} dtype=${done.dtype ?? "?"}`,
+            );
             init.resolve();
             return;
         }
@@ -165,7 +207,33 @@ const attachMessageRouter = (worker: Worker): void => {
                 pending.reject(new Error(done.error));
                 return;
             }
+            if (done.batchMode) {
+                activeBatchMode = done.batchMode;
+            }
+            if (done.batchFallbackReason) {
+                batchFallbackReason = done.batchFallbackReason;
+            }
             pending.resolve(done.results);
+            return;
+        }
+        if (data.kind === "embed-tiles-done") {
+            const pending = pendingTiles.get(data.id);
+            if (!pending) {
+                return;
+            }
+            pendingTiles.delete(data.id);
+            if (data.error || !data.vectors) {
+                pending.reject(new Error(data.error ?? "embed-tiles failed"));
+                return;
+            }
+            pending.resolve({
+                tiles: {
+                    rows: data.rows,
+                    columns: data.columns,
+                    vectors: data.vectors,
+                },
+                timing: data.timing,
+            });
         }
         // Legacy single-embed replies are unused by the batch job path.
     };
@@ -182,7 +250,8 @@ const getClipWorker = (): Worker => {
     return clipWorker;
 };
 
-const ensureClipWorkerReady = async (): Promise<void> => {
+/** Load the model (WASM, then WebGPU upgrade) if it is not already resident. */
+export const ensureKitEmbeddingWorkerReady = async (): Promise<void> => {
     if (!initPromise) {
         initPromise = new Promise<void>((resolve, reject) => {
             const worker = getClipWorker();
@@ -194,6 +263,31 @@ const ensureClipWorkerReady = async (): Promise<void> => {
         });
     }
     await initPromise;
+};
+
+/**
+ * Embed every {@link kitTileGrid} tile of one thumbnail in the CLIP worker.
+ *
+ * Copies `bytes` before transferring, so the caller's buffer stays usable.
+ */
+export const embedKitTilesInWorker = async (
+    fileId: number,
+    bytes: Uint8Array,
+): Promise<KitTileEmbeddingResult> => {
+    await ensureKitEmbeddingWorkerReady();
+    return new Promise((resolve, reject) => {
+        const worker = getClipWorker();
+        const id = ++requestCounter;
+        const transfer = bytes.slice();
+        pendingTiles.set(id, { resolve, reject });
+        const message: ClipEmbeddingInbound = {
+            kind: "embed-tiles",
+            id,
+            fileId,
+            bytes: transfer,
+        };
+        worker.postMessage(message, [transfer.buffer]);
+    });
 };
 
 const embedBatchInWorker = (
@@ -379,8 +473,11 @@ export type KitEmbeddingProgress = {
     total: number;
     phase: "model" | "embed";
     device?: KitEmbeddingDevice;
-    /** ORT batch size (images per forward pass). */
+    dtype?: ClipEmbeddingDtype;
+    /** ORT batch size requested (images per forward pass). */
     batchSize?: number;
+    /** How the worker actually issued the last forward. */
+    batchMode?: ClipEmbeddingBatchMode;
 };
 
 export type RunKitEmbeddingJobOptions = {
@@ -458,15 +555,24 @@ export const runKitEmbeddingJob = async (
         ),
     );
     options.onProgress?.({ completed: 0, total: 1, phase: "model" });
-    await ensureClipWorkerReady();
+    await ensureKitEmbeddingWorkerReady();
     const device = activeDevice ?? "wasm";
     const batchSize = resolveKitEmbeddingBatchSize(
         device,
         useSettingsStore.getState().clipEmbeddingBatchSize,
     );
     console.warn(
-        `[kit-embedding] device=${device} batchSize=${batchSize}`,
+        `[kit-embedding] ${KIT_EMBEDDING_MODEL_ID} device=${device} dtype=${activeDtype ?? "?"} batchSize=${batchSize}`,
     );
+    options.onProgress?.({
+        completed: 0,
+        total: 1,
+        phase: "model",
+        device,
+        dtype: activeDtype,
+        batchSize,
+        batchMode: activeBatchMode,
+    });
     const maxReadyQueue = Math.max(batchSize * 3, 12);
 
     let candidates = imageFilesForPhash([...options.files], options.userId);
@@ -482,7 +588,9 @@ export const runKitEmbeddingJob = async (
             total: 0,
             phase: "embed",
             device,
+            dtype: activeDtype,
             batchSize,
+            batchMode: activeBatchMode,
         });
         return entries;
     }
@@ -508,7 +616,9 @@ export const runKitEmbeddingJob = async (
             total,
             phase: "embed",
             device,
+            dtype: activeDtype,
             batchSize,
+            batchMode: activeBatchMode,
         });
     };
 
@@ -681,6 +791,10 @@ export const terminateKitEmbeddingWorker = (): void => {
         pending.reject(new Error("CLIP worker terminated"));
     }
     pendingBatches.clear();
+    for (const pending of pendingTiles.values()) {
+        pending.reject(new Error("CLIP worker terminated"));
+    }
+    pendingTiles.clear();
     if (pendingInit) {
         pendingInit.reject(new Error("CLIP worker terminated"));
         pendingInit = undefined;
@@ -690,5 +804,8 @@ export const terminateKitEmbeddingWorker = (): void => {
     messageRouterAttached = false;
     initPromise = undefined;
     activeDevice = undefined;
+    activeDtype = undefined;
+    activeBatchMode = undefined;
+    batchFallbackReason = undefined;
     webGpuSkipReason = undefined;
 };

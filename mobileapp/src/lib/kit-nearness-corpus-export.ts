@@ -13,7 +13,9 @@ import type { PhashEntry } from "@/lib/crop-match";
 import {
     KIT_EMBEDDING_DIMS,
     KIT_EMBEDDING_MODEL_ID,
+    type KitTileEmbeddings,
 } from "@/lib/kit-embedding";
+import { KIT_TILE_LAYOUT_ID } from "@/lib/kit-tile-layout";
 import { tagSetKey, type TagPreset } from "@/lib/tag-presets";
 import { extractUserTags } from "@/lib/tags";
 import { isEnteVideoFile } from "@/lib/media-kind";
@@ -21,7 +23,7 @@ import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 import type { EnteFile } from "ente-media/file";
 
 /** Schema version for harness loaders. */
-export const KIT_NEARNESS_CORPUS_VERSION = 3 as const;
+export const KIT_NEARNESS_CORPUS_VERSION = 4 as const;
 
 /** Shown in the JSON so humans do not treat vectors as “anonymous content”. */
 export const KIT_NEARNESS_CORPUS_PRIVACY_NOTICE =
@@ -42,6 +44,16 @@ export type AnonymisedCorpusPhoto = {
      * ({@link KIT_EMBEDDING_MODEL_ID}).
      */
     embedding?: number[];
+    /** Where this photo's tile vectors sit in the float32 sidecar. */
+    tiles?: AnonymisedCorpusTiles;
+};
+
+export type AnonymisedCorpusTiles = {
+    /** First row of this photo in {@link AnonymisedKitNearnessCorpus.tileVectors}. */
+    offset: number;
+    /** {@link kitTileGrid} shape; `rows × columns` consecutive rows. */
+    rows: number;
+    columns: number;
 };
 
 export type AnonymisedCorpusKit = {
@@ -69,6 +81,14 @@ export type AnonymisedKitNearnessCorpus = {
     /** CLIP model id when any photo has an embedding. */
     embeddingModelId?: string;
     embeddingDims?: number;
+    /** {@link KIT_TILE_LAYOUT_ID} when any photo has tiles. */
+    tileLayout?: string;
+    /**
+     * All tile rows back to back (`embeddingDims` floats each), indexed by
+     * {@link AnonymisedCorpusPhoto.tiles}. Written as a binary sidecar, not
+     * JSON.
+     */
+    tileVectors?: Float32Array;
     /** Tagged photos only (user tags; system tags never included). */
     photos: AnonymisedCorpusPhoto[];
     /** Saved presets (names/ids discarded). */
@@ -86,6 +106,8 @@ export type BuildAnonymisedCorpusInput = {
     kits: readonly TagPreset[];
     /** Optional CLIP vectors keyed by Ente file id. */
     embeddings?: ReadonlyMap<number, number[]>;
+    /** Optional tile vectors ({@link KIT_TILE_LAYOUT_ID}) keyed by Ente file id. */
+    tileEmbeddings?: ReadonlyMap<number, KitTileEmbeddings>;
     /**
      * When set, only these tags appear in photos/kits (kit nearness allowlist).
      * Default: all user tags (legacy exports).
@@ -143,6 +165,9 @@ const toCorpusPhoto = (
     }
     return photo;
 };
+
+const hasCompleteGrid = (tiles: KitTileEmbeddings): boolean =>
+    tiles.vectors.length === tiles.rows * tiles.columns * KIT_EMBEDDING_DIMS;
 
 /**
  * Rank exact multi-tag sets from corpus photos (mirrors {@link suggestTagKits}).
@@ -250,17 +275,30 @@ export const buildAnonymisedKitNearnessCorpus = (
 
     const shuffledFiles = shuffleCopy(eligible, random);
     let embeddingCount = 0;
+    const tileMatrices: Float32Array[] = [];
+    let tileRowCount = 0;
     const photos: AnonymisedCorpusPhoto[] = shuffledFiles.map((file, index) => {
         const embedding = input.embeddings?.get(file.id);
         if (embedding?.length === KIT_EMBEDDING_DIMS) {
             embeddingCount += 1;
         }
-        return toCorpusPhoto(
+        const photo = toCorpusPhoto(
             index + 1,
             input.phashEntries.get(file.id),
             remapTags(extractUserTags(file)),
             embedding,
         );
+        const tiles = input.tileEmbeddings?.get(file.id);
+        if (tiles && hasCompleteGrid(tiles)) {
+            photo.tiles = {
+                offset: tileRowCount,
+                rows: tiles.rows,
+                columns: tiles.columns,
+            };
+            tileMatrices.push(tiles.vectors);
+            tileRowCount += tiles.rows * tiles.columns;
+        }
+        return photo;
     });
 
     const kits: AnonymisedCorpusKit[] = [];
@@ -289,14 +327,29 @@ export const buildAnonymisedKitNearnessCorpus = (
         corpus.embeddingModelId = KIT_EMBEDDING_MODEL_ID;
         corpus.embeddingDims = KIT_EMBEDDING_DIMS;
     }
+    if (tileRowCount > 0) {
+        corpus.tileLayout = KIT_TILE_LAYOUT_ID;
+        const tileVectors = new Float32Array(tileRowCount * KIT_EMBEDDING_DIMS);
+        let offset = 0;
+        for (const matrix of tileMatrices) {
+            tileVectors.set(matrix, offset);
+            offset += matrix.length;
+        }
+        corpus.tileVectors = tileVectors;
+    }
     return corpus;
 };
 
 /**
  * Serialize with an explicit allowlist so future fields cannot leak by accident.
+ *
+ * @param tileSidecar filename of the float32 sidecar holding
+ * {@link AnonymisedKitNearnessCorpus.tileVectors}; recorded in the JSON when
+ * the corpus has tiles.
  */
 export const serializeAnonymisedKitNearnessCorpus = (
     corpus: AnonymisedKitNearnessCorpus,
+    tileSidecar?: string,
 ): string => {
     const photos = corpus.photos.map((photo) => {
         const row: Record<string, unknown> = {
@@ -309,6 +362,13 @@ export const serializeAnonymisedKitNearnessCorpus = (
         }
         if (photo.embedding !== undefined) {
             row.embedding = photo.embedding;
+        }
+        if (photo.tiles !== undefined) {
+            row.tiles = {
+                offset: photo.tiles.offset,
+                rows: photo.tiles.rows,
+                columns: photo.tiles.columns,
+            };
         }
         return row;
     });
@@ -334,19 +394,45 @@ export const serializeAnonymisedKitNearnessCorpus = (
     if (corpus.embeddingDims) {
         doc.embeddingDims = corpus.embeddingDims;
     }
+    if (corpus.tileLayout && corpus.tileVectors) {
+        doc.tileLayout = corpus.tileLayout;
+        doc.tileRows = corpus.tileVectors.length / KIT_EMBEDDING_DIMS;
+        if (tileSidecar) {
+            doc.tileSidecar = tileSidecar;
+        }
+    }
     return `${JSON.stringify(doc)}\n`;
 };
 
 /**
- * Trigger a browser download of the corpus JSON.
+ * Trigger a browser download of the corpus JSON, plus a little-endian float32
+ * sidecar (`<name>-tiles.f32`) when the corpus has tile vectors. The browser
+ * may ask once to allow the second download.
  */
 export const downloadAnonymisedKitNearnessCorpus = (
     corpus: AnonymisedKitNearnessCorpus,
     filename = "kit-nearness-corpus.json",
 ): void => {
-    const blob = new Blob([serializeAnonymisedKitNearnessCorpus(corpus)], {
-        type: "application/json",
-    });
+    const tileSidecar = corpus.tileVectors ?
+        `${filename.replace(/\.json$/, "")}-tiles.f32` :
+        undefined;
+    downloadBlob(
+        new Blob([serializeAnonymisedKitNearnessCorpus(corpus, tileSidecar)], {
+            type: "application/json",
+        }),
+        filename,
+    );
+    if (corpus.tileVectors && tileSidecar) {
+        downloadBlob(
+            new Blob([corpus.tileVectors.buffer as ArrayBuffer], {
+                type: "application/octet-stream",
+            }),
+            tileSidecar,
+        );
+    }
+};
+
+const downloadBlob = (blob: Blob, filename: string): void => {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
