@@ -47,7 +47,7 @@ export function TagQueryBuilderPanel({
     const removeNode = useTagStore((s) => s.removeNode);
     const setClauseMode = useTagStore((s) => s.setClauseMode);
     const setClauseInGroup = useTagStore((s) => s.setClauseInGroup);
-    const setKitTagsInGroup = useTagStore((s) => s.setKitTagsInGroup);
+    const setKitInGroup = useTagStore((s) => s.setKitInGroup);
 
     return (
         <DropdownMenu>
@@ -88,7 +88,7 @@ export function TagQueryBuilderPanel({
                             removeNode,
                             setClauseMode,
                             setClauseInGroup,
-                            setKitTagsInGroup,
+                            setKitInGroup,
                         }}
                         taggedCount={taggedCount}
                         untaggedCount={untaggedCount}

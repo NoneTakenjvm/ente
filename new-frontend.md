@@ -7,13 +7,22 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-10 |
-| **Last agent / session** | Fast optimistic favourites |
+| **Last agent / session** | Quick-rotate gallery mode feasibility |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable |
-| **Next recommended action** | Phone QA: favourite toggle should feel instant on large libraries (`0.3.137`). Also prior `0.3.136` Options Filter UX. **Note:** working tree uncommitted since `85cffccd44`. |
+| **Next recommended action** | If desired: ship stamp-like “quick rotate 90° CW” gallery mode on existing `rotateAndUploadFile` (images only; creates derived JPEG + `rotated` tag). Else continue phone QA on `0.3.139`. |
 
 **This session shipped:**
-1. **Fast optimistic favourites** — star/unstar patches `favoriteFileIds` in O(1) for owned files (no full-library `deriveFavoriteFileIDs`); pending+ids in one store update; gallery skips favourite-store subscription unless Favourites filter is active; filter-bar count deferred. Lint, favorites tests, build green. `APP_VERSION` → `0.3.137`.
+1. **Feasibility only (nothing shipped)** — Quick rotate from gallery is high-confidence: stamp-mode UX pattern + `rotateAndUploadFile` / `rotateImageBytes` / `uploadRotatedImage` already exist. Open product choice: tap-to-rotate mode vs select-then-rotate; derived copy (not in-place) matches crop editor today.
+
+**Previous session shipped:**
+1. **Query builder UX** — Add-tag submenu scrolls with wheel anywhere over the list (`stopPropagation` + flex scroll); type tabs use native `overflow-x-auto`; picker work deferred until open and kit counts ranked once; first-class `TagFilterKitNode` (Has = all tags, Not = missing ≥1) so `(NOT kitA) OR (NOT kitB)` needs no manual grouping. Lint, targeted tests, build green. `APP_VERSION` → `0.3.139`.
+
+**Previous session shipped:**
+1. **Compress video speed** — skip slow `decodeAudioData` AAC fallback; remux prefers `-c:a copy` (original audio onto hardware video), AAC only if copy fails; WebCodecs `latencyMode: "realtime"`. `APP_VERSION` → `0.3.138`.
+
+**Previous session shipped:**
+1. **Fast optimistic favourites** — `APP_VERSION` → `0.3.137`.
 
 **Previous session shipped:**
 1. **Options Filter UX** — same collapsible pattern as Sort: Clear at the top (resets all scopes to All); Tag presence / Favourites / Manual crop / Media type collapse behind title+chevron and auto-expand when that scope isn’t All. Shared `OptionsSection` helper. `APP_VERSION` → `0.3.136`.

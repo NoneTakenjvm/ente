@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-    kitTagsAreIncluded,
+    findKitModeInGroup,
+    kitIsIncluded,
     setClauseInGroupOnFilter,
     setClauseModeOnFilter,
-    setKitTagsModeOnFilter,
+    setKitModeOnFilter,
     setTagFilterModeOnFilter,
 } from "@/lib/tag-filter-mutations";
 import {
@@ -11,6 +12,7 @@ import {
     emptyTagFilter,
     findClauseInGroup,
     isFlatTagFilterRoot,
+    isTagFilterKit,
     newTagFilterNodeId,
     type TagFilterClauseNode,
     type TagFilterGroup,
@@ -36,6 +38,17 @@ describe("tag-filter-mutations", () => {
         expect(
             isFlatTagFilterRoot(andRoot(includeClause("a"), includeClause("b"))),
         ).toBe(true);
+    });
+
+    it("isFlatTagFilterRoot is true for kit leaves", () => {
+        let filter = emptyTagFilter();
+        filter = setKitModeOnFilter(
+            filter,
+            { presetId: "k1", name: "Beach", tags: ["a", "b"] },
+            "include",
+        );
+        expect(isFlatTagFilterRoot(filter.root)).toBe(true);
+        expect(isTagFilterKit(filter.root.children[0])).toBe(true);
     });
 
     it("isFlatTagFilterRoot is false when nested groups exist", () => {
@@ -85,13 +98,28 @@ describe("tag-filter-mutations", () => {
         expect(updated.mode).toBe("exclude");
     });
 
-    it("setKitTagsModeOnFilter includes or clears every kit tag", () => {
+    it("setKitModeOnFilter adds one kit unit (not expanded tags)", () => {
         let filter = emptyTagFilter();
-        filter = setKitTagsModeOnFilter(filter, ["a", "b"], "include");
-        expect(kitTagsAreIncluded(filter.root, ["a", "b"])).toBe(true);
-        expect(filter.root.children).toHaveLength(2);
-        filter = setKitTagsModeOnFilter(filter, ["a", "b"], null);
-        expect(kitTagsAreIncluded(filter.root, ["a", "b"])).toBe(false);
+        filter = setKitModeOnFilter(
+            filter,
+            { presetId: "k1", name: "Beach", tags: ["a", "b"] },
+            "include",
+        );
+        expect(kitIsIncluded(filter.root, "k1")).toBe(true);
+        expect(filter.root.children).toHaveLength(1);
+        expect(findKitModeInGroup(filter.root, "k1")).toBe("include");
+        filter = setKitModeOnFilter(
+            filter,
+            { presetId: "k1", name: "Beach", tags: ["a", "b"] },
+            "exclude",
+        );
+        expect(findKitModeInGroup(filter.root, "k1")).toBe("exclude");
+        filter = setKitModeOnFilter(
+            filter,
+            { presetId: "k1", name: "Beach", tags: ["a", "b"] },
+            null,
+        );
+        expect(findKitModeInGroup(filter.root, "k1")).toBeNull();
         expect(filter.root.children).toHaveLength(0);
     });
 

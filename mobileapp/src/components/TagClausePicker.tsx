@@ -1,4 +1,4 @@
-import { useMemo, useState, type JSX } from "react";
+import { useMemo, useState, type JSX, type WheelEvent } from "react";
 import { Tags } from "lucide-react";
 import { TagTypeTabBar } from "@/components/TagTypeTabBar";
 import { Badge } from "@/components/ui/badge";
@@ -16,13 +16,14 @@ import {
     tagsForTypeView,
 } from "@/lib/tag-types";
 import {
-    countFilesMatchingKit,
-    countFilesMatchingKitExact,
     KITS_TAB,
-    sortPresetsByMatchCount,
+    rankPresetsByMatchCount,
     type TagPreset,
 } from "@/lib/tag-presets";
-import { kitTagsAreIncluded } from "@/lib/tag-filter-mutations";
+import {
+    findKitModeInGroup,
+    type KitFilterInput,
+} from "@/lib/tag-filter-mutations";
 import {
     findClauseInGroup,
     findClauseModeForTag,
@@ -52,12 +53,12 @@ interface TagClausePickerProps {
         tag: string,
         mode: TagFilterMode | null,
     ) => void;
-    /** Prefer over looping onSetTagFilterMode when applying a kit at root. */
-    onSetKitTagsMode?: (tags: string[], mode: TagFilterMode | null) => void;
-    /** Prefer over looping onSetClauseInGroup when applying a kit in a group. */
-    onSetKitTagsInGroup?: (
+    /** Prefer when applying a kit at root. */
+    onSetKitMode?: (kit: KitFilterInput, mode: TagFilterMode | null) => void;
+    /** Prefer when applying a kit in a group. */
+    onSetKitInGroup?: (
         groupId: string,
-        tags: string[],
+        kit: KitFilterInput,
         mode: TagFilterMode | null,
     ) => void;
     /** When set, show an AND/OR/ONLY control for the root flat filter. */
@@ -71,15 +72,15 @@ interface TagClausePickerProps {
 }
 
 /**
- * Dropdown to add include/exclude tag clauses at the root or within one group.
- * Kits expand to their tags as include clauses.
+ * Dropdown to add include/exclude tag clauses or kit units at the root or
+ * within one group.
  */
 export function TagClausePicker({
     filter,
     onSetTagFilterMode,
     onSetClauseInGroup,
-    onSetKitTagsMode,
-    onSetKitTagsInGroup,
+    onSetKitMode,
+    onSetKitInGroup,
     onSetRootOp,
     targetGroupId,
     disabled = false,
@@ -88,6 +89,7 @@ export function TagClausePicker({
     triggerVariant = "outline",
     triggerSize = "sm",
 }: TagClausePickerProps): JSX.Element {
+    const [open, setOpen] = useState(false);
     const tags = useTagStore((s) => s.tags);
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
     const tagTypes = useTagStore((s) => s.tagTypes);
@@ -99,21 +101,6 @@ export function TagClausePicker({
     const [selectedType, setSelectedType] = useState<string>(ALL_TAG_TYPES_TAB);
 
     const isKitsTab = selectedType === KITS_TAB;
-
-    const visibleTags = useMemo(
-        (): string[] => {
-            if (isKitsTab) {
-                return [];
-            }
-            return tagsForTypeView(
-                tags.filter((tag) => !isReservedTag(tag)),
-                tagTypeByName,
-                selectedType,
-                fileIdsByTag,
-            );
-        },
-        [tags, tagTypeByName, selectedType, fileIdsByTag, isKitsTab],
-    );
 
     const scopedGroup = useMemo(
         (): ReturnType<typeof findTagFilterGroupById> =>
@@ -139,14 +126,33 @@ export function TagClausePicker({
         isRootPicker && isFlatRoot && onSetRootOp !== undefined;
     const isOnlyMode = activeGroup.op === "only";
 
-    const rankedPresets = useMemo((): TagPreset[] => {
-        if (!presets.length) {
+    const visibleTags = useMemo((): string[] => {
+        if (!open || isKitsTab) {
             return [];
         }
-        return sortPresetsByMatchCount(presets, allFiles, {
+        return tagsForTypeView(
+            tags.filter((tag) => !isReservedTag(tag)),
+            tagTypeByName,
+            selectedType,
+            fileIdsByTag,
+        );
+    }, [
+        open,
+        tags,
+        tagTypeByName,
+        selectedType,
+        fileIdsByTag,
+        isKitsTab,
+    ]);
+
+    const rankedPresets = useMemo((): { preset: TagPreset; count: number }[] => {
+        if (!open || !presets.length) {
+            return [];
+        }
+        return rankPresetsByMatchCount(presets, allFiles, {
             exact: isOnlyMode,
         });
-    }, [allFiles, isOnlyMode, presets]);
+    }, [open, allFiles, isOnlyMode, presets]);
 
     const resolveMode = (tag: string): TagFilterMode | null => {
         if (scopedGroup) {
@@ -165,24 +171,32 @@ export function TagClausePicker({
         }
     };
 
-    const handleKitInclude = (kitTags: string[]): void => {
-        const included = kitTagsAreIncluded(activeGroup, kitTags);
-        const nextMode: TagFilterMode | null = included ? null : "include";
-        if (scopedGroup && onSetKitTagsInGroup) {
-            onSetKitTagsInGroup(scopedGroup.id, kitTags, nextMode);
+    const handleKitModeChange = (
+        preset: TagPreset,
+        mode: TagFilterMode | null,
+    ): void => {
+        const kit: KitFilterInput = {
+            presetId: preset.id,
+            name: preset.name,
+            tags: [...preset.tags],
+        };
+        if (scopedGroup && onSetKitInGroup) {
+            onSetKitInGroup(scopedGroup.id, kit, mode);
             return;
         }
-        if (!scopedGroup && onSetKitTagsMode) {
-            onSetKitTagsMode(kitTags, nextMode);
-            return;
-        }
-        for (const tag of kitTags) {
-            handleModeChange(tag, nextMode);
+        if (!scopedGroup && onSetKitMode) {
+            onSetKitMode(kit, mode);
         }
     };
 
+    const stopWheelPropagation = (
+        event: WheelEvent<HTMLUListElement>,
+    ): void => {
+        event.stopPropagation();
+    };
+
     return (
-        <DropdownMenu>
+        <DropdownMenu open={open} onOpenChange={setOpen}>
             <DropdownMenuTrigger
                 disabled={isDisabled}
                 render={
@@ -204,7 +218,7 @@ export function TagClausePicker({
                 align="start"
                 className="flex max-h-72 w-[min(100vw-2rem,20rem)] flex-col overflow-hidden p-2"
             >
-                <DropdownMenuGroup className="flex min-h-0 flex-1 flex-col gap-2">
+                <DropdownMenuGroup className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
                     <DropdownMenuLabel className="shrink-0 px-0">
                         Has / not has / only
                     </DropdownMenuLabel>
@@ -258,27 +272,21 @@ export function TagClausePicker({
                         onSelect={setSelectedType}
                         leadingTabs={showKitsTab ? [KITS_TAB] : undefined}
                     />
-                    {isKitsTab ? (
+                    {!open ? null : isKitsTab ? (
                         rankedPresets.length === 0 ? (
                             <p className="shrink-0 px-1 py-2 text-xs text-muted-foreground">
                                 No kits yet. Create them in Manage → Tags.
                             </p>
                         ) : (
-                            <ul className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overscroll-contain">
-                                {rankedPresets.map((preset) => {
-                                    const included = kitTagsAreIncluded(
+                            <ul
+                                className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overscroll-contain"
+                                onWheel={stopWheelPropagation}
+                            >
+                                {rankedPresets.map(({ preset, count }) => {
+                                    const mode = findKitModeInGroup(
                                         activeGroup,
-                                        preset.tags,
+                                        preset.id,
                                     );
-                                    const count = isOnlyMode ?
-                                        countFilesMatchingKitExact(
-                                            allFiles,
-                                            preset.tags,
-                                        ) :
-                                        countFilesMatchingKit(
-                                            allFiles,
-                                            preset.tags,
-                                        );
                                     return (
                                         <li
                                             key={preset.id}
@@ -298,24 +306,59 @@ export function TagClausePicker({
                                             >
                                                 {count}
                                             </Badge>
-                                            <Button
-                                                type="button"
-                                                size="xs"
-                                                variant={
-                                                    included ?
-                                                        "default" :
-                                                        "outline"
-                                                }
-                                                className="h-7 px-2"
-                                                title="Include every tag in this kit"
-                                                onClick={() => {
-                                                    handleKitInclude(
-                                                        preset.tags,
-                                                    );
-                                                }}
-                                            >
-                                                Has
-                                            </Button>
+                                            <div className="flex shrink-0 items-center gap-1">
+                                                <Button
+                                                    type="button"
+                                                    size="xs"
+                                                    variant={
+                                                        mode === "include" ?
+                                                            "default" :
+                                                            "outline"
+                                                    }
+                                                    className="h-7 px-2"
+                                                    title="Has every tag in this kit"
+                                                    onClick={() => {
+                                                        handleKitModeChange(
+                                                            preset,
+                                                            mode === "include" ?
+                                                                null :
+                                                                "include",
+                                                        );
+                                                    }}
+                                                >
+                                                    Has
+                                                </Button>
+                                                <Button
+                                                    type="button"
+                                                    size="xs"
+                                                    variant={
+                                                        mode === "exclude" ?
+                                                            "destructive" :
+                                                            "outline"
+                                                    }
+                                                    className={cn(
+                                                        "h-7 px-2",
+                                                        mode === "exclude" &&
+                                                            "text-destructive-foreground",
+                                                    )}
+                                                    disabled={isOnlyMode}
+                                                    title={
+                                                        isOnlyMode ?
+                                                            "Not is unavailable in ONLY mode — exact tag set only" :
+                                                            "Not this kit (missing at least one tag)"
+                                                    }
+                                                    onClick={() => {
+                                                        handleKitModeChange(
+                                                            preset,
+                                                            mode === "exclude" ?
+                                                                null :
+                                                                "exclude",
+                                                        );
+                                                    }}
+                                                >
+                                                    Not
+                                                </Button>
+                                            </div>
                                         </li>
                                     );
                                 })}
@@ -326,7 +369,10 @@ export function TagClausePicker({
                             No tags in this group.
                         </p>
                     ) : (
-                        <ul className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overscroll-contain">
+                        <ul
+                            className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overscroll-contain"
+                            onWheel={stopWheelPropagation}
+                        >
                             {visibleTags.map((tag) => {
                                 const mode = resolveMode(tag);
                                 const count = tagFileCount(tag, fileIdsByTag);

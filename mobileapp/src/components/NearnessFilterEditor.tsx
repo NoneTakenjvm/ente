@@ -45,7 +45,7 @@ export function NearnessFilterEditor({
                 <TagClausePicker
                     filter={draft.filter}
                     onSetTagFilterMode={draft.actions.setTagFilterMode}
-                    onSetKitTagsMode={draft.actions.setKitTagsMode}
+                    onSetKitMode={draft.actions.setKitMode}
                     onSetRootOp={(op) => {
                         draft.actions.setGroupOp(draft.filter.root.id, op);
                     }}

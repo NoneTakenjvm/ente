@@ -1,5 +1,4 @@
 import type { JSX } from "react";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ALL_TAG_TYPES_TAB } from "@/lib/tag-types";
 import { cn } from "@/lib/utils";
@@ -23,7 +22,12 @@ export function TagTypeTabBar({
     const tabs = [...(leadingTabs ?? []), ALL_TAG_TYPES_TAB, ...types];
 
     return (
-        <ScrollArea className={cn("w-full whitespace-nowrap", className)}>
+        <div
+            className={cn(
+                "w-full overflow-x-auto overscroll-contain whitespace-nowrap",
+                className,
+            )}
+        >
             <ToggleGroup
                 value={[selected]}
                 onValueChange={(next) => {
@@ -41,7 +45,6 @@ export function TagTypeTabBar({
                     </ToggleGroupItem>
                 ))}
             </ToggleGroup>
-            <ScrollBar orientation="horizontal" />
-        </ScrollArea>
+        </div>
     );
 }

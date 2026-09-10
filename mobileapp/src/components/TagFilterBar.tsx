@@ -73,7 +73,7 @@ export function TagFilterBar({
         (s) => s.includeInKitNearnessByName,
     );
     const setTagFilterMode = useTagStore((s) => s.setTagFilterMode);
-    const setKitTagsMode = useTagStore((s) => s.setKitTagsMode);
+    const setKitMode = useTagStore((s) => s.setKitMode);
     const setGroupOp = useTagStore((s) => s.setGroupOp);
     const clearFilters = useTagStore((s) => s.clearFilters);
     const knownTags = useTagStore((s) => s.tags);
@@ -452,7 +452,7 @@ export function TagFilterBar({
                     <TagClausePicker
                         filter={tagFilter}
                         onSetTagFilterMode={setTagFilterMode}
-                        onSetKitTagsMode={setKitTagsMode}
+                        onSetKitMode={setKitMode}
                         onSetRootOp={(op) => {
                             setGroupOp(tagFilter.root.id, op);
                         }}

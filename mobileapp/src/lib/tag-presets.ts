@@ -1,11 +1,12 @@
 import { normalizeTagName } from "@/lib/tag-writes";
-import { setKitTagsModeOnFilter } from "@/lib/tag-filter-mutations";
+import { setKitModeOnFilter } from "@/lib/tag-filter-mutations";
 import {
     emptyTagFilter,
     extractUserTags,
     isFlatTagFilterRoot,
     isTagFilterActive,
     isTagFilterClause,
+    isTagFilterKit,
     type TagFilterSelection,
 } from "@/lib/tags";
 import { areAllTagsIncludedInKitNearness } from "@/lib/tag-types";
@@ -122,6 +123,24 @@ export const matchNearnessFilterToKitPreset = (
     if (filter.root.op !== "and") {
         return undefined;
     }
+    if (
+        filter.root.children.length === 1 &&
+        isTagFilterKit(filter.root.children[0])
+    ) {
+        const kit = filter.root.children[0];
+        if (kit.mode !== "include") {
+            return undefined;
+        }
+        if (kit.presetId) {
+            const byId = presets.find((preset) => preset.id === kit.presetId);
+            if (byId) {
+                return byId;
+            }
+        }
+        const matches = presets.filter((preset) =>
+            tagSetsEqual(preset.tags, kit.tags));
+        return matches.length === 1 ? matches[0] : undefined;
+    }
     const includes: string[] = [];
     for (const child of filter.root.children) {
         if (!isTagFilterClause(child)) {
@@ -141,12 +160,21 @@ export const matchNearnessFilterToKitPreset = (
 };
 
 /**
- * Build a nearness seed filter that is exactly one kit (flat AND includes).
+ * Build a nearness seed filter that is exactly one kit unit.
  */
 export const nearnessFilterFromKitTags = (
     tags: readonly string[],
+    preset?: Pick<TagPreset, "id" | "name">,
 ): TagFilterSelection =>
-    setKitTagsModeOnFilter(emptyTagFilter(), [...tags], "include");
+    setKitModeOnFilter(
+        emptyTagFilter(),
+        {
+            presetId: preset?.id ?? "",
+            name: preset?.name ?? formatKitSuggestionName([...tags]),
+            tags: [...tags],
+        },
+        "include",
+    );
 
 export type StampTagsFromNearness = {
     tags: string[];
@@ -176,6 +204,8 @@ export const stampTagsFromNearnessFilter = (
     for (const child of filter.root.children) {
         if (isTagFilterClause(child) && child.mode === "include") {
             includes.push(child.tag);
+        } else if (isTagFilterKit(child) && child.mode === "include") {
+            includes.push(...child.tags);
         }
     }
     if (!includes.length) {
@@ -214,25 +244,36 @@ export interface SortPresetsByMatchCountOptions {
 }
 
 /**
+ * Sort kits by how many of `files` match, then by name. Returns counts so
+ * callers do not recount.
+ */
+export const rankPresetsByMatchCount = (
+    presets: TagPreset[],
+    files: EnteFile[],
+    options?: SortPresetsByMatchCountOptions,
+): { preset: TagPreset; count: number }[] => {
+    const score = options?.exact ?
+        countFilesMatchingKitExact :
+        countFilesMatchingKit;
+    return [...presets]
+        .map((preset) => ({ preset, count: score(files, preset.tags) }))
+        .sort((a, b) => {
+            if (b.count !== a.count) {
+                return b.count - a.count;
+            }
+            return a.preset.name.localeCompare(b.preset.name);
+        });
+};
+
+/**
  * Sort kits by how many of `files` match, then by name.
  */
 export const sortPresetsByMatchCount = (
     presets: TagPreset[],
     files: EnteFile[],
     options?: SortPresetsByMatchCountOptions,
-): TagPreset[] => {
-    const score = options?.exact ?
-        countFilesMatchingKitExact :
-        countFilesMatchingKit;
-    return [...presets].sort((a, b) => {
-        const scoreA = score(files, a.tags);
-        const scoreB = score(files, b.tags);
-        if (scoreB !== scoreA) {
-            return scoreB - scoreA;
-        }
-        return a.name.localeCompare(b.name);
-    });
-};
+): TagPreset[] =>
+    rankPresetsByMatchCount(presets, files, options).map((row) => row.preset);
 
 /**
  * Canonical key for a tag set (order-independent).

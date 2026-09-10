@@ -61,6 +61,16 @@ export interface TagFilterClauseNode {
     mode: TagFilterMode;
 }
 
+/** One kit as a single filter unit (Has = all tags; Not = missing at least one). */
+export interface TagFilterKitNode {
+    kind: "kit";
+    id: string;
+    presetId: string;
+    name: string;
+    tags: string[];
+    mode: TagFilterMode;
+}
+
 export interface TagFilterGroup {
     kind: "group";
     id: string;
@@ -68,7 +78,10 @@ export interface TagFilterGroup {
     children: TagFilterNode[];
 }
 
-export type TagFilterNode = TagFilterClauseNode | TagFilterGroup;
+export type TagFilterNode =
+    TagFilterClauseNode |
+    TagFilterKitNode |
+    TagFilterGroup;
 
 export interface TagFilterSelection {
     tagScope: TagScope;
@@ -118,11 +131,14 @@ export const isTagFilterClause = (
     node: TagFilterNode,
 ): node is TagFilterClauseNode => node.kind === "clause";
 
-/** Count clause leaves in the filter tree. */
+export const isTagFilterKit = (node: TagFilterNode): node is TagFilterKitNode =>
+    node.kind === "kit";
+
+/** Count clause and kit leaves in the filter tree. */
 export const countTagFilterClauses = (root: TagFilterGroup): number => {
     let count = 0;
     const walk = (node: TagFilterNode): void => {
-        if (isTagFilterClause(node)) {
+        if (isTagFilterClause(node) || isTagFilterKit(node)) {
             count += 1;
             return;
         }
@@ -149,9 +165,24 @@ export const findClauseModeForTag = (
     return null;
 };
 
-/** True when every root child is a clause (no nested groups). */
+/** True when every root child is a clause or kit (no nested groups). */
 export const isFlatTagFilterRoot = (root: TagFilterGroup): boolean =>
-    root.children.every((child) => isTagFilterClause(child));
+    root.children.every(
+        (child) => isTagFilterClause(child) || isTagFilterKit(child),
+    );
+
+/** Find a direct-child kit by preset id within one group. */
+export const findKitInGroup = (
+    group: TagFilterGroup,
+    presetId: string,
+): TagFilterKitNode | null => {
+    for (const child of group.children) {
+        if (isTagFilterKit(child) && child.presetId === presetId) {
+            return child;
+        }
+    }
+    return null;
+};
 
 /** Find a direct-child clause for a tag within one group. */
 export const findClauseInGroup = (
@@ -199,30 +230,45 @@ export const isTagFilterActive = (filter: TagFilterSelection): boolean =>
 const describeClauseNode = (clause: TagFilterClauseNode): string =>
     clause.mode === "exclude" ? `not ${clause.tag}` : clause.tag;
 
+const describeKitNode = (kit: TagFilterKitNode): string =>
+    kit.mode === "exclude" ? `not kit:${kit.name}` : `kit:${kit.name}`;
+
+const describeLeafOrGroup = (node: TagFilterNode): string => {
+    if (isTagFilterClause(node)) {
+        return describeClauseNode(node);
+    }
+    if (isTagFilterKit(node)) {
+        return describeKitNode(node);
+    }
+    const inner = describeGroupNode(node);
+    return inner ? `(${inner})` : "";
+};
+
 const describeGroupNode = (group: TagFilterGroup): string => {
     if (group.children.length === 0) {
         return "";
     }
-    const parts = group.children.map((child) => {
-        if (isTagFilterClause(child)) {
-            return describeClauseNode(child);
-        }
-        const inner = describeGroupNode(child);
-        return inner ? `(${inner})` : "";
-    }).filter((part) => part.length > 0);
+    const parts = group.children
+        .map(describeLeafOrGroup)
+        .filter((part) => part.length > 0);
     if (group.op === "only") {
-        const includeParts = group.children
-            .filter(
-                (child): child is TagFilterClauseNode =>
-                    isTagFilterClause(child) && child.mode === "include",
-            )
-            .map((child) => child.tag);
-        const excludeParts = group.children
-            .filter(
-                (child): child is TagFilterClauseNode =>
-                    isTagFilterClause(child) && child.mode === "exclude",
-            )
-            .map((child) => `not ${child.tag}`);
+        const includeParts: string[] = [];
+        const excludeParts: string[] = [];
+        for (const child of group.children) {
+            if (isTagFilterClause(child)) {
+                if (child.mode === "include") {
+                    includeParts.push(child.tag);
+                } else {
+                    excludeParts.push(`not ${child.tag}`);
+                }
+            } else if (isTagFilterKit(child)) {
+                if (child.mode === "include") {
+                    includeParts.push(...child.tags);
+                } else {
+                    excludeParts.push(describeKitNode(child));
+                }
+            }
+        }
         const nested = group.children
             .filter(isTagFilterGroup)
             .map((child) => {
@@ -274,6 +320,10 @@ export const describeTagFilter = (filter: TagFilterSelection): string => {
 /** Instruction label for one tag clause in the query builder. */
 export const describeTagFilterClause = (clause: TagFilterClauseNode): string =>
     clause.mode === "exclude" ? `Not ${clause.tag}` : `Has ${clause.tag}`;
+
+/** Instruction label for one kit node in the query builder. */
+export const describeTagFilterKit = (kit: TagFilterKitNode): string =>
+    kit.mode === "exclude" ? `Not kit ${kit.name}` : `Has kit ${kit.name}`;
 
 /**
  * Return true when the tag is reserved for internal organizer workflows.
@@ -514,6 +564,55 @@ const evaluateClauseNode = (
 };
 
 /**
+ * Files among candidates that carry every kit tag (superset allowed).
+ */
+const kitMemberIdsInCandidates = (
+    kitTags: readonly string[],
+    candidateIds: Set<number>,
+    files: EnteFile[],
+    fileIdsByTag: Map<string, Set<number>>,
+    includeInEffectsPresenceByName?: ReadonlyMap<string, boolean>,
+): Set<number> => {
+    if (kitTags.length === 0) {
+        return new Set();
+    }
+    let matching = candidateIds;
+    for (const tag of kitTags) {
+        matching = tagIdsInCandidates(
+            tag,
+            matching,
+            files,
+            fileIdsByTag,
+            includeInEffectsPresenceByName,
+        );
+        if (matching.size === 0) {
+            return matching;
+        }
+    }
+    return matching;
+};
+
+const evaluateKitNode = (
+    kit: TagFilterKitNode,
+    candidateIds: Set<number>,
+    files: EnteFile[],
+    fileIdsByTag: Map<string, Set<number>>,
+    includeInEffectsPresenceByName?: ReadonlyMap<string, boolean>,
+): Set<number> => {
+    const members = kitMemberIdsInCandidates(
+        kit.tags,
+        candidateIds,
+        files,
+        fileIdsByTag,
+        includeInEffectsPresenceByName,
+    );
+    if (kit.mode === "include") {
+        return members;
+    }
+    return subtractIds(candidateIds, members);
+};
+
+/**
  * True when two tag lists are the same set (order-independent).
  */
 const tagSetsEqual = (left: string[], right: string[]): boolean => {
@@ -567,6 +666,16 @@ export const evaluateTagFilterNode = (
         );
     }
 
+    if (isTagFilterKit(node)) {
+        return evaluateKitNode(
+            node,
+            candidateIds,
+            files,
+            fileIdsByTag,
+            includeInEffectsPresenceByName,
+        );
+    }
+
     if (node.children.length === 0) {
         return candidateIds;
     }
@@ -574,6 +683,7 @@ export const evaluateTagFilterNode = (
     if (node.op === "only") {
         const includeTags: string[] = [];
         const excludeClauses: TagFilterClauseNode[] = [];
+        const excludeKits: TagFilterKitNode[] = [];
         const nestedGroups: TagFilterGroup[] = [];
         for (const child of node.children) {
             if (isTagFilterClause(child)) {
@@ -581,6 +691,12 @@ export const evaluateTagFilterNode = (
                     includeTags.push(child.tag);
                 } else {
                     excludeClauses.push(child);
+                }
+            } else if (isTagFilterKit(child)) {
+                if (child.mode === "include") {
+                    includeTags.push(...child.tags);
+                } else {
+                    excludeKits.push(child);
                 }
             } else {
                 nestedGroups.push(child);
@@ -596,6 +712,16 @@ export const evaluateTagFilterNode = (
         for (const clause of excludeClauses) {
             matchingIds = evaluateClauseNode(
                 clause,
+                matchingIds,
+                files,
+                fileIdsByTag,
+                includeInEffectsPresenceByName,
+            );
+        }
+
+        for (const kit of excludeKits) {
+            matchingIds = evaluateKitNode(
+                kit,
                 matchingIds,
                 files,
                 fileIdsByTag,

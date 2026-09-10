@@ -19,6 +19,7 @@ import {
     isTagFilterActive,
     isTagFilterClause,
     isTagFilterGroup,
+    isTagFilterKit,
     isReservedTag,
     newTagFilterNodeId,
     tagIndexToMaps,
@@ -36,9 +37,10 @@ import { normalizeTagName } from "@/lib/tag-writes";
 import {
     setClauseInGroupOnFilter,
     setClauseModeOnFilter,
-    setKitTagsInGroupOnFilter,
-    setKitTagsModeOnFilter,
+    setKitInGroupOnFilter,
+    setKitModeOnFilter,
     setTagFilterModeOnFilter,
+    type KitFilterInput,
 } from "@/lib/tag-filter-mutations";
 
 import type { EnteFile } from "ente-media/file";
@@ -75,10 +77,10 @@ interface TagState {
         tag: string,
         mode: TagFilterMode | null,
     ) => void;
-    setKitTagsMode: (tags: string[], mode: TagFilterMode | null) => void;
-    setKitTagsInGroup: (
+    setKitMode: (kit: KitFilterInput, mode: TagFilterMode | null) => void;
+    setKitInGroup: (
         groupId: string,
-        tags: string[],
+        kit: KitFilterInput,
         mode: TagFilterMode | null,
     ) => void;
     setGroupOp: (groupId: string, op: TagFilterJoin) => void;
@@ -532,6 +534,16 @@ const renameTagInTree = (
                 { ...child, tag: newName } :
                 child;
         }
+        if (isTagFilterKit(child)) {
+            if (!child.tags.includes(oldName)) {
+                return child;
+            }
+            return {
+                ...child,
+                tags: child.tags.map((tag) =>
+                    tag === oldName ? newName : tag),
+            };
+        }
         return renameTagInTree(child, oldName, newName);
     }),
 });
@@ -542,14 +554,24 @@ const removeTagFromTree = (
 ): TagFilterGroup => ({
     ...root,
     children: root.children
-        .filter(
-            (child) => !(isTagFilterClause(child) && child.tag === tagName),
-        )
-        .map((child) => {
-            if (!isTagFilterGroup(child)) {
-                return child;
+        .flatMap((child): TagFilterNode[] => {
+            if (isTagFilterClause(child) && child.tag === tagName) {
+                return [];
             }
-            return removeTagFromTree(child, tagName);
+            if (isTagFilterKit(child)) {
+                const nextTags = child.tags.filter((tag) => tag !== tagName);
+                if (nextTags.length === 0) {
+                    return [];
+                }
+                if (nextTags.length === child.tags.length) {
+                    return [child];
+                }
+                return [{ ...child, tags: nextTags }];
+            }
+            if (!isTagFilterGroup(child)) {
+                return [child];
+            }
+            return [removeTagFromTree(child, tagName)];
         }),
 });
 
@@ -701,22 +723,22 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         });
     },
 
-    setKitTagsMode: (tags: string[], mode: TagFilterMode | null): void => {
+    setKitMode: (kit: KitFilterInput, mode: TagFilterMode | null): void => {
         set({
-            tagFilter: setKitTagsModeOnFilter(get().tagFilter, tags, mode),
+            tagFilter: setKitModeOnFilter(get().tagFilter, kit, mode),
         });
     },
 
-    setKitTagsInGroup: (
+    setKitInGroup: (
         groupId: string,
-        tags: string[],
+        kit: KitFilterInput,
         mode: TagFilterMode | null,
     ): void => {
         set({
-            tagFilter: setKitTagsInGroupOnFilter(
+            tagFilter: setKitInGroupOnFilter(
                 get().tagFilter,
                 groupId,
-                tags,
+                kit,
                 mode,
             ),
         });

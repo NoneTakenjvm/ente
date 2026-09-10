@@ -2,18 +2,27 @@ import {
     createEmptyTagFilterRoot,
     isTagFilterClause,
     isTagFilterGroup,
+    isTagFilterKit,
     newTagFilterNodeId,
     type CroppedScope,
     type FavoritesScope,
     type TagFilterClauseNode,
     type TagFilterGroup,
     type TagFilterJoin,
+    type TagFilterKitNode,
     type TagFilterMode,
     type TagFilterNode,
     type TagFilterSelection,
     type TagScope,
     type MediaScope,
 } from "@/lib/tags";
+
+/** Identity of a kit when adding it as one filter unit. */
+export interface KitFilterInput {
+    presetId: string;
+    name: string;
+    tags: string[];
+}
 
 /** Untagged scope cannot hold tag clauses; include clauses replace the tagged scope. */
 const tagScopeAfterClauseChange = (
@@ -301,7 +310,7 @@ const updateClauseModeInTree = (
 ): TagFilterGroup => ({
     ...root,
     children: root.children.map((child) => {
-        if (isTagFilterClause(child)) {
+        if (isTagFilterClause(child) || isTagFilterKit(child)) {
             return child.id === clauseId ? { ...child, mode } : child;
         }
         return updateClauseModeInTree(child, clauseId, mode);
@@ -327,7 +336,7 @@ const updateGroupInTree = (
     };
 };
 
-/** Set include/exclude mode on one clause by node id. */
+/** Set include/exclude mode on one clause or kit by node id. */
 export const setClauseModeOnFilter = (
     filter: TagFilterSelection,
     clauseId: string,
@@ -378,57 +387,92 @@ export const setClauseInGroupOnFilter = (
     };
 };
 
-/**
- * Include or clear every tag in a kit at the root (Has kit = all includes).
- */
-export const setKitTagsModeOnFilter = (
-    filter: TagFilterSelection,
-    tags: string[],
+const applyKitToGroup = (
+    group: TagFilterGroup,
+    kit: KitFilterInput,
     mode: TagFilterMode | null,
-): TagFilterSelection => {
-    let next = filter;
-    for (const tag of tags) {
-        next = setTagFilterModeOnFilter(next, tag, mode);
+): TagFilterGroup => {
+    if (mode === null) {
+        return {
+            ...group,
+            children: group.children.filter(
+                (child) =>
+                    !(isTagFilterKit(child) && child.presetId === kit.presetId),
+            ),
+        };
     }
-    return next;
+    const existingIndex = group.children.findIndex(
+        (child) => isTagFilterKit(child) && child.presetId === kit.presetId,
+    );
+    const nextKit: TagFilterKitNode = {
+        kind: "kit",
+        id:
+            existingIndex >= 0 ?
+                group.children[existingIndex].id :
+                newTagFilterNodeId(),
+        presetId: kit.presetId,
+        name: kit.name,
+        tags: [...kit.tags],
+        mode,
+    };
+    if (existingIndex >= 0) {
+        const nextChildren = [...group.children];
+        nextChildren[existingIndex] = nextKit;
+        return { ...group, children: nextChildren };
+    }
+    return { ...group, children: [...group.children, nextKit] };
 };
 
 /**
- * Include or clear every tag in a kit inside one group.
+ * Add, update, or clear a kit unit at the root.
  */
-export const setKitTagsInGroupOnFilter = (
+export const setKitModeOnFilter = (
+    filter: TagFilterSelection,
+    kit: KitFilterInput,
+    mode: TagFilterMode | null,
+): TagFilterSelection => ({
+    ...filter,
+    tagScope: tagScopeAfterClauseChange(filter.tagScope, mode),
+    root: applyKitToGroup(filter.root, kit, mode),
+});
+
+/**
+ * Add, update, or clear a kit unit inside one group.
+ */
+export const setKitInGroupOnFilter = (
     filter: TagFilterSelection,
     groupId: string,
-    tags: string[],
+    kit: KitFilterInput,
     mode: TagFilterMode | null,
 ): TagFilterSelection => {
-    let next = filter;
-    for (const tag of tags) {
-        next = setClauseInGroupOnFilter(next, groupId, tag, mode);
-    }
-    return next;
+    const updatedRoot = updateGroupInTree(filter.root, groupId, (group) =>
+        applyKitToGroup(group, kit, mode));
+    return {
+        ...filter,
+        tagScope: tagScopeAfterClauseChange(filter.tagScope, mode),
+        root: updatedRoot,
+    };
 };
 
 /**
- * Whether every kit tag is currently an include clause in the given group/root.
+ * Mode of a kit unit in the group, if present.
  */
-export const kitTagsAreIncluded = (
+export const findKitModeInGroup = (
     group: TagFilterGroup,
-    tags: string[],
-): boolean => {
-    if (tags.length === 0) {
-        return false;
-    }
-    return tags.every((tag) => {
-        for (const child of group.children) {
-            if (
-                isTagFilterClause(child) &&
-                child.tag === tag &&
-                child.mode === "include"
-            ) {
-                return true;
-            }
+    presetId: string,
+): TagFilterMode | null => {
+    for (const child of group.children) {
+        if (isTagFilterKit(child) && child.presetId === presetId) {
+            return child.mode;
         }
-        return false;
-    });
+    }
+    return null;
 };
+
+/**
+ * Whether the kit is currently an include unit in the given group/root.
+ */
+export const kitIsIncluded = (
+    group: TagFilterGroup,
+    presetId: string,
+): boolean => findKitModeInGroup(group, presetId) === "include";

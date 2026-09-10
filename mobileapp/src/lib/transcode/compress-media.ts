@@ -15,6 +15,7 @@ import {
 export type CompressEncoder = "webcodecs" | "ffmpeg" | "photohoard";
 
 export type CompressAudioOutcome = "aac" | "ffmpeg-remux" | "none";
+// ffmpeg-remux = original audio copied (preferred) or AAC-reencoded onto HW video
 
 export interface CompressMediaResult {
     bytes: Uint8Array;
@@ -99,7 +100,10 @@ const compressVideoWithFfmpeg = async (
 };
 
 /**
- * Remux WebCodecs video with audio from the original file (ffmpeg audio only).
+ * Remux WebCodecs video with audio from the original file.
+ *
+ * Prefer {@code -c:a copy} (original audio, no re-encode). Fall back to AAC
+ * only when the container/codec cannot be copied into MP4.
  */
 const remuxWebCodecsAudio = async (
     videoOnlyBytes: Uint8Array,
@@ -115,7 +119,7 @@ const remuxWebCodecsAudio = async (
                 "-map", "0:v:0",
                 "-map", "1:a:0?",
                 "-c:v", "copy",
-                "-c:a", "aac",
+                "-c:a", "copy",
                 "-shortest",
                 "-movflags", "+faststart",
                 "OUTPUT",
@@ -135,7 +139,7 @@ const remuxWebCodecsAudio = async (
                 "-map", "0:v:0",
                 "-map", "1:a:0?",
                 "-c:v", "copy",
-                "-c:a", "copy",
+                "-c:a", "aac",
                 "-shortest",
                 "-movflags", "+faststart",
                 "OUTPUT",
