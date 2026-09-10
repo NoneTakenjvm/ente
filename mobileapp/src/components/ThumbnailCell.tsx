@@ -14,6 +14,8 @@ import {
     subscribeThumbnail,
 } from "@/lib/thumbnail-cache";
 import { fileByteSize, formatFileSize } from "@/lib/compress";
+import { previewTransformForRotation } from "@/lib/rotate-draft";
+import type { RotationDegrees } from "@/lib/rotate";
 import { Check, CircleCheck, Play } from "lucide-react";
 import { FileType } from "ente-media/file-type";
 import type { EnteFile } from "ente-media/file";
@@ -36,6 +38,8 @@ interface ThumbnailCellProps {
     tapSelects?: boolean;
     /** Compress picker: show file size chip (bottom-left). */
     showFileSize?: boolean;
+    /** Draft quick-rotate preview (CSS only). */
+    previewRotationDegrees?: RotationDegrees;
 }
 
 /** Skip re-render when the same file is shown with the same chrome. */
@@ -57,7 +61,8 @@ const thumbnailCellPropsAreEqual = (
     prev.isAlreadyCompressed === next.isAlreadyCompressed &&
     prev.disabled === next.disabled &&
     prev.tapSelects === next.tapSelects &&
-    prev.showFileSize === next.showFileSize;
+    prev.showFileSize === next.showFileSize &&
+    prev.previewRotationDegrees === next.previewRotationDegrees;
 
 export const ThumbnailCell = memo(function ThumbnailCell({
     file,
@@ -72,12 +77,21 @@ export const ThumbnailCell = memo(function ThumbnailCell({
     disabled = false,
     tapSelects = false,
     showFileSize = false,
+    previewRotationDegrees,
 }: ThumbnailCellProps): JSX.Element {
     const cellWidth = width ?? size ?? 0;
     const cellHeight = height ?? size ?? 0;
     const imageFitClass =
         objectFit === "contain" ? "object-contain" : "object-cover";
     const sizeBytes = fileByteSize(file);
+    const previewTransform =
+        previewRotationDegrees !== undefined ?
+            previewTransformForRotation(
+                previewRotationDegrees,
+                cellWidth,
+                cellHeight,
+            ) :
+            undefined;
 
     const entry = useSyncExternalStore(
         (listener) => subscribeThumbnail(file.id, listener),
@@ -178,9 +192,11 @@ export const ThumbnailCell = memo(function ThumbnailCell({
                 disabled={disabled}
                 aria-label={
                     tapSelects ?
-                        isSelected ?
-                            `Deselect media ${file.id}` :
-                            `Select media ${file.id}` :
+                        previewRotationDegrees !== undefined ?
+                            `Rotate media ${file.id}, pending ${previewRotationDegrees} degrees` :
+                            isSelected ?
+                                `Deselect media ${file.id}` :
+                                `Select media ${file.id}` :
                         `Open media ${file.id}`
                 }
                 aria-pressed={tapSelects ? isSelected : undefined}
@@ -196,6 +212,11 @@ export const ThumbnailCell = memo(function ThumbnailCell({
                             "pointer-events-none size-full",
                             imageFitClass,
                         )}
+                        style={
+                            previewTransform ?
+                                { transform: previewTransform } :
+                                undefined
+                        }
                         src={entry.url}
                         alt=""
                         loading="lazy"
@@ -213,6 +234,14 @@ export const ThumbnailCell = memo(function ThumbnailCell({
                     <Skeleton className="size-full rounded-none" aria-hidden />
                 )}
             </button>
+            {previewRotationDegrees !== undefined ? (
+                <span
+                    className="pointer-events-none absolute top-1 right-1 z-10 rounded bg-black/70 px-1 py-0.5 text-[10px] leading-none text-white"
+                    aria-hidden
+                >
+                    {previewRotationDegrees}°
+                </span>
+            ) : null}
             {isAlreadyCompressed ? (
                 <span
                     className="absolute top-1.5 left-1.5 z-10 flex size-5 items-center justify-center rounded-full bg-green-600 text-white"

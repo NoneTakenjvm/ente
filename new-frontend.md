@@ -7,12 +7,15 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-10 |
-| **Last agent / session** | Quick-rotate gallery mode feasibility |
+| **Last agent / session** | Quick rotate + Tools menu |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable |
-| **Next recommended action** | If desired: ship stamp-like “quick rotate 90° CW” gallery mode on existing `rotateAndUploadFile` (images only; creates derived JPEG + `rotated` tag). Else continue phone QA on `0.3.139`. |
+| **Next recommended action** | Phone QA: Tools menu + quick rotate draft/Apply (`0.3.140`). |
 
 **This session shipped:**
+1. **Quick rotate + Tools menu** — Gallery Tools dropdown (Query builder / Select / Stamp / Rotate); draft +90° CW taps with CSS preview; Apply uploads sequentially via `rotateAndUploadFile` (now goes through `toRenderableImageBlob` so HEIC works in Chromium); Discard / 4th tap clears. Albums get Tools without query. Playwright e2e green on `/dev-login`. `APP_VERSION` → `0.3.140`.
+
+**Previous session shipped:**
 1. **Feasibility only (nothing shipped)** — Quick rotate from gallery is high-confidence: stamp-mode UX pattern + `rotateAndUploadFile` / `rotateImageBytes` / `uploadRotatedImage` already exist. Open product choice: tap-to-rotate mode vs select-then-rotate; derived copy (not in-place) matches crop editor today.
 
 **Previous session shipped:**
