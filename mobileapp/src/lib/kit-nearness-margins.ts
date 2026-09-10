@@ -16,6 +16,8 @@
  *
  * The same tag models also drive the kit presence list ("kit likeness"):
  * see {@link tagPresenceProbabilities} and {@link countKitPresence}.
+ * Gallery ranking stays AND. The dropdown partitions each shown file to the
+ * most-specific remaining kit it AND-matches (unchecked kits omitted).
  */
 
 export type KitWhitening = {
@@ -105,11 +107,10 @@ export const KIT_MARGIN_ITERATIONS = 100;
 export const KIT_MARGIN_LEARNING_RATE = 0.1;
 
 /**
- * A file fits a kit when the product of its tag probabilities reaches this.
- * Counting fits (rather than summing probabilities) keeps sibling kits that
- * share most tags from reading 10–15% on views where nothing fits them.
+ * Predicted tag is present at or above this (exact-set @0.4 from the ONLY
+ * retune: specific-kit top-5 recall 42% → 83% vs the old AND product).
  */
-export const KIT_PRESENCE_FIT_THRESHOLD = 0.5;
+export const KIT_PRESENCE_EXACT_THRESHOLD = 0.4;
 
 /**
  * Mean, shrunk covariance Cholesky factor and whitened rows of a training
@@ -361,56 +362,91 @@ export const tagPresenceProbabilities = (
 };
 
 /**
- * Count, per kit, the files in view that fit it.
+ * Count, per kit, the shown files assigned to it as best fit.
  *
- * A file fits when the product over the kit's tags of its tag probability
- * reaches {@link KIT_PRESENCE_FIT_THRESHOLD}: a tag the file already carries
- * counts as 1, a missing tag uses the worker's estimate for embedded files
- * and 0 otherwise. Counts are independent per kit, so a file that fits both
- * `[A, B]` and `[A, B, C]` counts for both. Kits with a tag the estimate does
- * not cover are left out.
+ * Among kits that are not excluded, a file matches a kit when every kit tag
+ * is present (known, or `p ≥ {@link KIT_PRESENCE_EXACT_THRESHOLD}` for
+ * embedded files). Extra tags do not reject. Each file is credited to one
+ * matching kit: the most tags wins, then id — so a child beats its parent,
+ * and unchecking the child sends those photos to the next-best remaining
+ * match. Excluded kits get 0. Kits with no tags are skipped.
  */
 export const countKitPresence = (
     kits: readonly { id: string; tags: readonly string[] }[],
     viewFileIds: readonly number[],
     fileIdsByTag: ReadonlyMap<string, ReadonlySet<number>>,
     estimate: KitPresenceEstimate,
+    excludedKitIds?: ReadonlySet<string>,
 ): Map<string, number> => {
     const { tagNames, candidateIds, tagProbabilities } = estimate;
     const columnByTag = new Map(tagNames.map((name, column) => [name, column]));
     const rowByFileId = new Map(candidateIds.map((id, row) => [id, row]));
     const counts = new Map<string, number>();
+    const included: { id: string; tags: readonly string[] }[] = [];
     for (const kit of kits) {
-        const columns = kit.tags.map((tag) => columnByTag.get(tag));
-        if (!kit.tags.length || columns.some((column) => column === undefined)) {
+        if (excludedKitIds?.has(kit.id)) {
+            counts.set(kit.id, 0);
             continue;
         }
-        let count = 0;
-        for (const fileId of viewFileIds) {
-            const row = rowByFileId.get(fileId);
-            let product = 1;
-            for (let index = 0; index < kit.tags.length; index += 1) {
-                if (fileIdsByTag.get(kit.tags[index]!)?.has(fileId)) {
-                    continue;
-                }
-                product =
-                    row === undefined ?
-                        0 :
-                        product *
-                            tagProbabilities[
-                                row * tagNames.length + columns[index]!
-                            ]!;
-                if (product < KIT_PRESENCE_FIT_THRESHOLD) {
-                    break;
-                }
+        if (!kit.tags.length) {
+            continue;
+        }
+        included.push(kit);
+        counts.set(kit.id, 0);
+    }
+    for (const fileId of viewFileIds) {
+        const row = rowByFileId.get(fileId);
+        let best: { id: string; tags: readonly string[] } | undefined;
+        for (const kit of included) {
+            if (!fileHasAllKitTags(
+                fileId,
+                kit.tags,
+                fileIdsByTag,
+                row,
+                tagNames,
+                columnByTag,
+                tagProbabilities,
+            )) {
+                continue;
             }
-            if (product >= KIT_PRESENCE_FIT_THRESHOLD) {
-                count += 1;
+            if (
+                !best ||
+                kit.tags.length > best.tags.length ||
+                (kit.tags.length === best.tags.length && kit.id < best.id)
+            ) {
+                best = kit;
             }
         }
-        counts.set(kit.id, count);
+        if (best) {
+            counts.set(best.id, (counts.get(best.id) ?? 0) + 1);
+        }
     }
     return counts;
+};
+
+const fileHasAllKitTags = (
+    fileId: number,
+    kitTags: readonly string[],
+    fileIdsByTag: ReadonlyMap<string, ReadonlySet<number>>,
+    row: number | undefined,
+    tagNames: readonly string[],
+    columnByTag: ReadonlyMap<string, number>,
+    tagProbabilities: Float32Array,
+): boolean => {
+    for (const tag of kitTags) {
+        if (fileIdsByTag.get(tag)?.has(fileId)) {
+            continue;
+        }
+        const column = columnByTag.get(tag);
+        if (row === undefined || column === undefined) {
+            return false;
+        }
+        if (tagProbabilities[row * tagNames.length + column]! <
+            KIT_PRESENCE_EXACT_THRESHOLD) {
+            return false;
+        }
+    }
+    return true;
 };
 
 /**

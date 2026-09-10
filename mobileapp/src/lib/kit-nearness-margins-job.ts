@@ -12,6 +12,7 @@ import {
     countKitPresence,
     type KitMarginsWorkerRequest,
     type KitMarginsWorkerResponse,
+    type KitPresenceEstimate,
     type KitPresenceWorkerRequest,
     type KitPresenceWorkerResponse,
     type KitWorkerRequest,
@@ -52,6 +53,8 @@ export type KitPresenceInput = TrainingPopulationInput & {
     kits: readonly { id: string; tags: readonly string[] }[];
     /** Files currently shown. */
     viewFiles: readonly EnteFile[];
+    /** Kits the user unchecked; omitted from best-fit assignment. */
+    excludedKitIds?: ReadonlySet<string>;
 };
 
 /** Training rows are capped for phone CPUs and sampled deterministically. */
@@ -156,14 +159,16 @@ export const rankByKitMarginsInWorker = async (
 };
 
 /**
- * Count, per kit, the shown files that fit it (see
- * {@link countKitPresence}), estimating the tags a file lacks with the
- * worker's per-tag models. Kits with a tag that has too few training
- * examples are left out, as is every kit while the sample has none.
+ * Per-tag estimates for the shown embedded files. Missing tags use the
+ * worker's models; kits with a tag that has too few training examples are
+ * absent from {@link KitPresenceEstimate.tagNames}.
  */
-export const countKitPresenceInWorker = async (
-    input: KitPresenceInput,
-): Promise<Map<string, number>> => {
+export const estimateKitPresenceInWorker = async (
+    input: TrainingPopulationInput & {
+        kits: readonly { id: string; tags: readonly string[] }[];
+        viewFiles: readonly EnteFile[];
+    },
+): Promise<KitPresenceEstimate> => {
     const trainingIds = sampleTrainingIds(input);
     const tags = [...new Set(input.kits.flatMap((kit) => kit.tags))]
         .sort()
@@ -176,19 +181,16 @@ export const countKitPresenceInWorker = async (
             };
         })
         .filter((tag) => hasEnoughTagExamples(tag.labels));
-    if (!tags.length) {
-        return new Map();
-    }
     const viewFileIds = input.viewFiles.map((file) => file.id);
     const candidateIds = viewFileIds.filter((id) =>
         hasEmbedding(id, input.embeddings));
     const tagNames = tags.map((tag) => tag.name);
-    if (!candidateIds.length) {
-        return countKitPresence(input.kits, viewFileIds, input.fileIdsByTag, {
+    if (!tags.length || !candidateIds.length) {
+        return {
             tagNames,
             candidateIds,
             tagProbabilities: new Float32Array(0),
-        });
+        };
     }
 
     const request: KitPresenceWorkerRequest = {
@@ -211,11 +213,28 @@ export const countKitPresenceInWorker = async (
     if (response.error || !response.tagProbabilities) {
         throw new Error(response.error ?? "Kit presence failed");
     }
-    return countKitPresence(input.kits, viewFileIds, input.fileIdsByTag, {
+    return {
         tagNames,
         candidateIds,
         tagProbabilities: response.tagProbabilities,
-    });
+    };
+};
+
+/**
+ * Count, per kit, the shown files assigned as best fit (see
+ * {@link countKitPresence}), estimating missing tags with the worker.
+ */
+export const countKitPresenceInWorker = async (
+    input: KitPresenceInput,
+): Promise<Map<string, number>> => {
+    const estimate = await estimateKitPresenceInWorker(input);
+    return countKitPresence(
+        input.kits,
+        input.viewFiles.map((file) => file.id),
+        input.fileIdsByTag,
+        estimate,
+        input.excludedKitIds,
+    );
 };
 
 /** Post one request to the shared worker and resolve with its reply. */

@@ -268,25 +268,23 @@ describe("countKitPresence", () => {
         ["a", new Set([1, 2, 3])],
         ["b", new Set([1])],
     ]);
-    // Rows: file 2 (b likely, c unlikely), file 3 (b unlikely, c likely).
+    // Rows: file 2 (b likely, c unlikely), file 3 (b borderline, c likely).
     const estimate = {
         tagNames: ["a", "b", "c"],
         candidateIds: [2, 3],
         tagProbabilities: Float32Array.from([1, 0.9, 0.3, 1, 0.4, 0.9]),
     };
 
-    it("counts known tags as certain, estimates the rest, skips unmodelled kits", () => {
-        // File 4 has no embedding and no tags: fits nothing.
+    it("assigns each file to the most-specific AND match", () => {
         const counts = countKitPresence(kits, [1, 2, 3, 4], fileIdsByTag, estimate);
-        // ab: file 1 (both known), file 2 (b at 0.9); file 3 fails on b.
+        // File 1: known {a,b} → ab. File 2: known {a}, b=0.9, c=0.3 → ab.
+        // File 3: a known, b=0.4, c=0.9 → abc beats ab. File 4: nothing.
         expect(counts.get("ab")).toBe(2);
-        // abc: file 1 carries a, b; c estimated 0 (no row) → out. File 2:
-        // 0.9 × 0.3 < 0.5. File 3: 0.4 × 0.9 < 0.5.
-        expect(counts.get("abc")).toBe(0);
-        expect(counts.has("z")).toBe(false);
+        expect(counts.get("abc")).toBe(1);
+        expect(counts.get("z")).toBe(0);
     });
 
-    it("lets one file count for every kit it fits", () => {
+    it("lets a nested child take the photo from its parent", () => {
         const counts = countKitPresence(
             kits,
             [2],
@@ -297,7 +295,81 @@ describe("countKitPresence", () => {
                 tagProbabilities: Float32Array.from([1, 0.9, 0.8]),
             },
         );
-        expect(counts.get("ab")).toBe(1);
+        expect(counts.get("ab")).toBe(0);
         expect(counts.get("abc")).toBe(1);
+    });
+
+    it("gives a known child photo to the child, not the parent", () => {
+        const withC = new Map(fileIdsByTag);
+        withC.set("c", new Set([1]));
+        const counts = countKitPresence(kits, [1], withC, {
+            tagNames: ["a", "b", "c"],
+            candidateIds: [],
+            tagProbabilities: new Float32Array(0),
+        });
+        expect(counts.get("ab")).toBe(0);
+        expect(counts.get("abc")).toBe(1);
+    });
+
+    it("sends excluded-kit photos to the next-best remaining match", () => {
+        const withC = new Map(fileIdsByTag);
+        withC.set("c", new Set([1]));
+        const parent = countKitPresence(
+            kits,
+            [1],
+            withC,
+            {
+                tagNames: ["a", "b", "c"],
+                candidateIds: [],
+                tagProbabilities: new Float32Array(0),
+            },
+            new Set(["abc"]),
+        );
+        expect(parent.get("abc")).toBe(0);
+        expect(parent.get("ab")).toBe(1);
+
+        // Equal-specificity siblings: one winner (lower id).
+        const overlapping = [
+            { id: "a", tags: ["a"] },
+            { id: "b", tags: ["b"] },
+            { id: "abc", tags: ["a", "b", "c"] },
+        ];
+        const siblings = countKitPresence(
+            overlapping,
+            [1],
+            withC,
+            {
+                tagNames: ["a", "b", "c"],
+                candidateIds: [],
+                tagProbabilities: new Float32Array(0),
+            },
+            new Set(["abc"]),
+        );
+        expect(siblings.get("abc")).toBe(0);
+        expect(siblings.get("a")).toBe(1);
+        expect(siblings.get("b")).toBe(0);
+    });
+
+    it("does not let an unrelated remaining kit block fallthrough", () => {
+        const withC = new Map(fileIdsByTag);
+        withC.set("c", new Set([1]));
+        const kitsWithD = [
+            ...kits,
+            { id: "d", tags: ["d"] },
+        ];
+        const counts = countKitPresence(
+            kitsWithD,
+            [1],
+            withC,
+            {
+                tagNames: ["a", "b", "c", "d"],
+                candidateIds: [1],
+                tagProbabilities: Float32Array.from([1, 1, 0.2, 0.9]),
+            },
+            new Set(["abc"]),
+        );
+        expect(counts.get("abc")).toBe(0);
+        expect(counts.get("ab")).toBe(1);
+        expect(counts.get("d")).toBe(0);
     });
 });
