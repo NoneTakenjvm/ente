@@ -664,3 +664,84 @@ describe("tags", () => {
         expect(withB?.map((file) => file.id)).toEqual([1, 2]);
     });
 });
+
+describe("kit filter units", () => {
+    const kitNode = (
+        name: string,
+        tags: string[],
+        mode: "include" | "exclude",
+        presetId = name,
+    ) => ({
+        kind: "kit" as const,
+        id: newTagFilterNodeId(),
+        presetId,
+        name,
+        tags,
+        mode,
+    });
+
+    it("include kit matches files that have every kit tag", () => {
+        const files = [
+            fileWithTags(1, ["a", "b"]),
+            fileWithTags(2, ["a"]),
+            fileWithTags(3, ["a", "b", "c"]),
+        ];
+        const { fileIdsByTag } = tagIndexToMaps(buildTagIndex(files));
+        const filtered = filterFilesByTags(
+            files,
+            filterWithRoot(andRoot(kitNode("AB", ["a", "b"], "include"))),
+            fileIdsByTag,
+        );
+        expect(filtered.map((f) => f.id).sort()).toEqual([1, 3]);
+    });
+
+    it("exclude kit keeps files missing at least one kit tag", () => {
+        const files = [
+            fileWithTags(1, ["a", "b"]),
+            fileWithTags(2, ["a"]),
+            fileWithTags(3, ["c"]),
+        ];
+        const { fileIdsByTag } = tagIndexToMaps(buildTagIndex(files));
+        const filtered = filterFilesByTags(
+            files,
+            filterWithRoot(andRoot(kitNode("AB", ["a", "b"], "exclude"))),
+            fileIdsByTag,
+        );
+        expect(filtered.map((f) => f.id).sort()).toEqual([2, 3]);
+    });
+
+    it("NOT kit OR NOT kit without manual grouping", () => {
+        const files = [
+            fileWithTags(1, ["a", "b"]),
+            fileWithTags(2, ["c", "d"]),
+            fileWithTags(3, ["a", "b", "c", "d"]),
+            fileWithTags(4, ["x"]),
+        ];
+        const { fileIdsByTag } = tagIndexToMaps(buildTagIndex(files));
+        const filtered = filterFilesByTags(
+            files,
+            filterWithRoot(
+                orRoot(
+                    kitNode("AB", ["a", "b"], "exclude", "k1"),
+                    kitNode("CD", ["c", "d"], "exclude", "k2"),
+                ),
+            ),
+            fileIdsByTag,
+        );
+        // 1 misses CD → in; 2 misses AB → in; 3 has both kits → out; 4 misses both → in
+        expect(filtered.map((f) => f.id).sort()).toEqual([1, 2, 4]);
+    });
+
+    it("describeTagFilter formats kit units", () => {
+        expect(
+            describeTagFilter(
+                filterWithRoot(
+                    orRoot(
+                        kitNode("Beach", ["sand", "sea"], "exclude", "k1"),
+                        kitNode("City", ["street"], "exclude", "k2"),
+                    ),
+                ),
+            ),
+        ).toBe("not kit:Beach OR not kit:City");
+    });
+});

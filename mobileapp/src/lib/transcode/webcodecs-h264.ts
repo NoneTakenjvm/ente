@@ -31,8 +31,6 @@ const AVC_CODECS = ["avc1.640028", "avc1.4D401F", "avc1.42001E"] as const;
 const DEFAULT_FPS = 30;
 const KEYFRAME_INTERVAL_US = 2_000_000;
 const AAC_BITRATE = 128_000;
-/** PCM chunk size when feeding AudioEncoder from decoded AudioBuffer. */
-const AAC_SAMPLES_PER_CHUNK = 1024;
 
 type CaptureCapableVideo = HTMLVideoElement & {
     captureStream?: () => MediaStream;
@@ -157,97 +155,13 @@ const audioProcessorCtor = (): MediaStreamTrackProcessorCtor | undefined =>
         MediaStreamTrackProcessor?: MediaStreamTrackProcessorCtor;
     }).MediaStreamTrackProcessor;
 
-const interleaveAudioBuffer = (buffer: AudioBuffer): Float32Array => {
-    const { numberOfChannels, length } = buffer;
-    if (numberOfChannels === 1) {
-        return buffer.getChannelData(0);
-    }
-    const interleaved = new Float32Array(length * numberOfChannels);
-    for (let channel = 0; channel < numberOfChannels; channel += 1) {
-        const data = buffer.getChannelData(channel);
-        for (let i = 0; i < length; i += 1) {
-            interleaved[i * numberOfChannels + channel] = data[i]!;
-        }
-    }
-    return interleaved;
-};
-
-/**
- * Encode an AudioBuffer as AAC into the muxer via {@link AudioEncoder}.
- *
- * @returns true when AAC chunks were produced
- */
-const encodeAudioBufferAsAac = async (
-    audioBuffer: AudioBuffer,
-    muxer: Muxer<ArrayBufferTarget>,
-    fail: (error: Error) => void,
-): Promise<boolean> => {
-    if (typeof AudioEncoder === "undefined" || typeof AudioData === "undefined") {
-        return false;
-    }
-    const numberOfChannels = Math.max(1, audioBuffer.numberOfChannels);
-    const sampleRate = audioBuffer.sampleRate;
-    const support = await AudioEncoder.isConfigSupported({
-        codec: "mp4a.40.2",
-        numberOfChannels,
-        sampleRate,
-        bitrate: AAC_BITRATE,
-    });
-    if (!support.supported) {
-        return false;
-    }
-
-    const encoder = new AudioEncoder({
-        output: (chunk, meta) => {
-            muxer.addAudioChunk(chunk, meta);
-        },
-        error: (error) => {
-            fail(error instanceof Error ? error : new Error(String(error)));
-        },
-    });
-    encoder.configure({
-        codec: "mp4a.40.2",
-        numberOfChannels,
-        sampleRate,
-        bitrate: AAC_BITRATE,
-    });
-
-    const interleaved = interleaveAudioBuffer(audioBuffer);
-    const frameSamples = AAC_SAMPLES_PER_CHUNK;
-    let offset = 0;
-    let timestamp = 0;
-    while (offset < audioBuffer.length) {
-        const samples = Math.min(frameSamples, audioBuffer.length - offset);
-        const frame = new AudioData({
-            format: "f32",
-            sampleRate,
-            numberOfFrames: samples,
-            numberOfChannels,
-            timestamp,
-            data: new Float32Array(
-                interleaved.subarray(
-                    offset * numberOfChannels,
-                    (offset + samples) * numberOfChannels,
-                ),
-            ),
-        });
-        encoder.encode(frame);
-        frame.close();
-        timestamp += Math.round((samples / sampleRate) * 1_000_000);
-        offset += samples;
-    }
-    await encoder.flush();
-    encoder.close();
-    return true;
-};
-
 /**
  * Re-encode video bytes as H.264/AAC MP4 using hardware WebCodecs when available.
  *
  * Video is always encoded when {@link VideoEncoder} works. Audio uses capture-stream
- * AAC when possible, else decoded PCM → AAC. If the source has audio but neither
- * path works, returns {@code audio: "needs-remux"} so the caller can ffmpeg-remux
- * or skip — never silently drops audio.
+ * AAC when {@link MediaStreamTrackProcessor} is available; otherwise returns
+ * {@code audio: "needs-remux"} so the caller can copy the original audio track
+ * onto the hardware video (never silently drops audio).
  *
  * @throws when WebCodecs cannot encode video (caller should fall back to ffmpeg)
  */
@@ -322,31 +236,10 @@ export const encodeH264WebCodecs = async (
             }
         }
 
-        // Prefer streaming AAC when possible; otherwise decode PCM → AAC
-        // (muxer audio config must be set at construction).
-        let decodedAudio: AudioBuffer | undefined;
-        if (hasAudioTrack && !canStreamEncodeAudio) {
-            try {
-                const AudioCtx =
-                    globalThis.AudioContext ??
-                    (globalThis as unknown as {
-                        webkitAudioContext?: typeof AudioContext;
-                    }).webkitAudioContext;
-                if (AudioCtx && typeof AudioEncoder !== "undefined") {
-                    const context = new AudioCtx();
-                    try {
-                        const copy = options.bytes.slice().buffer;
-                        decodedAudio = await context.decodeAudioData(copy);
-                    } finally {
-                        void context.close();
-                    }
-                }
-            } catch {
-                decodedAudio = undefined;
-            }
-        }
-
-        const willMuxAac = canStreamEncodeAudio || Boolean(decodedAudio);
+        // Prefer streaming AAC when MediaStreamTrackProcessor exists. Otherwise
+        // skip decodeAudioData (slow / often fails on video containers) and
+        // remux original audio onto the hardware video afterward.
+        const willMuxAac = canStreamEncodeAudio;
         if (hasAudioTrack && !willMuxAac) {
             audioOutcome = "needs-remux";
         }
@@ -363,8 +256,8 @@ export const encodeH264WebCodecs = async (
             audio: willMuxAac ?
                 {
                     codec: "aac",
-                    numberOfChannels: decodedAudio?.numberOfChannels ?? numberOfChannels,
-                    sampleRate: decodedAudio?.sampleRate ?? sampleRate,
+                    numberOfChannels,
+                    sampleRate,
                 } :
                 undefined,
             fastStart: "in-memory",
@@ -391,7 +284,9 @@ export const encodeH264WebCodecs = async (
             bitrate,
             framerate: DEFAULT_FPS,
             hardwareAcceleration: "prefer-hardware",
-            latencyMode: "quality",
+            // realtime keeps the encode queue moving on mobile; quality mode
+            // stalls behind our canvas/rVFC pump and feels much slower.
+            latencyMode: "realtime",
             avc: { format: "avc" },
         });
 
@@ -506,19 +401,6 @@ export const encodeH264WebCodecs = async (
         }
         await encoder.flush();
         await audioEncoder?.flush();
-
-        if (decodedAudio && audioOutcome !== "aac") {
-            const encoded = await encodeAudioBufferAsAac(decodedAudio, muxer, fail);
-            if (encoded && !encodeError) {
-                audioOutcome = "aac";
-            } else if (hasAudioTrack) {
-                audioOutcome = "needs-remux";
-            }
-        }
-
-        if (encodeError) {
-            throw encodeError;
-        }
 
         muxer.finalize();
         options.onProgress?.(1);

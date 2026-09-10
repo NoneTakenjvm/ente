@@ -94,6 +94,46 @@ describe("serializeTagFilter / hydrateTagFilter", () => {
         expect(restored.root.op).toBe("only");
         expect(restored.root.children).toHaveLength(2);
     });
+
+    it("round-trips kit units", () => {
+        const original: TagFilterSelection = {
+            ...emptyTagFilter(),
+            root: {
+                kind: "group",
+                id: newTagFilterNodeId(),
+                op: "or",
+                children: [
+                    {
+                        kind: "kit",
+                        id: newTagFilterNodeId(),
+                        presetId: "k1",
+                        name: "Beach",
+                        tags: ["sand", "sea"],
+                        mode: "exclude",
+                    },
+                    {
+                        kind: "kit",
+                        id: newTagFilterNodeId(),
+                        presetId: "k2",
+                        name: "City",
+                        tags: ["street"],
+                        mode: "exclude",
+                    },
+                ],
+            },
+        };
+        const restored = hydrateTagFilter(serializeTagFilter(original));
+        expect(restored.root.op).toBe("or");
+        expect(restored.root.children).toHaveLength(2);
+        const first = restored.root.children[0];
+        expect(first.kind).toBe("kit");
+        if (first.kind === "kit") {
+            expect(first.presetId).toBe("k1");
+            expect(first.name).toBe("Beach");
+            expect(first.tags).toEqual(["sand", "sea"]);
+            expect(first.mode).toBe("exclude");
+        }
+    });
 });
 
 describe("createQueryAlbum", () => {

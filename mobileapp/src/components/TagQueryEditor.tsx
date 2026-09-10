@@ -1,13 +1,16 @@
-import { useState, type JSX } from "react";
+import { memo, useState, type JSX } from "react";
 import { TagClausePicker } from "@/components/TagClausePicker";
 import { TagScopeFilterDropdown } from "@/components/TagScopeFilterDropdown";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { X } from "lucide-react";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import type { KitFilterInput } from "@/lib/tag-filter-mutations";
 import {
     describeTagFilterClause,
+    describeTagFilterKit,
     isTagFilterClause,
+    isTagFilterKit,
     type CroppedScope,
     type FavoritesScope,
     type MediaScope,
@@ -38,9 +41,9 @@ export interface TagQueryEditorActions {
         tag: string,
         mode: TagFilterMode | null,
     ) => void;
-    setKitTagsInGroup: (
+    setKitInGroup: (
         groupId: string,
-        tags: string[],
+        kit: KitFilterInput,
         mode: TagFilterMode | null,
     ) => void;
 }
@@ -72,9 +75,9 @@ interface NodeRowProps {
         tag: string,
         mode: TagFilterMode | null,
     ) => void;
-    onSetKitTagsInGroup: (
+    onSetKitInGroup: (
         groupId: string,
-        tags: string[],
+        kit: KitFilterInput,
         mode: TagFilterMode | null,
     ) => void;
     onSetGroupOp: (groupId: string, op: TagFilterJoin) => void;
@@ -126,7 +129,7 @@ function MatchJoinToggle({
     );
 }
 
-function FilterNodeRow({
+const FilterNodeRow = memo(function FilterNodeRow({
     node,
     depth,
     filter,
@@ -135,7 +138,7 @@ function FilterNodeRow({
     onRemove,
     onSetClauseMode,
     onSetClauseInGroup,
-    onSetKitTagsInGroup,
+    onSetKitInGroup,
     onSetGroupOp,
     onUngroup,
 }: NodeRowProps): JSX.Element {
@@ -202,6 +205,72 @@ function FilterNodeRow({
         );
     }
 
+    if (isTagFilterKit(node)) {
+        return (
+            <li
+                className="flex items-center gap-2 rounded-md border border-border/60 p-2"
+                style={{ marginLeft: depth * 12 }}
+            >
+                <Checkbox
+                    checked={selectedIds.has(node.id)}
+                    onCheckedChange={() => {
+                        onToggleSelect(node.id);
+                    }}
+                    aria-label={`Select ${describeTagFilterKit(node)}`}
+                />
+                <span className="min-w-0 flex-1 truncate text-sm">
+                    <span className="font-medium">{node.name}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                        Kit · {node.tags.join(", ")}
+                    </span>
+                </span>
+                <div className="flex shrink-0 items-center gap-1">
+                    <Button
+                        type="button"
+                        size="xs"
+                        variant={
+                            node.mode === "include" ? "default" : "outline"
+                        }
+                        className="h-7 px-2"
+                        onClick={() => {
+                            onSetClauseMode(node.id, "include");
+                        }}
+                    >
+                        Has
+                    </Button>
+                    <Button
+                        type="button"
+                        size="xs"
+                        variant={
+                            node.mode === "exclude" ? "destructive" : "outline"
+                        }
+                        className={cn(
+                            "h-7 px-2",
+                            node.mode === "exclude" &&
+                                "text-destructive-foreground",
+                        )}
+                        onClick={() => {
+                            onSetClauseMode(node.id, "exclude");
+                        }}
+                    >
+                        Not
+                    </Button>
+                </div>
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={`Remove kit ${node.name}`}
+                    onClick={() => {
+                        onRemove(node.id);
+                    }}
+                >
+                    <X className="size-3.5" />
+                </Button>
+            </li>
+        );
+    }
+
     return (
         <li
             className="flex flex-col gap-2 rounded-md border border-dashed border-border/80 p-2"
@@ -228,7 +297,7 @@ function FilterNodeRow({
                     filter={filter}
                     targetGroupId={node.id}
                     onSetClauseInGroup={onSetClauseInGroup}
-                    onSetKitTagsInGroup={onSetKitTagsInGroup}
+                    onSetKitInGroup={onSetKitInGroup}
                     triggerLabel="Add tag"
                     triggerVariant="ghost"
                     triggerSize="xs"
@@ -257,7 +326,7 @@ function FilterNodeRow({
                         onRemove={onRemove}
                         onSetClauseMode={onSetClauseMode}
                         onSetClauseInGroup={onSetClauseInGroup}
-                        onSetKitTagsInGroup={onSetKitTagsInGroup}
+                        onSetKitInGroup={onSetKitInGroup}
                         onSetGroupOp={onSetGroupOp}
                         onUngroup={onUngroup}
                     />
@@ -265,7 +334,7 @@ function FilterNodeRow({
             </ul>
         </li>
     );
-}
+});
 
 function RootGroupSection({
     group,
@@ -276,7 +345,7 @@ function RootGroupSection({
     onRemove,
     onSetClauseMode,
     onSetClauseInGroup,
-    onSetKitTagsInGroup,
+    onSetKitInGroup,
     onSetGroupOp,
     onUngroup,
 }: {
@@ -292,9 +361,9 @@ function RootGroupSection({
         tag: string,
         mode: TagFilterMode | null,
     ) => void;
-    onSetKitTagsInGroup: (
+    onSetKitInGroup: (
         groupId: string,
-        tags: string[],
+        kit: KitFilterInput,
         mode: TagFilterMode | null,
     ) => void;
     onSetGroupOp: (groupId: string, op: TagFilterJoin) => void;
@@ -310,7 +379,7 @@ function RootGroupSection({
                     filter={filter}
                     targetGroupId={group.id}
                     onSetClauseInGroup={onSetClauseInGroup}
-                    onSetKitTagsInGroup={onSetKitTagsInGroup}
+                    onSetKitInGroup={onSetKitInGroup}
                     triggerLabel="Add tag"
                     triggerSize="sm"
                 />
@@ -334,7 +403,7 @@ function RootGroupSection({
                     filter={filter}
                     targetGroupId={group.id}
                     onSetClauseInGroup={onSetClauseInGroup}
-                    onSetKitTagsInGroup={onSetKitTagsInGroup}
+                    onSetKitInGroup={onSetKitInGroup}
                     triggerLabel="Add tag"
                     triggerVariant="ghost"
                     triggerSize="xs"
@@ -352,7 +421,7 @@ function RootGroupSection({
                         onRemove={onRemove}
                         onSetClauseMode={onSetClauseMode}
                         onSetClauseInGroup={onSetClauseInGroup}
-                        onSetKitTagsInGroup={onSetKitTagsInGroup}
+                        onSetKitInGroup={onSetKitInGroup}
                         onSetGroupOp={onSetGroupOp}
                         onUngroup={onUngroup}
                     />
@@ -435,7 +504,7 @@ export function TagQueryEditor({
                 onRemove={actions.removeNode}
                 onSetClauseMode={actions.setClauseMode}
                 onSetClauseInGroup={actions.setClauseInGroup}
-                onSetKitTagsInGroup={actions.setKitTagsInGroup}
+                onSetKitInGroup={actions.setKitInGroup}
                 onSetGroupOp={actions.setGroupOp}
                 onUngroup={actions.ungroup}
             />

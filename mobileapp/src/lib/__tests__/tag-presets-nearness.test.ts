@@ -5,7 +5,7 @@ import {
     stampTagsFromNearnessFilter,
 } from "@/lib/tag-presets";
 import { emptyTagFilter } from "@/lib/tags";
-import { setKitTagsModeOnFilter } from "@/lib/tag-filter-mutations";
+import { setKitModeOnFilter, setTagFilterModeOnFilter } from "@/lib/tag-filter-mutations";
 
 describe("matchNearnessFilterToKitPreset", () => {
     const presets = [
@@ -13,19 +13,25 @@ describe("matchNearnessFilterToKitPreset", () => {
         { id: "k2", name: "City", tags: ["street"] },
     ];
 
+    it("matches a kit unit that equals one preset", () => {
+        const filter = nearnessFilterFromKitTags(["sand", "sea"], {
+            id: "k1",
+            name: "Beach",
+        });
+        expect(matchNearnessFilterToKitPreset(filter, presets)?.id).toBe("k1");
+    });
+
     it("matches a flat AND include set that equals one kit", () => {
-        const filter = setKitTagsModeOnFilter(
-            emptyTagFilter(),
-            ["sand", "sea"],
-            "include",
-        );
+        let filter = emptyTagFilter();
+        filter = setTagFilterModeOnFilter(filter, "sand", "include");
+        filter = setTagFilterModeOnFilter(filter, "sea", "include");
         expect(matchNearnessFilterToKitPreset(filter, presets)?.id).toBe("k1");
     });
 
     it("returns undefined for scopes, excludes, OR, or non-kit tag sets", () => {
-        const kitFilter = setKitTagsModeOnFilter(
+        const kitFilter = setKitModeOnFilter(
             emptyTagFilter(),
-            ["sand", "sea"],
+            { presetId: "k1", name: "Beach", tags: ["sand", "sea"] },
             "include",
         );
         expect(
@@ -41,9 +47,9 @@ describe("matchNearnessFilterToKitPreset", () => {
         };
         expect(matchNearnessFilterToKitPreset(orFilter, presets)).toBeUndefined();
 
-        const other = setKitTagsModeOnFilter(
+        const other = setTagFilterModeOnFilter(
             emptyTagFilter(),
-            ["sand"],
+            "sand",
             "include",
         );
         expect(matchNearnessFilterToKitPreset(other, presets)).toBeUndefined();
@@ -65,9 +71,9 @@ describe("stampTagsFromNearnessFilter", () => {
     });
 
     it("returns tag mode for a non-kit include set", () => {
-        const filter = setKitTagsModeOnFilter(
+        const filter = setTagFilterModeOnFilter(
             emptyTagFilter(),
-            ["sand"],
+            "sand",
             "include",
         );
         expect(stampTagsFromNearnessFilter(filter, presets)).toEqual({

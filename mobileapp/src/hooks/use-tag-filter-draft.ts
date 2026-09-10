@@ -3,8 +3,8 @@ import {
     removeTagFilterNode,
     setClauseInGroupOnFilter,
     setClauseModeOnFilter,
-    setKitTagsInGroupOnFilter,
-    setKitTagsModeOnFilter,
+    setKitInGroupOnFilter,
+    setKitModeOnFilter,
     setTagFilterFavoritesScope,
     setTagFilterMediaScope,
     setTagFilterCroppedScope,
@@ -13,6 +13,7 @@ import {
     setTagFilterScope,
     ungroupTagFilterNode,
     wrapTagFilterNodesInGroup,
+    type KitFilterInput,
 } from "@/lib/tag-filter-mutations";
 import {
     emptyTagFilter,
@@ -28,7 +29,7 @@ import type { TagQueryEditorActions } from "@/components/TagQueryEditor";
 
 export type TagFilterDraftActions = TagQueryEditorActions & {
     setTagFilterMode: (tag: string, mode: TagFilterMode | null) => void;
-    setKitTagsMode: (tags: string[], mode: TagFilterMode | null) => void;
+    setKitMode: (kit: KitFilterInput, mode: TagFilterMode | null) => void;
 };
 
 export interface TagFilterDraft {
@@ -93,13 +94,13 @@ export const useTagFilterDraft: (
         [],
     );
 
-    const setKitTagsMode: (
-        tags: string[],
+    const setKitMode: (
+        kit: KitFilterInput,
         mode: TagFilterMode | null,
     ) => void = useCallback(
-        (tags: string[], mode: TagFilterMode | null): void => {
+        (kit: KitFilterInput, mode: TagFilterMode | null): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
-                setKitTagsModeOnFilter(current, tags, mode));
+                setKitModeOnFilter(current, kit, mode));
         },
         [],
     );
@@ -157,14 +158,18 @@ export const useTagFilterDraft: (
         [],
     );
 
-    const setKitTagsInGroup: (
+    const setKitInGroup: (
         groupId: string,
-        tags: string[],
+        kit: KitFilterInput,
         mode: TagFilterMode | null,
     ) => void = useCallback(
-        (groupId: string, tags: string[], mode: TagFilterMode | null): void => {
+        (
+            groupId: string,
+            kit: KitFilterInput,
+            mode: TagFilterMode | null,
+        ): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
-                setKitTagsInGroupOnFilter(current, groupId, tags, mode));
+                setKitInGroupOnFilter(current, groupId, kit, mode));
         },
         [],
     );
@@ -180,10 +185,10 @@ export const useTagFilterDraft: (
             ungroup,
             removeNode,
             setTagFilterMode,
-            setKitTagsMode,
+            setKitMode,
             setClauseMode,
             setClauseInGroup,
-            setKitTagsInGroup,
+            setKitInGroup,
         }),
         [
             setTagScope,
@@ -195,10 +200,10 @@ export const useTagFilterDraft: (
             ungroup,
             removeNode,
             setTagFilterMode,
-            setKitTagsMode,
+            setKitMode,
             setClauseMode,
             setClauseInGroup,
-            setKitTagsInGroup,
+            setKitInGroup,
         ],
     );
     return { filter, setFilter, actions };

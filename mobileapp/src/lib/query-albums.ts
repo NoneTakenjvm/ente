@@ -1,10 +1,12 @@
 import {
     emptyTagFilter,
     isTagFilterClause,
+    isTagFilterKit,
     newTagFilterNodeId,
     type TagFilterClauseNode,
     type TagFilterGroup,
     type TagFilterJoin,
+    type TagFilterKitNode,
     type TagFilterMode,
     type TagFilterNode,
     type TagFilterSelection,
@@ -33,6 +35,14 @@ export type PersistedTagFilterClause = {
     mode: TagFilterMode;
 };
 
+export type PersistedTagFilterKit = {
+    kind: "kit";
+    presetId: string;
+    name: string;
+    tags: string[];
+    mode: TagFilterMode;
+};
+
 export type PersistedTagFilterGroup = {
     kind: "group";
     op: TagFilterJoin;
@@ -41,6 +51,7 @@ export type PersistedTagFilterGroup = {
 
 export type PersistedTagFilterNode =
     PersistedTagFilterClause |
+    PersistedTagFilterKit |
     PersistedTagFilterGroup;
 
 export interface PersistedTagFilterSelection {
@@ -54,6 +65,15 @@ export interface PersistedTagFilterSelection {
 const serializeNode = (node: TagFilterNode): PersistedTagFilterNode => {
     if (isTagFilterClause(node)) {
         return { kind: "clause", tag: node.tag, mode: node.mode };
+    }
+    if (isTagFilterKit(node)) {
+        return {
+            kind: "kit",
+            presetId: node.presetId,
+            name: node.name,
+            tags: [...node.tags],
+            mode: node.mode,
+        };
     }
     return {
         kind: "group",
@@ -84,9 +104,21 @@ const hydrateClause = (
     mode: clause.mode,
 });
 
+const hydrateKit = (kit: PersistedTagFilterKit): TagFilterKitNode => ({
+    kind: "kit",
+    id: newTagFilterNodeId(),
+    presetId: kit.presetId,
+    name: kit.name,
+    tags: [...kit.tags],
+    mode: kit.mode,
+});
+
 const hydrateNode = (node: PersistedTagFilterNode): TagFilterNode => {
     if (node.kind === "clause") {
         return hydrateClause(node);
+    }
+    if (node.kind === "kit") {
+        return hydrateKit(node);
     }
     return {
         kind: "group",

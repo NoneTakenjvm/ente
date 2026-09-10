@@ -254,7 +254,7 @@ export function AlbumEditorPanel({
                     <TagClausePicker
                         filter={filter}
                         onSetTagFilterMode={actions.setTagFilterMode}
-                        onSetKitTagsMode={actions.setKitTagsMode}
+                        onSetKitMode={actions.setKitMode}
                         onSetRootOp={(op) => {
                             actions.setGroupOp(filter.root.id, op);
                         }}
