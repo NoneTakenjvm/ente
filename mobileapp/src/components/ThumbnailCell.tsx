@@ -13,6 +13,7 @@ import {
     requestThumbnail,
     subscribeThumbnail,
 } from "@/lib/thumbnail-cache";
+import { fileByteSize, formatFileSize } from "@/lib/compress";
 import { Check, CircleCheck, Play } from "lucide-react";
 import { FileType } from "ente-media/file-type";
 import type { EnteFile } from "ente-media/file";
@@ -33,6 +34,8 @@ interface ThumbnailCellProps {
     disabled?: boolean;
     /** When true, tap toggles selection instead of opening. */
     tapSelects?: boolean;
+    /** Compress picker: show file size chip (bottom-left). */
+    showFileSize?: boolean;
 }
 
 /** Skip re-render when the same file is shown with the same chrome. */
@@ -43,6 +46,7 @@ const thumbnailCellPropsAreEqual = (
     prev.file.id === next.file.id &&
     prev.file.key === next.file.key &&
     prev.file.metadata.fileType === next.file.metadata.fileType &&
+    prev.file.info?.fileSize === next.file.info?.fileSize &&
     prev.size === next.size &&
     prev.width === next.width &&
     prev.height === next.height &&
@@ -52,7 +56,8 @@ const thumbnailCellPropsAreEqual = (
     prev.onToggleSelect === next.onToggleSelect &&
     prev.isAlreadyCompressed === next.isAlreadyCompressed &&
     prev.disabled === next.disabled &&
-    prev.tapSelects === next.tapSelects;
+    prev.tapSelects === next.tapSelects &&
+    prev.showFileSize === next.showFileSize;
 
 export const ThumbnailCell = memo(function ThumbnailCell({
     file,
@@ -66,11 +71,13 @@ export const ThumbnailCell = memo(function ThumbnailCell({
     isAlreadyCompressed = false,
     disabled = false,
     tapSelects = false,
+    showFileSize = false,
 }: ThumbnailCellProps): JSX.Element {
     const cellWidth = width ?? size ?? 0;
     const cellHeight = height ?? size ?? 0;
     const imageFitClass =
         objectFit === "contain" ? "object-contain" : "object-cover";
+    const sizeBytes = fileByteSize(file);
 
     const entry = useSyncExternalStore(
         (listener) => subscribeThumbnail(file.id, listener),
@@ -212,6 +219,14 @@ export const ThumbnailCell = memo(function ThumbnailCell({
                     aria-hidden
                 >
                     <CircleCheck className="size-3.5" strokeWidth={2.5} />
+                </span>
+            ) : null}
+            {showFileSize && sizeBytes > 0 ? (
+                <span
+                    className="pointer-events-none absolute bottom-1 left-1 z-10 rounded bg-black/60 px-1 py-0.5 text-[10px] leading-none text-white"
+                    aria-hidden
+                >
+                    {formatFileSize(sizeBytes)}
                 </span>
             ) : null}
             {tapSelects && isSelected ? (

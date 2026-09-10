@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/sheet";
 import {
     fileByteSize,
+    formatFileSize,
     formatSizeDelta,
 } from "@/lib/compress";
 import type { EnteFile } from "ente-media/file";
@@ -17,26 +18,14 @@ interface BatchCompressPreviewSheetProps {
     open: boolean;
     files: EnteFile[];
     minSizeLabel: string;
-    videoCrf: number;
     onClose: () => void;
     onConfirm: () => void;
 }
-
-const formatBytes = (bytes: number): string => {
-    if (bytes < 1024) {
-        return `${bytes} B`;
-    }
-    if (bytes < 1024 * 1024) {
-        return `${Math.round(bytes / 1024)} KB`;
-    }
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-};
 
 export function BatchCompressPreviewSheet({
     open,
     files,
     minSizeLabel,
-    videoCrf,
     onClose,
     onConfirm,
 }: BatchCompressPreviewSheetProps): JSX.Element {
@@ -45,7 +34,7 @@ export function BatchCompressPreviewSheet({
         [files],
     );
 
-    const settingsSummary = `Skip under ${minSizeLabel.replace(/\+$/u, "")} · Video CRF ${videoCrf}`;
+    const settingsSummary = `Skip under ${minSizeLabel.replace(/\+$/u, "")}`;
 
     const sizeSummary = formatSizeDelta(totalBytes, Math.round(totalBytes * 0.7));
 
@@ -69,11 +58,12 @@ export function BatchCompressPreviewSheet({
                 <div className="flex flex-col gap-4 px-4">
                     <p className="text-sm text-muted-foreground">
                         {files.length} file{files.length === 1 ? "" : "s"} selected ·{" "}
-                        {formatBytes(totalBytes)} total
+                        {formatFileSize(totalBytes)} total
                     </p>
                     <p className="text-sm text-muted-foreground">
                         {settingsSummary}. Files that would not shrink by at least 2%
-                        are skipped automatically.
+                        are skipped automatically. Videos with audio that cannot be
+                        kept are skipped too.
                     </p>
                     {totalBytes > 0 ? (
                         <p className="text-sm text-muted-foreground">
@@ -92,7 +82,7 @@ export function BatchCompressPreviewSheet({
                                 </span>
                                 <span className="shrink-0 text-muted-foreground">
                                     {fileByteSize(file) > 0 ?
-                                        formatBytes(fileByteSize(file)) :
+                                        formatFileSize(fileByteSize(file)) :
                                         "Unknown size"}
                                 </span>
                             </li>

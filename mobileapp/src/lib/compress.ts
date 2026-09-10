@@ -34,6 +34,17 @@ export class CompressionSkippedError extends Error {
     }
 }
 
+/** Compact byte label for overlays and selection chrome (e.g. `1.2 MB`). */
+export const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) {
+        return `${bytes} B`;
+    }
+    if (bytes < 1024 * 1024) {
+        return `${Math.round(bytes / 1024)} KB`;
+    }
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
 export interface MinSizeFilterPreset {
     label: string;
     bytes: number;
@@ -313,15 +324,7 @@ export const compressedReplaceTitle = (
     return `${baseName}.avif`;
 };
 
-const formatBytes = (bytes: number): string => {
-    if (bytes < 1024) {
-        return `${bytes} B`;
-    }
-    if (bytes < 1024 * 1024) {
-        return `${Math.round(bytes / 1024)} KB`;
-    }
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-};
+const formatBytes = formatFileSize;
 
 /**
  * Format original vs compressed sizes and percent saved.

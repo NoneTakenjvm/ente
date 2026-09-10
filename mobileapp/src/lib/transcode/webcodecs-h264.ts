@@ -10,17 +10,29 @@ export interface WebCodecsH264Options {
     onProgress?: (ratio: number) => void;
 }
 
+/** How audio was handled in the WebCodecs MP4. */
+export type WebCodecsAudioOutcome =
+    /** AAC was muxed into the MP4. */
+    "aac" |
+    /** Source had no audio track. */
+    "none" |
+    /** Source had audio but WebCodecs could not encode it — caller should remux. */
+    "needs-remux";
+
 export interface WebCodecsH264Result {
     bytes: Uint8Array;
     width: number;
     height: number;
     duration: number;
+    audio: WebCodecsAudioOutcome;
 }
 
 const AVC_CODECS = ["avc1.640028", "avc1.4D401F", "avc1.42001E"] as const;
 const DEFAULT_FPS = 30;
 const KEYFRAME_INTERVAL_US = 2_000_000;
 const AAC_BITRATE = 128_000;
+/** PCM chunk size when feeding AudioEncoder from decoded AudioBuffer. */
+const AAC_SAMPLES_PER_CHUNK = 1024;
 
 type CaptureCapableVideo = HTMLVideoElement & {
     captureStream?: () => MediaStream;
@@ -145,10 +157,99 @@ const audioProcessorCtor = (): MediaStreamTrackProcessorCtor | undefined =>
         MediaStreamTrackProcessor?: MediaStreamTrackProcessorCtor;
     }).MediaStreamTrackProcessor;
 
+const interleaveAudioBuffer = (buffer: AudioBuffer): Float32Array => {
+    const { numberOfChannels, length } = buffer;
+    if (numberOfChannels === 1) {
+        return buffer.getChannelData(0);
+    }
+    const interleaved = new Float32Array(length * numberOfChannels);
+    for (let channel = 0; channel < numberOfChannels; channel += 1) {
+        const data = buffer.getChannelData(channel);
+        for (let i = 0; i < length; i += 1) {
+            interleaved[i * numberOfChannels + channel] = data[i]!;
+        }
+    }
+    return interleaved;
+};
+
+/**
+ * Encode an AudioBuffer as AAC into the muxer via {@link AudioEncoder}.
+ *
+ * @returns true when AAC chunks were produced
+ */
+const encodeAudioBufferAsAac = async (
+    audioBuffer: AudioBuffer,
+    muxer: Muxer<ArrayBufferTarget>,
+    fail: (error: Error) => void,
+): Promise<boolean> => {
+    if (typeof AudioEncoder === "undefined" || typeof AudioData === "undefined") {
+        return false;
+    }
+    const numberOfChannels = Math.max(1, audioBuffer.numberOfChannels);
+    const sampleRate = audioBuffer.sampleRate;
+    const support = await AudioEncoder.isConfigSupported({
+        codec: "mp4a.40.2",
+        numberOfChannels,
+        sampleRate,
+        bitrate: AAC_BITRATE,
+    });
+    if (!support.supported) {
+        return false;
+    }
+
+    const encoder = new AudioEncoder({
+        output: (chunk, meta) => {
+            muxer.addAudioChunk(chunk, meta);
+        },
+        error: (error) => {
+            fail(error instanceof Error ? error : new Error(String(error)));
+        },
+    });
+    encoder.configure({
+        codec: "mp4a.40.2",
+        numberOfChannels,
+        sampleRate,
+        bitrate: AAC_BITRATE,
+    });
+
+    const interleaved = interleaveAudioBuffer(audioBuffer);
+    const frameSamples = AAC_SAMPLES_PER_CHUNK;
+    let offset = 0;
+    let timestamp = 0;
+    while (offset < audioBuffer.length) {
+        const samples = Math.min(frameSamples, audioBuffer.length - offset);
+        const frame = new AudioData({
+            format: "f32",
+            sampleRate,
+            numberOfFrames: samples,
+            numberOfChannels,
+            timestamp,
+            data: new Float32Array(
+                interleaved.subarray(
+                    offset * numberOfChannels,
+                    (offset + samples) * numberOfChannels,
+                ),
+            ),
+        });
+        encoder.encode(frame);
+        frame.close();
+        timestamp += Math.round((samples / sampleRate) * 1_000_000);
+        offset += samples;
+    }
+    await encoder.flush();
+    encoder.close();
+    return true;
+};
+
 /**
  * Re-encode video bytes as H.264/AAC MP4 using hardware WebCodecs when available.
  *
- * @throws when WebCodecs cannot encode this file (caller should fall back to ffmpeg)
+ * Video is always encoded when {@link VideoEncoder} works. Audio uses capture-stream
+ * AAC when possible, else decoded PCM → AAC. If the source has audio but neither
+ * path works, returns {@code audio: "needs-remux"} so the caller can ffmpeg-remux
+ * or skip — never silently drops audio.
+ *
+ * @throws when WebCodecs cannot encode video (caller should fall back to ffmpeg)
  */
 export const encodeH264WebCodecs = async (
     options: WebCodecsH264Options,
@@ -170,6 +271,7 @@ export const encodeH264WebCodecs = async (
 
     let encoder: VideoEncoder | undefined;
     let audioEncoder: AudioEncoder | undefined;
+    let audioOutcome: WebCodecsAudioOutcome = "none";
 
     try {
         await waitForMetadata(video);
@@ -195,19 +297,59 @@ export const encodeH264WebCodecs = async (
         await video.play();
         const stream = captureStreamFrom(video);
         const audioTrack = stream?.getAudioTracks()[0];
+        const hasAudioTrack = Boolean(audioTrack);
         const Processor = audioProcessorCtor();
-        const canEncodeAudio =
-            Boolean(audioTrack) &&
-            typeof AudioEncoder !== "undefined" &&
-            Processor !== undefined;
-
-        if (audioTrack && !canEncodeAudio) {
-            throw new Error("WebCodecs AAC encoder unavailable");
-        }
-
         const audioSettings = audioTrack?.getSettings() ?? {};
         const numberOfChannels = Math.max(1, audioSettings.channelCount ?? 2);
         const sampleRate = audioSettings.sampleRate ?? 44100;
+
+        let canStreamEncodeAudio = false;
+        if (
+            hasAudioTrack &&
+            typeof AudioEncoder !== "undefined" &&
+            Processor !== undefined
+        ) {
+            try {
+                const aacSupport = await AudioEncoder.isConfigSupported({
+                    codec: "mp4a.40.2",
+                    numberOfChannels,
+                    sampleRate,
+                    bitrate: AAC_BITRATE,
+                });
+                canStreamEncodeAudio = Boolean(aacSupport.supported);
+            } catch {
+                canStreamEncodeAudio = false;
+            }
+        }
+
+        // Prefer streaming AAC when possible; otherwise decode PCM → AAC
+        // (muxer audio config must be set at construction).
+        let decodedAudio: AudioBuffer | undefined;
+        if (hasAudioTrack && !canStreamEncodeAudio) {
+            try {
+                const AudioCtx =
+                    globalThis.AudioContext ??
+                    (globalThis as unknown as {
+                        webkitAudioContext?: typeof AudioContext;
+                    }).webkitAudioContext;
+                if (AudioCtx && typeof AudioEncoder !== "undefined") {
+                    const context = new AudioCtx();
+                    try {
+                        const copy = options.bytes.slice().buffer;
+                        decodedAudio = await context.decodeAudioData(copy);
+                    } finally {
+                        void context.close();
+                    }
+                }
+            } catch {
+                decodedAudio = undefined;
+            }
+        }
+
+        const willMuxAac = canStreamEncodeAudio || Boolean(decodedAudio);
+        if (hasAudioTrack && !willMuxAac) {
+            audioOutcome = "needs-remux";
+        }
 
         const target = new ArrayBufferTarget();
         const muxer = new Muxer({
@@ -218,11 +360,11 @@ export const encodeH264WebCodecs = async (
                 height,
                 frameRate: DEFAULT_FPS,
             },
-            audio: canEncodeAudio ?
+            audio: willMuxAac ?
                 {
                     codec: "aac",
-                    numberOfChannels,
-                    sampleRate,
+                    numberOfChannels: decodedAudio?.numberOfChannels ?? numberOfChannels,
+                    sampleRate: decodedAudio?.sampleRate ?? sampleRate,
                 } :
                 undefined,
             fastStart: "in-memory",
@@ -264,16 +406,7 @@ export const encodeH264WebCodecs = async (
             }
         }
 
-        if (canEncodeAudio && audioTrack && Processor) {
-            const aacSupport = await AudioEncoder.isConfigSupported({
-                codec: "mp4a.40.2",
-                numberOfChannels,
-                sampleRate,
-                bitrate: AAC_BITRATE,
-            });
-            if (!aacSupport.supported) {
-                throw new Error("AAC encoder config unsupported");
-            }
+        if (canStreamEncodeAudio && audioTrack && Processor) {
             audioEncoder = new AudioEncoder({
                 output: (chunk, meta) => {
                     muxer.addAudioChunk(chunk, meta);
@@ -306,6 +439,7 @@ export const encodeH264WebCodecs = async (
                     fail(error instanceof Error ? error : new Error("Audio encode failed"));
                 }
             })();
+            audioOutcome = "aac";
         }
 
         if (typeof video.requestVideoFrameCallback !== "function") {
@@ -372,6 +506,20 @@ export const encodeH264WebCodecs = async (
         }
         await encoder.flush();
         await audioEncoder?.flush();
+
+        if (decodedAudio && audioOutcome !== "aac") {
+            const encoded = await encodeAudioBufferAsAac(decodedAudio, muxer, fail);
+            if (encoded && !encodeError) {
+                audioOutcome = "aac";
+            } else if (hasAudioTrack) {
+                audioOutcome = "needs-remux";
+            }
+        }
+
+        if (encodeError) {
+            throw encodeError;
+        }
+
         muxer.finalize();
         options.onProgress?.(1);
         if (!target.buffer) {
@@ -382,6 +530,9 @@ export const encodeH264WebCodecs = async (
             width,
             height,
             duration: Math.max(1, Math.round(durationSec)),
+            audio: hasAudioTrack ?
+                audioOutcome === "aac" ? "aac" : "needs-remux" :
+                "none",
         };
     } finally {
         try {

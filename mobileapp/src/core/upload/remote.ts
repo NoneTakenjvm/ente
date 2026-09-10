@@ -112,19 +112,62 @@ export const withUploadRetry = async <T>(
 
 /**
  * Upload encrypted bytes to a pre-signed S3 URL, retrying transient failures.
+ *
+ * When {@link onProgress} is set, uses XHR so upload byte progress is available
+ * (fetch does not report request-body progress).
  */
 export const putFile = async (
     http: HttpClient,
     uploadURL: string,
     fileData: Uint8Array<ArrayBuffer>,
+    onProgress?: (loaded: number, total: number) => void,
 ): Promise<void> => {
     await withUploadRetry(async () => {
-        const res = await fetch(uploadURL, {
-            method: "PUT",
-            headers: http.publicHeaders(),
-            body: fileData,
+        if (!onProgress) {
+            const res = await fetch(uploadURL, {
+                method: "PUT",
+                headers: http.publicHeaders(),
+                body: fileData,
+            });
+            http.ensureOk(res);
+            return;
+        }
+
+        await new Promise<void>((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open("PUT", uploadURL);
+            const headers = http.publicHeaders();
+            for (const [key, value] of Object.entries(headers)) {
+                xhr.setRequestHeader(key, value);
+            }
+            xhr.upload.onprogress = (event: ProgressEvent): void => {
+                if (event.lengthComputable) {
+                    onProgress(event.loaded, event.total);
+                } else {
+                    onProgress(
+                        event.loaded,
+                        Math.max(event.loaded, fileData.byteLength),
+                    );
+                }
+            };
+            xhr.onload = (): void => {
+                const res = new Response(null, {
+                    status: xhr.status,
+                    statusText: xhr.statusText,
+                });
+                try {
+                    http.ensureOk(res);
+                    onProgress(fileData.byteLength, fileData.byteLength);
+                    resolve();
+                } catch (error: unknown) {
+                    reject(error);
+                }
+            };
+            xhr.onerror = (): void => {
+                reject(new TypeError("Failed to fetch"));
+            };
+            xhr.send(fileData);
         });
-        http.ensureOk(res);
     });
 };
 

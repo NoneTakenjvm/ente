@@ -3,6 +3,28 @@ import {
     compressManageCandidates,
     CompressionSkippedError,
 } from "@/lib/compress";
+import { fileFileName } from "ente-media/file-metadata";
+import type { CompressEncoder } from "@/lib/transcode/compress-media";
+
+export type CompressJobStage =
+    "download" |
+    "compress" |
+    "upload" |
+    "skip" |
+    "done" |
+    "error";
+
+export interface CompressJobStageUpdate {
+    stage: CompressJobStage;
+    fileId: number;
+    fileLabel: string;
+    /** 1-based index of the file currently being processed (or just finished). */
+    current: number;
+    total: number;
+    /** 0–1 within the current stage when known. */
+    ratio?: number;
+    encoder?: CompressEncoder;
+}
 
 export interface CompressJobOptions {
     files: EnteFile[];
@@ -11,12 +33,23 @@ export interface CompressJobOptions {
     quality: number;
     videoCrf: number;
     minSizeBytes?: number;
+    maxLongEdge?: number;
     signal: AbortSignal;
     shouldPause: () => boolean;
-    onProgress: (current: number, total: number) => void;
+    onProgress: (update: CompressJobStageUpdate) => void;
     compressFile: (
         fileId: number,
-        options: { quality: number; videoCrf: number; minSizeBytes?: number },
+        options: {
+            quality: number;
+            videoCrf: number;
+            minSizeBytes?: number;
+            maxLongEdge?: number;
+            onStage?: (
+                stage: "download" | "compress" | "upload",
+                ratio?: number,
+                encoder?: CompressEncoder,
+            ) => void;
+        },
     ) => Promise<unknown>;
 }
 
@@ -52,24 +85,60 @@ export const runCompressJob = async (
         errors: [],
     };
 
-    options.onProgress(0, candidates.length);
+    const total = candidates.length;
+    options.onProgress({
+        stage: "download",
+        fileId: 0,
+        fileLabel: "",
+        current: 0,
+        total,
+    });
 
     for (let index = 0; index < candidates.length; index++) {
         if (options.signal.aborted || options.shouldPause()) {
             break;
         }
 
-        const file = candidates[index];
+        const file = candidates[index]!;
+        const fileLabel = fileFileName(file);
+        const current = index + 1;
         try {
             await options.compressFile(file.id, {
                 quality: options.quality,
                 videoCrf: options.videoCrf,
                 minSizeBytes: options.minSizeBytes,
+                maxLongEdge: options.maxLongEdge,
+                onStage: (stage, ratio, encoder) => {
+                    options.onProgress({
+                        stage,
+                        fileId: file.id,
+                        fileLabel,
+                        current,
+                        total,
+                        ratio,
+                        encoder,
+                    });
+                },
             });
             result.completed += 1;
+            options.onProgress({
+                stage: "done",
+                fileId: file.id,
+                fileLabel,
+                current,
+                total,
+                ratio: 1,
+            });
         } catch (error: unknown) {
             if (error instanceof CompressionSkippedError) {
                 result.skipped += 1;
+                options.onProgress({
+                    stage: "skip",
+                    fileId: file.id,
+                    fileLabel,
+                    current,
+                    total,
+                });
             } else {
                 result.failed += 1;
                 result.errors.push(
@@ -77,10 +146,15 @@ export const runCompressJob = async (
                         `${file.id}: ${error.message}` :
                         `${file.id}: compress failed`,
                 );
+                options.onProgress({
+                    stage: "error",
+                    fileId: file.id,
+                    fileLabel,
+                    current,
+                    total,
+                });
             }
         }
-
-        options.onProgress(index + 1, candidates.length);
     }
 
     return result;

@@ -187,13 +187,24 @@ interface LibraryState {
     ) => Promise<EnteFile>;
     compressAndUploadMedia: (
         fileId: number,
-        options?: { quality?: number; videoCrf?: number; minSizeBytes?: number },
+        options?: {
+            quality?: number;
+            videoCrf?: number;
+            minSizeBytes?: number;
+            maxLongEdge?: number;
+            onStage?: (
+                stage: "download" | "compress" | "upload",
+                ratio?: number,
+                encoder?: CompressMediaResult["encoder"],
+            ) => void;
+        },
         precomputed?: CompressMediaResult,
     ) => Promise<EnteFile>;
     compressAndReplaceMediaOptimistic: (
         fileId: number,
         result: CompressMediaResult,
         originalByteLength: number,
+        onUploadProgress?: (ratio: number) => void,
     ) => { optimisticFile: EnteFile; finalize: Promise<EnteFile> };
     rotateAndUploadFile: (
         fileId: number,
@@ -1134,7 +1145,17 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
 
     compressAndUploadMedia: async (
         fileId: number,
-        options?: { quality?: number; videoCrf?: number; minSizeBytes?: number },
+        options?: {
+            quality?: number;
+            videoCrf?: number;
+            minSizeBytes?: number;
+            maxLongEdge?: number;
+            onStage?: (
+                stage: "download" | "compress" | "upload",
+                ratio?: number,
+                encoder?: CompressMediaResult["encoder"],
+            ) => void;
+        },
         precomputed?: CompressMediaResult,
     ): Promise<EnteFile> => {
         const { allFiles } = get();
@@ -1157,17 +1178,39 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             const { compressMediaBytes } = await import(
                 "@/lib/transcode/compress-media"
             );
-            const bytes = await loadMediaBytesForEdit(file);
+            options?.onStage?.("download", 0);
+            const bytes = await loadMediaBytesForEdit(file, (progress) => {
+                const total = progress.total > 0 ? progress.total : progress.loaded;
+                options?.onStage?.(
+                    "download",
+                    total > 0 ? progress.loaded / total : undefined,
+                );
+            });
             originalByteLength = bytes.length;
-            result = await compressMediaBytes(file, bytes, options);
+            options?.onStage?.("download", 1);
+            options?.onStage?.("compress", 0);
+            result = await compressMediaBytes(file, bytes, {
+                quality: options?.quality,
+                videoCrf: options?.videoCrf,
+                minSizeBytes: options?.minSizeBytes,
+                maxLongEdge: options?.maxLongEdge,
+                onProgress: (ratio) => {
+                    options?.onStage?.("compress", ratio);
+                },
+            });
+            options?.onStage?.("compress", 1, result.encoder);
         }
         if (!isWorthReplacing(originalByteLength, result.bytes.length)) {
             throw new CompressionSkippedError();
         }
+        options?.onStage?.("upload", 0, result.encoder);
         const { finalize } = get().compressAndReplaceMediaOptimistic(
             fileId,
             result,
             originalByteLength,
+            (ratio) => {
+                options?.onStage?.("upload", ratio, result?.encoder);
+            },
         );
         return finalize;
     },
@@ -1176,6 +1219,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         fileId: number,
         result: CompressMediaResult,
         originalByteLength: number,
+        onUploadProgress?: (ratio: number) => void,
     ): { optimisticFile: EnteFile; finalize: Promise<EnteFile> } => {
         const { allFiles, collections } = get();
         const file = allFiles.find((entry) => entry.id === fileId);
@@ -1257,6 +1301,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                         sourceCollection,
                         compressedReplaceTitle(source, result.extension),
                         buildCompressedOrganizerTags(source),
+                        onUploadProgress,
                     );
                     return replaceSourceWithCompressed(
                         set,

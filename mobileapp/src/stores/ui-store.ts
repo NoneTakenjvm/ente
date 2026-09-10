@@ -63,10 +63,24 @@ export const usePhashJobStore = create<PhashJobState>(createPhashJobStore);
 
 interface CompressJobState {
     status: BackgroundJobStatus;
-    progress: { current: number; total: number };
+    progress: {
+        current: number;
+        total: number;
+        stage: string;
+        fileLabel: string;
+        ratio: number | undefined;
+        encoder: string | undefined;
+    };
     error: string | undefined;
     setStatus: (status: BackgroundJobStatus) => void;
-    setProgress: (current: number, total: number) => void;
+    setProgress: (update: {
+        current: number;
+        total: number;
+        stage?: string;
+        fileLabel?: string;
+        ratio?: number;
+        encoder?: string;
+    }) => void;
     setError: (error: string | undefined) => void;
     reset: () => void;
 }
@@ -76,7 +90,14 @@ const initialCompressJob: Pick<
     "status" | "progress" | "error"
 > = {
     status: "idle",
-    progress: { current: 0, total: 0 },
+    progress: {
+        current: 0,
+        total: 0,
+        stage: "",
+        fileLabel: "",
+        ratio: undefined,
+        encoder: undefined,
+    },
     error: undefined,
 };
 
@@ -85,8 +106,17 @@ export const useCompressJobStore = create<CompressJobState>((set) => ({
     setStatus: (status: BackgroundJobStatus): void => {
         set({ status });
     },
-    setProgress: (current: number, total: number): void => {
-        set({ progress: { current, total } });
+    setProgress: (update): void => {
+        set({
+            progress: {
+                current: update.current,
+                total: update.total,
+                stage: update.stage ?? "",
+                fileLabel: update.fileLabel ?? "",
+                ratio: update.ratio,
+                encoder: update.encoder,
+            },
+        });
     },
     setError: (error: string | undefined): void => {
         set({ error });
