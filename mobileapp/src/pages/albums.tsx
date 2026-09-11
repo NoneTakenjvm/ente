@@ -312,6 +312,7 @@ export default function AlbumsPage(): JSX.Element {
                     undefined
             }
             email={email}
+            mainScrolls={mode !== "view"}
             onBack={mode === "list" ? undefined : handleBack}
             actions={
                 mode === "list" ? (

@@ -4,7 +4,7 @@ import {
     useState,
     type JSX,
 } from "react";
-import { Stamp, Tag } from "lucide-react";
+import { ChevronDown, Stamp, Tag } from "lucide-react";
 import { TagPickerSheet } from "@/components/TagPickerSheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import {
     countFilesMatchingKit,
     type TagPreset,
 } from "@/lib/tag-presets";
+import { cn } from "@/lib/utils";
 import { useLibraryStore } from "@/stores/library-store";
 import {
     useSelectionStore,
@@ -38,6 +39,7 @@ const tagsMatchPreset = (tags: string[], preset: TagPreset): boolean => {
 
 /**
  * Footer for the stamp tool: Kit or Tag pick mode, then tap photos to apply.
+ * Collapsed by default (session-only expand); summary + Close always visible.
  */
 export function StampToolFooter(): JSX.Element | null {
     const stampActive = useSelectionStore((s) => s.stampActive);
@@ -58,6 +60,8 @@ export function StampToolFooter(): JSX.Element | null {
     const togglePinnedTag = useTagSpeedStore((s) => s.togglePinnedTag);
     /** When equal to the current kit key, show the full kit list. */
     const [expandedKitKey, setExpandedKitKey] = useState<string | null>(null);
+    /** Session-only: kit/tag chrome starts collapsed. */
+    const [expanded, setExpanded] = useState(false);
 
     const rankedKits = useMemo((): RankedKit[] => {
         if (!presets.length) {
@@ -102,6 +106,7 @@ export function StampToolFooter(): JSX.Element | null {
 
     const exitStamp = useCallback((): void => {
         setExpandedKitKey(null);
+        setExpanded(false);
         setStampActive(false);
     }, [setStampActive]);
 
@@ -140,14 +145,14 @@ export function StampToolFooter(): JSX.Element | null {
 
     return (
         <>
-            <footer className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-30 flex max-h-[45dvh] flex-col gap-2 border-t border-border bg-background/95 px-3 py-2.5 backdrop-blur">
+            <footer className="fixed inset-x-0 bottom-[env(safe-area-inset-bottom)] z-30 flex max-h-[45dvh] flex-col gap-2 border-t border-border bg-background/95 px-3 py-2.5 backdrop-blur">
                 <div className="flex items-center justify-between gap-2">
                     <p className="flex min-w-0 items-center gap-1.5 truncate text-sm text-muted-foreground">
                         <Stamp className="size-3.5 shrink-0" />
                         <span className="truncate">Stamp: {stampLabel}</span>
                     </p>
                     <div className="flex shrink-0 items-center gap-1.5">
-                        {kitListExpanded ? (
+                        {expanded && kitListExpanded ? (
                             <Button
                                 type="button"
                                 variant="ghost"
@@ -165,127 +170,162 @@ export function StampToolFooter(): JSX.Element | null {
                         >
                             Close
                         </Button>
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={
+                                expanded ?
+                                    "Collapse stamp kit" :
+                                    "Expand stamp kit"
+                            }
+                            aria-expanded={expanded}
+                            onClick={() => setExpanded((value) => !value)}
+                        >
+                            <ChevronDown
+                                className={cn(
+                                    "size-4 transition-transform",
+                                    expanded && "rotate-180",
+                                )}
+                            />
+                        </Button>
                     </div>
                 </div>
 
-                {activeKit && !kitListExpanded ? (
-                    <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="self-start"
-                        onClick={() => {
-                            setStampPickMode("kit");
-                            setExpandedKitKey(activeKit.id);
-                        }}
-                    >
-                        Change kit
-                    </Button>
-                ) : (
-                    <>
-                        <ToggleGroup
-                            variant="outline"
+                {expanded ? (
+                    activeKit && !kitListExpanded ? (
+                        <Button
+                            type="button"
+                            variant="ghost"
                             size="sm"
-                            value={[stampPickMode]}
-                            onValueChange={handlePickModeChange}
-                            className="w-full"
+                            className="self-start"
+                            onClick={() => {
+                                setStampPickMode("kit");
+                                setExpandedKitKey(activeKit.id);
+                            }}
                         >
-                            <ToggleGroupItem value="kit" className="flex-1">
-                                Kit
-                            </ToggleGroupItem>
-                            <ToggleGroupItem value="tag" className="flex-1">
-                                Tag
-                            </ToggleGroupItem>
-                        </ToggleGroup>
+                            Change kit
+                        </Button>
+                    ) : (
+                        <>
+                            <ToggleGroup
+                                variant="outline"
+                                size="sm"
+                                value={[stampPickMode]}
+                                onValueChange={handlePickModeChange}
+                                className="w-full"
+                            >
+                                <ToggleGroupItem value="kit" className="flex-1">
+                                    Kit
+                                </ToggleGroupItem>
+                                <ToggleGroupItem value="tag" className="flex-1">
+                                    Tag
+                                </ToggleGroupItem>
+                            </ToggleGroup>
 
-                        {stampPickMode === "kit" ? (
-                            rankedKits.length === 0 ? (
-                                <p className="text-xs text-muted-foreground">
-                                    No kits yet. Create them in Manage → Tags.
-                                </p>
+                            {stampPickMode === "kit" ? (
+                                rankedKits.length === 0 ? (
+                                    <p className="text-xs text-muted-foreground">
+                                        No kits yet. Create them in Manage →
+                                        Tags.
+                                    </p>
+                                ) : (
+                                    <ul className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain">
+                                        {rankedKits.map(
+                                            ({ preset, count }) => {
+                                                const selected =
+                                                    tagsMatchPreset(
+                                                        stampTags,
+                                                        preset,
+                                                    );
+                                                return (
+                                                    <li key={preset.id}>
+                                                        <Button
+                                                            type="button"
+                                                            variant={
+                                                                selected ?
+                                                                    "secondary" :
+                                                                    "ghost"
+                                                            }
+                                                            className="h-auto min-h-9 w-full justify-between gap-2 px-2 py-1.5"
+                                                            onClick={() => {
+                                                                selectKit(
+                                                                    preset,
+                                                                );
+                                                                setExpandedKitKey(
+                                                                    null,
+                                                                );
+                                                            }}
+                                                        >
+                                                            <span className="flex min-w-0 flex-col items-start gap-0.5 text-left">
+                                                                <span className="truncate text-sm font-medium">
+                                                                    {
+                                                                        preset.name
+                                                                    }
+                                                                </span>
+                                                                <span className="truncate text-xs text-muted-foreground">
+                                                                    {preset.tags.join(
+                                                                        ", ",
+                                                                    )}
+                                                                </span>
+                                                            </span>
+                                                            <Badge
+                                                                variant="secondary"
+                                                                className="shrink-0 tabular-nums"
+                                                            >
+                                                                {count}
+                                                            </Badge>
+                                                        </Button>
+                                                    </li>
+                                                );
+                                            },
+                                        )}
+                                    </ul>
+                                )
                             ) : (
-                                <ul className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain">
-                                    {rankedKits.map(({ preset, count }) => {
-                                        const selected = tagsMatchPreset(
-                                            stampTags,
-                                            preset,
-                                        );
+                                <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+                                    {workingSetTags.map((tag) => {
+                                        const isStamp =
+                                            stampTags.includes(tag);
                                         return (
-                                            <li key={preset.id}>
-                                                <Button
-                                                    type="button"
-                                                    variant={
-                                                        selected ?
-                                                            "secondary" :
-                                                            "ghost"
-                                                    }
-                                                    className="h-auto min-h-9 w-full justify-between gap-2 px-2 py-1.5"
-                                                    onClick={() => {
-                                                        selectKit(preset);
-                                                        setExpandedKitKey(null);
-                                                    }}
-                                                >
-                                                    <span className="flex min-w-0 flex-col items-start gap-0.5 text-left">
-                                                        <span className="truncate text-sm font-medium">
-                                                            {preset.name}
-                                                        </span>
-                                                        <span className="truncate text-xs text-muted-foreground">
-                                                            {preset.tags.join(
-                                                                ", ",
-                                                            )}
-                                                        </span>
-                                                    </span>
-                                                    <Badge
-                                                        variant="secondary"
-                                                        className="shrink-0 tabular-nums"
-                                                    >
-                                                        {count}
-                                                    </Badge>
-                                                </Button>
-                                            </li>
+                                            <Button
+                                                key={tag}
+                                                type="button"
+                                                variant={
+                                                    isStamp ?
+                                                        "secondary" :
+                                                        "outline"
+                                                }
+                                                size="sm"
+                                                className="h-8 shrink-0"
+                                                onClick={() => {
+                                                    toggleStampTag(tag);
+                                                }}
+                                                onContextMenu={(event) => {
+                                                    event.preventDefault();
+                                                    togglePinnedTag(tag);
+                                                }}
+                                            >
+                                                {tag}
+                                            </Button>
                                         );
                                     })}
-                                </ul>
-                            )
-                        ) : (
-                            <div className="flex gap-1.5 overflow-x-auto pb-0.5">
-                                {workingSetTags.map((tag) => {
-                                    const isStamp = stampTags.includes(tag);
-                                    return (
-                                        <Button
-                                            key={tag}
-                                            type="button"
-                                            variant={
-                                                isStamp ? "secondary" : "outline"
-                                            }
-                                            size="sm"
-                                            className="h-8 shrink-0"
-                                            onClick={() => {
-                                                toggleStampTag(tag);
-                                            }}
-                                            onContextMenu={(event) => {
-                                                event.preventDefault();
-                                                togglePinnedTag(tag);
-                                            }}
-                                        >
-                                            {tag}
-                                        </Button>
-                                    );
-                                })}
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-8 shrink-0 gap-1.5"
-                                    onClick={() => setStampSheetOpen(true)}
-                                >
-                                    <Tag className="size-3.5 shrink-0" />
-                                    Tags
-                                </Button>
-                            </div>
-                        )}
-                    </>
-                )}
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-8 shrink-0 gap-1.5"
+                                        onClick={() =>
+                                            setStampSheetOpen(true)}
+                                    >
+                                        <Tag className="size-3.5 shrink-0" />
+                                        Tags
+                                    </Button>
+                                </div>
+                            )}
+                        </>
+                    )
+                ) : null}
             </footer>
 
             <TagPickerSheet

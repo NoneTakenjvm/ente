@@ -3,6 +3,7 @@
 import { useRouter } from "next/router";
 import { useEffect, type JSX, type ReactNode } from "react";
 import { idleLockMs } from "@/lib/session-persistence";
+import { installDurableFlushListeners } from "@/lib/durable-flush";
 import {
     isSessionAuthenticated,
     useSessionStore,
@@ -30,6 +31,7 @@ export function SessionProvider({ children }: SessionProviderProps): JSX.Element
     const lock = useSessionStore((s) => s.lock);
 
     useEffect(() => {
+        installDurableFlushListeners();
         void restoreFromPersistence();
     }, [restoreFromPersistence]);
 

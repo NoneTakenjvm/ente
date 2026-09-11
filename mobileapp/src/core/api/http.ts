@@ -1,5 +1,6 @@
 import type { CoreSession } from "../session";
 import { authHeadersFor, publicHeaders } from "../session";
+import { notifyUnauthorized } from "@/lib/session-invalidation";
 
 const defaultOrigin = "https://api.ente.com";
 
@@ -50,6 +51,9 @@ export class HttpClient {
 
     ensureOk = (res: Response): void => {
         this.logRateLimitHeaders(res, res.url);
+        if (res.status === 401) {
+            notifyUnauthorized();
+        }
         if (!res.ok) {
             throw new Error(`HTTP ${res.status} for ${res.url}`);
         }

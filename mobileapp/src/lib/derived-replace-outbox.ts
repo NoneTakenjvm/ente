@@ -140,9 +140,31 @@ export const removeDerivedReplaceOutboxEntries = async (
 export const getDerivedReplaceOutboxEntries = (): DerivedReplaceOutboxEntry[] =>
     [...outboxByFileId.values()];
 
+/**
+ * Persist the in-memory derived-replace outbox meta to encrypted IDB.
+ */
+export const flushDerivedReplaceOutboxPersist = (): Promise<void> => {
+    if (!hydrated) {
+        return ensureDerivedReplaceOutboxHydrated().then(() => persist());
+    }
+    return persist();
+};
+
 export const clearDerivedReplaceOutbox = (): void => {
     outboxByFileId.clear();
     hydrated = false;
     persistChain = Promise.resolve();
     void clearDerivedReplacePayloads();
 };
+
+if (typeof window !== "undefined") {
+    const flushOnHide = (): void => {
+        void flushDerivedReplaceOutboxPersist();
+    };
+    window.addEventListener("pagehide", flushOnHide);
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") {
+            flushOnHide();
+        }
+    });
+}

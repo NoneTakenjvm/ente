@@ -5,6 +5,7 @@ import {
     useRef,
     useState,
     useSyncExternalStore,
+    memo,
     type JSX,
     type PointerEvent as ReactPointerEvent,
     type ReactNode,
@@ -341,7 +342,7 @@ const primeVideoFirstFrame = (video: HTMLVideoElement): void => {
         });
 };
 
-export function PhotoViewer({
+export const PhotoViewer = memo(function PhotoViewer({
     files,
     initialIndex,
     initialFileId,
@@ -2436,4 +2437,16 @@ export function PhotoViewer({
             ) : null}
         </div>
     );
-}
+}, (prev, next) => {
+    return (
+        prev.initialFileId === next.initialFileId &&
+        prev.initialIndex === next.initialIndex &&
+        prev.onClose === next.onClose &&
+        prev.onFileUpdated === next.onFileUpdated &&
+        prev.albumCoverFileId === next.albumCoverFileId &&
+        prev.onSetAlbumCover === next.onSetAlbumCover &&
+        prev.readOnly === next.readOnly
+    );
+    // `files` is snapshotted into sessionFiles on mount — ignore identity churn
+    // from the gallery page while the viewer is open.
+});

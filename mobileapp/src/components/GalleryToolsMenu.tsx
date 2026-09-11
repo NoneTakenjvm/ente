@@ -1,4 +1,4 @@
-import type { JSX } from "react";
+import { useCallback, useState, type JSX } from "react";
 import {
     Check,
     ListFilter,
@@ -24,6 +24,7 @@ import {
     DropdownMenuSubTrigger,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { confirmDiscardPendingRotations } from "@/lib/rotate-draft";
 import { cn } from "@/lib/utils";
 import { stampTagsFromNearnessFilter } from "@/lib/tag-presets";
 import { isTagFilterActive } from "@/lib/tags";
@@ -38,6 +39,7 @@ type GalleryToolsMenuProps = {
 
 /**
  * Gallery/album tools: wrench dropdown below `md`, individual icon buttons at `md+`.
+ * Mobile: re-tap wrench exits the active tool; opens the menu only when none is active.
  */
 export function GalleryToolsMenu({ query }: GalleryToolsMenuProps): JSX.Element {
     const selectionEnabled = useSelectionStore((s) => s.enabled);
@@ -50,8 +52,42 @@ export function GalleryToolsMenu({ query }: GalleryToolsMenuProps): JSX.Element 
     const setStampSheetOpen = useSelectionStore((s) => s.setStampSheetOpen);
     const setRotateActive = useSelectionStore((s) => s.setRotateActive);
 
+    const [menuOpen, setMenuOpen] = useState(false);
+
     const anyToolActive = selectionEnabled || stampActive || rotateActive;
     const triggerActive = anyToolActive || Boolean(query?.hasQueryContent);
+
+    /** Exit rotate after confirming discard when drafts exist. */
+    const exitRotate = useCallback((): boolean => {
+        const pending = useSelectionStore.getState().pendingRotations;
+        if (!confirmDiscardPendingRotations(pending)) {
+            return false;
+        }
+        setRotateActive(false);
+        return true;
+    }, [setRotateActive]);
+
+    /** Exit whichever tool is active (wrench re-tap). */
+    const exitActiveTool = useCallback((): void => {
+        if (rotateActive) {
+            exitRotate();
+            return;
+        }
+        if (stampActive) {
+            setStampActive(false);
+            return;
+        }
+        if (selectionEnabled) {
+            setEnabled(false);
+        }
+    }, [
+        exitRotate,
+        rotateActive,
+        selectionEnabled,
+        setEnabled,
+        setStampActive,
+        stampActive,
+    ]);
 
     const activateStamp = (): void => {
         if (stampActive) {
@@ -76,19 +112,44 @@ export function GalleryToolsMenu({ query }: GalleryToolsMenuProps): JSX.Element 
         setStampActive(true);
     };
 
+    const toggleRotate = (): void => {
+        if (rotateActive) {
+            exitRotate();
+            return;
+        }
+        setRotateActive(true);
+    };
+
     return (
         <>
             <div className="md:hidden">
-                <DropdownMenu>
+                <DropdownMenu
+                    open={menuOpen}
+                    onOpenChange={(open) => {
+                        if (open && anyToolActive) {
+                            exitActiveTool();
+                            return;
+                        }
+                        setMenuOpen(open);
+                    }}
+                >
                     <DropdownMenuTrigger
                         render={
                             <Button
                                 type="button"
                                 variant={triggerActive ? "secondary" : "outline"}
                                 size="icon-sm"
-                                aria-label="Gallery tools"
+                                aria-label={
+                                    anyToolActive ?
+                                        "Exit active tool" :
+                                        "Gallery tools"
+                                }
                                 aria-pressed={anyToolActive}
-                                title="Tools — select, stamp, rotate, query"
+                                title={
+                                    anyToolActive ?
+                                        "Exit tool" :
+                                        "Tools — select, stamp, rotate, query"
+                                }
                             >
                                 <Wrench />
                             </Button>
@@ -164,7 +225,7 @@ export function GalleryToolsMenu({ query }: GalleryToolsMenuProps): JSX.Element 
                             </DropdownMenuItem>
                             <DropdownMenuItem
                                 onClick={() => {
-                                    setRotateActive(!rotateActive);
+                                    toggleRotate();
                                 }}
                             >
                                 <RotateCw />
@@ -244,9 +305,7 @@ export function GalleryToolsMenu({ query }: GalleryToolsMenuProps): JSX.Element 
                             "Exit rotate" :
                             "Rotate — tap photos +90°, then Apply"
                     }
-                    onClick={() => {
-                        setRotateActive(!rotateActive);
-                    }}
+                    onClick={toggleRotate}
                 >
                     <RotateCw />
                 </Button>

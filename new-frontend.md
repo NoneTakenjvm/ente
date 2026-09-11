@@ -7,13 +7,23 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-11 |
-| **Last agent / session** | Favourite sync durability fix |
+| **Last agent / session** | Pre-ship check (`0.3.159` shard dirty-detect fix) |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable |
-| **Next recommended action** | Phone QA: hard-refresh Manage footer `0.3.154`; bulk-favourite ~100+ photos, confirm they land on another device before closing the tab. |
+| **Next recommended action** | Phone QA Manage `0.3.159` — shards + CLIP sync + tools chrome from prior batch. |
 
 **This session shipped:**
-1. **Favourite outbox durability** — root cause: drain sent one HTTP call per favourite (concurrency 2), so bulk favourite left hundreds stranded in local IDB; Incognito wipe on close discarded them. Now batches adds/removes (chunks of 100) via `addToFavorites`/`removeFromFavorites`, debounces single taps, flushes immediately on batch stamp, toasts failures, warns on `beforeunload` while outbox non-empty. `APP_VERSION` → `0.3.154`.
+1. **`0.3.159`** — library shard dirty detection uses content fingerprint (tags/visibility without `updationTime` bump were skipped). Prior: `0.3.158` fileShards; `0.3.157` CLIP mldata; `0.3.156` durable flush/tools.
+
+**Previous session shipped:**
+1. **`0.3.156` durability + tools** — durable flush, 401→logout, favourite local patch, IO hard-pause, tools chrome.
+
+**Previous:**
+1. Tools chrome UX landed ahead of version bump; owner decisions; audits; `0.3.155` perf pass.
+
+**Previous session shipped:**
+1. **Deep backend audit (no code)** — canvas `deep-backend-reliability-audit.canvas.tsx`.
+2. **Favourite outbox durability** — batches of 100. `APP_VERSION` → `0.3.154`.
 
 **Previous session shipped:**
 1. **Quick rotate in-place** — `PUT /files/update` same file id + key; merge pub magic (dims + `rotated` tag); no trash/remap. `APP_VERSION` → `0.3.153`.

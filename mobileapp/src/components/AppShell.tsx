@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useState, type ReactNode, type JSX } from "react";
 import { useSessionStore } from "@/stores/session-store";
+import { useSelectionStore } from "@/stores/selection-store";
 import { Button } from "@/components/ui/button";
 import { ConfirmPanicModal } from "@/components/ConfirmPanicModal";
 import {
@@ -36,6 +37,11 @@ interface AppShellProps {
     email?: string;
     actions?: ReactNode;
     onBack?: () => void;
+    /**
+     * When false, main does not scroll — the child (e.g. gallery grid) owns
+     * vertical scroll. Default true for list pages (albums, recents, manage).
+     */
+    mainScrolls?: boolean;
     children: ReactNode;
 }
 
@@ -52,6 +58,7 @@ export function AppShell({
     email,
     actions,
     onBack,
+    mainScrolls = true,
     children,
 }: AppShellProps): JSX.Element {
     const router = useRouter();
@@ -60,6 +67,11 @@ export function AppShell({
     const uploadStatus = useUploadJobStore((s) => s.status);
     const mountUploadPanel =
         uploadPanelOpen || uploadStatus === "running";
+    const selectionEnabled = useSelectionStore((s) => s.enabled);
+    const stampActive = useSelectionStore((s) => s.stampActive);
+    const rotateActive = useSelectionStore((s) => s.rotateActive);
+    const hideBottomNav =
+        selectionEnabled || stampActive || rotateActive;
 
     return (
         // [Note: bottom nav] Do not use position:fixed for the tab bar. On iOS
@@ -103,38 +115,45 @@ export function AppShell({
                 </div>
             </header>
 
-            <main className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+            <main
+                className={cn(
+                    "flex min-h-0 flex-1 flex-col",
+                    mainScrolls ? "overflow-y-auto" : "overflow-hidden",
+                )}
+            >
                 {children}
             </main>
 
             {mountUploadPanel ? <UploadPanel /> : null}
 
-            <nav
-                className="z-40 shrink-0 border-t border-border bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur supports-backdrop-filter:bg-background/80"
-                aria-label="Main navigation"
-            >
-                <div className="grid grid-cols-4 gap-1 px-2 py-1.5">
-                    {navItems.map(({ href, label, icon: Icon }) => {
-                        const active = pathname === href;
-                        return (
-                            <Link
-                                key={href}
-                                href={href}
-                                className={cn(
-                                    "flex flex-col items-center gap-0.5 rounded-lg px-1 py-2 text-[0.65rem] font-medium transition-colors",
-                                    active ?
-                                        "bg-accent text-accent-foreground" :
-                                        "text-muted-foreground hover:bg-muted hover:text-foreground",
-                                )}
-                                aria-current={active ? "page" : undefined}
-                            >
-                                <Icon className="size-5" aria-hidden />
-                                <span>{label}</span>
-                            </Link>
-                        );
-                    })}
-                </div>
-            </nav>
+            {hideBottomNav ? null : (
+                <nav
+                    className="z-40 shrink-0 border-t border-border bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur supports-backdrop-filter:bg-background/80"
+                    aria-label="Main navigation"
+                >
+                    <div className="grid grid-cols-4 gap-1 px-2 py-1.5">
+                        {navItems.map(({ href, label, icon: Icon }) => {
+                            const active = pathname === href;
+                            return (
+                                <Link
+                                    key={href}
+                                    href={href}
+                                    className={cn(
+                                        "flex flex-col items-center gap-0.5 rounded-lg px-1 py-2 text-[0.65rem] font-medium transition-colors",
+                                        active ?
+                                            "bg-accent text-accent-foreground" :
+                                            "text-muted-foreground hover:bg-muted hover:text-foreground",
+                                    )}
+                                    aria-current={active ? "page" : undefined}
+                                >
+                                    <Icon className="size-5" aria-hidden />
+                                    <span>{label}</span>
+                                </Link>
+                            );
+                        })}
+                    </div>
+                </nav>
+            )}
         </div>
     );
 }

@@ -51,7 +51,7 @@ export const updateCollectionPrivateMagicMetadata = async (
     }
 
     collection.magicMetadata = {
-        version: magicMetadata.version,
+        version: magicMetadata.version + 1,
         count: magicMetadata.count,
         data: merged.data,
     };

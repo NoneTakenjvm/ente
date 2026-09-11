@@ -12,6 +12,7 @@ import {
     isThumbnailCachedLocally,
 } from "@/lib/thumbnail-bytes";
 import { imageFilesForPhash } from "@/lib/similarity-job";
+import { waitWhileGalleryScrolling } from "@/lib/gallery-scroll-activity";
 import type {
     ImageQualityWorkerRequest,
     ImageQualityWorkerResponse,
@@ -223,6 +224,10 @@ export const runImageQualityJob = async (
     };
 
     const processOne = async (file: EnteFile): Promise<void> => {
+        if (options.signal?.aborted) {
+            return;
+        }
+        await waitWhileGalleryScrolling(options.signal);
         if (options.signal?.aborted) {
             return;
         }

@@ -62,6 +62,7 @@ export function FilteredMediaView({
 
     const selectionEnabled = useSelectionStore((s) => s.enabled);
     const selectedIds = useSelectionStore((s) => s.selectedIds);
+    const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
     const toggleSelection = useSelectionStore((s) => s.toggle);
     const selectMany = useSelectionStore((s) => s.selectMany);
     const pruneToVisible = useSelectionStore((s) => s.pruneToVisible);
@@ -134,7 +135,7 @@ export function FilteredMediaView({
         () =>
             buildMediaGridSelection({
                 selectionEnabled,
-                selectedIds,
+                selectedIds: selectedIdSet,
                 stampActive,
                 stampTags,
                 rotateActive,
@@ -148,7 +149,7 @@ export function FilteredMediaView({
             rotateActive,
             rotateBusy,
             selectMany,
-            selectedIds,
+            selectedIdSet,
             selectionEnabled,
             stampActive,
             stampTags,
@@ -157,9 +158,7 @@ export function FilteredMediaView({
     );
 
     const footerInsetPx =
-        stampActive ||
-        rotateActive ||
-        (selectionEnabled && selectedIds.length > 0) ?
+        stampActive || rotateActive || selectionEnabled ?
             SELECTION_FOOTER_INSET_PX :
             0;
 
@@ -189,7 +188,7 @@ export function FilteredMediaView({
     }
 
     return (
-        <>
+        <div className="flex min-h-0 flex-1 flex-col">
             <ThumbnailGrid
                 files={displayFiles}
                 onOpenFile={
@@ -213,6 +212,6 @@ export function FilteredMediaView({
                     onSetAlbumCover={onSetAlbumCover}
                 />
             ) : null}
-        </>
+        </div>
     );
 }

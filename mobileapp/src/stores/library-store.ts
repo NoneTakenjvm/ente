@@ -329,14 +329,6 @@ const flushScheduledEncryptedFilesSave = (): Promise<void> => {
     return enqueueEncryptedFilesPersist(getter);
 };
 
-const cancelScheduledEncryptedFilesSave = (): void => {
-    if (encryptedFilesSaveTimer !== undefined) {
-        clearTimeout(encryptedFilesSaveTimer);
-        encryptedFilesSaveTimer = undefined;
-    }
-    encryptedFilesSaveGetter = undefined;
-};
-
 /**
  * Replace {@link LibraryState.allFiles}, refresh the id index, and bump
  * {@link LibraryState.filesRevision} so subscribers see the change.
@@ -775,6 +767,45 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 void import("@/stores/trash-store").then(({ useTrashStore }) => {
                     void useTrashStore.getState().syncTrash(collections);
                 });
+
+                // Pull organizer_clip mldata into local embedding cache (non-blocking).
+                void import("@/lib/organizer-clip-sync").then(
+                    async ({
+                        pullOrganizerClipSync,
+                        backfillOrganizerClipUploads,
+                    }) => {
+                        try {
+                            const applied = await pullOrganizerClipSync(allFiles);
+                            const { useEmbeddingIndexStore } = await import(
+                                "@/stores/embedding-index-store"
+                            );
+                            const store = useEmbeddingIndexStore.getState();
+                            if (applied.size > 0) {
+                                const next = new Map(store.entries);
+                                for (const [id, vector] of applied) {
+                                    next.set(id, vector);
+                                }
+                                store.setEntries(next);
+                            }
+                            let local = store.entries;
+                            if (local.size === 0) {
+                                await store.hydrate();
+                                local = useEmbeddingIndexStore.getState().entries;
+                            }
+                            if (local.size > 0) {
+                                void backfillOrganizerClipUploads(
+                                    allFiles,
+                                    local,
+                                );
+                            }
+                        } catch (error) {
+                            console.warn(
+                                "[organizer-clip] pull/backfill failed",
+                                error,
+                            );
+                        }
+                    },
+                );
             } catch (error) {
                 const offline =
                     typeof navigator !== "undefined" && !navigator.onLine;
@@ -991,6 +1022,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         const userId = core.getUserID();
         const { collections, allFiles } = get();
         const favoritesStore = useFavoritesStore.getState();
+        const wasFavorite = favoritesStore.favoriteFileIds.has(file.id);
 
         favoritesStore.applyOptimisticFavorite(
             file,
@@ -1006,7 +1038,15 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 requestTagOutboxFlush();
             })
             .catch(() => {
+                favoritesStore.revertOptimisticFavorite(
+                    file,
+                    userId,
+                    wasFavorite,
+                    collections,
+                    allFiles,
+                );
                 favoritesStore.removePending(file.id);
+                console.warn("Favourite outbox persist failed; reverted UI");
             });
     },
 
@@ -1749,6 +1789,12 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         useTagStore.getState().rebuildFromFiles(nextFiles);
         useFavoritesStore.getState().removeTrashedFileIds([...trashedIds]);
         await removeFavoriteOutboxForFileIds([...trashedIds]);
+        const { removeTagOutboxEntries } = await import("@/lib/tag-outbox");
+        const { removeVisibilityOutboxEntries } = await import(
+            "@/lib/visibility-outbox"
+        );
+        await removeTagOutboxEntries([...trashedIds]);
+        await removeVisibilityOutboxEntries([...trashedIds]);
     },
 
     reinsertRestoredFiles: async (files: EnteFile[]): Promise<void> => {
@@ -1864,7 +1910,9 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
     },
 
     reset: (): void => {
-        cancelScheduledEncryptedFilesSave();
+        // Prefer flush over cancel — callers that need durability await
+        // flushAllDurableState before reset (logout/lock).
+        void flushScheduledEncryptedFilesSave();
         useFavoritesStore.getState().reset();
         set(initialState);
     },

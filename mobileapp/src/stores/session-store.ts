@@ -21,6 +21,11 @@ import {
 import { wipeSiteStorage } from "@/lib/site-wipe";
 import { clearThumbnailCache } from "@/lib/thumbnail-cache";
 import { clearVideoSessionCache } from "@/lib/video-media-cache";
+import { flushAllDurableState } from "@/lib/durable-flush";
+import {
+    resetUnauthorizedGate,
+    setUnauthorizedHandler,
+} from "@/lib/session-invalidation";
 
 export type SessionStatus = "idle" | "loading" | "authenticated" | "error";
 
@@ -163,6 +168,7 @@ const createSessionStore: StateCreator<SessionState> = (set) => ({
                 session.userID,
                 credentials.email,
             );
+            resetUnauthorizedGate();
             set({
                 status: "authenticated",
                 userID: session.userID,
@@ -181,15 +187,22 @@ const createSessionStore: StateCreator<SessionState> = (set) => ({
     },
 
     logout: (): void => {
-        clearPersistedSession();
-        clearSessionLock();
-        clearLocalState();
-        set({
-            status: "idle",
-            userID: undefined,
-            email: undefined,
-            errorMessage: undefined,
-        });
+        void (async (): Promise<void> => {
+            try {
+                await flushAllDurableState();
+            } catch {
+                // Best-effort — still clear local session.
+            }
+            clearPersistedSession();
+            clearSessionLock();
+            clearLocalState();
+            set({
+                status: "idle",
+                userID: undefined,
+                email: undefined,
+                errorMessage: undefined,
+            });
+        })();
     },
 
     lock: (): void => {
@@ -197,13 +210,20 @@ const createSessionStore: StateCreator<SessionState> = (set) => ({
         if (status !== "authenticated" || !email) {
             return;
         }
-        clearMemoryState();
-        markSessionLocked(email);
-        set({
-            status: "idle",
-            userID: undefined,
-            errorMessage: undefined,
-        });
+        void (async (): Promise<void> => {
+            try {
+                await flushAllDurableState();
+            } catch {
+                // Best-effort.
+            }
+            clearMemoryState();
+            markSessionLocked(email);
+            set({
+                status: "idle",
+                userID: undefined,
+                errorMessage: undefined,
+            });
+        })();
     },
 
     unlock: async (): Promise<boolean> => {
@@ -227,6 +247,7 @@ const createSessionStore: StateCreator<SessionState> = (set) => ({
             payload.masterKey,
             payload.userID,
         );
+        resetUnauthorizedGate();
         set({
             status: "authenticated",
             userID: payload.userID,
@@ -258,6 +279,12 @@ const createSessionStore: StateCreator<SessionState> = (set) => ({
 });
 
 export const useSessionStore = create<SessionState>(createSessionStore);
+
+if (typeof window !== "undefined") {
+    setUnauthorizedHandler((): void => {
+        useSessionStore.getState().logout();
+    });
+}
 
 /** True when the core holds a live session (keys in memory). */
 export const isSessionAuthenticated = (): boolean =>

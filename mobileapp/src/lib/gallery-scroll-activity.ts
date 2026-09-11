@@ -15,3 +15,20 @@ export const noteGalleryScrollActivity = (): void => {
 
 /** True while the user is actively scrolling (or just stopped within idle window). */
 export const isGalleryScrolling = (): boolean => Date.now() < scrollingUntilMs;
+
+/**
+ * Background jobs await this between units of work so flings get CPU/IO
+ * (hard-pause scans while the gallery is scrolling).
+ */
+export const waitWhileGalleryScrolling = async (
+    signal?: AbortSignal,
+): Promise<void> => {
+    while (isGalleryScrolling()) {
+        if (signal?.aborted) {
+            return;
+        }
+        await new Promise<void>((resolve) => {
+            setTimeout(resolve, 50);
+        });
+    }
+};

@@ -20,6 +20,7 @@ import { noteGalleryScrollActivity } from "@/lib/gallery-scroll-activity";
 import {
     computeMasonryLayout,
     masonryItemsInMarquee,
+    masonryViewOrderKey,
     visibleMasonryItemsFromColumns,
     type MasonryLayout,
 } from "@/lib/masonry-layout";
@@ -173,7 +174,7 @@ function SizedGrid({
             itemSize={layout.rowHeight}
             itemData={itemData}
             itemKey={itemKey}
-            overscanCount={4}
+            overscanCount={2}
             onScroll={(props) => {
                 noteGalleryScrollActivity();
                 onScrollOffsetChange(props.scrollOffset);
@@ -216,8 +217,6 @@ function SizedMasonryGrid({
     viewOrderKey,
 }: SizedMasonryGridProps): JSX.Element {
     const [scrollTop, setScrollTop] = useState<number>(0);
-    const pendingScrollTopRef = useRef<number>(0);
-    const scrollRafRef = useRef<number | undefined>(undefined);
     const scrollerRef = useRef<HTMLDivElement>(null);
 
     const placedLayout: MasonryLayout = useMemo(
@@ -238,21 +237,12 @@ function SizedMasonryGrid({
     );
 
     useEffect(() => {
-        return (): void => {
-            if (scrollRafRef.current !== undefined) {
-                cancelAnimationFrame(scrollRafRef.current);
-            }
-        };
-    }, []);
-
-    useEffect(() => {
         const node = scrollerRef.current;
         if (!node) {
             return;
         }
         const maxScroll = Math.max(0, node.scrollHeight - node.clientHeight);
         const next = Math.min(node.scrollTop, maxScroll);
-        pendingScrollTopRef.current = next;
         setScrollTop((prev) => (prev === next ? prev : next));
         onScrollOffsetChange(next);
     }, [height, onScrollOffsetChange, placedLayout.totalHeight, viewOrderKey]);
@@ -261,16 +251,9 @@ function SizedMasonryGrid({
         (event: UIEvent<HTMLDivElement>): void => {
             const nextScrollTop = event.currentTarget.scrollTop;
             noteGalleryScrollActivity();
-            pendingScrollTopRef.current = nextScrollTop;
-            // Marquee / selection use the latest offset immediately.
+            // Keep visibility window in sync with hit targets (no rAF lag).
             onScrollOffsetChange(nextScrollTop);
-            if (scrollRafRef.current !== undefined) {
-                return;
-            }
-            scrollRafRef.current = requestAnimationFrame(() => {
-                scrollRafRef.current = undefined;
-                setScrollTop(pendingScrollTopRef.current);
-            });
+            setScrollTop((prev) => (prev === nextScrollTop ? prev : nextScrollTop));
         },
         [onScrollOffsetChange],
     );
@@ -279,7 +262,7 @@ function SizedMasonryGrid({
         <div
             ref={scrollerRef}
             className="overflow-y-auto"
-            style={{ width, height }}
+            style={{ width, height, overflowAnchor: "none" }}
             onScroll={handleScroll}
         >
             <div
@@ -405,11 +388,37 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
 
     const viewOrderKey = useMemo(
         () =>
-            galleryThumbnailMode === "fit" ?
-                files.map((file) => file.id).join(",") :
-                "",
+            galleryThumbnailMode === "fit" ? masonryViewOrderKey(files) : "",
         [files, galleryThumbnailMode],
     );
+
+    // Block taps while order/geometry settles (ghost opens on remount / sort).
+    // Stale readyToken keeps pointer-events off until two rAFs land — no sync setState.
+    const settleToken = `${viewOrderKey}|${gridWidth}|${files.length}|${galleryThumbnailMode}`;
+    const [readyToken, setReadyToken] = useState("");
+    useEffect(() => {
+        if (files.length === 0 || gridWidth <= 0) {
+            return;
+        }
+        let cancelled = false;
+        let innerRaf = 0;
+        const outerRaf = requestAnimationFrame(() => {
+            innerRaf = requestAnimationFrame(() => {
+                if (!cancelled) {
+                    setReadyToken(settleToken);
+                }
+            });
+        });
+        return (): void => {
+            cancelled = true;
+            cancelAnimationFrame(outerRaf);
+            if (innerRaf !== 0) {
+                cancelAnimationFrame(innerRaf);
+            }
+        };
+    }, [files.length, galleryThumbnailMode, gridWidth, settleToken]);
+    const interactionsReady =
+        readyToken === settleToken && files.length > 0 && gridWidth > 0;
 
     const finishMarquee = useCallback(
         (endX: number, endY: number): void => {
@@ -572,7 +581,10 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
         <div
             ref={containerRef}
             className="relative min-h-0 flex-1 select-none"
-            style={{ touchAction: marqueeArmed ? "none" : "pan-y" }}
+            style={{
+                touchAction: marqueeArmed ? "none" : "pan-y",
+                pointerEvents: interactionsReady ? "auto" : "none",
+            }}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}

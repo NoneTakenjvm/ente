@@ -1,6 +1,6 @@
 import { deleteDB, openDB, type IDBPDatabase } from "idb";
 
-const dbVersion = 6;
+const dbVersion = 7;
 
 export type KvKey =
     | "collections" |
@@ -89,6 +89,12 @@ export interface TileEmbeddingRecord {
     decryptionHeader: string;
 }
 
+export interface FileShardRecord {
+    shardId: number;
+    encryptedData: string;
+    decryptionHeader: string;
+}
+
 export interface OrganizerDB {
     kv: {
         key: KvKey;
@@ -118,9 +124,14 @@ export interface OrganizerDB {
         key: number;
         value: TileEmbeddingRecord;
     };
+    fileShards: {
+        key: number;
+        value: FileShardRecord;
+    };
     meta: {
         key: string;
-        value: number;
+        /** Sync cursors are numbers; some flags are JSON strings. */
+        value: number | string;
     };
 }
 
@@ -155,6 +166,9 @@ const openOrganizerDB = (userId: number): Promise<IDBPDatabase<OrganizerDB>> =>
             }
             if (!db.objectStoreNames.contains("tileEmbeddings")) {
                 db.createObjectStore("tileEmbeddings", { keyPath: "fileId" });
+            }
+            if (!db.objectStoreNames.contains("fileShards")) {
+                db.createObjectStore("fileShards", { keyPath: "shardId" });
             }
             if (!db.objectStoreNames.contains("meta")) {
                 db.createObjectStore("meta");
@@ -191,6 +205,8 @@ export const wipeOrganizerDB = async (): Promise<void> => {
     const userId = activeUserId;
     dbPromise = undefined;
     activeUserId = undefined;
+    const { clearFileShardPersistState } = await import("./file-shards");
+    clearFileShardPersistState();
     await deleteDB(dbNameForUser(userId));
 };
 
@@ -201,6 +217,8 @@ export const wipeOrganizerDBForUser = async (userId: number): Promise<void> => {
     if (activeUserId === userId) {
         dbPromise = undefined;
         activeUserId = undefined;
+        const { clearFileShardPersistState } = await import("./file-shards");
+        clearFileShardPersistState();
     }
     await deleteDB(dbNameForUser(userId));
 };
@@ -210,7 +228,16 @@ export const wipeOrganizerDBForUser = async (userId: number): Promise<void> => {
  */
 export const hasCachedLibrary = async (userId: number): Promise<boolean> => {
     const db = await openOrganizerDB(userId);
-    const record = await db.get("kv", "files");
-    await db.close();
-    return record !== undefined;
+    try {
+        if (db.objectStoreNames.contains("fileShards")) {
+            const shardCount = await db.count("fileShards");
+            if (shardCount > 0) {
+                return true;
+            }
+        }
+        const record = await db.get("kv", "files");
+        return record !== undefined;
+    } finally {
+        await db.close();
+    }
 };
