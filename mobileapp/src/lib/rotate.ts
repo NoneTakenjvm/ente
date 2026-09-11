@@ -1,6 +1,12 @@
+import type { EnteFile } from "ente-media/file";
+import { fileFileName } from "ente-media/file-metadata";
 import type { EncodeJpegResult } from "@/lib/compress";
+import { extractTags } from "@/lib/tags";
+import { addTagNames } from "@/lib/tag-writes";
 
 export type RotationDegrees = 90 | 180 | 270;
+
+export const ROTATED_TAG = "rotated";
 
 /**
  * Rotate image bytes clockwise by the given angle using canvas.
@@ -57,7 +63,16 @@ export const rotateImageBytes = async (
         image.src = url;
     });
 
-export const rotatedUploadTitle = (title: string): string => {
-    const baseName = title.replace(/\.[^.]+$/u, "");
-    return `${baseName}-rotated.jpg`;
+/**
+ * Merge source organizer tags and ensure the rotated tag is present.
+ */
+export const buildRotatedOrganizerTags = (sourceFile: EnteFile): string[] =>
+    addTagNames(extractTags(sourceFile), ROTATED_TAG);
+
+/**
+ * Derive the replacement title for a rotated image (basename, .jpg).
+ */
+export const rotatedReplaceTitle = (sourceFile: EnteFile): string => {
+    const baseName = fileFileName(sourceFile).replace(/\.[^.]+$/u, "");
+    return `${baseName}.jpg`;
 };

@@ -189,3 +189,41 @@ export const postEnteFile = async (
     });
     return RemoteEnteFile.parse(await res.json());
 };
+
+export interface PutEnteFileUpdateRequest {
+    id: number;
+    file: UploadedFileObjectAttributes;
+    thumbnail: UploadedFileObjectAttributes;
+    metadata: { encryptedData: string; decryptionHeader: string };
+}
+
+export interface PutEnteFileUpdateResponse {
+    id: number;
+    updationTime: number;
+}
+
+const PutEnteFileUpdateResponseSchema = z.object({
+    id: z.number(),
+    updationTime: z.number(),
+});
+
+/**
+ * Replace file + thumbnail bytes for an existing file id (same key, no trash).
+ *
+ * Mirrors the official app's `PUT /files/update`. Does not touch pub/private
+ * magic metadata — callers merge those separately when dimensions or tags
+ * change.
+ */
+export const putEnteFileUpdate = async (
+    http: HttpClient,
+    request: PutEnteFileUpdateRequest,
+): Promise<PutEnteFileUpdateResponse> => {
+    const res = await withUploadRetry(async () => {
+        return http.authFetch("/files/update", undefined, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+        });
+    });
+    return PutEnteFileUpdateResponseSchema.parse(await res.json());
+};

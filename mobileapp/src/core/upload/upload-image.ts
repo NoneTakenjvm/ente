@@ -29,9 +29,12 @@ import {
 } from "./upload-url-pool";
 import {
     postEnteFile,
+    putEnteFileUpdate,
     putFile,
     type PostEnteFileRequest,
 } from "./remote";
+import { updatePublicMetadata } from "../metadata";
+import { buildOrganizerUpdate } from "@/lib/tag-writes";
 
 export interface UploadJpegOptions {
     title: string;
@@ -224,7 +227,10 @@ export const uploadCroppedImage = async (
     );
 
 /**
- * Upload a rotated JPEG derived from an existing library file.
+ * Upload a rotated JPEG as a new file id (legacy derive-copy path).
+ *
+ * Prefer {@link updateRotatedImageInPlace} so tags, favourites, and sessions
+ * stay on the same file id.
  */
 export const uploadRotatedImage = async (
     http: HttpClient,
@@ -233,6 +239,7 @@ export const uploadRotatedImage = async (
     collection: Collection,
     dimensions: { width: number; height: number },
     title: string,
+    organizerTags: string[] = ["rotated"],
 ): Promise<EnteFile> =>
     uploadDerivedImage(
         http,
@@ -240,8 +247,124 @@ export const uploadRotatedImage = async (
         jpegBytes,
         collection,
         dimensions,
-        { title, organizerTags: ["rotated"] },
+        { title, organizerTags },
     );
+
+export interface UpdateImageInPlaceOptions {
+    title: string;
+    width: number;
+    height: number;
+    /** Organizer tags to merge into existing public magic metadata. */
+    organizerTags: string[];
+}
+
+/**
+ * Replace an owned file's bytes and thumbnail in place (same file id + key).
+ *
+ * Updates immutable encrypted metadata (hash / title / modificationTime), then
+ * merges dimensions + organizer tags into existing public magic metadata so
+ * captions and other fields are preserved.
+ */
+export const updateImageBytesInPlace = async (
+    http: HttpClient,
+    sourceFile: EnteFile,
+    jpegBytes: Uint8Array,
+    options: UpdateImageInPlaceOptions,
+): Promise<EnteFile> => {
+    if (!sourceFile.key) {
+        throw new Error(`File ${sourceFile.id} has no decryption key`);
+    }
+
+    const nowMicros = Date.now() * 1000;
+    const metadata = await buildMetadata(jpegBytes, {
+        title: options.title,
+        creationTime: sourceFile.metadata.creationTime,
+        modificationTime: nowMicros,
+        width: options.width,
+        height: options.height,
+    });
+    const thumbnail = await generateImageThumbnail(jpegBytes);
+    const fileKey = sourceFile.key;
+
+    const encryptedFile = await encryptStreamBytes(jpegBytes, fileKey);
+    const encryptedThumbnail = await encryptBlobBytes(thumbnail, fileKey);
+    const encryptedMetadata = await encryptMetadataJSON(metadata, fileKey);
+
+    const fileUploadURL = await takeUploadURL(http);
+    await putFile(http, fileUploadURL.url, encryptedFile.encryptedData);
+
+    const thumbnailUploadURL = await takeUploadURL(http);
+    await putFile(
+        http,
+        thumbnailUploadURL.url,
+        encryptedThumbnail.encryptedData,
+    );
+
+    const thumbnailDecryptionHeader = await toB64(
+        encryptedThumbnail.decryptionHeader,
+    );
+
+    const updateResult = await putEnteFileUpdate(http, {
+        id: sourceFile.id,
+        file: {
+            objectKey: fileUploadURL.objectKey,
+            decryptionHeader: encryptedFile.decryptionHeader,
+            size: encryptedFile.encryptedData.length,
+        },
+        thumbnail: {
+            objectKey: thumbnailUploadURL.objectKey,
+            decryptionHeader: thumbnailDecryptionHeader,
+            size: encryptedThumbnail.encryptedData.length,
+        },
+        metadata: encryptedMetadata,
+    });
+    markBatchUploadFileComplete();
+
+    const updated: EnteFile = {
+        ...sourceFile,
+        updationTime: updateResult.updationTime,
+        metadata,
+        file: {
+            ...sourceFile.file,
+            decryptionHeader: encryptedFile.decryptionHeader,
+        },
+        thumbnail: {
+            ...sourceFile.thumbnail,
+            decryptionHeader: thumbnailDecryptionHeader,
+        },
+        info: {
+            ...sourceFile.info,
+            fileSize: encryptedFile.encryptedData.length,
+            thumbSize: encryptedThumbnail.encryptedData.length,
+        },
+    };
+
+    await updatePublicMetadata(http, updated, {
+        w: ensureInteger(options.width),
+        h: ensureInteger(options.height),
+        ...buildOrganizerUpdate(options.organizerTags),
+    });
+
+    return updated;
+};
+
+/**
+ * Rotate an owned image in place (same file id), preserving pub magic fields.
+ */
+export const updateRotatedImageInPlace = async (
+    http: HttpClient,
+    sourceFile: EnteFile,
+    jpegBytes: Uint8Array,
+    dimensions: { width: number; height: number },
+    title: string,
+    organizerTags: string[],
+): Promise<EnteFile> =>
+    updateImageBytesInPlace(http, sourceFile, jpegBytes, {
+        title,
+        width: dimensions.width,
+        height: dimensions.height,
+        organizerTags,
+    });
 
 export interface UploadLocalImageOptions {
     title: string;

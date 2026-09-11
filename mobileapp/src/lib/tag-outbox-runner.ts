@@ -37,6 +37,8 @@ import {
 const drainIntervalMs = 60_000;
 const flushDebounceMs = 400;
 const failureToastCooldownMs = 5 * 60_000;
+/** Favourites API accepts large payloads; chunk so partial progress can ack. */
+const favoriteDrainChunkSize = 100;
 
 let intervalId: ReturnType<typeof setInterval> | undefined;
 let flushDebounceId: ReturnType<typeof setTimeout> | undefined;
@@ -54,13 +56,25 @@ export interface TagOutboxDrainStats {
     writeFailures: number;
 }
 
+export interface FavoriteMutationsResult {
+    /** Outbox keys that were applied on remote (or safely discarded, e.g. trashed). */
+    ackedKeys: string[];
+}
+
 export interface TagOutboxRunnerContext {
     getFiles: () => EnteFile[];
     getCollections: () => Collection[];
     patchFile: (file: EnteFile) => Promise<void>;
     /** Preferred: one library update + one scheduled encrypt for many verifies. */
     patchFiles?: (files: EnteFile[]) => void | Promise<void>;
-    /** Apply a pending favourite mutation (add/remove). */
+    /**
+     * Apply many pending favourite mutations in one remote batch.
+     * Preferred over {@link applyFavoriteMutation} — one HTTP round-trip per chunk.
+     */
+    applyFavoriteMutations?: (
+        entries: FavoriteOutboxEntry[],
+    ) => Promise<FavoriteMutationsResult>;
+    /** Apply a single pending favourite mutation (fallback when a batch fails). */
     applyFavoriteMutation?: (entry: FavoriteOutboxEntry) => Promise<void>;
     /** Optional full favourites/library sync after favourite drains. */
     syncFavorites?: () => Promise<void>;
@@ -102,6 +116,28 @@ const notifyTagWriteFailures = (
         pendingCount === 1 ?
             "Couldn't sync tags for 1 photo — will keep retrying" :
             `Couldn't sync tags for ${pendingCount} photos — will keep retrying`,
+    );
+};
+
+const notifyFavoriteSyncFailures = (
+    pendingCount: number,
+    source: "user" | "periodic",
+): void => {
+    if (pendingCount <= 0) {
+        return;
+    }
+    const now = Date.now();
+    if (
+        source === "periodic" &&
+        now - lastFailureToastAt < failureToastCooldownMs
+    ) {
+        return;
+    }
+    lastFailureToastAt = now;
+    toast.error(
+        pendingCount === 1 ?
+            "Couldn't sync 1 favourite — will keep retrying" :
+            `Couldn't sync ${pendingCount} favourites — will keep retrying`,
     );
 };
 
@@ -198,31 +234,108 @@ const drainTagEntries = async (
     };
 };
 
-const drainFavoriteEntries = async (
+const drainFavoriteEntriesOneByOne = async (
     context: TagOutboxRunnerContext,
-): Promise<void> => {
-    if (!isFavoriteOutboxHydrated() || !context.applyFavoriteMutation) {
-        return;
+    entries: FavoriteOutboxEntry[],
+): Promise<{ acked: number; failures: number }> => {
+    if (!context.applyFavoriteMutation) {
+        return { acked: 0, failures: entries.length };
     }
-    const entries = getFavoriteOutboxEntries();
-    if (!entries.length) {
-        return;
-    }
-
-    let anySucceeded = false;
+    let acked = 0;
+    let failures = 0;
+    const ackedKeys: string[] = [];
     await mapBatched(
         entries,
         async (entry) => {
             try {
                 await context.applyFavoriteMutation?.(entry);
-                await removeFavoriteOutboxEntries([favoriteEntryKey(entry)]);
-                anySucceeded = true;
+                ackedKeys.push(favoriteEntryKey(entry));
+                acked += 1;
             } catch {
-                // Keep entry for the next drain pass.
+                failures += 1;
             }
         },
         { concurrency: 2 },
     );
+    if (ackedKeys.length) {
+        await removeFavoriteOutboxEntries(ackedKeys);
+    }
+    return { acked, failures };
+};
+
+/**
+ * Drain favourite outbox in remote batches (add/remove chunks), falling back to
+ * per-file calls only when a chunk fails. One-at-a-time drain was too slow for
+ * bulk favouriting and left hundreds of intents stranded on tab close.
+ */
+const drainFavoriteEntries = async (
+    context: TagOutboxRunnerContext,
+    source: "user" | "periodic",
+    notify: boolean,
+): Promise<number> => {
+    if (
+        !isFavoriteOutboxHydrated() ||
+        (!context.applyFavoriteMutations && !context.applyFavoriteMutation)
+    ) {
+        return 0;
+    }
+    const entries = getFavoriteOutboxEntries();
+    if (!entries.length) {
+        return 0;
+    }
+
+    let anySucceeded = false;
+    let failures = 0;
+
+    const processChunk = async (chunk: FavoriteOutboxEntry[]): Promise<void> => {
+        if (!chunk.length) {
+            return;
+        }
+        if (context.applyFavoriteMutations) {
+            try {
+                const { ackedKeys } = await context.applyFavoriteMutations(chunk);
+                if (ackedKeys.length) {
+                    await removeFavoriteOutboxEntries(ackedKeys);
+                    anySucceeded = true;
+                }
+                const acked = new Set(ackedKeys);
+                const remaining = chunk.filter(
+                    (entry) => !acked.has(favoriteEntryKey(entry)),
+                );
+                if (remaining.length && context.applyFavoriteMutation) {
+                    const fallback = await drainFavoriteEntriesOneByOne(
+                        context,
+                        remaining,
+                    );
+                    if (fallback.acked > 0) {
+                        anySucceeded = true;
+                    }
+                    failures += fallback.failures;
+                } else {
+                    failures += remaining.length;
+                }
+                return;
+            } catch {
+                // Fall through to per-file for this chunk.
+            }
+        }
+        const fallback = await drainFavoriteEntriesOneByOne(context, chunk);
+        if (fallback.acked > 0) {
+            anySucceeded = true;
+        }
+        failures += fallback.failures;
+    };
+
+    const toAdd = entries.filter((entry) => entry.isFavorite);
+    const toRemove = entries.filter((entry) => !entry.isFavorite);
+
+    for (let i = 0; i < toAdd.length; i += favoriteDrainChunkSize) {
+        await processChunk(toAdd.slice(i, i + favoriteDrainChunkSize));
+    }
+    for (let i = 0; i < toRemove.length; i += favoriteDrainChunkSize) {
+        await processChunk(toRemove.slice(i, i + favoriteDrainChunkSize));
+    }
+
     if (anySucceeded && context.syncFavorites) {
         try {
             await context.syncFavorites();
@@ -230,6 +343,13 @@ const drainFavoriteEntries = async (
             // Favourites already applied; sync can retry later.
         }
     }
+
+    const stillPending = getFavoriteOutboxEntries().length;
+    if (notify && failures > 0 && stillPending > 0) {
+        notifyFavoriteSyncFailures(stillPending, source);
+    }
+
+    return stillPending;
 };
 
 const drainVisibilityEntries = async (
@@ -310,7 +430,7 @@ const executeDrainPass = async (
         };
     }
 
-    await drainFavoriteEntries(runnerContext);
+    await drainFavoriteEntries(runnerContext, source, notify);
     await drainVisibilityEntries(runnerContext);
     await drainDerivedReplaceEntries(runnerContext);
 

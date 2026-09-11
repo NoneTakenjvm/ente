@@ -6,13 +6,20 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-09-10 |
-| **Last agent / session** | Audit all changes + push CI |
+| **Last updated** | 2026-09-11 |
+| **Last agent / session** | Favourite sync durability fix |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable |
-| **Next recommended action** | Phone QA: hard-refresh Manage footer `0.3.151`; rescan image quality (index v3), Sort Best. |
+| **Next recommended action** | Phone QA: hard-refresh Manage footer `0.3.154`; bulk-favourite ~100+ photos, confirm they land on another device before closing the tab. |
 
 **This session shipped:**
+1. **Favourite outbox durability** — root cause: drain sent one HTTP call per favourite (concurrency 2), so bulk favourite left hundreds stranded in local IDB; Incognito wipe on close discarded them. Now batches adds/removes (chunks of 100) via `addToFavorites`/`removeFromFavorites`, debounces single taps, flushes immediately on batch stamp, toasts failures, warns on `beforeunload` while outbox non-empty. `APP_VERSION` → `0.3.154`.
+
+**Previous session shipped:**
+1. **Quick rotate in-place** — `PUT /files/update` same file id + key; merge pub magic (dims + `rotated` tag); no trash/remap. `APP_VERSION` → `0.3.153`.
+2. Earlier: replace-instead-of-append (0.3.152) — superseded by in-place.
+
+**Previous session shipped:**
 1. **AGENTS.md audit of unpushed batch** — view-sessions close uses `ViewOpenKind` (not boolean); JSDoc/`[Note:]` on remap + quality hydrate; commit + push + Deploy CI. `APP_VERSION` → `0.3.151`.
 
 **Previous session shipped:**
