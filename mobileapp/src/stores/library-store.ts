@@ -42,7 +42,7 @@ import {
     reconcileTagOutboxWithFiles,
     remapTagOutboxFileId,
 } from "@/lib/tag-outbox";
-import { drainTagOutbox, requestTagOutboxFlush } from "@/lib/tag-outbox-runner";
+import { drainTagOutbox, flushTagOutboxNow, requestTagOutboxFlush } from "@/lib/tag-outbox-runner";
 import { enqueueDerivedReplace } from "@/lib/derived-replace-queue";
 import {
     removeDerivedReplaceOutboxEntries,
@@ -107,7 +107,7 @@ import type { CompressMediaResult } from "@/lib/transcode/compress-media";
 import type { RotationDegrees } from "@/lib/rotate";
 import type { CroppedVideoResult, VideoCropRect } from "@/lib/video-edit";
 import { mimeTypeForFile } from "@/lib/media-kind";
-import { fileFileName, ItemVisibility } from "ente-media/file-metadata";
+import { ItemVisibility } from "ente-media/file-metadata";
 
 export type SyncStatus =
     | "idle" |
@@ -1003,7 +1003,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         void upsertFavoriteOutboxEntry(file, userId, isFavorite)
             .then(() => {
                 favoritesStore.removePending(file.id);
-                return drainTagOutbox();
+                requestTagOutboxFlush();
             })
             .catch(() => {
                 favoritesStore.removePending(file.id);
@@ -1339,42 +1339,63 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         fileId: number,
         degrees: RotationDegrees,
     ): Promise<EnteFile> => {
-        const { allFiles, collections } = get();
+        const { allFiles } = get();
         const file = allFiles.find((entry) => entry.id === fileId);
         if (!file) {
             throw new Error(`File ${fileId} not found`);
         }
 
-        const collection = collections.find(
-            (entry) => entry.id === file.collectionID,
-        );
-        if (!collection) {
-            throw new Error(`Collection ${file.collectionID} not found`);
+        const core = getEnteCore();
+        const userId = core.getUserID();
+        if (file.ownerID !== userId) {
+            throw new Error("Can only rotate files you own");
         }
 
-        const bytes = await getEnteCore().getDecryptedFile(file);
+        const bytes = await core.getDecryptedFile(file);
         const { toRenderableImageBlob } = await import(
             "@/lib/renderable-image"
         );
         const renderable = await toRenderableImageBlob(file, bytes);
         const sourceBytes = new Uint8Array(await renderable.arrayBuffer());
-        const { rotateImageBytes, rotatedUploadTitle } = await import(
-            "@/lib/rotate"
-        );
+        const {
+            buildRotatedOrganizerTags,
+            rotateImageBytes,
+            rotatedReplaceTitle,
+        } = await import("@/lib/rotate");
         const rotated = await rotateImageBytes(
             sourceBytes,
             renderable.type || "image/jpeg",
             degrees,
         );
-        const uploaded = await getEnteCore().uploadRotatedImage(
+        const updated = await core.updateRotatedImageInPlace(
             file,
             rotated.bytes,
-            collection,
             { width: rotated.width, height: rotated.height },
-            rotatedUploadTitle(fileFileName(file)),
+            rotatedReplaceTitle(file),
+            buildRotatedOrganizerTags(file),
         );
 
-        return appendUploadedFile(set, get, uploaded);
+        const previousTags = extractTags(file);
+        const intendedTags = extractTags(updated);
+        const { allFiles: library, fileIndexById } = get();
+        const nextFiles = patchFileInLibrary(
+            library,
+            updated.id,
+            updated,
+            fileIndexById,
+        );
+        if (nextFiles) {
+            commitAllFiles(set, get, nextFiles);
+            scheduleSaveEncryptedFiles(() => get().allFiles);
+        }
+        useTagStore.getState().applyFileTags(
+            updated.id,
+            intendedTags,
+            previousTags,
+        );
+        await invalidateThumbnailCache(updated.id);
+        primeThumbnailFromBytes(updated.id, rotated.bytes);
+        return updated;
     },
 
     cropVideoAndUploadFile: async (
@@ -1818,7 +1839,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 upsertFavoriteOutboxEntry(file, userId, isFavorite).finally(() => {
                     favoritesStore.removePending(file.id);
                 })),
-        ).then(() => drainTagOutbox());
+        ).then(() => flushTagOutboxNow());
     },
 
     batchSetArchived: async (

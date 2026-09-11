@@ -23,12 +23,35 @@ import { hydrateTagOutbox } from "@/lib/tag-outbox";
 import {
     startTagOutboxRunner,
     stopTagOutboxRunner,
+    type FavoriteMutationsResult,
 } from "@/lib/tag-outbox-runner";
 import {
     hydrateVisibilityOutbox,
     type VisibilityOutboxEntry,
 } from "@/lib/visibility-outbox";
 import { probeVideoDurationSec } from "@/lib/video-edit";
+
+const favoriteEntryKey: (entry: FavoriteOutboxEntry) => string = (
+    entry: FavoriteOutboxEntry,
+): string => entry.fileHashAndTypeKey ?? String(entry.fileId);
+
+const isFileIdInTrash: (fileId: number) => Promise<boolean> = async (
+    fileId: number,
+): Promise<boolean> => {
+    const trashStoreModule: {
+        useTrashStore: {
+            getState: () => {
+                items: Array<{ file: { id: number } }>;
+            };
+        };
+    } = await import("@/stores/trash-store");
+    return trashStoreModule.useTrashStore
+        .getState()
+        .items.some(
+            (item: { file: { id: number } }): boolean =>
+                item.file.id === fileId,
+        );
+};
 
 export interface UseLibraryBootstrapOptions {
     /** Extra work after cache load and remote sync (e.g. phash hydrate). */
@@ -84,6 +107,61 @@ export const useLibraryBootstrap: (
                     patchFiles: (files: EnteFile[]): void => {
                         useLibraryStore.getState().patchFiles(files);
                     },
+                    applyFavoriteMutations: async (
+                        entries: FavoriteOutboxEntry[],
+                    ): Promise<FavoriteMutationsResult> => {
+                        const library: ReturnType<
+                            typeof useLibraryStore.getState
+                        > = useLibraryStore.getState();
+                        const core: EnteCore = getEnteCore();
+                        const ctx: {
+                            collections: Collection[];
+                            allFiles: EnteFile[];
+                            pendingByHashAndType: typeof pendingFavoriteFilesByHashAndType;
+                        } = {
+                            collections: library.collections,
+                            allFiles: library.allFiles,
+                            pendingByHashAndType:
+                                pendingFavoriteFilesByHashAndType,
+                        };
+
+                        const ackedKeys: string[] = [];
+                        const toAdd: EnteFile[] = [];
+                        const toRemove: EnteFile[] = [];
+                        const addKeys: string[] = [];
+                        const removeKeys: string[] = [];
+
+                        for (const entry of entries) {
+                            const key: string = favoriteEntryKey(entry);
+                            const file: EnteFile | undefined =
+                                library.allFiles.find(
+                                    (candidate: EnteFile): boolean =>
+                                        candidate.id === entry.fileId,
+                                );
+                            if (!file) {
+                                if (await isFileIdInTrash(entry.fileId)) {
+                                    ackedKeys.push(key);
+                                }
+                                continue;
+                            }
+                            if (entry.isFavorite) {
+                                toAdd.push(file);
+                                addKeys.push(key);
+                            } else {
+                                toRemove.push(file);
+                                removeKeys.push(key);
+                            }
+                        }
+                        if (toAdd.length) {
+                            await core.addToFavorites(toAdd, ctx);
+                            ackedKeys.push(...addKeys);
+                        }
+                        if (toRemove.length) {
+                            await core.removeFromFavorites(toRemove, ctx);
+                            ackedKeys.push(...removeKeys);
+                        }
+                        return { ackedKeys };
+                    },
                     applyFavoriteMutation: async (
                         entry: FavoriteOutboxEntry,
                     ): Promise<void> => {
@@ -96,13 +174,7 @@ export const useLibraryBootstrap: (
                                     candidate.id === entry.fileId,
                             );
                         if (!file) {
-                            const trashed: boolean = (
-                                await import("@/stores/trash-store")
-                            ).useTrashStore.getState().items.some(
-                                (item: { file: { id: number } }): boolean =>
-                                    item.file.id === entry.fileId,
-                            );
-                            if (trashed) {
+                            if (await isFileIdInTrash(entry.fileId)) {
                                 return;
                             }
                             throw new Error(

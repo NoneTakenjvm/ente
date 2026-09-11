@@ -53,6 +53,7 @@ import {
     uploadCroppedImage as uploadCroppedImageToRemote,
     uploadLocalImage as uploadLocalImageToRemote,
     uploadRotatedImage as uploadRotatedImageToRemote,
+    updateRotatedImageInPlace as updateRotatedImageInPlaceToRemote,
     type UploadLocalImageOptions,
 } from "./upload/upload-image";
 import {
@@ -435,6 +436,7 @@ export class EnteCore {
         collection: Collection,
         dimensions: { width: number; height: number },
         title: string,
+        organizerTags?: string[],
     ): Promise<EnteFile> {
         return uploadRotatedImageToRemote(
             this.http,
@@ -443,6 +445,27 @@ export class EnteCore {
             collection,
             dimensions,
             title,
+            organizerTags,
+        );
+    }
+
+    /**
+     * Replace image bytes on the same file id (no trash / no new id).
+     */
+    updateRotatedImageInPlace(
+        sourceFile: EnteFile,
+        jpegBytes: Uint8Array,
+        dimensions: { width: number; height: number },
+        title: string,
+        organizerTags: string[],
+    ): Promise<EnteFile> {
+        return updateRotatedImageInPlaceToRemote(
+            this.http,
+            sourceFile,
+            jpegBytes,
+            dimensions,
+            title,
+            organizerTags,
         );
     }
 
