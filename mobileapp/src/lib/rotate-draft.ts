@@ -46,3 +46,20 @@ export const previewTransformForRotation = (
 export const countPendingRotations = (
     pending: Record<number, PendingRotationDegrees>,
 ): number => Object.keys(pending).length;
+
+/**
+ * Ask before discarding draft rotations. Returns true when it is safe to exit.
+ */
+export const confirmDiscardPendingRotations = (
+    pending: Record<number, PendingRotationDegrees>,
+): boolean => {
+    const count = countPendingRotations(pending);
+    if (count === 0) {
+        return true;
+    }
+    return window.confirm(
+        count === 1 ?
+            "Discard 1 pending rotation?" :
+            `Discard ${count} pending rotations?`,
+    );
+};

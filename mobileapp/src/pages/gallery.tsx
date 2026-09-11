@@ -1,7 +1,6 @@
 import {
     startTransition,
     useCallback,
-    useDeferredValue,
     useEffect,
     useMemo,
     useRef,
@@ -583,8 +582,8 @@ export default function GalleryPage(): JSX.Element {
                     skipped.push(file.id);
                 }
             }
-            // Urgent update — startTransition + useDeferredValue deferred the
-            // reorder enough that Closest/Furthest looked like a no-op.
+            // Urgent update — startTransition deferred the reorder enough that
+            // Closest/Furthest looked like a no-op.
             setFrozenRelativeOrderIds([...embeddedOrder, ...skipped]);
         };
 
@@ -925,16 +924,19 @@ export default function GalleryPage(): JSX.Element {
 
     const matchCount = filteredFiles.length;
 
-    const deferredFiles = useDeferredValue(files);
-    // Keep the first non-empty paint immediate so cache load doesn't flash
-    // the empty state; later filter/sort updates can lag one frame.
-    const displayFiles =
-        files.length > 0 && deferredFiles.length === 0 ? files : deferredFiles;
+    // Live order for the interactive grid — deferred lists caused ghost taps
+    // on cells that moved after sort/filter settled.
+    const displayFiles = files;
 
     const [viewerFileId, setViewerFileId] = useState<number | undefined>();
+    const viewerFilesRef = useRef(files);
+    if (viewerFileId === undefined) {
+        viewerFilesRef.current = files;
+    }
 
     const selectionEnabled = useSelectionStore((s) => s.enabled);
     const selectedIds = useSelectionStore((s) => s.selectedIds);
+    const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
     const toggleSelection = useSelectionStore((s) => s.toggle);
     const selectMany = useSelectionStore((s) => s.selectMany);
     const pruneToVisible = useSelectionStore((s) => s.pruneToVisible);
@@ -983,7 +985,7 @@ export default function GalleryPage(): JSX.Element {
         () =>
             buildMediaGridSelection({
                 selectionEnabled,
-                selectedIds,
+                selectedIds: selectedIdSet,
                 stampActive,
                 stampTags,
                 rotateActive,
@@ -997,7 +999,7 @@ export default function GalleryPage(): JSX.Element {
             rotateActive,
             rotateBusy,
             selectMany,
-            selectedIds,
+            selectedIdSet,
             selectionEnabled,
             stampActive,
             stampTags,
@@ -1006,9 +1008,7 @@ export default function GalleryPage(): JSX.Element {
     );
 
     const footerInsetPx =
-        stampActive ||
-        rotateActive ||
-        (selectionEnabled && selectedIds.length > 0) ?
+        stampActive || rotateActive || selectionEnabled ?
             SELECTION_FOOTER_INSET_PX :
             0;
 
@@ -1061,6 +1061,7 @@ export default function GalleryPage(): JSX.Element {
         <AppShell
             title="Media"
             email={email}
+            mainScrolls={false}
             actions={
                 <>
                     <Button
@@ -1124,7 +1125,7 @@ export default function GalleryPage(): JSX.Element {
 
             {viewerFileId !== undefined ? (
                 <PhotoViewer
-                    files={displayFiles}
+                    files={viewerFilesRef.current}
                     initialFileId={viewerFileId}
                     onClose={handleCloseViewer}
                     onFileUpdated={handleFileUpdated}

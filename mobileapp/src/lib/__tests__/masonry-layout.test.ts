@@ -3,6 +3,7 @@ import { fileAspectRatio } from "@/lib/file-aspect-ratio";
 import {
     computeMasonryLayout,
     groupMasonryItemsByColumn,
+    masonryViewOrderKey,
     visibleMasonryItemsFromColumns,
 } from "@/lib/masonry-layout";
 import type { EnteFile } from "ente-media/file";
@@ -88,5 +89,14 @@ describe("visibleMasonryItemsFromColumns", () => {
             expect(item.y).toBeLessThanOrEqual(80);
             expect(item.y + item.height).toBeGreaterThanOrEqual(0);
         }
+    });
+});
+
+describe("masonryViewOrderKey", () => {
+    it("is stable for the same id order and changes when order changes", () => {
+        const a = [fileWithDimensions(1, 1, 1), fileWithDimensions(2, 1, 1)];
+        const b = [fileWithDimensions(2, 1, 1), fileWithDimensions(1, 1, 1)];
+        expect(masonryViewOrderKey(a)).toBe(masonryViewOrderKey(a));
+        expect(masonryViewOrderKey(a)).not.toBe(masonryViewOrderKey(b));
     });
 });

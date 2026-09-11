@@ -78,7 +78,6 @@ export function TagFilterBar({
     const knownTags = useTagStore((s) => s.tags);
 
     const selectAll = useSelectionStore((s) => s.selectAll);
-    const setEnabled = useSelectionStore((s) => s.setEnabled);
     const setStampActive = useSelectionStore((s) => s.setStampActive);
     const setStampTags = useSelectionStore((s) => s.setStampTags);
     const setStampPickMode = useSelectionStore((s) => s.setStampPickMode);
@@ -121,7 +120,7 @@ export function TagFilterBar({
         (s) => s.toggleKitLikenessExcluded,
     );
 
-    const embeddingEntries = useEmbeddingIndexStore((s) => s.entries);
+    const embeddingCount = useEmbeddingIndexStore((s) => s.entries.size);
     const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
     const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.hydrate);
     const qualityHydrated = useQualityIndexStore((s) => s.isHydrated);
@@ -185,7 +184,7 @@ export function TagFilterBar({
                 kits: presets,
                 libraryFiles: allFiles,
                 viewFiles: matchingFiles,
-                embeddings: embeddingEntries,
+                embeddings: useEmbeddingIndexStore.getState().entries,
                 fileIdsByTag,
                 includeInKitNearnessByName,
             })
@@ -204,7 +203,7 @@ export function TagFilterBar({
         };
     }, [
         allFiles,
-        embeddingEntries,
+        embeddingCount,
         embeddingHydrated,
         fileIdsByTag,
         includeInKitNearnessByName,
@@ -529,7 +528,6 @@ export function TagFilterBar({
                                         onClick={() => {
                                             setBulkError(undefined);
                                             setBulkTagOpen(true);
-                                            setEnabled(true);
                                         }}
                                     >
                                         Tag matching…

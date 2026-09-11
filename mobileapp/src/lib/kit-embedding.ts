@@ -36,6 +36,7 @@ import {
 } from "@/db/kv";
 import { imageFilesForPhash } from "@/lib/similarity-job";
 import { isEnteVideoFile } from "@/lib/media-kind";
+import { waitWhileGalleryScrolling } from "@/lib/gallery-scroll-activity";
 import type { EnteFile } from "ente-media/file";
 import { useSettingsStore } from "@/stores/settings-store";
 import type {
@@ -312,7 +313,7 @@ const embedBatchInWorker = (
     });
 
 /** L2-normalize; returns undefined when empty / non-finite. */
-const l2NormalizeEmbedding = (
+export const l2NormalizeEmbedding = (
     data: number[] | Float32Array,
 ): number[] | undefined => {
     let norm = 0;
@@ -425,6 +426,12 @@ class EmbeddingWriteQueue {
                     batch,
                     this.meta,
                     this.cacheKey,
+                );
+                // Cross-device: upload this dirty batch (dynamic import avoids cycle).
+                void import("@/lib/organizer-clip-sync").then(
+                    ({ enqueueOrganizerClipUpload }) => {
+                        enqueueOrganizerClipUpload(batch);
+                    },
                 );
             })
             .catch((error: unknown) => {
@@ -667,6 +674,10 @@ export const runKitEmbeddingJob = async (
     };
 
     const prefetchOne = async (file: EnteFile): Promise<void> => {
+        if (options.signal?.aborted) {
+            return;
+        }
+        await waitWhileGalleryScrolling(options.signal);
         if (options.signal?.aborted) {
             return;
         }

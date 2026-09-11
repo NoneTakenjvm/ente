@@ -13,6 +13,7 @@ import {
     isThumbnailCachedLocally,
 } from "@/lib/thumbnail-bytes";
 import { isFileArchivedLocally } from "@/lib/visibility-outbox";
+import { waitWhileGalleryScrolling } from "@/lib/gallery-scroll-activity";
 import type {
     Stage1Cluster,
     Stage1FileEdge,
@@ -375,6 +376,10 @@ export const runPhashJob = async (
     };
 
     const processOne = async (file: EnteFile): Promise<void> => {
+        if (options.signal?.aborted) {
+            return;
+        }
+        await waitWhileGalleryScrolling(options.signal);
         if (options.signal?.aborted) {
             return;
         }

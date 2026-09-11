@@ -24,6 +24,18 @@ export interface MasonryLayout {
     gap: number;
 }
 
+/**
+ * Order fingerprint for masonry layout reuse — O(n) integer hash, no giant
+ * comma-joined id string allocation on every `files` reference change.
+ */
+export const masonryViewOrderKey = (files: readonly EnteFile[]): string => {
+    let hash = files.length | 0;
+    for (const file of files) {
+        hash = (Math.imul(hash, 31) + file.id) | 0;
+    }
+    return `${files.length}:${hash}`;
+};
+
 const paddingInlineForWidth = (containerWidth: number): number =>
     containerWidth > 480 ? 16 : 4;
 

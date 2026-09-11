@@ -17,6 +17,7 @@ import {
     mergeFileChangesIntoLibrary,
 } from "@/lib/sync/merge-files";
 import { applyOutboxTagsToFiles } from "@/lib/tag-outbox";
+import { applyOutboxVisibilityToFiles } from "@/lib/visibility-outbox";
 
 const collectionSyncConcurrency = 2;
 
@@ -148,9 +149,9 @@ export const pullFiles = async (
         const trashedIds = new Set(
             (trashItems ?? []).map((item) => item.file.id),
         );
-        const forDisk = applyOutboxTagsToFiles(files).filter(
-            (file) => !trashedIds.has(file.id),
-        );
+        const forDisk = applyOutboxVisibilityToFiles(
+            applyOutboxTagsToFiles(files),
+        ).filter((file) => !trashedIds.has(file.id));
         await saveEncryptedFiles(forDisk, getSessionCacheKey());
     }
     // Cursors only after a durable library snapshot (or when no file changes).

@@ -252,16 +252,5 @@ if (typeof window !== "undefined") {
             flushOnHide();
         }
     });
-    /**
-     * Warn before discarding a tab while favourites are still only in the local
-     * outbox. Incognito (and normal close before drain) otherwise silently lose
-     * them — the remote batch drain is the real fix; this is the last guardrail.
-     */
-    window.addEventListener("beforeunload", (event: BeforeUnloadEvent) => {
-        if (!hydrated || outboxByKey.size === 0) {
-            return;
-        }
-        event.preventDefault();
-        event.returnValue = "";
-    });
+    // Tab-close warn for any outbox: installDurableFlushListeners in durable-flush.ts.
 }

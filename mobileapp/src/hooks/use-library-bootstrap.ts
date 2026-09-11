@@ -7,7 +7,10 @@ import {
 } from "react";
 import type { EnteFile } from "ente-media/file";
 import { getEnteCore, type Collection, type EnteCore } from "@/core";
-import { pendingFavoriteFilesByHashAndType } from "@/stores/favorites-store";
+import {
+    pendingFavoriteFilesByHashAndType,
+    useFavoritesStore,
+} from "@/stores/favorites-store";
 import { isSessionAuthenticated } from "@/stores/session-store";
 import { useLibraryStore } from "@/stores/library-store";
 import {
@@ -198,8 +201,20 @@ export const useLibraryBootstrap: (
                             await core.removeFromFavorites([file], ctx);
                         }
                     },
-                    syncFavorites: (): Promise<void> =>
-                        useLibraryStore.getState().syncRemote(),
+                    syncFavorites: async (): Promise<void> => {
+                        // Local patch only — full syncRemote after every favourite
+                        // batch was too expensive and raced in-flight edits.
+                        const library: ReturnType<
+                            typeof useLibraryStore.getState
+                        > = useLibraryStore.getState();
+                        useFavoritesStore
+                            .getState()
+                            .rebuildFromLibrary(
+                                getEnteCore().getUserID(),
+                                library.collections,
+                                library.allFiles,
+                            );
+                    },
                     applyVisibilityMutation: async (
                         entry: VisibilityOutboxEntry,
                     ): Promise<void> => {

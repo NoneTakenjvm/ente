@@ -48,18 +48,16 @@ export const saveEncryptedCollections = async (
 export const loadEncryptedFiles = async (
     cacheKey: string,
 ): Promise<EnteFile[] | undefined> => {
-    const payload = await getEncrypted("files");
-    if (!payload) {
-        return undefined;
-    }
-    return decryptCachePayload<EnteFile[]>(payload, cacheKey);
+    const { loadEncryptedFilesSharded } = await import("./file-shards");
+    return loadEncryptedFilesSharded(cacheKey);
 };
 
 export const saveEncryptedFiles = async (
     files: EnteFile[],
     cacheKey: string,
 ): Promise<void> => {
-    await putEncrypted("files", await encryptCachePayload(files, cacheKey));
+    const { saveEncryptedFilesSharded } = await import("./file-shards");
+    await saveEncryptedFilesSharded(files, cacheKey);
 };
 
 export interface PersistedTagIndex {

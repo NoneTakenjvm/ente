@@ -180,3 +180,25 @@ export const clearVisibilityOutbox = (): void => {
     hydrated = false;
     persistChain = Promise.resolve();
 };
+
+/**
+ * Persist the in-memory visibility outbox to encrypted IDB.
+ */
+export const flushVisibilityOutboxPersist = (): Promise<void> => {
+    if (!hydrated) {
+        return ensureVisibilityOutboxHydrated().then(() => persistVisibilityOutbox());
+    }
+    return persistVisibilityOutbox();
+};
+
+if (typeof window !== "undefined") {
+    const flushOnHide = (): void => {
+        void flushVisibilityOutboxPersist();
+    };
+    window.addEventListener("pagehide", flushOnHide);
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") {
+            flushOnHide();
+        }
+    });
+}

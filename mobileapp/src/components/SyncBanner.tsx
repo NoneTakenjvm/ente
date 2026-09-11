@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useLibraryStore } from "@/stores/library-store";
 
@@ -7,6 +8,8 @@ export function SyncBanner(): JSX.Element | null {
     const syncStatus = useLibraryStore((s) => s.syncStatus);
     const syncProgress = useLibraryStore((s) => s.syncProgress);
     const syncError = useLibraryStore((s) => s.syncError);
+    const syncRemote = useLibraryStore((s) => s.syncRemote);
+    const forceResyncLibrary = useLibraryStore((s) => s.forceResyncLibrary);
 
     if (syncStatus === "offline") {
         return (
@@ -21,7 +24,26 @@ export function SyncBanner(): JSX.Element | null {
     if (syncStatus === "error" && syncError) {
         return (
             <Alert variant="destructive" className="mx-4 mt-3 rounded-lg py-2">
-                <AlertDescription>Sync failed: {syncError}</AlertDescription>
+                <AlertDescription className="flex flex-wrap items-center gap-2">
+                    <span className="min-w-0 flex-1">
+                        Sync failed: {syncError}
+                    </span>
+                    <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                            void syncRemote();
+                        }}
+                        onContextMenu={(event) => {
+                            event.preventDefault();
+                            void forceResyncLibrary();
+                        }}
+                        title="Tap to retry · long-press / right-click to force full resync"
+                    >
+                        Retry
+                    </Button>
+                </AlertDescription>
             </Alert>
         );
     }
