@@ -7,14 +7,15 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-09-12 |
-| **Last agent / session** | Stamp no longer instant-resorts nearness/relative (`0.3.171`) |
+| **Last agent / session** | AGENTS.md audit of unpushed batch (`0.3.172`) |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable |
-| **Next recommended action** | Phone QA Manage `0.3.171`: stamp under kit likeness / relative — order holds until Reapply / New start. |
+| **Next recommended action** | Commit audit fixes, push `ntphotos`, Deploy CI; phone QA Manage `0.3.172`. |
 
 **This session shipped:**
-1. **`0.3.171` stamp vs expensive sorts** — kit nearness / relative freeze no longer rebuilds when stamp patches `libraryFiles`; only Reapply / New start (and mode/tip/embedding hydrate) rebuilds order. Filter membership still patches in place.
-2. Prior: **`0.3.170` cache memory** — CLIP `Float32Array` + IDB LRU touch coalesce.
+1. **`0.3.172` production audit** — LWW-merge `viewSessions` in organizer save-queue coalesce; logout/tab flush includes organizer-config queue; 401 on `authFetchResponse`; validate favourite membership payload after decrypt; JSDoc / duplicate sync helper cleanup.
+2. Prior unpushed (now audited): **`0.3.171` stamp vs expensive sorts** — kit nearness / relative freeze no longer rebuilds when stamp patches `libraryFiles`.
+3. Prior: **`0.3.170` cache memory** — CLIP `Float32Array` + IDB LRU touch coalesce.
 
 **Previous session shipped:**
 1. **`0.3.169`** — marquee edge / programmatic `setScrollTop` calls `noteGalleryScrollActivity()` so thumbnail cache throttles like a real fling (amplifier called out by memory investigation).

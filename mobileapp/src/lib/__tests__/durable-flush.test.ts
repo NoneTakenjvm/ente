@@ -29,6 +29,10 @@ describe("durable-flush", () => {
             flushDerivedReplaceOutboxPersist: vi.fn(async () => undefined),
             getDerivedReplaceOutboxEntries: () => [],
         }));
+        vi.doMock("@/lib/organizer-config-save-queue", () => ({
+            flushOrganizerConfigQueueIfReady: vi.fn(async () => undefined),
+            hasPendingOrganizerConfigPatch: () => false,
+        }));
 
         const { hasPendingDurableOutbox } = await import("@/lib/durable-flush");
         expect(hasPendingDurableOutbox()).toBe(false);
@@ -54,6 +58,10 @@ describe("durable-flush", () => {
             flushDerivedReplaceOutboxPersist: vi.fn(async () => undefined),
             getDerivedReplaceOutboxEntries: () => [],
         }));
+        vi.doMock("@/lib/organizer-config-save-queue", () => ({
+            flushOrganizerConfigQueueIfReady: vi.fn(async () => undefined),
+            hasPendingOrganizerConfigPatch: () => false,
+        }));
 
         const { hasPendingDurableOutbox } = await import("@/lib/durable-flush");
         expect(hasPendingDurableOutbox()).toBe(true);
@@ -65,6 +73,7 @@ describe("durable-flush", () => {
         const flushMembership = vi.fn(async () => undefined);
         const flushVisibility = vi.fn(async () => undefined);
         const flushDerived = vi.fn(async () => undefined);
+        const flushOrganizer = vi.fn(async () => undefined);
         const flushLibrary = vi.fn(async () => undefined);
 
         vi.doMock("@/lib/tag-outbox", () => ({
@@ -86,8 +95,18 @@ describe("durable-flush", () => {
             flushDerivedReplaceOutboxPersist: flushDerived,
             getDerivedReplaceOutboxEntries: () => [],
         }));
+        vi.doMock("@/lib/organizer-config-save-queue", () => ({
+            flushOrganizerConfigQueueIfReady: flushOrganizer,
+            hasPendingOrganizerConfigPatch: () => false,
+        }));
         vi.doMock("@/stores/library-store", () => ({
             flushLibraryCachePersist: flushLibrary,
+        }));
+        vi.doMock("@/db/thumbnails", () => ({
+            flushThumbnailLruTouches: vi.fn(async () => undefined),
+        }));
+        vi.doMock("@/db/file-ciphertexts", () => ({
+            flushFileCiphertextLruTouches: vi.fn(async () => undefined),
         }));
 
         const { flushAllDurableState } = await import("@/lib/durable-flush");
@@ -98,6 +117,7 @@ describe("durable-flush", () => {
         expect(flushMembership).toHaveBeenCalledOnce();
         expect(flushVisibility).toHaveBeenCalledOnce();
         expect(flushDerived).toHaveBeenCalledOnce();
+        expect(flushOrganizer).toHaveBeenCalledOnce();
         expect(flushLibrary).toHaveBeenCalledOnce();
     });
 });

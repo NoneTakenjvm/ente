@@ -104,6 +104,9 @@ export class HttpClient {
             headers: { ...this.authHeaders(), ...init?.headers },
         });
         this.logRateLimitHeaders(res, res.url);
+        if (res.status === 401) {
+            notifyUnauthorized();
+        }
         return res;
     };
 

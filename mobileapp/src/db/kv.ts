@@ -224,7 +224,14 @@ export const loadEncryptedFavoriteMembership = async (
     if (!payload) {
         return undefined;
     }
-    return decryptCachePayload<number[]>(payload, cacheKey);
+    const decoded = await decryptCachePayload<unknown>(payload, cacheKey);
+    if (!Array.isArray(decoded)) {
+        return undefined;
+    }
+    const ids = decoded.filter(
+        (id): id is number => typeof id === "number" && Number.isFinite(id),
+    );
+    return ids.length === decoded.length ? ids : undefined;
 };
 
 export const saveEncryptedFavoriteMembership = async (
