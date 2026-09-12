@@ -75,6 +75,7 @@ export const hydrateFavoriteMembership = async (): Promise<void> => {
     return hydrateInFlight;
 };
 
+/** Hydrate membership from IDB if not already loaded. */
 export const ensureFavoriteMembershipHydrated = async (): Promise<void> => {
     if (hydrated) {
         return;
@@ -82,6 +83,7 @@ export const ensureFavoriteMembershipHydrated = async (): Promise<void> => {
     await hydrateFavoriteMembership();
 };
 
+/** True after {@link hydrateFavoriteMembership} has finished (payload or miss). */
 export const isFavoriteMembershipHydrated = (): boolean => hydrated;
 
 /** True after at least one successful Favourites membership sync or hydrate. */
@@ -91,13 +93,14 @@ export const isFavoriteMembershipReady = (): boolean => ready;
 export const needsFavoriteMembershipFullSync = (): boolean => needsFullSync;
 
 /**
- * Snapshot of server membership file IDs ( Favourites collection rows ).
+ * Snapshot of server membership file IDs (Favourites collection rows).
  */
 export const getFavoriteMembershipIds = (): Set<number> =>
     new Set(membershipIds);
 
 /**
- * Clear in-memory membership and force a full Favourites re-pull (force resync).
+ * Clear in-memory membership and force a full Favourites re-pull.
+ * Used for Manage force-resync and at the start of a full membership rebuild.
  */
 export const resetFavoriteMembershipForFullSync = (): void => {
     membershipIds.clear();
@@ -109,9 +112,7 @@ export const resetFavoriteMembershipForFullSync = (): void => {
  * Begin a full Favourites membership rebuild (clears set; caller applies diffs).
  */
 export const beginFavoriteMembershipFullSync = (): void => {
-    membershipIds.clear();
-    needsFullSync = true;
-    ready = false;
+    resetFavoriteMembershipForFullSync();
 };
 
 /**
@@ -221,6 +222,7 @@ export const removeFavoriteMembershipForFileIds = async (
     }
 };
 
+/** Await pending membership encrypt to IDB (durable-flush / hide). */
 export const flushFavoriteMembershipPersist = (): Promise<void> => {
     if (!hydrated) {
         return ensureFavoriteMembershipHydrated().then(() =>
@@ -229,6 +231,7 @@ export const flushFavoriteMembershipPersist = (): Promise<void> => {
     return persistMembership();
 };
 
+/** Wipe in-memory membership on logout; forces next full Favourites pull. */
 export const clearFavoriteMembership = (): void => {
     membershipIds.clear();
     hydrated = false;

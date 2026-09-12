@@ -26,6 +26,7 @@ export const MARQUEE_EDGE_ZONE_PX = 48;
 /** Max auto-scroll speed at the extreme edge (px per frame at 60fps-ish). */
 export const MARQUEE_EDGE_MAX_SPEED_PX = 28;
 
+/** Axis-aligned rect from two content-space points. */
 export const normalizeRect = (
     a: MarqueePoint,
     b: MarqueePoint,

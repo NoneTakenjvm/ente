@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { LruTouchCoalescer } from "../lru-touch";
+import { LruTouchCoalescer } from "@/db/lru-touch";
 
 describe("LruTouchCoalescer", () => {
     it("batches writes until flushEvery and overlays pending times", async () => {

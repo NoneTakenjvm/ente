@@ -6,6 +6,10 @@
 import { flushFavoriteOutboxPersist, getFavoriteOutboxEntries } from "@/lib/favorite-outbox";
 import { flushFavoriteMembershipPersist } from "@/lib/favorite-membership";
 import {
+    flushOrganizerConfigQueueIfReady,
+    hasPendingOrganizerConfigPatch,
+} from "@/lib/organizer-config-save-queue";
+import {
     flushTagOutboxPersist,
     getTagOutboxEntries,
 } from "@/lib/tag-outbox";
@@ -22,16 +26,17 @@ let flushChain: Promise<void> = Promise.resolve();
 let beforeUnloadInstalled = false;
 
 /**
- * True when any mutation outbox still has pending entries in memory.
+ * True when any mutation outbox or organizer-config cloud patch is pending.
  */
 export const hasPendingDurableOutbox = (): boolean =>
     getTagOutboxEntries().length > 0 ||
     getFavoriteOutboxEntries().length > 0 ||
     getVisibilityOutboxEntries().length > 0 ||
-    getDerivedReplaceOutboxEntries().length > 0;
+    getDerivedReplaceOutboxEntries().length > 0 ||
+    hasPendingOrganizerConfigPatch();
 
 /**
- * Await encrypt+IDB for all outboxes and the debounced library snapshot.
+ * Await encrypt+IDB for all outboxes, organizer cloud config, and library cache.
  */
 export const flushAllDurableState = (): Promise<void> => {
     flushChain = flushChain
@@ -44,6 +49,7 @@ export const flushAllDurableState = (): Promise<void> => {
                 flushVisibilityOutboxPersist(),
                 flushDerivedReplaceOutboxPersist(),
             ]);
+            await flushOrganizerConfigQueueIfReady();
             const [
                 { flushLibraryCachePersist },
                 { flushThumbnailLruTouches },

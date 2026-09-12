@@ -1,6 +1,7 @@
 import { getEnteCore } from "@/core";
 import { isOrganizerConfigBootstrapped } from "@/core/organizer-config";
 import type { OrganizerAppConfig } from "@/lib/organizer-config";
+import { mergeCloudViewSessions } from "@/lib/view-sessions";
 
 let pendingPatch: Partial<OrganizerAppConfig> = {};
 let flushing = false;
@@ -9,13 +10,26 @@ let flushChain: Promise<void> = Promise.resolve();
 const yieldToCoalesce = (): Promise<void> =>
     new Promise((resolve) => setTimeout(resolve, 0));
 
+/**
+ * Coalesce queued patches. `viewSessions` uses LWW merge so two rapid Recents
+ * updates in one debounce window do not drop sessions.
+ */
 const mergePending = (
     current: Partial<OrganizerAppConfig>,
     patch: Partial<OrganizerAppConfig>,
-): Partial<OrganizerAppConfig> => ({
-    ...current,
-    ...patch,
-});
+): Partial<OrganizerAppConfig> => {
+    const merged: Partial<OrganizerAppConfig> = { ...current, ...patch };
+    if (
+        current.viewSessions !== undefined &&
+        patch.viewSessions !== undefined
+    ) {
+        merged.viewSessions = mergeCloudViewSessions(
+            current.viewSessions,
+            patch.viewSessions,
+        );
+    }
+    return merged;
+};
 
 /**
  * Queue a partial app-config write. Rapid edits coalesce into one remote PUT.
@@ -29,6 +43,10 @@ export const enqueueOrganizerConfigPatch = (
     }
     void flushOrganizerConfigQueue();
 };
+
+/** True when a cloud config patch is queued or a flush is in flight. */
+export const hasPendingOrganizerConfigPatch = (): boolean =>
+    Object.keys(pendingPatch).length > 0 || flushing;
 
 /**
  * Flush any patches queued before organizer bootstrap completed.
