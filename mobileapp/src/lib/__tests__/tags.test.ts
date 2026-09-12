@@ -407,6 +407,27 @@ describe("tags", () => {
         expect(untagged.map((file) => file.id)).toEqual([1, 2]);
     });
 
+    it("filterFilesByTags combines untagged scope with presence-off include", () => {
+        const files = [
+            fileWithTags(1, []),
+            fileWithTags(2, ["junk"]),
+            fileWithTags(3, ["selfie"]),
+            fileWithTags(4, ["junk", "selfie"]),
+        ];
+        const index = buildTagIndex(files);
+        const { fileIdsByTag } = tagIndexToMaps(index);
+        const includeInEffectsPresenceByName = new Map([["junk", false]]);
+        const filtered = filterFilesByTags(
+            files,
+            filterWithRoot(andRoot(includeClause("junk")), {
+                tagScope: "untagged",
+            }),
+            fileIdsByTag,
+            { includeInEffectsPresenceByName },
+        );
+        expect(filtered.map((file) => file.id)).toEqual([2]);
+    });
+
     it("filterFilesByTags combines tagged scope with exclude clauses", () => {
         const files = [
             fileWithTags(1, ["selfie"]),

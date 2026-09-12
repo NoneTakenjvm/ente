@@ -23,10 +23,11 @@ const fileWithHash = (
     id: number,
     collectionID: number,
     hash: string,
+    ownerID: number = userId,
 ): EnteFile =>
     ({
         id,
-        ownerID: userId,
+        ownerID,
         collectionID,
         metadata: {
             hash,
@@ -35,23 +36,80 @@ const fileWithHash = (
     }) as unknown as EnteFile;
 
 describe("favorites", () => {
-    it("marks user-owned gallery files as favourites when hash matches favourites collection", () => {
+    it("marks favourites from membership even when library collectionID is an album", () => {
         const galleryFile = fileWithHash(10, 5, "abc");
-        const favoriteCopy = fileWithHash(20, favoritesCollectionId, "abc");
         const collections = [favoritesCollection];
-        const allFiles = [galleryFile, favoriteCopy];
+        const allFiles = [galleryFile];
 
         const { favoriteFileIds } = deriveFavoriteFileIDs(
             userId,
             collections,
             allFiles,
+            new Map(),
+            {
+                membershipFileIds: new Set([10]),
+                membershipReady: true,
+            },
+        );
+
+        expect(favoriteFileIds.has(10)).toBe(true);
+        expect(
+            isFileFavorited(
+                galleryFile,
+                userId,
+                collections,
+                allFiles,
+                new Map(),
+                {
+                    membershipFileIds: new Set([10]),
+                    membershipReady: true,
+                },
+            ),
+        ).toBe(true);
+    });
+
+    it("marks shared gallery files when hash matches a membership favourite", () => {
+        const sharedFile = fileWithHash(10, 5, "abc", 2);
+        const ownedFavorite = fileWithHash(20, favoritesCollectionId, "abc");
+        const collections = [favoritesCollection];
+        const allFiles = [sharedFile, ownedFavorite];
+
+        const { favoriteFileIds } = deriveFavoriteFileIDs(
+            userId,
+            collections,
+            allFiles,
+            new Map(),
+            {
+                membershipFileIds: new Set([20]),
+                membershipReady: true,
+            },
         );
 
         expect(favoriteFileIds.has(20)).toBe(true);
         expect(favoriteFileIds.has(10)).toBe(true);
-        expect(isFileFavorited(galleryFile, userId, collections, allFiles)).toBe(
-            true,
+    });
+
+    it("does not mark other owned files solely by hash match", () => {
+        const galleryFile = fileWithHash(10, 5, "abc");
+        const otherOwned = fileWithHash(11, 5, "abc");
+        const ownedFavorite = fileWithHash(20, favoritesCollectionId, "abc");
+        const collections = [favoritesCollection];
+        const allFiles = [galleryFile, otherOwned, ownedFavorite];
+
+        const { favoriteFileIds } = deriveFavoriteFileIDs(
+            userId,
+            collections,
+            allFiles,
+            new Map(),
+            {
+                membershipFileIds: new Set([20]),
+                membershipReady: true,
+            },
         );
+
+        expect(favoriteFileIds.has(20)).toBe(true);
+        expect(favoriteFileIds.has(10)).toBe(false);
+        expect(favoriteFileIds.has(11)).toBe(false);
     });
 
     it("mergePendingFavoriteUpdates keeps unconfirmed intents and drops matches", () => {

@@ -23,6 +23,7 @@ import {
     type KitEmbeddingEvalFold,
     type KitEmbeddingFitnessBreakdown,
 } from "@/lib/kit-nearness-embedding-eval";
+import type { ReadonlyEmbeddingMap } from "@/lib/kit-embedding";
 import type { EnteFile } from "ente-media/file";
 
 export type KitNearnessTuneProgress = {
@@ -41,7 +42,7 @@ export type KitNearnessTuneOptions = {
     libraryFiles: readonly EnteFile[];
     kitTags: readonly string[];
     kitId: string;
-    embeddings: ReadonlyMap<number, number[]>;
+    embeddings: ReadonlyEmbeddingMap;
     /** Other kits for rival penalties. */
     rivalKits: readonly {
         id: string;

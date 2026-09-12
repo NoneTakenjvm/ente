@@ -6,6 +6,7 @@ import {
     useRef,
     useState,
     type JSX,
+    type PointerEvent as ReactPointerEvent,
     type RefObject,
     type UIEvent,
 } from "react";
@@ -15,8 +16,11 @@ import {
     type ListChildComponentProps,
 } from "react-window";
 import type { GalleryColumnCount } from "@/lib/app-settings";
-import { resolveMarqueeDragIntent } from "@/lib/compress";
 import { noteGalleryScrollActivity } from "@/lib/gallery-scroll-activity";
+import {
+    gridIndicesInContentMarquee,
+    type MarqueeRect,
+} from "@/lib/marquee-selection";
 import {
     computeMasonryLayout,
     masonryItemsInMarquee,
@@ -29,6 +33,10 @@ import {
     rowCountForFiles,
     type ThumbnailGridLayout,
 } from "@/lib/thumbnail-grid-layout";
+import {
+    useMarqueeSelection,
+    type MarqueeScrollController,
+} from "@/hooks/use-marquee-selection";
 import { useSettingsStore } from "@/stores/settings-store";
 import type { EnteFile } from "ente-media/file";
 import {
@@ -44,7 +52,12 @@ import { ThumbnailCell } from "./ThumbnailCell";
 export interface ThumbnailGridSelection {
     selectedIds: Set<number>;
     onToggle: (file: EnteFile) => void;
-    onSelectMany?: (fileIds: number[], mode: "add" | "toggle") => void;
+    onSelectMany?: (fileIds: number[], mode: "add" | "toggle" | "set") => void;
+    /**
+     * When set, marquee selection is baseline ∪ live intersection (retract
+     * deselects). Stamp/tag tools omit this and stay add-only.
+     */
+    onSetSelection?: (fileIds: number[]) => void;
     isAlreadyCompressed?: (file: EnteFile) => boolean;
     disabled?: boolean;
 }
@@ -127,6 +140,7 @@ interface SizedGridProps {
     previewRotationById?: Record<number, 90 | 180 | 270>;
     onScrollOffsetChange: (offset: number) => void;
     listRef: RefObject<FixedSizeList<RowData> | null>;
+    scrollControllerRef: RefObject<MarqueeScrollController | null>;
 }
 
 function SizedGrid({
@@ -141,6 +155,7 @@ function SizedGrid({
     previewRotationById,
     onScrollOffsetChange,
     listRef,
+    scrollControllerRef,
 }: SizedGridProps): JSX.Element {
     const layout: ThumbnailGridLayout = useMemo(
         () => computeThumbnailGridLayout(width, columns),
@@ -164,6 +179,24 @@ function SizedGrid({
         [files, layout.columns],
     );
 
+    const scrollOffsetRef = useRef(0);
+
+    useEffect(() => {
+        scrollControllerRef.current = {
+            getScrollTop: (): number => scrollOffsetRef.current,
+            setScrollTop: (next: number): void => {
+                const clamped = Math.max(0, next);
+                noteGalleryScrollActivity();
+                scrollOffsetRef.current = clamped;
+                listRef.current?.scrollTo(clamped);
+                onScrollOffsetChange(clamped);
+            },
+        };
+        return (): void => {
+            scrollControllerRef.current = null;
+        };
+    }, [listRef, onScrollOffsetChange, scrollControllerRef]);
+
     return (
         <FixedSizeList
             ref={listRef}
@@ -177,6 +210,7 @@ function SizedGrid({
             overscanCount={2}
             onScroll={(props) => {
                 noteGalleryScrollActivity();
+                scrollOffsetRef.current = props.scrollOffset;
                 onScrollOffsetChange(props.scrollOffset);
             }}
             style={{ paddingBottom: footerInsetPx }}
@@ -197,6 +231,7 @@ interface SizedMasonryGridProps {
     showFileSize?: boolean;
     previewRotationById?: Record<number, 90 | 180 | 270>;
     onScrollOffsetChange: (offset: number) => void;
+    scrollControllerRef: RefObject<MarqueeScrollController | null>;
     /** Generation that changes when id order changes; layout is reused otherwise. */
     viewOrderKey: string;
 }
@@ -214,6 +249,7 @@ function SizedMasonryGrid({
     showFileSize,
     previewRotationById,
     onScrollOffsetChange,
+    scrollControllerRef,
     viewOrderKey,
 }: SizedMasonryGridProps): JSX.Element {
     const [scrollTop, setScrollTop] = useState<number>(0);
@@ -246,6 +282,30 @@ function SizedMasonryGrid({
         setScrollTop((prev) => (prev === next ? prev : next));
         onScrollOffsetChange(next);
     }, [height, onScrollOffsetChange, placedLayout.totalHeight, viewOrderKey]);
+
+    useEffect(() => {
+        scrollControllerRef.current = {
+            getScrollTop: (): number => scrollerRef.current?.scrollTop ?? 0,
+            setScrollTop: (next: number): void => {
+                const node = scrollerRef.current;
+                if (!node) {
+                    return;
+                }
+                const maxScroll = Math.max(0, node.scrollHeight - node.clientHeight);
+                const clamped = Math.min(Math.max(0, next), maxScroll);
+                if (node.scrollTop === clamped) {
+                    return;
+                }
+                noteGalleryScrollActivity();
+                node.scrollTop = clamped;
+                onScrollOffsetChange(clamped);
+                setScrollTop(clamped);
+            },
+        };
+        return (): void => {
+            scrollControllerRef.current = null;
+        };
+    }, [onScrollOffsetChange, scrollControllerRef]);
 
     const handleScroll = useCallback(
         (event: UIEvent<HTMLDivElement>): void => {
@@ -310,59 +370,6 @@ function SizedMasonryGrid({
     );
 }
 
-const MARQUEE_ARM_THRESHOLD_PX = 12;
-
-interface MarqueeRect {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-}
-
-const normalizeRect = (a: { x: number; y: number }, b: { x: number; y: number }): MarqueeRect => ({
-    x: Math.min(a.x, b.x),
-    y: Math.min(a.y, b.y),
-    width: Math.abs(a.x - b.x),
-    height: Math.abs(a.y - b.y),
-});
-
-const fileIdsInMarquee = (
-    files: EnteFile[],
-    layout: ThumbnailGridLayout,
-    scrollTop: number,
-    rect: MarqueeRect,
-): number[] => {
-    const ids: number[] = [];
-    const rowCount = rowCountForFiles(files.length, layout.columns);
-    for (let row = 0; row < rowCount; row += 1) {
-        const rowTop = row * layout.rowHeight - scrollTop;
-        const rowBottom = rowTop + layout.itemSize;
-        if (rowBottom < rect.y || rowTop > rect.y + rect.height) {
-            continue;
-        }
-        for (let col = 0; col < layout.columns; col += 1) {
-            const index = row * layout.columns + col;
-            if (index >= files.length) {
-                break;
-            }
-            const cellLeft =
-                layout.paddingInline + col * (layout.itemSize + layout.gap);
-            const cellRight = cellLeft + layout.itemSize;
-            const cellTop = rowTop;
-            const cellBottom = rowBottom;
-            const overlaps =
-                cellRight >= rect.x &&
-                cellLeft <= rect.x + rect.width &&
-                cellBottom >= rect.y &&
-                cellTop <= rect.y + rect.height;
-            if (overlaps) {
-                ids.push(files[index].id);
-            }
-        }
-    }
-    return ids;
-};
-
 export const ThumbnailGrid = memo(function ThumbnailGrid({
     files,
     onOpenFile,
@@ -375,15 +382,13 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
     const galleryThumbnailMode = useSettingsStore((s) => s.galleryThumbnailMode);
     const listRef = useRef<FixedSizeList<RowData>>(null);
     const containerRef = useRef<HTMLDivElement>(null);
-    const scrollTopRef = useRef<number>(0);
-    const dragStartRef = useRef<{ x: number; y: number } | undefined>(undefined);
-    const dragIntentRef = useRef<"pending" | "scroll" | "marquee">("pending");
-    const [marqueeArmed, setMarqueeArmed] = useState<boolean>(false);
-    const [marquee, setMarquee] = useState<MarqueeRect | undefined>();
+    const scrollControllerRef = useRef<MarqueeScrollController | null>(null);
+    const marqueeBaselineRef = useRef<Set<number>>(new Set());
+    const marqueeAppliedIdsRef = useRef<Set<number>>(new Set());
     const [gridWidth, setGridWidth] = useState<number>(0);
 
-    const handleScrollOffsetChange = useCallback((offset: number): void => {
-        scrollTopRef.current = offset;
+    const handleScrollOffsetChange = useCallback((_offset: number): void => {
+        // Scroll offset is owned by scrollControllerRef inside the sized grids.
     }, []);
 
     const viewOrderKey = useMemo(
@@ -420,143 +425,86 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
     const interactionsReady =
         readyToken === settleToken && files.length > 0 && gridWidth > 0;
 
-    const finishMarquee = useCallback(
-        (endX: number, endY: number): void => {
-            const start = dragStartRef.current;
-            const intent = dragIntentRef.current;
-            dragStartRef.current = undefined;
-            dragIntentRef.current = "pending";
-            setMarqueeArmed(false);
-            setMarquee(undefined);
-            if (
-                !start ||
-                intent !== "marquee" ||
-                !selection?.onSelectMany ||
-                !containerRef.current
-            ) {
-                return;
-            }
-            const rect = normalizeRect(start, { x: endX, y: endY });
+    const resolveMarqueeFileIds = useCallback(
+        (rect: MarqueeRect): number[] => {
             if (rect.width < 8 && rect.height < 8) {
-                return;
+                return [];
             }
-            let fileIds: number[];
             if (galleryThumbnailMode === "fit") {
                 const layout = computeMasonryLayout(
                     files,
                     gridWidth,
                     galleryColumns,
                 );
-                fileIds = masonryItemsInMarquee(
-                    layout.items,
-                    scrollTopRef.current,
-                    rect,
-                ).map((id) => Number(id));
-            } else {
-                const layout = computeThumbnailGridLayout(
-                    gridWidth,
-                    galleryColumns,
-                );
-                fileIds = fileIdsInMarquee(
-                    files,
-                    layout,
-                    scrollTopRef.current,
-                    rect,
-                );
+                return masonryItemsInMarquee(layout.items, rect).map((id) => Number(id));
             }
-            if (fileIds.length > 0) {
-                selection.onSelectMany(fileIds, "add");
-            }
+            const layout = computeThumbnailGridLayout(gridWidth, galleryColumns);
+            const indices = gridIndicesInContentMarquee(
+                files.length,
+                layout.columns,
+                layout.rowHeight,
+                layout.itemSize,
+                layout.paddingInline,
+                layout.gap,
+                rect,
+            );
+            return indices.map((index) => files[index]!.id);
         },
-        [files, galleryColumns, galleryThumbnailMode, gridWidth, selection],
+        [files, galleryColumns, galleryThumbnailMode, gridWidth],
     );
 
-    const cancelMarqueeTracking = useCallback((): void => {
-        dragStartRef.current = undefined;
-        dragIntentRef.current = "pending";
-        setMarqueeArmed(false);
-        setMarquee(undefined);
-    }, []);
+    const handleMarqueeRect = useCallback(
+        (rect: MarqueeRect): void => {
+            if (!selection?.onSelectMany) {
+                return;
+            }
+            const fileIds = resolveMarqueeFileIds(rect);
+            if (selection.onSetSelection) {
+                const next = new Set(marqueeBaselineRef.current);
+                for (const id of fileIds) {
+                    next.add(id);
+                }
+                selection.onSetSelection([...next]);
+                return;
+            }
+            // Stamp / add-only tools: never retract (can't un-apply tags).
+            const fresh: number[] = [];
+            for (const id of fileIds) {
+                if (!marqueeAppliedIdsRef.current.has(id)) {
+                    marqueeAppliedIdsRef.current.add(id);
+                    fresh.push(id);
+                }
+            }
+            if (fresh.length > 0) {
+                selection.onSelectMany(fresh, "add");
+            }
+        },
+        [resolveMarqueeFileIds, selection],
+    );
+
+    const marqueeEnabled =
+        Boolean(selection?.onSelectMany) && !selection?.disabled;
+
+    const {
+        marqueeViewport,
+        onPointerDown,
+        onPointerMove,
+        onPointerUp,
+        onPointerCancel,
+    } = useMarqueeSelection({
+        enabled: marqueeEnabled,
+        containerRef,
+        scrollControllerRef,
+        onMarqueeRect: handleMarqueeRect,
+    });
 
     const handlePointerDown = useCallback(
-        (event: React.PointerEvent<HTMLDivElement>): void => {
-            if (!selection?.onSelectMany || selection.disabled) {
-                return;
-            }
-            if (event.pointerType === "mouse" && event.button !== 0) {
-                return;
-            }
-            const bounds = containerRef.current?.getBoundingClientRect();
-            if (!bounds) {
-                return;
-            }
-            dragIntentRef.current = "pending";
-            dragStartRef.current = {
-                x: event.clientX - bounds.left,
-                y: event.clientY - bounds.top,
-            };
+        (event: ReactPointerEvent<HTMLDivElement>): void => {
+            marqueeBaselineRef.current = new Set(selection?.selectedIds ?? []);
+            marqueeAppliedIdsRef.current = new Set();
+            onPointerDown(event);
         },
-        [selection],
-    );
-
-    const handlePointerMove = useCallback(
-        (event: React.PointerEvent<HTMLDivElement>): void => {
-            const start = dragStartRef.current;
-            if (!start) {
-                return;
-            }
-            const bounds = containerRef.current?.getBoundingClientRect();
-            if (!bounds) {
-                return;
-            }
-            const x = event.clientX - bounds.left;
-            const y = event.clientY - bounds.top;
-            const dx = x - start.x;
-            const dy = y - start.y;
-
-            if (dragIntentRef.current === "pending") {
-                const intent = resolveMarqueeDragIntent(
-                    dx,
-                    dy,
-                    MARQUEE_ARM_THRESHOLD_PX,
-                );
-                if (intent === "scroll") {
-                    cancelMarqueeTracking();
-                    return;
-                }
-                if (intent === "marquee") {
-                    dragIntentRef.current = "marquee";
-                    setMarqueeArmed(true);
-                    containerRef.current?.setPointerCapture(event.pointerId);
-                    setMarquee(normalizeRect(start, { x, y }));
-                }
-                return;
-            }
-
-            if (dragIntentRef.current === "marquee") {
-                setMarquee(normalizeRect(start, { x, y }));
-            }
-        },
-        [cancelMarqueeTracking],
-    );
-
-    const handlePointerUp = useCallback(
-        (event: React.PointerEvent<HTMLDivElement>): void => {
-            if (!dragStartRef.current) {
-                return;
-            }
-            const bounds = containerRef.current?.getBoundingClientRect();
-            if (bounds && dragIntentRef.current === "marquee") {
-                finishMarquee(
-                    event.clientX - bounds.left,
-                    event.clientY - bounds.top,
-                );
-                containerRef.current?.releasePointerCapture(event.pointerId);
-                return;
-            }
-            cancelMarqueeTracking();
-        },
-        [cancelMarqueeTracking, finishMarquee],
+        [onPointerDown, selection?.selectedIds],
     );
 
     if (files.length === 0) {
@@ -580,15 +528,17 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
     return (
         <div
             ref={containerRef}
-            className="relative min-h-0 flex-1 select-none"
+            className="relative min-h-0 flex-1 select-none overflow-hidden"
             style={{
-                touchAction: marqueeArmed ? "none" : "pan-y",
+                // Select/stamp: block native pan so any-direction drag selects;
+                // navigate via edge auto-scroll while dragging (iOS Photos).
+                touchAction: marqueeEnabled ? "none" : "pan-y",
                 pointerEvents: interactionsReady ? "auto" : "none",
             }}
             onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerCancel={handlePointerUp}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerCancel}
         >
             <AutoSizer
                 onResize={({ width }: { width: number }) => {
@@ -608,6 +558,7 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
                             showFileSize={showFileSize}
                             previewRotationById={previewRotationById}
                             onScrollOffsetChange={handleScrollOffsetChange}
+                            scrollControllerRef={scrollControllerRef}
                             viewOrderKey={viewOrderKey}
                         />
                     ) : (
@@ -623,17 +574,18 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
                             previewRotationById={previewRotationById}
                             onScrollOffsetChange={handleScrollOffsetChange}
                             listRef={listRef}
+                            scrollControllerRef={scrollControllerRef}
                         />
                     )}
             </AutoSizer>
-            {marquee ? (
+            {marqueeViewport ? (
                 <div
                     className="pointer-events-none absolute z-30 border border-primary bg-primary/20"
                     style={{
-                        left: marquee.x,
-                        top: marquee.y,
-                        width: marquee.width,
-                        height: marquee.height,
+                        left: marqueeViewport.x,
+                        top: marqueeViewport.y,
+                        width: marqueeViewport.width,
+                        height: marqueeViewport.height,
                     }}
                 />
             ) : null}

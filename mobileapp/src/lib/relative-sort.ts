@@ -5,7 +5,7 @@
  * (videos are never CLIP-judged by poster thumbnail).
  */
 import type { EnteFile } from "ente-media/file";
-import { KIT_EMBEDDING_DIMS } from "@/lib/kit-embedding";
+import { KIT_EMBEDDING_DIMS, type ReadonlyEmbeddingMap } from "@/lib/kit-embedding";
 import { isEnteVideoFile } from "@/lib/media-kind";
 import {
     pickRelativeStartIndex,
@@ -36,7 +36,7 @@ export const pickRelativeStartId = (
  */
 export const packRelativeEmbeddings = (
     fileIds: readonly number[],
-    embeddings: ReadonlyMap<number, number[]>,
+    embeddings: ReadonlyEmbeddingMap,
     dim: number = KIT_EMBEDDING_DIMS,
 ): Float32Array => {
     const packed = new Float32Array(fileIds.length * dim);
@@ -62,7 +62,7 @@ export const packRelativeEmbeddings = (
 export const sortFilesByRelative = (
     files: readonly EnteFile[],
     mode: RelativeSort,
-    embeddings: ReadonlyMap<number, number[]>,
+    embeddings: ReadonlyEmbeddingMap,
     seed: number,
     startFileId?: number,
 ): EnteFile[] => {

@@ -1,10 +1,12 @@
 import {
     memo,
     useCallback,
+    useEffect,
     useMemo,
     useRef,
     useState,
     type JSX,
+    type PointerEvent as ReactPointerEvent,
     type RefObject,
     type UIEvent,
 } from "react";
@@ -15,7 +17,10 @@ import {
 } from "react-window";
 import { Check } from "lucide-react";
 import type { GalleryColumnCount } from "@/lib/app-settings";
-import { resolveMarqueeDragIntent } from "@/lib/compress";
+import {
+    gridIndicesInContentMarquee,
+    type MarqueeRect,
+} from "@/lib/marquee-selection";
 import {
     computeMasonryLayoutFromAspects,
     masonryItemsInMarquee,
@@ -26,6 +31,10 @@ import {
     rowCountForFiles,
     type ThumbnailGridLayout,
 } from "@/lib/thumbnail-grid-layout";
+import {
+    useMarqueeSelection,
+    type MarqueeScrollController,
+} from "@/hooks/use-marquee-selection";
 import { cn } from "@/lib/utils";
 import { useSettingsStore } from "@/stores/settings-store";
 
@@ -39,7 +48,9 @@ export interface LocalUploadItem {
 export interface LocalUploadGridSelection {
     selectedIds: Set<string>;
     onToggle: (id: string) => void;
-    onSelectMany?: (ids: string[], mode: "add" | "toggle") => void;
+    onSelectMany?: (ids: string[], mode: "add" | "toggle" | "set") => void;
+    /** When set, marquee is baseline ∪ live intersection (retract deselects). */
+    onSetSelection?: (ids: string[]) => void;
     disabled?: boolean;
 }
 
@@ -187,6 +198,7 @@ interface SizedGridProps {
     footerInsetPx: number;
     onScrollOffsetChange: (offset: number) => void;
     listRef: RefObject<FixedSizeList<RowData> | null>;
+    scrollControllerRef: RefObject<MarqueeScrollController | null>;
 }
 
 function SizedGrid({
@@ -198,6 +210,7 @@ function SizedGrid({
     footerInsetPx,
     onScrollOffsetChange,
     listRef,
+    scrollControllerRef,
 }: SizedGridProps): JSX.Element {
     const layout = useMemo(
         () => computeThumbnailGridLayout(width, columns),
@@ -208,6 +221,22 @@ function SizedGrid({
         () => ({ items, layout, selection }),
         [items, layout, selection],
     );
+    const scrollOffsetRef = useRef(0);
+
+    useEffect(() => {
+        scrollControllerRef.current = {
+            getScrollTop: (): number => scrollOffsetRef.current,
+            setScrollTop: (next: number): void => {
+                const clamped = Math.max(0, next);
+                scrollOffsetRef.current = clamped;
+                listRef.current?.scrollTo(clamped);
+                onScrollOffsetChange(clamped);
+            },
+        };
+        return (): void => {
+            scrollControllerRef.current = null;
+        };
+    }, [listRef, onScrollOffsetChange, scrollControllerRef]);
 
     return (
         <FixedSizeList
@@ -219,6 +248,7 @@ function SizedGrid({
             itemSize={layout.rowHeight}
             itemData={itemData}
             onScroll={(props) => {
+                scrollOffsetRef.current = props.scrollOffset;
                 onScrollOffsetChange(props.scrollOffset);
             }}
             style={{ paddingBottom: footerInsetPx }}
@@ -236,6 +266,7 @@ interface SizedMasonryGridProps {
     selection: LocalUploadGridSelection;
     footerInsetPx: number;
     onScrollOffsetChange: (offset: number) => void;
+    scrollControllerRef: RefObject<MarqueeScrollController | null>;
 }
 
 function SizedMasonryGrid({
@@ -246,8 +277,10 @@ function SizedMasonryGrid({
     selection,
     footerInsetPx,
     onScrollOffsetChange,
+    scrollControllerRef,
 }: SizedMasonryGridProps): JSX.Element {
     const [scrollTop, setScrollTop] = useState<number>(0);
+    const scrollerRef = useRef<HTMLDivElement>(null);
     const layout = useMemo(
         () =>
             computeMasonryLayoutFromAspects(
@@ -266,6 +299,29 @@ function SizedMasonryGrid({
         [height, layout.items, scrollTop],
     );
 
+    useEffect(() => {
+        scrollControllerRef.current = {
+            getScrollTop: (): number => scrollerRef.current?.scrollTop ?? 0,
+            setScrollTop: (next: number): void => {
+                const node = scrollerRef.current;
+                if (!node) {
+                    return;
+                }
+                const maxScroll = Math.max(0, node.scrollHeight - node.clientHeight);
+                const clamped = Math.min(Math.max(0, next), maxScroll);
+                if (node.scrollTop === clamped) {
+                    return;
+                }
+                node.scrollTop = clamped;
+                onScrollOffsetChange(clamped);
+                setScrollTop(clamped);
+            },
+        };
+        return (): void => {
+            scrollControllerRef.current = null;
+        };
+    }, [onScrollOffsetChange, scrollControllerRef]);
+
     const handleScroll = useCallback(
         (event: UIEvent<HTMLDivElement>): void => {
             const nextScrollTop = event.currentTarget.scrollTop;
@@ -277,6 +333,7 @@ function SizedMasonryGrid({
 
     return (
         <div
+            ref={scrollerRef}
             className="overflow-y-auto"
             style={{ width, height }}
             onScroll={handleScroll}
@@ -314,57 +371,6 @@ function SizedMasonryGrid({
     );
 }
 
-const MARQUEE_ARM_THRESHOLD_PX = 12;
-
-interface MarqueeRect {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-}
-
-const normalizeRect = (a: { x: number; y: number }, b: { x: number; y: number }): MarqueeRect => ({
-    x: Math.min(a.x, b.x),
-    y: Math.min(a.y, b.y),
-    width: Math.abs(a.x - b.x),
-    height: Math.abs(a.y - b.y),
-});
-
-const itemIdsInMarquee = (
-    items: LocalUploadItem[],
-    layout: ThumbnailGridLayout,
-    scrollTop: number,
-    rect: MarqueeRect,
-): string[] => {
-    const ids: string[] = [];
-    const rowCount = rowCountForFiles(items.length, layout.columns);
-    for (let row = 0; row < rowCount; row += 1) {
-        const rowTop = row * layout.rowHeight - scrollTop;
-        const rowBottom = rowTop + layout.itemSize;
-        if (rowBottom < rect.y || rowTop > rect.y + rect.height) {
-            continue;
-        }
-        for (let col = 0; col < layout.columns; col += 1) {
-            const index = row * layout.columns + col;
-            if (index >= items.length) {
-                break;
-            }
-            const cellLeft =
-                layout.paddingInline + col * (layout.itemSize + layout.gap);
-            const cellRight = cellLeft + layout.itemSize;
-            const overlaps =
-                cellRight >= rect.x &&
-                cellLeft <= rect.x + rect.width &&
-                rowBottom >= rect.y &&
-                rowTop <= rect.y + rect.height;
-            if (overlaps) {
-                ids.push(items[index].id);
-            }
-        }
-    }
-    return ids;
-};
-
 export function LocalUploadGrid({
     items,
     selection,
@@ -374,38 +380,20 @@ export function LocalUploadGrid({
     const galleryThumbnailMode = useSettingsStore((s) => s.galleryThumbnailMode);
     const listRef = useRef<FixedSizeList<RowData>>(null);
     const containerRef = useRef<HTMLDivElement>(null);
-    const scrollTopRef = useRef<number>(0);
-    const dragStartRef = useRef<{ x: number; y: number } | undefined>(undefined);
-    const dragIntentRef = useRef<"pending" | "scroll" | "marquee">("pending");
-    const [marqueeArmed, setMarqueeArmed] = useState<boolean>(false);
-    const [marquee, setMarquee] = useState<MarqueeRect | undefined>();
+    const scrollControllerRef = useRef<MarqueeScrollController | null>(null);
+    const marqueeBaselineRef = useRef<Set<string>>(new Set());
+    const marqueeAppliedIdsRef = useRef<Set<string>>(new Set());
     const [gridWidth, setGridWidth] = useState<number>(0);
 
-    const handleScrollOffsetChange = useCallback((offset: number): void => {
-        scrollTopRef.current = offset;
+    const handleScrollOffsetChange = useCallback((_offset: number): void => {
+        // Scroll offset is owned by scrollControllerRef inside the sized grids.
     }, []);
 
-    const finishMarquee = useCallback(
-        (endX: number, endY: number): void => {
-            const start = dragStartRef.current;
-            const intent = dragIntentRef.current;
-            dragStartRef.current = undefined;
-            dragIntentRef.current = "pending";
-            setMarqueeArmed(false);
-            setMarquee(undefined);
-            if (
-                !start ||
-                intent !== "marquee" ||
-                !selection.onSelectMany ||
-                !containerRef.current
-            ) {
-                return;
-            }
-            const rect = normalizeRect(start, { x: endX, y: endY });
+    const resolveMarqueeItemIds = useCallback(
+        (rect: MarqueeRect): string[] => {
             if (rect.width < 8 && rect.height < 8) {
-                return;
+                return [];
             }
-            let itemIds: string[];
             if (galleryThumbnailMode === "fit") {
                 const layout = computeMasonryLayoutFromAspects(
                     items.map((item) => ({
@@ -416,127 +404,85 @@ export function LocalUploadGrid({
                     gridWidth,
                     galleryColumns,
                 );
-                itemIds = masonryItemsInMarquee(
-                    layout.items,
-                    scrollTopRef.current,
-                    rect,
-                ).map((id) => String(id));
-            } else {
-                const layout = computeThumbnailGridLayout(
-                    gridWidth,
-                    galleryColumns,
-                );
-                itemIds = itemIdsInMarquee(
-                    items,
-                    layout,
-                    scrollTopRef.current,
-                    rect,
-                );
+                return masonryItemsInMarquee(layout.items, rect).map((id) => String(id));
             }
-            if (itemIds.length > 0) {
-                selection.onSelectMany(itemIds, "add");
-            }
+            const layout = computeThumbnailGridLayout(gridWidth, galleryColumns);
+            const indices = gridIndicesInContentMarquee(
+                items.length,
+                layout.columns,
+                layout.rowHeight,
+                layout.itemSize,
+                layout.paddingInline,
+                layout.gap,
+                rect,
+            );
+            return indices.map((index) => items[index]!.id);
         },
-        [galleryColumns, galleryThumbnailMode, gridWidth, items, selection],
+        [galleryColumns, galleryThumbnailMode, gridWidth, items],
     );
 
-    const cancelMarqueeTracking = useCallback((): void => {
-        dragStartRef.current = undefined;
-        dragIntentRef.current = "pending";
-        setMarqueeArmed(false);
-        setMarquee(undefined);
-    }, []);
+    const handleMarqueeRect = useCallback(
+        (rect: MarqueeRect): void => {
+            if (!selection.onSelectMany) {
+                return;
+            }
+            const itemIds = resolveMarqueeItemIds(rect);
+            if (selection.onSetSelection) {
+                const next = new Set(marqueeBaselineRef.current);
+                for (const id of itemIds) {
+                    next.add(id);
+                }
+                selection.onSetSelection([...next]);
+                return;
+            }
+            const fresh: string[] = [];
+            for (const id of itemIds) {
+                if (!marqueeAppliedIdsRef.current.has(id)) {
+                    marqueeAppliedIdsRef.current.add(id);
+                    fresh.push(id);
+                }
+            }
+            if (fresh.length > 0) {
+                selection.onSelectMany(fresh, "add");
+            }
+        },
+        [resolveMarqueeItemIds, selection],
+    );
+
+    const marqueeEnabled =
+        Boolean(selection.onSelectMany) && !selection.disabled;
+
+    const {
+        marqueeViewport,
+        onPointerDown,
+        onPointerMove,
+        onPointerUp,
+        onPointerCancel,
+    } = useMarqueeSelection({
+        enabled: marqueeEnabled,
+        containerRef,
+        scrollControllerRef,
+        onMarqueeRect: handleMarqueeRect,
+    });
 
     const handlePointerDown = useCallback(
-        (event: React.PointerEvent<HTMLDivElement>): void => {
-            if (!selection.onSelectMany || selection.disabled) {
-                return;
-            }
-            if (event.pointerType === "mouse" && event.button !== 0) {
-                return;
-            }
-            const bounds = containerRef.current?.getBoundingClientRect();
-            if (!bounds) {
-                return;
-            }
-            dragIntentRef.current = "pending";
-            dragStartRef.current = {
-                x: event.clientX - bounds.left,
-                y: event.clientY - bounds.top,
-            };
+        (event: ReactPointerEvent<HTMLDivElement>): void => {
+            marqueeBaselineRef.current = new Set(selection.selectedIds);
+            marqueeAppliedIdsRef.current = new Set();
+            onPointerDown(event);
         },
-        [selection],
-    );
-
-    const handlePointerMove = useCallback(
-        (event: React.PointerEvent<HTMLDivElement>): void => {
-            const start = dragStartRef.current;
-            if (!start) {
-                return;
-            }
-            const bounds = containerRef.current?.getBoundingClientRect();
-            if (!bounds) {
-                return;
-            }
-            const x = event.clientX - bounds.left;
-            const y = event.clientY - bounds.top;
-            const dx = x - start.x;
-            const dy = y - start.y;
-
-            if (dragIntentRef.current === "pending") {
-                const intent = resolveMarqueeDragIntent(
-                    dx,
-                    dy,
-                    MARQUEE_ARM_THRESHOLD_PX,
-                );
-                if (intent === "scroll") {
-                    cancelMarqueeTracking();
-                    return;
-                }
-                if (intent === "marquee") {
-                    dragIntentRef.current = "marquee";
-                    setMarqueeArmed(true);
-                    containerRef.current?.setPointerCapture(event.pointerId);
-                    setMarquee(normalizeRect(start, { x, y }));
-                }
-                return;
-            }
-
-            if (dragIntentRef.current === "marquee") {
-                setMarquee(normalizeRect(start, { x, y }));
-            }
-        },
-        [cancelMarqueeTracking],
-    );
-
-    const handlePointerUp = useCallback(
-        (event: React.PointerEvent<HTMLDivElement>): void => {
-            if (!dragStartRef.current) {
-                return;
-            }
-            const bounds = containerRef.current?.getBoundingClientRect();
-            if (bounds && dragIntentRef.current === "marquee") {
-                finishMarquee(
-                    event.clientX - bounds.left,
-                    event.clientY - bounds.top,
-                );
-                containerRef.current?.releasePointerCapture(event.pointerId);
-                return;
-            }
-            cancelMarqueeTracking();
-        },
-        [cancelMarqueeTracking, finishMarquee],
+        [onPointerDown, selection.selectedIds],
     );
 
     return (
         <div
             ref={containerRef}
-            className="relative min-h-0 flex-1 select-none"
-            style={{ touchAction: marqueeArmed ? "none" : "pan-y" }}
+            className="relative min-h-0 flex-1 select-none overflow-hidden"
+            style={{ touchAction: marqueeEnabled ? "none" : "pan-y" }}
             onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerCancel={handlePointerUp}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerCancel}
         >
             <AutoSizer
                 onResize={({ width }: { width: number }) => {
@@ -553,6 +499,7 @@ export function LocalUploadGrid({
                             selection={selection}
                             footerInsetPx={footerInsetPx}
                             onScrollOffsetChange={handleScrollOffsetChange}
+                            scrollControllerRef={scrollControllerRef}
                         />
                     ) : (
                         <SizedGrid
@@ -564,17 +511,18 @@ export function LocalUploadGrid({
                             footerInsetPx={footerInsetPx}
                             onScrollOffsetChange={handleScrollOffsetChange}
                             listRef={listRef}
+                            scrollControllerRef={scrollControllerRef}
                         />
                     )}
             </AutoSizer>
-            {marquee ? (
+            {marqueeViewport ? (
                 <div
                     className="pointer-events-none absolute z-30 border border-primary bg-primary/20"
                     style={{
-                        left: marquee.x,
-                        top: marquee.y,
-                        width: marquee.width,
-                        height: marquee.height,
+                        left: marqueeViewport.x,
+                        top: marqueeViewport.y,
+                        width: marqueeViewport.width,
+                        height: marqueeViewport.height,
                     }}
                 />
             ) : null}

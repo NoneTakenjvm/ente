@@ -68,6 +68,11 @@ const resetDependentStores = (): void => {
     void import("@/lib/favorite-outbox").then(({ clearFavoriteOutbox }) => {
         clearFavoriteOutbox();
     });
+    void import("@/lib/favorite-membership").then(
+        ({ clearFavoriteMembership }) => {
+            clearFavoriteMembership();
+        },
+    );
     void import("@/lib/visibility-outbox").then(({ clearVisibilityOutbox }) => {
         clearVisibilityOutbox();
     });

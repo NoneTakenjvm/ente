@@ -1,6 +1,9 @@
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
-import type { ViewSession } from "@/lib/view-sessions";
+import type {
+    ViewSession,
+    ViewSessionTombstone,
+} from "@/lib/view-sessions";
 import {
     decryptCachePayload,
     encryptCachePayload,
@@ -59,6 +62,11 @@ export const saveEncryptedFiles = async (
     const { saveEncryptedFilesSharded } = await import("./file-shards");
     await saveEncryptedFilesSharded(files, cacheKey);
 };
+
+export {
+    markLibraryCacheFilesDirty,
+    markLibraryCacheFullyDirty,
+} from "./file-shards";
 
 export interface PersistedTagIndex {
     tags: string[];
@@ -202,6 +210,30 @@ export const saveEncryptedFavoriteOutbox = async (
     await putEncrypted(
         "favoriteOutbox",
         await encryptCachePayload(entries, cacheKey),
+    );
+};
+
+/**
+ * File IDs present in the user's Favourites collection on remote
+ * (membership oracle — independent of deduped library `collectionID`).
+ */
+export const loadEncryptedFavoriteMembership = async (
+    cacheKey: string,
+): Promise<number[] | undefined> => {
+    const payload = await getEncrypted("favoriteMembership");
+    if (!payload) {
+        return undefined;
+    }
+    return decryptCachePayload<number[]>(payload, cacheKey);
+};
+
+export const saveEncryptedFavoriteMembership = async (
+    fileIds: number[],
+    cacheKey: string,
+): Promise<void> => {
+    await putEncrypted(
+        "favoriteMembership",
+        await encryptCachePayload(fileIds, cacheKey),
     );
 };
 
@@ -399,9 +431,10 @@ export const clearEmbeddingChunks = async (): Promise<void> => {
 
 /**
  * Encrypt and append one embedding chunk; updates meta atomically after write.
+ * Accepts packed or plain vectors — disk payload is always number[].
  */
 export const appendEmbeddingChunk = async (
-    entries: Map<number, number[]>,
+    entries: ReadonlyMap<number, ArrayLike<number>>,
     meta: PersistedEmbeddingMeta,
     cacheKey: string,
 ): Promise<PersistedEmbeddingMeta> => {
@@ -409,8 +442,14 @@ export const appendEmbeddingChunk = async (
         return meta;
     }
     const chunkId = meta.nextChunkId;
+    const jsonEntries: Record<number, number[]> = {};
+    for (const [fileId, vector] of entries) {
+        jsonEntries[fileId] = Array.isArray(vector) ?
+            vector :
+            Array.from(vector);
+    }
     const payload: EmbeddingChunkPayload = {
-        entries: Object.fromEntries(entries),
+        entries: jsonEntries,
     };
     const encrypted = await encryptCachePayload(payload, cacheKey);
     const db = await getOrganizerDB();
@@ -430,14 +469,14 @@ export const appendEmbeddingChunk = async (
 };
 
 /**
- * Decrypt all chunks for the given model and merge into a map.
+ * Decrypt all chunks for the given model and merge into a packed map.
  */
 export const loadAllEmbeddingChunks = async (
     meta: PersistedEmbeddingMeta,
     cacheKey: string,
-): Promise<Map<number, number[]>> => {
+): Promise<Map<number, Float32Array>> => {
     const db = await getOrganizerDB();
-    const map = new Map<number, number[]>();
+    const map = new Map<number, Float32Array>();
     const records = await db.getAll("embeddingChunks");
     for (const record of records) {
         if (record.modelId !== meta.modelId || record.dims !== meta.dims) {
@@ -452,7 +491,7 @@ export const loadAllEmbeddingChunks = async (
         );
         for (const [id, vector] of Object.entries(payload.entries)) {
             if (Array.isArray(vector) && vector.length === meta.dims) {
-                map.set(Number(id), vector);
+                map.set(Number(id), Float32Array.from(vector));
             }
         }
     }
@@ -461,6 +500,8 @@ export const loadAllEmbeddingChunks = async (
 
 export interface PersistedViewSessions {
     sessions: ViewSession[];
+    /** Deleted session ids retained for cloud LWW merge. */
+    tombstones?: ViewSessionTombstone[];
 }
 
 export const loadEncryptedViewSessions = async (

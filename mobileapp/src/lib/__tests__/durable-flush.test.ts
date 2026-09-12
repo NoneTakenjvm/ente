@@ -18,6 +18,9 @@ describe("durable-flush", () => {
             flushFavoriteOutboxPersist: vi.fn(async () => undefined),
             getFavoriteOutboxEntries: () => [],
         }));
+        vi.doMock("@/lib/favorite-membership", () => ({
+            flushFavoriteMembershipPersist: vi.fn(async () => undefined),
+        }));
         vi.doMock("@/lib/visibility-outbox", () => ({
             flushVisibilityOutboxPersist: vi.fn(async () => undefined),
             getVisibilityOutboxEntries: () => [],
@@ -40,6 +43,9 @@ describe("durable-flush", () => {
             flushFavoriteOutboxPersist: vi.fn(async () => undefined),
             getFavoriteOutboxEntries: () => [],
         }));
+        vi.doMock("@/lib/favorite-membership", () => ({
+            flushFavoriteMembershipPersist: vi.fn(async () => undefined),
+        }));
         vi.doMock("@/lib/visibility-outbox", () => ({
             flushVisibilityOutboxPersist: vi.fn(async () => undefined),
             getVisibilityOutboxEntries: () => [],
@@ -56,6 +62,7 @@ describe("durable-flush", () => {
     it("flushAllDurableState awaits outboxes then library cache", async () => {
         const flushTag = vi.fn(async () => undefined);
         const flushFavorite = vi.fn(async () => undefined);
+        const flushMembership = vi.fn(async () => undefined);
         const flushVisibility = vi.fn(async () => undefined);
         const flushDerived = vi.fn(async () => undefined);
         const flushLibrary = vi.fn(async () => undefined);
@@ -67,6 +74,9 @@ describe("durable-flush", () => {
         vi.doMock("@/lib/favorite-outbox", () => ({
             flushFavoriteOutboxPersist: flushFavorite,
             getFavoriteOutboxEntries: () => [],
+        }));
+        vi.doMock("@/lib/favorite-membership", () => ({
+            flushFavoriteMembershipPersist: flushMembership,
         }));
         vi.doMock("@/lib/visibility-outbox", () => ({
             flushVisibilityOutboxPersist: flushVisibility,
@@ -85,6 +95,7 @@ describe("durable-flush", () => {
 
         expect(flushTag).toHaveBeenCalledOnce();
         expect(flushFavorite).toHaveBeenCalledOnce();
+        expect(flushMembership).toHaveBeenCalledOnce();
         expect(flushVisibility).toHaveBeenCalledOnce();
         expect(flushDerived).toHaveBeenCalledOnce();
         expect(flushLibrary).toHaveBeenCalledOnce();

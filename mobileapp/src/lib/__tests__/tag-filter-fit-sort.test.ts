@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { sortFilesByTagFilterFit } from "@/lib/tag-filter-fit-sort";
 import type { EnteFile } from "ente-media/file";
 
+const toEmb = (values: number[]): Float32Array => Float32Array.from(values);
+const embMap = (entries: Array<[number, number[]]>): Map<number, Float32Array> =>
+    new Map(entries.map(([id, v]) => [id, toEmb(v)]));
+
 const file = (id: number): EnteFile => ({ id }) as EnteFile;
 
 const axis = (dim: number, dims = 512): number[] => {
@@ -23,7 +27,7 @@ describe("sortFilesByTagFilterFit", () => {
 
     it("orders best = closest to medoids first", () => {
         // Two near axis-0, one on axis-1 (outlier — not dense enough to be a medoid).
-        const embeddings = new Map([
+        const embeddings = embMap([
             [1, axis(0)],
             [2, axis(0)],
             [3, axis(1)],
@@ -40,7 +44,7 @@ describe("sortFilesByTagFilterFit", () => {
     });
 
     it("orders worst = farthest from medoids first", () => {
-        const embeddings = new Map([
+        const embeddings = embMap([
             [1, axis(0)],
             [2, axis(0)],
             [3, axis(1)],
@@ -54,7 +58,7 @@ describe("sortFilesByTagFilterFit", () => {
     });
 
     it("puts missing embeddings last for best", () => {
-        const embeddings = new Map([
+        const embeddings = embMap([
             [1, axis(0)],
             [2, axis(0)],
         ]);

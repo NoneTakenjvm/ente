@@ -19,7 +19,11 @@ import { waitWhileGalleryScrolling } from "@/lib/gallery-scroll-activity";
 import {
     KIT_EMBEDDING_DIMS,
     KIT_EMBEDDING_MODEL_ID,
+    embeddingToNumberArray,
     l2NormalizeEmbedding,
+    type EmbeddingMap,
+    type EmbeddingVector,
+    type ReadonlyEmbeddingMap,
 } from "@/lib/kit-embedding";
 import {
     fetchOrganizerMLDataBatch,
@@ -33,8 +37,8 @@ const uploadConcurrency = 3;
 const fetchBatchSize = 200;
 
 let uploadChain: Promise<void> = Promise.resolve();
-const pendingUpload = new Map<number, number[]>();
-let pullInFlight: Promise<Map<number, number[]>> | undefined;
+const pendingUpload: EmbeddingMap = new Map();
+let pullInFlight: Promise<EmbeddingMap> | undefined;
 
 const emptyMeta = (): PersistedEmbeddingMeta => ({
     version: 2,
@@ -96,7 +100,7 @@ const markUploaded = async (fileIds: Iterable<number>): Promise<void> => {
  * Queue newly computed vectors for mldata upload (non-blocking).
  */
 export const enqueueOrganizerClipUpload = (
-    entries: ReadonlyMap<number, number[]>,
+    entries: ReadonlyEmbeddingMap,
 ): void => {
     if (entries.size === 0) {
         return;
@@ -123,7 +127,7 @@ const drainOrganizerClipUploads = async (): Promise<void> => {
 
     while (pendingUpload.size > 0) {
         await waitWhileGalleryScrolling();
-        const batch: Array<{ file: EnteFile; vector: number[] }> = [];
+        const batch: Array<{ file: EnteFile; vector: EmbeddingVector }> = [];
         for (const [fileId, vector] of pendingUpload) {
             const file = filesById.get(fileId);
             pendingUpload.delete(fileId);
@@ -142,7 +146,11 @@ const drainOrganizerClipUploads = async (): Promise<void> => {
         await Promise.all(
             batch.map(async ({ file, vector }) => {
                 try {
-                    await putOrganizerClip(http, file, vector);
+                    await putOrganizerClip(
+                        http,
+                        file,
+                        embeddingToNumberArray(vector),
+                    );
                     uploaded.push(file.id);
                 } catch (error) {
                     console.warn(
@@ -168,12 +176,12 @@ const drainOrganizerClipUploads = async (): Promise<void> => {
 export const pullOrganizerClipSync = async (
     files: readonly EnteFile[],
     signal?: AbortSignal,
-): Promise<Map<number, number[]>> => {
+): Promise<EmbeddingMap> => {
     if (pullInFlight) {
         return pullInFlight;
     }
-    pullInFlight = (async (): Promise<Map<number, number[]>> => {
-        const applied = new Map<number, number[]>();
+    pullInFlight = (async (): Promise<EmbeddingMap> => {
+        const applied = new Map();
         const core = getEnteCore();
         if (!core.isAuthenticated() || files.length === 0) {
             return applied;
@@ -222,7 +230,7 @@ export const pullOrganizerClipSync = async (
                 }
             }
             const mldata = await fetchOrganizerMLDataBatch(http, sliceMap);
-            const chunk = new Map<number, number[]>();
+            const chunk = new Map();
             for (const [fileId, data] of mldata) {
                 const clip = data.organizerClip;
                 if (!clip) {
@@ -252,12 +260,12 @@ export const pullOrganizerClipSync = async (
  */
 export const backfillOrganizerClipUploads = async (
     files: readonly EnteFile[],
-    localEntries: ReadonlyMap<number, number[]>,
+    localEntries: ReadonlyEmbeddingMap,
     signal?: AbortSignal,
 ): Promise<number> => {
     const uploaded = await loadUploadedIdSet();
     const filesById = new Map(files.map((file) => [file.id, file]));
-    const todo = new Map<number, number[]>();
+    const todo = new Map();
     for (const [fileId, vector] of localEntries) {
         if (uploaded.has(fileId)) {
             continue;

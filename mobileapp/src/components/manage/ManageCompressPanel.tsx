@@ -254,8 +254,17 @@ export function ManageCompressPanel({
         });
     }, []);
 
-    const selectMany = useCallback((fileIds: number[], mode: "add" | "toggle"): void => {
+    const selectMany = useCallback((fileIds: number[], mode: "add" | "toggle" | "set"): void => {
         setSelectedIds((current) => {
+            if (mode === "set") {
+                const next = new Set<number>();
+                for (const fileId of fileIds) {
+                    if (candidateIds.has(fileId)) {
+                        next.add(fileId);
+                    }
+                }
+                return next;
+            }
             const next = new Set(current);
             for (const fileId of fileIds) {
                 if (!candidateIds.has(fileId)) {
@@ -434,6 +443,9 @@ export function ManageCompressPanel({
             selectedIds: activeSelectedIds,
             onToggle: toggleFile,
             onSelectMany: selectMany,
+            onSetSelection: (fileIds: number[]): void => {
+                selectMany(fileIds, "set");
+            },
             isAlreadyCompressed,
             disabled: jobRunning,
         }),

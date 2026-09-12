@@ -7,7 +7,7 @@
  * The same worker (and cached tag models) also counts kit presence for the
  * kit likeness list: {@link countKitPresenceInWorker}.
  */
-import { KIT_EMBEDDING_DIMS } from "@/lib/kit-embedding";
+import { KIT_EMBEDDING_DIMS, type ReadonlyEmbeddingMap } from "@/lib/kit-embedding";
 import {
     countKitPresence,
     type KitMarginsWorkerRequest,
@@ -30,7 +30,7 @@ export type KitMarginsRankingInput = {
     libraryFiles: readonly EnteFile[];
     /** Files currently shown, in gallery order. */
     candidateFiles: readonly EnteFile[];
-    embeddings: ReadonlyMap<number, number[]>;
+    embeddings: ReadonlyEmbeddingMap;
     fileIdsByTag: ReadonlyMap<string, ReadonlySet<number>>;
     includeInKitNearnessByName: ReadonlyMap<string, boolean>;
     /** Production competitive score (higher = nearer); non-finite when unscorable. */
@@ -317,7 +317,7 @@ const sampleTrainingIds = (input: TrainingPopulationInput): number[] => {
 
 const hasEmbedding = (
     fileId: number,
-    embeddings: ReadonlyMap<number, number[]>,
+    embeddings: ReadonlyEmbeddingMap,
 ): boolean => embeddings.get(fileId)?.length === KIT_EMBEDDING_DIMS;
 
 /** Score each id once, dropping any the production path cannot score. */

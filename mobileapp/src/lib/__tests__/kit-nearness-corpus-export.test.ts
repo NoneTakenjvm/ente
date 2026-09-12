@@ -11,6 +11,10 @@ import type { TagPreset } from "@/lib/tag-presets";
 import { fileWithOrganizerTags } from "@/lib/tag-writes";
 import type { EnteFile } from "ente-media/file";
 
+const toEmb = (values: number[]): Float32Array => Float32Array.from(values);
+const embMap = (entries: Array<[number, number[]]>): Map<number, Float32Array> =>
+    new Map(entries.map(([id, v]) => [id, toEmb(v)]));
+
 const fileWithTags = (id: number, tags: string[]): EnteFile =>
     fileWithOrganizerTags({ id } as EnteFile, tags);
 
@@ -57,7 +61,7 @@ describe("buildAnonymisedKitNearnessCorpus", () => {
             files,
             phashEntries,
             kits,
-            embeddings: new Map([[101, embedding]]),
+            embeddings: embMap([[101, embedding]]),
             random: makeRandom(42),
         });
 

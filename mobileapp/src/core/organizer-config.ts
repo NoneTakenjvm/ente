@@ -2,8 +2,12 @@ import type { Collection } from "ente-media/collection";
 import { ItemVisibility } from "ente-media/file-metadata";
 import {
     createRemoteCollection,
+    getCollectionByID,
 } from "./api/collections";
-import { updateCollectionPrivateMagicMetadata } from "./api/collection-metadata";
+import {
+    CollectionMetadataUpdateError,
+    updateCollectionPrivateMagicMetadata,
+} from "./api/collection-metadata";
 import type { HttpClient } from "./api/http";
 import type { CoreSession } from "./session";
 import {
@@ -86,27 +90,72 @@ export const bootstrapOrganizerConfig = async (
 
 /**
  * Merge a partial update into remote app config and return the merged document.
+ *
+ * [Note: Collection magic has no server 409] Museum ignores collection magic
+ * versions (`UpdateMagicMetadata` TODO). Always refetch before merge+PUT so
+ * concurrent device patches LWW-merge against fresh remote instead of
+ * last-PUT-wins clobber.
  */
 export const patchOrganizerConfig = async (
     http: HttpClient,
+    session: CoreSession,
     patch: Partial<OrganizerAppConfig>,
 ): Promise<OrganizerAppConfig> => {
     if (!organizerCollection) {
         throw new Error("Organizer config collection not bootstrapped");
     }
 
+    organizerCollection = await getCollectionByID(
+        http,
+        session,
+        organizerCollection.id,
+    );
     const current = organizerAppConfigFromCollection(organizerCollection);
     const next = mergeOrganizerAppConfig(current, patch);
 
-    await updateCollectionPrivateMagicMetadata(http, organizerCollection, {
-        [ORGANIZER_APP_CONFIG_KEY]: next,
-    });
-
-    return next;
+    try {
+        await updateCollectionPrivateMagicMetadata(
+            http,
+            organizerCollection,
+            {
+                [ORGANIZER_APP_CONFIG_KEY]: next,
+            },
+        );
+        return next;
+    } catch (error) {
+        // Forward-compatible if museum ever enforces versions.
+        if (
+            !(error instanceof CollectionMetadataUpdateError) ||
+            error.status !== 409
+        ) {
+            throw error;
+        }
+        organizerCollection = await getCollectionByID(
+            http,
+            session,
+            organizerCollection.id,
+        );
+        const retryCurrent = organizerAppConfigFromCollection(
+            organizerCollection,
+        );
+        const retryNext = mergeOrganizerAppConfig(retryCurrent, patch);
+        await updateCollectionPrivateMagicMetadata(
+            http,
+            organizerCollection,
+            {
+                [ORGANIZER_APP_CONFIG_KEY]: retryNext,
+            },
+        );
+        return retryNext;
+    }
 };
 
 export const getOrganizerConfigCollection = (): Collection | undefined =>
     organizerCollection;
+
+/** True after bootstrap/create has set the in-memory organizer collection. */
+export const isOrganizerConfigBootstrapped = (): boolean =>
+    organizerCollection !== undefined;
 
 /**
  * Replace the in-memory organizer collection after a collections sync.

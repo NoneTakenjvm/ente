@@ -34,8 +34,8 @@ export const CLIP_CONFIRM_TOP_K = 3;
  * Mismatched / empty → Infinity.
  */
 export const embeddingCosineDistance = (
-    left: readonly number[] | undefined,
-    right: readonly number[] | undefined,
+    left: ArrayLike<number> | undefined,
+    right: ArrayLike<number> | undefined,
 ): number => {
     if (!left?.length || !right?.length || left.length !== right.length) {
         return Number.POSITIVE_INFINITY;
@@ -101,7 +101,7 @@ const insertTopNeighbour = (
  * others with score ≤ {@link CLIP_SCORE_COLLECT_MAX}.
  */
 export const findClipTopNeighbours = (
-    vectors: readonly (readonly number[])[],
+    vectors: readonly ArrayLike<number>[],
     topK: number = CLIP_CONFIRM_TOP_K,
     collectMax: number = CLIP_SCORE_COLLECT_MAX,
 ): ClipNeighbour[][] => {
@@ -133,7 +133,7 @@ export const findClipTopNeighbours = (
  * Fill one row of top-K neighbours (async Stage-1 progress loop).
  */
 export const findClipTopNeighboursForIndex = (
-    vectors: readonly (readonly number[])[],
+    vectors: readonly ArrayLike<number>[],
     index: number,
     topK: number = CLIP_CONFIRM_TOP_K,
     collectMax: number = CLIP_SCORE_COLLECT_MAX,

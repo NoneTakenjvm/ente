@@ -26,6 +26,7 @@ import {
     type TagScope,
 } from "@/lib/tags";
 import type { TagQueryEditorActions } from "@/components/TagQueryEditor";
+import { useTagStore } from "@/stores/tag-store";
 
 export type TagFilterDraftActions = TagQueryEditorActions & {
     setTagFilterMode: (tag: string, mode: TagFilterMode | null) => void;
@@ -50,13 +51,20 @@ export const useTagFilterDraft: (
         TagFilterSelection,
         (value: TagFilterSelection | ((current: TagFilterSelection) => TagFilterSelection)) => void,
     ] = useState<TagFilterSelection>(initial);
+    const includeInEffectsPresenceByName = useTagStore(
+        (s) => s.includeInEffectsPresenceByName,
+    );
 
     const setTagScope: (scope: TagScope) => void = useCallback(
         (scope: TagScope): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
-                setTagFilterScope(current, scope));
+                setTagFilterScope(
+                    current,
+                    scope,
+                    includeInEffectsPresenceByName,
+                ));
         },
-        [],
+        [includeInEffectsPresenceByName],
     );
 
     const setFavoritesScope: (favoritesScope: FavoritesScope) => void = useCallback(
@@ -89,9 +97,14 @@ export const useTagFilterDraft: (
     ) => void = useCallback(
         (tag: string, mode: TagFilterMode | null): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
-                setTagFilterModeOnFilter(current, tag, mode));
+                setTagFilterModeOnFilter(
+                    current,
+                    tag,
+                    mode,
+                    includeInEffectsPresenceByName,
+                ));
         },
-        [],
+        [includeInEffectsPresenceByName],
     );
 
     const setKitMode: (
@@ -100,9 +113,14 @@ export const useTagFilterDraft: (
     ) => void = useCallback(
         (kit: KitFilterInput, mode: TagFilterMode | null): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
-                setKitModeOnFilter(current, kit, mode));
+                setKitModeOnFilter(
+                    current,
+                    kit,
+                    mode,
+                    includeInEffectsPresenceByName,
+                ));
         },
-        [],
+        [includeInEffectsPresenceByName],
     );
 
     const setGroupOp: (groupId: string, op: TagFilterJoin) => void = useCallback(
@@ -141,9 +159,14 @@ export const useTagFilterDraft: (
     ) => void = useCallback(
         (clauseId: string, mode: TagFilterMode): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
-                setClauseModeOnFilter(current, clauseId, mode));
+                setClauseModeOnFilter(
+                    current,
+                    clauseId,
+                    mode,
+                    includeInEffectsPresenceByName,
+                ));
         },
-        [],
+        [includeInEffectsPresenceByName],
     );
 
     const setClauseInGroup: (
@@ -153,9 +176,15 @@ export const useTagFilterDraft: (
     ) => void = useCallback(
         (groupId: string, tag: string, mode: TagFilterMode | null): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
-                setClauseInGroupOnFilter(current, groupId, tag, mode));
+                setClauseInGroupOnFilter(
+                    current,
+                    groupId,
+                    tag,
+                    mode,
+                    includeInEffectsPresenceByName,
+                ));
         },
-        [],
+        [includeInEffectsPresenceByName],
     );
 
     const setKitInGroup: (
@@ -169,9 +198,15 @@ export const useTagFilterDraft: (
             mode: TagFilterMode | null,
         ): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
-                setKitInGroupOnFilter(current, groupId, kit, mode));
+                setKitInGroupOnFilter(
+                    current,
+                    groupId,
+                    kit,
+                    mode,
+                    includeInEffectsPresenceByName,
+                ));
         },
-        [],
+        [includeInEffectsPresenceByName],
     );
 
     const actions: TagFilterDraftActions = useMemo(

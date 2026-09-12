@@ -6,7 +6,11 @@
  * kits apply the competitive steal penalty using each rival's stored genome or
  * the global default.
  */
-import { KIT_EMBEDDING_DIMS } from "@/lib/kit-embedding";
+import {
+    KIT_EMBEDDING_DIMS,
+    type EmbeddingVector,
+    type ReadonlyEmbeddingMap,
+} from "@/lib/kit-embedding";
 import {
     DEFAULT_KIT_EMBEDDING_GENOME,
     type KitEmbeddingNearnessGenome,
@@ -107,9 +111,9 @@ export const topKHitRate = (
  */
 export const buildKitEmbeddingPrototypes = (
     seedIds: readonly number[],
-    embeddings: ReadonlyMap<number, number[]>,
+    embeddings: ReadonlyEmbeddingMap,
     genome: KitEmbeddingNearnessGenome = DEFAULT_KIT_EMBEDDING_GENOME,
-): (readonly number[])[] => {
+): EmbeddingVector[] => {
     if (genome.useCentroid >= 0.5) {
         const centroid = buildKitEmbeddingCentroid(seedIds, embeddings);
         return centroid ? [centroid] : [];
@@ -126,7 +130,7 @@ export const buildKitEmbeddingPrototypes = (
 export const listEmbeddedKitMembers = (
     libraryFiles: readonly EnteFile[],
     kitTags: readonly string[],
-    embeddings: ReadonlyMap<number, number[]>,
+    embeddings: ReadonlyEmbeddingMap,
 ): number[] => {
     const seeds = listKitSeedFiles(libraryFiles, kitTags);
     const ids: number[] = [];
@@ -145,7 +149,7 @@ export const listEmbeddedKitMembers = (
 export const buildKitEmbeddingEvalFold = (
     libraryFiles: readonly EnteFile[],
     kitTags: readonly string[],
-    embeddings: ReadonlyMap<number, number[]>,
+    embeddings: ReadonlyEmbeddingMap,
     rivalKits: readonly { tags: readonly string[] }[],
     options?: BuildKitEmbeddingFoldOptions,
 ): KitEmbeddingEvalFold | undefined => {
@@ -219,7 +223,7 @@ export const buildKitEmbeddingEvalFold = (
  */
 export const evaluateKitEmbeddingGenome = (
     fold: KitEmbeddingEvalFold,
-    embeddings: ReadonlyMap<number, number[]>,
+    embeddings: ReadonlyEmbeddingMap,
     genome: KitEmbeddingNearnessGenome,
     rivalGenomes?: readonly KitEmbeddingNearnessGenome[],
 ): KitEmbeddingFitnessBreakdown => {
@@ -238,7 +242,7 @@ export const evaluateKitEmbeddingGenome = (
         };
     }
 
-    const rivalSets: (readonly number[])[][] = [];
+    const rivalSets: (readonly ArrayLike<number>[])[] = [];
     for (let i = 0; i < fold.rivalSeedIdSets.length; i++) {
         const rivalSeeds = fold.rivalSeedIdSets[i]!;
         const rivalGenome =

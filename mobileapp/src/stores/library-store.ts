@@ -7,6 +7,7 @@ import {
     loadEncryptedCollections,
     loadEncryptedFiles,
     loadEncryptedTagIndex,
+    markLibraryCacheFilesDirty,
     saveEncryptedCollections,
     saveEncryptedFiles,
 } from "@/db/kv";
@@ -63,6 +64,13 @@ import {
     upsertFavoriteOutboxEntry,
     remapFavoriteOutboxFileId,
 } from "@/lib/favorite-outbox";
+import {
+    ensureFavoriteMembershipHydrated,
+    hydrateFavoriteMembership,
+    remapFavoriteMembershipFileId,
+    removeFavoriteMembershipForFileIds,
+    resetFavoriteMembershipForFullSync,
+} from "@/lib/favorite-membership";
 import {
     upsertVisibilityOutboxEntry,
     remapVisibilityOutboxFileId,
@@ -299,7 +307,13 @@ const enqueueEncryptedFilesPersist = (
     return encryptedFilesPersistChain;
 };
 
-const scheduleSaveEncryptedFiles = (getAllFiles: () => EnteFile[]): void => {
+const scheduleSaveEncryptedFiles = (
+    getAllFiles: () => EnteFile[],
+    dirtyFileIds?: Iterable<number>,
+): void => {
+    if (dirtyFileIds) {
+        markLibraryCacheFilesDirty(dirtyFileIds);
+    }
     encryptedFilesSaveGetter = getAllFiles;
     if (encryptedFilesSaveTimer !== undefined) {
         clearTimeout(encryptedFilesSaveTimer);
@@ -389,7 +403,7 @@ const applyOptimisticBatchTags = (
     }
     commitAllFiles(set, get, optimisticFiles);
     useTagStore.getState().applyFilesTags(tagUpdates);
-    scheduleSaveEncryptedFiles(() => get().allFiles);
+    scheduleSaveEncryptedFiles(() => get().allFiles, fileIds);
 };
 
 const initialState: Pick<
@@ -576,6 +590,7 @@ const remapOutboxesAfterReplace = async (
     useViewSessionsStore.getState().remapFileId(fromFileId, toFileId);
     await Promise.all([
         remapFavoriteOutboxFileId(fromFileId, toFileId),
+        remapFavoriteMembershipFileId(fromFileId, toFileId),
         remapVisibilityOutboxFileId(fromFileId, toFileId),
         remapTagOutboxFileId(fromFileId, toFileId),
         removeDerivedReplaceOutboxEntries([fromFileId]),
@@ -625,6 +640,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
 
         await hydrateTagOutbox();
         await hydrateFavoriteOutbox();
+        await hydrateFavoriteMembership();
         await ensureVisibilityOutboxHydrated();
         await useTrashStore.getState().hydrateFromCache();
         const filesWithOutbox = excludeLocallyTrashedFiles(
@@ -658,6 +674,13 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                     pinnedTags: config.pinnedTags,
                 });
             });
+            void import("@/stores/view-sessions-store").then(
+                ({ useViewSessionsStore }) => {
+                    useViewSessionsStore
+                        .getState()
+                        .hydrateFromCloud(config.viewSessions);
+                },
+            );
         }
 
         return Boolean(files?.length);
@@ -719,6 +742,27 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 useSettingsStore.getState().hydrateFromOrganizerConfig(
                     organizerBootstrap.config,
                 );
+                const { flushOrganizerConfigQueueIfReady } = await import(
+                    "@/lib/organizer-config-save-queue"
+                );
+                await flushOrganizerConfigQueueIfReady();
+                // Re-read config after flush so hydrate merges against the
+                // post-write in-memory collection when a local push landed.
+                const { getOrganizerConfigCollection } = await import(
+                    "@/core/organizer-config"
+                );
+                const remoteOrganizer = getOrganizerConfigCollection();
+                const cloudViewSessions = remoteOrganizer ?
+                    organizerAppConfigFromCollection(remoteOrganizer)
+                        .viewSessions :
+                    organizerBootstrap.config.viewSessions;
+                void import("@/stores/view-sessions-store").then(
+                    ({ useViewSessionsStore }) => {
+                        useViewSessionsStore
+                            .getState()
+                            .hydrateFromCloud(cloudViewSessions);
+                    },
+                );
 
                 const filesPull = await pullFiles({
                     collections,
@@ -732,6 +776,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 allFiles = filesPull.files;
                 await ensureTagOutboxHydrated();
                 await ensureFavoriteOutboxHydrated();
+                await ensureFavoriteMembershipHydrated();
                 await ensureVisibilityOutboxHydrated();
                 await reconcileTagOutboxWithFiles(allFiles);
                 await reconcileFavoriteOutboxWithLibrary(
@@ -835,6 +880,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             }
         }
         await clearAllSyncCursors();
+        resetFavoriteMembershipForFullSync();
         await get().syncRemote();
     },
 
@@ -876,7 +922,10 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 allFiles[index] = nextFiles[index]!;
             }
         }
-        scheduleSaveEncryptedFiles(() => get().allFiles);
+        scheduleSaveEncryptedFiles(
+            () => get().allFiles,
+            resolvedById.keys(),
+        );
     },
 
     patchFile: async (updated: EnteFile): Promise<void> => {
@@ -900,7 +949,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             intendedTags,
             previousTags,
         );
-        scheduleSaveEncryptedFiles(() => get().allFiles);
+        scheduleSaveEncryptedFiles(() => get().allFiles, [fileId]);
     },
 
     updateTagsOnFile: async (
@@ -926,7 +975,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             intendedTags,
             previousTags,
         );
-        scheduleSaveEncryptedFiles(() => get().allFiles);
+        scheduleSaveEncryptedFiles(() => get().allFiles, [fileId]);
 
         enqueueTagOutboxEntries([{ fileId, intendedTags }]);
         requestTagOutboxFlush();
@@ -1069,7 +1118,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             return;
         }
         commitAllFiles(set, get, allFiles);
-        scheduleSaveEncryptedFiles(() => get().allFiles);
+        scheduleSaveEncryptedFiles(() => get().allFiles, [file.id]);
 
         void upsertVisibilityOutboxEntry(file.id, visibility)
             .then(() => drainTagOutbox())
@@ -1299,7 +1348,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             intendedTags,
             previousTags,
         );
-        scheduleSaveEncryptedFiles(() => get().allFiles);
+        scheduleSaveEncryptedFiles(() => get().allFiles, [fileId]);
         setLocalMediaOverride(fileId, result.bytes);
         if (result.mimeType.startsWith("video/")) {
             queueMicrotask(() => {
@@ -1426,7 +1475,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         );
         if (nextFiles) {
             commitAllFiles(set, get, nextFiles);
-            scheduleSaveEncryptedFiles(() => get().allFiles);
+            scheduleSaveEncryptedFiles(() => get().allFiles, [updated.id]);
         }
         useTagStore.getState().applyFileTags(
             updated.id,
@@ -1530,7 +1579,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             intendedTags,
             previousTags,
         );
-        scheduleSaveEncryptedFiles(() => get().allFiles);
+        scheduleSaveEncryptedFiles(() => get().allFiles, [fileId]);
         setLocalMediaOverride(fileId, croppedBytes);
         primeThumbnailFromBytes(fileId, croppedBytes);
 
@@ -1632,7 +1681,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             intendedTags,
             previousTags,
         );
-        scheduleSaveEncryptedFiles(() => get().allFiles);
+        scheduleSaveEncryptedFiles(() => get().allFiles, [fileId]);
         setLocalMediaOverride(fileId, result.bytes);
         // Defer poster extract so it does not overlap ffmpeg WASM + source video.
         queueMicrotask(() => {
@@ -1789,6 +1838,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         useTagStore.getState().rebuildFromFiles(nextFiles);
         useFavoritesStore.getState().removeTrashedFileIds([...trashedIds]);
         await removeFavoriteOutboxForFileIds([...trashedIds]);
+        await removeFavoriteMembershipForFileIds([...trashedIds]);
         const { removeTagOutboxEntries } = await import("@/lib/tag-outbox");
         const { removeVisibilityOutboxEntries } = await import(
             "@/lib/visibility-outbox"

@@ -151,11 +151,13 @@ const savedOrCreateUserFavoritesCollection = async (
 
 /**
  * Mark files as favourites by adding them to the user's favourites collection.
+ *
+ * @returns File IDs that are now members of the Favourites collection on remote.
  */
 export const addToFavoritesCollection = async (
     ctx: FavoritesContext,
     files: EnteFile[],
-): Promise<void> => {
+): Promise<number[]> => {
     const { userId, pendingByHashAndType } = ctx;
 
     const hashlessSharedFile = files.find(
@@ -195,15 +197,19 @@ export const addToFavoritesCollection = async (
         userId,
         pendingByHashAndType,
     );
+
+    return uniqueFilesByID(addedFiles).map((file) => file.id);
 };
 
 /**
  * Remove files from the user's favourites collection.
+ *
+ * @returns File IDs removed from Favourites membership on remote.
  */
 export const removeFromFavoritesCollection = async (
     ctx: FavoritesContext,
     files: EnteFile[],
-): Promise<void> => {
+): Promise<number[]> => {
     const favoritesCollection = findUserFavoritesCollection(
         ctx.collections,
         ctx.userId,
@@ -218,13 +224,14 @@ export const removeFromFavoritesCollection = async (
         files,
     );
     if (!resolvedFiles.length) {
-        return;
+        return [];
     }
 
+    const uniqueResolved = uniqueFilesByID(resolvedFiles);
     await removeFromOwnCollection(
         toCollectionFilesContext(ctx),
         favoritesCollection.id,
-        uniqueFilesByID(resolvedFiles),
+        uniqueResolved,
     );
 
     rememberPendingFavoriteFiles(
@@ -233,6 +240,8 @@ export const removeFromFavoritesCollection = async (
         ctx.userId,
         ctx.pendingByHashAndType,
     );
+
+    return uniqueResolved.map((file) => file.id);
 };
 
 export { findUserFavoritesCollection };

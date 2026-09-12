@@ -2,29 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { EnteFile } from "ente-media/file";
 import {
     FILE_LIBRARY_SHARD_COUNT,
-    dirtyFileShardIds,
-    fileLibraryPersistFingerprint,
+    dirtyFileShardIdsFromUpdation,
     fileLibraryShardId,
+    resolveDirtyFileShardIds,
 } from "@/db/file-shards";
 
-const stubFile = (
-    id: number,
-    updationTime: number,
-    tags?: string[],
-): EnteFile =>
-    ({
-        id,
-        updationTime,
-        pubMagicMetadata: tags ?
-            {
-                version: 1,
-                count: 1,
-                data: {
-                    _organizer_v1: { tags, updatedAt: updationTime + 1 },
-                },
-            } :
-            undefined,
-    }) as EnteFile;
+const stubFile = (id: number, updationTime: number): EnteFile =>
+    ({ id, updationTime }) as EnteFile;
 
 describe("fileLibraryShardId", () => {
     it("is stable and in range", () => {
@@ -39,20 +23,15 @@ describe("fileLibraryShardId", () => {
     });
 });
 
-describe("dirtyFileShardIds", () => {
+describe("dirtyFileShardIdsFromUpdation", () => {
     it("marks only shards touching changed or removed files", () => {
-        const previous = new Map<number, string>([
-            [1, fileLibraryPersistFingerprint(stubFile(1, 10))],
-            [2, fileLibraryPersistFingerprint(stubFile(2, 20))],
-            [128, fileLibraryPersistFingerprint(stubFile(128, 30))],
+        const previous = new Map<number, number>([
+            [1, 10],
+            [2, 20],
+            [128, 30],
         ]);
-        const files = [
-            stubFile(1, 10),
-            stubFile(2, 21),
-            stubFile(3, 1),
-        ];
-
-        const dirty = dirtyFileShardIds(
+        const files = [stubFile(1, 10), stubFile(2, 21), stubFile(3, 1)];
+        const dirty = dirtyFileShardIdsFromUpdation(
             files,
             FILE_LIBRARY_SHARD_COUNT,
             previous,
@@ -62,33 +41,32 @@ describe("dirtyFileShardIds", () => {
         expect(dirty.has(fileLibraryShardId(128))).toBe(true);
         expect(dirty.has(fileLibraryShardId(1))).toBe(false);
     });
+});
 
-    it("detects tag-only optimistic edits with unchanged updationTime", () => {
-        const before = stubFile(1, 10, ["a"]);
-        const after = stubFile(1, 10, ["a", "b"]);
-        const previous = new Map<number, string>([
-            [1, fileLibraryPersistFingerprint(before)],
-        ]);
-        const dirty = dirtyFileShardIds(
-            [after],
-            FILE_LIBRARY_SHARD_COUNT,
-            previous,
-        );
-        expect(dirty.has(fileLibraryShardId(1))).toBe(true);
-    });
-
-    it("is empty when snapshot matches", () => {
+describe("resolveDirtyFileShardIds", () => {
+    it("includes explicitly marked optimistic tag edits", () => {
+        const previous = new Map<number, number>([[1, 10], [2, 20]]);
         const files = [stubFile(1, 10), stubFile(2, 20)];
-        const previous = new Map(
-            files.map((file) => [
-                file.id,
-                fileLibraryPersistFingerprint(file),
-            ]),
-        );
-        const dirty = dirtyFileShardIds(
+        const dirty = resolveDirtyFileShardIds(
             files,
             FILE_LIBRARY_SHARD_COUNT,
             previous,
+            new Set([1]),
+            false,
+        );
+        expect(dirty.has(fileLibraryShardId(1))).toBe(true);
+        expect(dirty.has(fileLibraryShardId(2))).toBe(false);
+    });
+
+    it("is empty when nothing changed and nothing marked", () => {
+        const previous = new Map<number, number>([[1, 10], [2, 20]]);
+        const files = [stubFile(1, 10), stubFile(2, 20)];
+        const dirty = resolveDirtyFileShardIds(
+            files,
+            FILE_LIBRARY_SHARD_COUNT,
+            previous,
+            new Set(),
+            false,
         );
         expect(dirty.size).toBe(0);
     });

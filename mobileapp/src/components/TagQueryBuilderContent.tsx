@@ -1,6 +1,7 @@
 import type { JSX } from "react";
 import { TagQueryEditor } from "@/components/TagQueryEditor";
-import { useTagStore } from "@/stores/tag-store";
+import { useTagFilterBinding } from "@/hooks/use-tag-filter-binding";
+import type { TagFilterTarget } from "@/stores/tag-store";
 
 export interface TagQueryBuilderContentProps {
     taggedCount: number;
@@ -11,6 +12,7 @@ export interface TagQueryBuilderContentProps {
     videoCount: number;
     croppedCount: number;
     notCroppedCount: number;
+    filterTarget?: TagFilterTarget;
 }
 
 /**
@@ -25,29 +27,32 @@ export function TagQueryBuilderContent({
     videoCount,
     croppedCount,
     notCroppedCount,
+    filterTarget = "gallery",
 }: TagQueryBuilderContentProps): JSX.Element {
-    const tagFilter = useTagStore((s) => s.tagFilter);
-    const setFavoritesScope = useTagStore((s) => s.setFavoritesScope);
-    const setMediaScope = useTagStore((s) => s.setMediaScope);
-    const setCroppedScope = useTagStore((s) => s.setCroppedScope);
-    const setTagScope = useTagStore((s) => s.setTagScope);
-    const setGroupOpOnTree = useTagStore((s) => s.setGroupOp);
-    const wrapInGroup = useTagStore((s) => s.wrapInGroup);
-    const ungroup = useTagStore((s) => s.ungroup);
-    const removeNode = useTagStore((s) => s.removeNode);
-    const setClauseMode = useTagStore((s) => s.setClauseMode);
-    const setClauseInGroup = useTagStore((s) => s.setClauseInGroup);
-    const setKitInGroup = useTagStore((s) => s.setKitInGroup);
+    const {
+        filter,
+        setTagScope,
+        setFavoritesScope,
+        setMediaScope,
+        setCroppedScope,
+        setGroupOp,
+        wrapInGroup,
+        ungroup,
+        removeNode,
+        setClauseMode,
+        setClauseInGroup,
+        setKitInGroup,
+    } = useTagFilterBinding(filterTarget);
 
     return (
         <TagQueryEditor
-            filter={tagFilter}
+            filter={filter}
             actions={{
                 setTagScope,
                 setFavoritesScope,
                 setMediaScope,
                 setCroppedScope,
-                setGroupOp: setGroupOpOnTree,
+                setGroupOp,
                 wrapInGroup,
                 ungroup,
                 removeNode,

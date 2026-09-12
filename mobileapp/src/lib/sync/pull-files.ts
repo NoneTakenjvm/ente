@@ -12,8 +12,17 @@ import { invalidateThumbnailCache } from "@/lib/thumbnail-cache";
 import { getSessionCacheKey } from "@/lib/cache-key";
 import { removePhashEntry } from "@/lib/similarity-job";
 import {
+    applyFavoriteMembershipChanges,
+    beginFavoriteMembershipFullSync,
+    commitFavoriteMembershipSync,
+    ensureFavoriteMembershipHydrated,
+    needsFavoriteMembershipFullSync,
+} from "@/lib/favorite-membership";
+import { findUserFavoritesCollection } from "@/lib/favorites";
+import {
     dedupeFilesById,
     didFileContentChange,
+    mergeFavoritesCollectionIntoLibrary,
     mergeFileChangesIntoLibrary,
 } from "@/lib/sync/merge-files";
 import { applyOutboxTagsToFiles } from "@/lib/tag-outbox";
@@ -61,6 +70,16 @@ export const pullFiles = async (
     /** Collection id → sinceTime; written only after encrypted files persist. */
     const pendingCursors = new Map<number, number>();
 
+    await ensureFavoriteMembershipHydrated();
+    const userId = getEnteCore().getUserID();
+    const userFavorites = findUserFavoritesCollection(collections, userId);
+    let favoritesMembershipTouched = false;
+
+    if (!userFavorites) {
+        // No Favourites album yet — empty membership is authoritative.
+        await commitFavoriteMembershipSync();
+    }
+
     const targets = collections;
     const total = targets.length;
 
@@ -71,9 +90,21 @@ export const pullFiles = async (
                 const index = i + batchIndex;
                 onProgress?.(index + 1, total);
 
+                const isUserFavorites = userFavorites?.id === collection.id;
+
                 let sinceTime =
                     (await getCollectionSyncTime(collection.id)) ?? 0;
-                if (sinceTime === collection.updationTime) {
+                const forceFavoritesFullSync =
+                    isUserFavorites && needsFavoriteMembershipFullSync();
+                if (forceFavoritesFullSync) {
+                    sinceTime = 0;
+                    beginFavoriteMembershipFullSync();
+                }
+
+                if (
+                    !forceFavoritesFullSync &&
+                    sinceTime === collection.updationTime
+                ) {
                     return;
                 }
 
@@ -123,12 +154,21 @@ export const pullFiles = async (
                         }
                     }
 
-                    mergeFileChangesIntoLibrary(
-                        libraryById,
-                        collection.id,
-                        collectionFilesById,
-                        decrypted,
-                    );
+                    if (isUserFavorites) {
+                        applyFavoriteMembershipChanges(decrypted);
+                        mergeFavoritesCollectionIntoLibrary(
+                            libraryById,
+                            decrypted,
+                        );
+                        favoritesMembershipTouched = true;
+                    } else {
+                        mergeFileChangesIntoLibrary(
+                            libraryById,
+                            collection.id,
+                            collectionFilesById,
+                            decrypted,
+                        );
+                    }
 
                     pendingCursors.set(collection.id, sinceTime);
                     didUpdate = true;
@@ -139,8 +179,15 @@ export const pullFiles = async (
                 }
 
                 pendingCursors.set(collection.id, collection.updationTime);
+                if (isUserFavorites) {
+                    favoritesMembershipTouched = true;
+                }
             }),
         );
+    }
+
+    if (userFavorites && favoritesMembershipTouched) {
+        await commitFavoriteMembershipSync();
     }
 
     const files = sortFilesByUpload([...libraryById.values()]);

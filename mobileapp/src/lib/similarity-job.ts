@@ -20,6 +20,7 @@ import type {
     Stage1Item,
     Stage1ProgressUpdate,
 } from "@/lib/similarity-stage1-core";
+import type { ReadonlyEmbeddingMap } from "@/lib/kit-embedding";
 import type {
     CropCheckBatchMessage,
     CropCheckBatchResult,
@@ -423,7 +424,7 @@ export interface Stage1WorkerOptions {
     onProgress?: (update: Stage1ProgressUpdate) => void;
     signal?: AbortSignal;
     /** CLIP vectors for nearest-neighbour Similar (file id → L2-normalized). */
-    embeddings?: ReadonlyMap<number, readonly number[]>;
+    embeddings?: ReadonlyEmbeddingMap;
 }
 
 export type Stage1WorkerResult = {

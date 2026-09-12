@@ -6,6 +6,10 @@ import {
 import { sortIdsByRelativePacked } from "@/lib/relative-sort-packed";
 import type { EnteFile } from "ente-media/file";
 
+const toEmb = (values: number[]): Float32Array => Float32Array.from(values);
+const embMap = (entries: Array<[number, number[]]>): Map<number, Float32Array> =>
+    new Map(entries.map(([id, v]) => [id, toEmb(v)]));
+
 const file = (id: number): EnteFile => ({ id }) as EnteFile;
 
 /** Unit vector on one axis of a 512-d space. */
@@ -58,7 +62,7 @@ describe("sortFilesByRelative", () => {
 
     it("walks a genuine closest path A→B→C→D along a line", () => {
         // Distances: AB < AC < AD; BC < BD — greedy closest from A is A-B-C-D.
-        const embeddings = new Map([
+        const embeddings = embMap([
             [1, axis(0)],
             [2, blend01(0.4)],
             [3, blend01(1)],
@@ -81,7 +85,7 @@ describe("sortFilesByRelative", () => {
     });
 
     it("walks furthest as the opposite greedy path from the same start", () => {
-        const embeddings = new Map([
+        const embeddings = embMap([
             [1, axis(0)],
             [2, blend01(0.4)],
             [3, blend01(1)],
@@ -105,7 +109,7 @@ describe("sortFilesByRelative", () => {
     });
 
     it("is a permutation of the input (no drops / duplicates)", () => {
-        const embeddings = new Map([
+        const embeddings = embMap([
             [1, axis(0)],
             [2, blend01(0.4)],
             [3, axis(1)],
@@ -120,7 +124,7 @@ describe("sortFilesByRelative", () => {
     });
 
     it("uses an explicit startFileId as the chain tip", () => {
-        const embeddings = new Map([
+        const embeddings = embMap([
             [1, axis(0)],
             [2, blend01(0.4)],
             [3, blend01(1)],
@@ -137,7 +141,7 @@ describe("sortFilesByRelative", () => {
     });
 
     it("falls back to seed when startFileId is missing an embedding", () => {
-        const embeddings = new Map([
+        const embeddings = embMap([
             [1, axis(0)],
             [2, axis(1)],
         ]);
@@ -161,7 +165,7 @@ describe("sortFilesByRelative", () => {
 
 describe("sortIdsByRelativePacked", () => {
     it("matches sortFilesByRelative order for a closest line", () => {
-        const embeddings = new Map([
+        const embeddings = embMap([
             [1, axis(0)],
             [2, blend01(0.4)],
             [3, blend01(1)],
@@ -185,7 +189,7 @@ describe("sortIdsByRelativePacked", () => {
 
     it("preserves Ente-scale file ids that do not fit in Int32", () => {
         const ids = [2_500_000_001, 2_500_000_002, 2_500_000_003, 2_500_000_004];
-        const embeddings = new Map([
+        const embeddings = embMap([
             [ids[0]!, axis(0)],
             [ids[1]!, blend01(0.4)],
             [ids[2]!, blend01(1)],

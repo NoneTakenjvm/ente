@@ -45,7 +45,9 @@ import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
 import { useQualityIndexStore } from "@/stores/quality-index-store";
 import { useSelectionStore } from "@/stores/selection-store";
 import { useTagSpeedStore } from "@/stores/tag-speed-store";
+import { useTagFilterBinding } from "@/hooks/use-tag-filter-binding";
 import { useTagStore } from "@/stores/tag-store";
+import type { TagFilterTarget } from "@/stores/tag-store";
 import { useUIStore } from "@/stores/ui-store";
 import type { EnteFile } from "ente-media/file";
 
@@ -53,29 +55,45 @@ interface TagFilterBarProps {
     matchCount: number;
     /** Files currently matching the active filter (visible set). */
     matchingFiles: EnteFile[];
+    filterTarget?: TagFilterTarget;
+    /** Files to count scope filters against; defaults to the full library. */
+    scopeCandidateFiles?: EnteFile[];
+    /** Filter whose clauses enable tag-fit sort (album query when refining). */
+    tagFilterFitSource?: TagFilterSelection;
 }
 
 export function TagFilterBar({
     matchCount,
     matchingFiles,
+    filterTarget = "gallery",
+    scopeCandidateFiles,
+    tagFilterFitSource,
 }: TagFilterBarProps): JSX.Element {
     const allFiles = useLibraryStore((s) => s.allFiles);
     const favoriteFileIds = useFavoritesStore((s) => s.favoriteFileIds);
     // Defer the favourites count so starring stays snappy; the badge can lag a frame.
     const deferredFavoriteFileIds = useDeferredValue(favoriteFileIds);
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
-    const tagFilter = useTagStore((s) => s.tagFilter);
     const includeInEffectsPresenceByName = useTagStore(
         (s) => s.includeInEffectsPresenceByName,
     );
     const includeInKitNearnessByName = useTagStore(
         (s) => s.includeInKitNearnessByName,
     );
-    const setTagFilterMode = useTagStore((s) => s.setTagFilterMode);
-    const setKitMode = useTagStore((s) => s.setKitMode);
-    const setGroupOp = useTagStore((s) => s.setGroupOp);
-    const clearFilters = useTagStore((s) => s.clearFilters);
     const knownTags = useTagStore((s) => s.tags);
+    const {
+        filter: tagFilter,
+        setTagScope,
+        setFavoritesScope,
+        setMediaScope,
+        setCroppedScope,
+        setTagFilterMode,
+        setKitMode,
+        setGroupOp,
+        clearFilters,
+    } = useTagFilterBinding(filterTarget);
+
+    const countFiles = scopeCandidateFiles ?? allFiles;
 
     const selectAll = useSelectionStore((s) => s.selectAll);
     const setStampActive = useSelectionStore((s) => s.setStampActive);
@@ -304,8 +322,8 @@ export function TagFilterBar({
     const filterActive = isTagFilterActive(tagFilter);
 
     const libraryFileIds = useMemo(
-        (): Set<number> => new Set(allFiles.map((file) => file.id)),
-        [allFiles],
+        (): Set<number> => new Set(countFiles.map((file) => file.id)),
+        [countFiles],
     );
 
     const taggedCount = useMemo(
@@ -329,8 +347,8 @@ export function TagFilterBar({
 
     const fileKindCounts = useMemo(
         (): ReturnType<typeof countFileKindsInCandidates> =>
-            countFileKindsInCandidates(libraryFileIds, allFiles),
-        [libraryFileIds, allFiles],
+            countFileKindsInCandidates(libraryFileIds, countFiles),
+        [countFiles, libraryFileIds],
     );
 
     const photoCount = fileKindCounts.photos;
@@ -340,8 +358,11 @@ export function TagFilterBar({
 
     const clauseCount = countTagFilterClauses(tagFilter.root);
     const isFlat = isFlatTagFilterRoot(tagFilter.root);
+    const fitClauseCount = countTagFilterClauses(
+        (tagFilterFitSource ?? tagFilter).root,
+    );
     // Keep latched mode when clauses drop to zero; only hide the Sort radios.
-    const tagFilterFitAvailable = clauseCount > 0;
+    const tagFilterFitAvailable = fitClauseCount > 0;
 
     const tagsButtonLabel = useMemo((): string => {
         if (clauseCount === 0) {
@@ -426,6 +447,14 @@ export function TagFilterBar({
                         videoCount={videoCount}
                         croppedCount={croppedCount}
                         notCroppedCount={notCroppedCount}
+                        tagScope={tagFilter.tagScope}
+                        onTagScopeChange={setTagScope}
+                        favoritesScope={tagFilter.favoritesScope}
+                        onFavoritesScopeChange={setFavoritesScope}
+                        mediaScope={tagFilter.mediaScope}
+                        onMediaScopeChange={setMediaScope}
+                        croppedScope={tagFilter.croppedScope}
+                        onCroppedScopeChange={setCroppedScope}
                         viewportFitSort={viewportFitSort}
                         onViewportFitSortChange={setViewportFitSort}
                         updatedAtSort={updatedAtSort}
@@ -490,6 +519,7 @@ export function TagFilterBar({
                         <span>Randomise</span>
                     </Button>
                     <GalleryToolsMenu
+                        filterTarget={filterTarget}
                         query={{
                             hasQueryContent,
                             favoritesCount,

@@ -12,7 +12,6 @@ import {
     SELECTION_FOOTER_INSET_PX,
     buildMediaGridSelection,
 } from "@/lib/selection";
-import { reconcileShuffledIds } from "@/lib/shuffle-files";
 import { useSelectionStore } from "@/stores/selection-store";
 import type { EnteFile } from "ente-media/file";
 
@@ -24,41 +23,25 @@ const PhotoViewer = dynamic(
     { ssr: false },
 );
 
-export type MediaViewOrder = "default" | "shuffled";
-
 interface FilteredMediaViewProps {
     files: EnteFile[];
     loading?: boolean;
     loadingMessage?: string;
-    viewOrder?: MediaViewOrder;
-    shuffleSeed?: number;
     albumCoverFileId?: number;
     onSetAlbumCover?: (fileId: number) => void;
 }
 
 /**
- * Thumbnail grid with photo viewer. Shuffle controls live in the parent header.
+ * Thumbnail grid with photo viewer. Sort and shuffle are applied by the parent.
  */
 export function FilteredMediaView({
     files,
     loading = false,
     loadingMessage = "Loading your library…",
-    viewOrder = "default",
-    shuffleSeed = 0,
     albumCoverFileId,
     onSetAlbumCover,
 }: FilteredMediaViewProps): JSX.Element {
     const [viewerFileId, setViewerFileId] = useState<number | undefined>();
-    const [shuffledFileIds, setShuffledFileIds] = useState<number[]>([]);
-    const [shuffleSnapshot, setShuffleSnapshot] = useState<{
-        viewOrder: MediaViewOrder;
-        shuffleSeed: number;
-        fileIds: number[];
-    }>({
-        viewOrder,
-        shuffleSeed,
-        fileIds: files.map((file) => file.id),
-    });
 
     const selectionEnabled = useSelectionStore((s) => s.enabled);
     const selectedIds = useSelectionStore((s) => s.selectedIds);
@@ -73,57 +56,11 @@ export function FilteredMediaView({
     const bumpRotate = useSelectionStore((s) => s.bumpRotate);
     const rotateBusy = useSelectionStore((s) => s.rotateBusy);
 
-    const fileIds = useMemo(
-        () => files.map((file) => file.id),
+    const visibleFileIds = useMemo(
+        () => new Set(files.map((file) => file.id)),
         [files],
     );
-    const fileIdsKey = fileIds.join(",");
 
-    if (
-        viewOrder !== shuffleSnapshot.viewOrder ||
-        shuffleSeed !== shuffleSnapshot.shuffleSeed ||
-        fileIdsKey !== shuffleSnapshot.fileIds.join(",")
-    ) {
-        const seedChanged =
-            shuffleSeed !== shuffleSnapshot.shuffleSeed ||
-            viewOrder !== shuffleSnapshot.viewOrder;
-        const nextIds =
-            viewOrder === "shuffled" ?
-                reconcileShuffledIds(
-                    fileIds,
-                    shuffleSeed,
-                    seedChanged || shuffledFileIds.length === 0 ?
-                        undefined :
-                        shuffledFileIds,
-                ) :
-                [];
-        setShuffleSnapshot({ viewOrder, shuffleSeed, fileIds });
-        if (
-            nextIds.length !== shuffledFileIds.length ||
-            nextIds.some((id, index) => id !== shuffledFileIds[index])
-        ) {
-            setShuffledFileIds(nextIds);
-        }
-    }
-
-    const displayFiles = useMemo(() => {
-        if (viewOrder !== "shuffled") {
-            return files;
-        }
-        const byId = new Map(files.map((file) => [file.id, file]));
-        return shuffledFileIds.flatMap((id) => {
-            const file = byId.get(id);
-            return file ? [file] : [];
-        });
-    }, [files, shuffledFileIds, viewOrder]);
-
-    const visibleFileIds = useMemo(
-        () => new Set(displayFiles.map((file) => file.id)),
-        [displayFiles],
-    );
-
-    // Keep the selection while select mode is on — tag edits often drop files
-    // out of the active filter, and pruning would wipe a multi-select mid-edit.
     useEffect(() => {
         if (selectionEnabled) {
             return;
@@ -190,7 +127,7 @@ export function FilteredMediaView({
     return (
         <div className="flex min-h-0 flex-1 flex-col">
             <ThumbnailGrid
-                files={displayFiles}
+                files={files}
                 onOpenFile={
                     selectionEnabled || stampActive || rotateActive ?
                         undefined :
@@ -204,7 +141,7 @@ export function FilteredMediaView({
             />
             {viewerFileId !== undefined ? (
                 <PhotoViewer
-                    files={displayFiles}
+                    files={files}
                     initialFileId={viewerFileId}
                     onClose={handleCloseViewer}
                     onFileUpdated={handleFileUpdated}

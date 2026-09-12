@@ -10,6 +10,11 @@ import {
     type PersistedTagTypeConfig,
 } from "@/lib/tag-types";
 import type { PersistedTagPresets } from "@/lib/tag-presets";
+import {
+    mergeCloudViewSessions,
+    parseCloudViewSessions,
+    type CloudViewSessionsPayload,
+} from "@/lib/view-sessions";
 
 export const ORGANIZER_COLLECTION_NAME = ".organizer";
 
@@ -35,6 +40,11 @@ export interface OrganizerAppConfig {
     pinnedTags?: string[];
     queryAlbums?: PersistedQueryAlbums;
     appSettings?: PersistedAppSettings;
+    /**
+     * Recently-viewed sessions (Recents). Merged LWW per session id; deletes
+     * use tombstones. See [Note: View sessions cloud].
+     */
+    viewSessions?: CloudViewSessionsPayload;
 }
 
 export type OrganizerCollectionMagicMetadata =
@@ -53,17 +63,29 @@ export const defaultOrganizerAppConfig = (): OrganizerAppConfig => ({
 
 /**
  * Merge a partial config update into the current document.
+ *
+ * `viewSessions` is LWW-merged (not replaced) so a multi-device 409 retry keeps
+ * sessions from both sides.
  */
 export const mergeOrganizerAppConfig = (
     current: OrganizerAppConfig | undefined,
     patch: Partial<OrganizerAppConfig>,
-): OrganizerAppConfig => ({
-    ...defaultOrganizerAppConfig(),
-    ...current,
-    ...patch,
-    version: 1,
-    updatedAt: Date.now() * 1000,
-});
+): OrganizerAppConfig => {
+    const merged: OrganizerAppConfig = {
+        ...defaultOrganizerAppConfig(),
+        ...current,
+        ...patch,
+        version: 1,
+        updatedAt: Date.now() * 1000,
+    };
+    if (patch.viewSessions !== undefined) {
+        merged.viewSessions = mergeCloudViewSessions(
+            current?.viewSessions,
+            patch.viewSessions,
+        );
+    }
+    return merged;
+};
 
 export const organizerMagicMetadata = (
     collection: { magicMetadata?: { data: unknown } },
@@ -75,8 +97,15 @@ export const organizerMagicMetadata = (
 export const organizerAppConfigFromCollection = (
     collection: { magicMetadata?: { data: unknown } },
 ): OrganizerAppConfig => {
-    const config = organizerMagicMetadata(collection)?._organizer_app_v1;
-    return mergeOrganizerAppConfig(config, {});
+    const raw = organizerMagicMetadata(collection)?._organizer_app_v1;
+    const config = mergeOrganizerAppConfig(raw, {});
+    const viewSessions = parseCloudViewSessions(raw?.viewSessions);
+    if (viewSessions) {
+        config.viewSessions = viewSessions;
+    } else {
+        delete config.viewSessions;
+    }
+    return config;
 };
 
 export const isOrganizerConfigCollection = (

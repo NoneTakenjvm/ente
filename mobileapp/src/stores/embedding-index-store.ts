@@ -1,13 +1,16 @@
 import { create } from "zustand";
 import type { StateCreator } from "zustand";
 import { hasSessionCacheKey } from "@/lib/cache-key";
-import { hydrateEmbeddingIndex } from "@/lib/kit-embedding";
+import {
+    hydrateEmbeddingIndex,
+    type EmbeddingMap,
+} from "@/lib/kit-embedding";
 
 interface EmbeddingIndexState {
-    entries: Map<number, number[]>;
+    entries: EmbeddingMap;
     isHydrated: boolean;
     hydrate: () => Promise<void>;
-    setEntries: (entries: Map<number, number[]>) => void;
+    setEntries: (entries: EmbeddingMap) => void;
     reset: () => void;
 }
 
@@ -25,7 +28,7 @@ const createEmbeddingIndexStore: StateCreator<EmbeddingIndexState> = (
         set({ entries, isHydrated: true });
     },
 
-    setEntries: (entries: Map<number, number[]>): void => {
+    setEntries: (entries: EmbeddingMap): void => {
         set({ entries, isHydrated: true });
     },
 

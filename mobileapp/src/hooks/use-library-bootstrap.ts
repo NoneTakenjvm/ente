@@ -22,6 +22,11 @@ import {
     hydrateFavoriteOutbox,
     type FavoriteOutboxEntry,
 } from "@/lib/favorite-outbox";
+import {
+    addFavoriteMembershipIds,
+    hydrateFavoriteMembership,
+    removeFavoriteMembershipIds,
+} from "@/lib/favorite-membership";
 import { hydrateTagOutbox } from "@/lib/tag-outbox";
 import {
     startTagOutboxRunner,
@@ -97,6 +102,7 @@ export const useLibraryBootstrap: (
                 await Promise.all([
                     hydrateTagOutbox(),
                     hydrateFavoriteOutbox(),
+                    hydrateFavoriteMembership(),
                     hydrateVisibilityOutbox(),
                     hydrateDerivedReplaceOutbox(),
                 ]);
@@ -156,11 +162,15 @@ export const useLibraryBootstrap: (
                             }
                         }
                         if (toAdd.length) {
-                            await core.addToFavorites(toAdd, ctx);
+                            const membershipIds =
+                                await core.addToFavorites(toAdd, ctx);
+                            await addFavoriteMembershipIds(membershipIds);
                             ackedKeys.push(...addKeys);
                         }
                         if (toRemove.length) {
-                            await core.removeFromFavorites(toRemove, ctx);
+                            const membershipIds =
+                                await core.removeFromFavorites(toRemove, ctx);
+                            await removeFavoriteMembershipIds(membershipIds);
                             ackedKeys.push(...removeKeys);
                         }
                         return { ackedKeys };
@@ -196,14 +206,20 @@ export const useLibraryBootstrap: (
                                 pendingFavoriteFilesByHashAndType,
                         };
                         if (entry.isFavorite) {
-                            await core.addToFavorites([file], ctx);
+                            const membershipIds = await core.addToFavorites(
+                                [file],
+                                ctx,
+                            );
+                            await addFavoriteMembershipIds(membershipIds);
                         } else {
-                            await core.removeFromFavorites([file], ctx);
+                            const membershipIds =
+                                await core.removeFromFavorites([file], ctx);
+                            await removeFavoriteMembershipIds(membershipIds);
                         }
                     },
                     syncFavorites: async (): Promise<void> => {
-                        // Local patch only — full syncRemote after every favourite
-                        // batch was too expensive and raced in-flight edits.
+                        // Membership already patched after API success; rebuild
+                        // UI sets from oracle + remaining outbox overlays.
                         const library: ReturnType<
                             typeof useLibraryStore.getState
                         > = useLibraryStore.getState();

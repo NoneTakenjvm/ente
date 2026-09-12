@@ -10,11 +10,7 @@
  * Research: `scripts/kit-nearness-s2-research.md`, pass 5 "avenue 6".
  */
 import { listTileEmbeddingFileIds, putTileEmbeddings } from "@/db/tile-embeddings";
-import {
-    embedKitTilesInWorker,
-    ensureKitEmbeddingWorkerReady,
-    KIT_EMBEDDING_MODEL_ID,
-} from "@/lib/kit-embedding";
+import { embedKitTilesInWorker, ensureKitEmbeddingWorkerReady, KIT_EMBEDDING_MODEL_ID, type ReadonlyEmbeddingMap } from "@/lib/kit-embedding";
 import { KIT_TILE_LAYOUT_ID } from "@/lib/kit-tile-layout";
 import { imageFilesForPhash } from "@/lib/similarity-job";
 import { getDecryptedThumbnailBytes } from "@/lib/thumbnail-bytes";
@@ -37,7 +33,7 @@ export type KitTileEmbeddingJobInput = {
     files: readonly EnteFile[];
     userId: number;
     /** Global CLIP index; only files present here are eligible. */
-    embeddings: ReadonlyMap<number, number[]>;
+    embeddings: ReadonlyEmbeddingMap;
     /** Scanned before everything else (kit-nearness tagged photos). */
     priorityFileIds: ReadonlySet<number>;
 };

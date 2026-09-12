@@ -20,6 +20,10 @@ import { parseDHashHex } from "@/lib/phash";
 import { fileWithOrganizerTags } from "@/lib/tag-writes";
 import type { EnteFile } from "ente-media/file";
 
+const toEmb = (values: number[]): Float32Array => Float32Array.from(values);
+const embMap = (entries: Array<[number, number[]]>): Map<number, Float32Array> =>
+    new Map(entries.map(([id, v]) => [id, toEmb(v)]));
+
 const fileWithTags = (id: number, tags: string[]): EnteFile =>
     fileWithOrganizerTags({ id } as EnteFile, tags);
 
@@ -404,7 +408,7 @@ describe("CLIP kit embedding nearness", () => {
         const medoid = pad512(1, 0);
         const near = pad512(0.95, 0.05);
         const far = pad512(0, 1);
-        const embeddings = new Map<number, number[]>([
+        const embeddings = embMap([
             [1, near],
             [2, far],
             [3, medoid],
@@ -424,7 +428,7 @@ describe("CLIP kit embedding nearness", () => {
     });
 
     it("pickKitEmbeddingMedoids keeps dense modes, skips singleton outliers", () => {
-        const embeddings = new Map<number, number[]>([
+        const embeddings = embMap([
             [1, pad512(1, 0)],
             [2, pad512(1, 0)],
             [3, pad512(1, 0)],
@@ -442,7 +446,7 @@ describe("CLIP kit embedding nearness", () => {
     });
 
     it("buildKitEmbeddingCentroid averages seed vectors", () => {
-        const embeddings = new Map([
+        const embeddings = embMap([
             [1, pad512(1, 0)],
             [2, pad512(0, 1)],
         ]);

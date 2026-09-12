@@ -62,6 +62,41 @@ describe("mergeOrganizerAppConfig", () => {
         expect(merged.appSettings?.galleryColumns).toBe(6);
         expect(merged.appSettings?.galleryThumbnailMode).toBe("fit");
     });
+
+    it("LWW-merges viewSessions instead of replacing", () => {
+        const localSession = {
+            id: "local",
+            startedAt: 1,
+            endTime: 100,
+            views: [{ fileId: 1, openedAt: 50, closedAt: 100 }],
+            totalViewTimeMs: 50,
+            totalViews: 1,
+            uniqueFileIds: [1],
+            lastViewedFileId: 1,
+        };
+        const remoteSession = {
+            id: "remote",
+            startedAt: 2,
+            endTime: 90,
+            views: [{ fileId: 2, openedAt: 40, closedAt: 90 }],
+            totalViewTimeMs: 50,
+            totalViews: 1,
+            uniqueFileIds: [2],
+            lastViewedFileId: 2,
+        };
+        const merged = mergeOrganizerAppConfig(
+            {
+                version: 1,
+                updatedAt: 1,
+                viewSessions: { sessions: [remoteSession] },
+            },
+            {
+                viewSessions: { sessions: [localSession] },
+            },
+        );
+        const ids = merged.viewSessions?.sessions.map((s) => s.id).sort();
+        expect(ids).toEqual(["local", "remote"]);
+    });
 });
 
 describe("isOrganizerConfigCollection", () => {
