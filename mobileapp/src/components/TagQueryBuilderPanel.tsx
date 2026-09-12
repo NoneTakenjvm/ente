@@ -24,6 +24,7 @@ interface TagQueryBuilderPanelProps extends TagQueryBuilderContentProps {
 export function TagQueryBuilderPanel({
     hasQueryContent,
     clauseCount = 0,
+    filterTarget,
     taggedCount,
     untaggedCount,
     favoritesCount,
@@ -60,6 +61,7 @@ export function TagQueryBuilderPanel({
                         Query builder
                     </DropdownMenuLabel>
                     <TagQueryBuilderContent
+                        filterTarget={filterTarget}
                         taggedCount={taggedCount}
                         untaggedCount={untaggedCount}
                         favoritesCount={favoritesCount}

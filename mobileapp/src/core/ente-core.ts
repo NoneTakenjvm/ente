@@ -306,7 +306,7 @@ export class EnteCore {
     addToFavorites(
         files: EnteFile[],
         ctx: Omit<FavoritesContext, "http" | "session" | "userId">,
-    ): Promise<void> {
+    ): Promise<number[]> {
         return addToFavoritesCollection(
             {
                 http: this.http,
@@ -321,7 +321,7 @@ export class EnteCore {
     removeFromFavorites(
         files: EnteFile[],
         ctx: Omit<FavoritesContext, "http" | "session" | "userId">,
-    ): Promise<void> {
+    ): Promise<number[]> {
         return removeFromFavoritesCollection(
             {
                 http: this.http,
@@ -550,7 +550,7 @@ export class EnteCore {
     patchOrganizerConfig(
         patch: Partial<OrganizerAppConfig>,
     ): Promise<OrganizerAppConfig> {
-        return patchOrganizerConfig(this.http, patch);
+        return patchOrganizerConfig(this.http, this.session, patch);
     }
 }
 
@@ -559,4 +559,5 @@ export type { EnteFile } from "ente-media/file";
 export type { FilePublicMagicMetadataData } from "ente-media/file-metadata";
 export type { LoginCredentials, Session, EnteCoreConfig } from "./types";
 export type { BootstrapOrganizerConfigResult } from "./organizer-config";
-export type { OrganizerAppConfig } from "@/lib/organizer-config";
+export type { OrganizerAppConfig,
+} from "@/lib/organizer-config";

@@ -180,22 +180,27 @@ export const computeMasonryLayoutFromAspects = <T>(
     gap: number;
 } => computePlacedMasonryItems(entries, containerWidth, columns);
 
+/**
+ * Keys whose placed boxes intersect a content-space marquee rect.
+ * {@link rect} uses the same coordinate system as item `x`/`y` (not viewport).
+ */
 export const masonryItemsInMarquee = (
-    items: Array<{ key: string | number; x: number; y: number; width: number; height: number }>,
-    scrollTop: number,
+    items: Array<{
+        key: string | number;
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+    }>,
     rect: { x: number; y: number; width: number; height: number },
 ): Array<string | number> => {
     const keys: Array<string | number> = [];
     for (const item of items) {
-        const itemTop = item.y - scrollTop;
-        const itemBottom = itemTop + item.height;
-        const itemLeft = item.x;
-        const itemRight = itemLeft + item.width;
         const overlaps =
-            itemRight >= rect.x &&
-            itemLeft <= rect.x + rect.width &&
-            itemBottom >= rect.y &&
-            itemTop <= rect.y + rect.height;
+            item.x < rect.x + rect.width &&
+            item.x + item.width > rect.x &&
+            item.y < rect.y + rect.height &&
+            item.y + item.height > rect.y;
         if (overlaps) {
             keys.push(item.key);
         }

@@ -10,11 +10,7 @@
  * offline eval data, never public or committed.
  */
 import type { PhashEntry } from "@/lib/crop-match";
-import {
-    KIT_EMBEDDING_DIMS,
-    KIT_EMBEDDING_MODEL_ID,
-    type KitTileEmbeddings,
-} from "@/lib/kit-embedding";
+import { KIT_EMBEDDING_DIMS, KIT_EMBEDDING_MODEL_ID, type KitTileEmbeddings, type ReadonlyEmbeddingMap } from "@/lib/kit-embedding";
 import { KIT_TILE_LAYOUT_ID } from "@/lib/kit-tile-layout";
 import { tagSetKey, type TagPreset } from "@/lib/tag-presets";
 import { extractUserTags } from "@/lib/tags";
@@ -105,7 +101,7 @@ export type BuildAnonymisedCorpusInput = {
     phashEntries: ReadonlyMap<number, PhashEntry>;
     kits: readonly TagPreset[];
     /** Optional CLIP vectors keyed by Ente file id. */
-    embeddings?: ReadonlyMap<number, number[]>;
+    embeddings?: ReadonlyEmbeddingMap;
     /** Optional tile vectors ({@link KIT_TILE_LAYOUT_ID}) keyed by Ente file id. */
     tileEmbeddings?: ReadonlyMap<number, KitTileEmbeddings>;
     /**
@@ -150,7 +146,7 @@ const toCorpusPhoto = (
     syntheticId: number,
     entry: PhashEntry | undefined,
     tags: string[],
-    embedding?: number[],
+    embedding?: ArrayLike<number>,
 ): AnonymisedCorpusPhoto => {
     const photo: AnonymisedCorpusPhoto = {
         id: syntheticId,
@@ -161,7 +157,7 @@ const toCorpusPhoto = (
         photo.color = entry.color;
     }
     if (embedding?.length === KIT_EMBEDDING_DIMS) {
-        photo.embedding = [...embedding];
+        photo.embedding = Array.from(embedding);
     }
     return photo;
 };

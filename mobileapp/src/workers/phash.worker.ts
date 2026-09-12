@@ -58,7 +58,7 @@ const handleStage1 = async (message: Stage1Message): Promise<void> => {
     try {
         let clip: Stage1ClipOptions | undefined;
         if (message.embeddingsByFileId) {
-            const embeddings = new Map<number, number[]>();
+            const embeddings = new Map();
             for (const [id, vector] of Object.entries(
                 message.embeddingsByFileId,
             )) {

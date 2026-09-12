@@ -5,6 +5,8 @@ import {
     endViewOnSession,
     formatSessionDuration,
     formatSessionLore,
+    mergeCloudViewSessions,
+    parseCloudViewSessions,
     pickResumeSession,
     remapSessionFileId,
     recomputeSessionAggregates,
@@ -119,5 +121,88 @@ describe("view-sessions", () => {
         expect(formatSessionLore(session)).toBe("2 images · 2m");
         expect(formatSessionDuration(3_500)).toBe("4s");
         expect(formatSessionDuration(3_660_000)).toBe("1h 1m");
+    });
+
+    it("LWW-merges cloud sessions and honours tombstones", () => {
+        const older: ViewSession = {
+            id: "a",
+            startedAt: 1,
+            endTime: 100,
+            views: [{ fileId: 1, openedAt: 50, closedAt: 100 }],
+            totalViewTimeMs: 50,
+            totalViews: 1,
+            uniqueFileIds: [1],
+            lastViewedFileId: 1,
+        };
+        const newer: ViewSession = {
+            ...older,
+            endTime: 200,
+            views: [
+                { fileId: 1, openedAt: 50, closedAt: 100 },
+                { fileId: 2, openedAt: 150, closedAt: 200 },
+            ],
+            totalViewTimeMs: 100,
+            totalViews: 2,
+            uniqueFileIds: [1, 2],
+            lastViewedFileId: 2,
+        };
+        const other: ViewSession = {
+            id: "b",
+            startedAt: 10,
+            endTime: 50,
+            views: [{ fileId: 3, openedAt: 20, closedAt: 50 }],
+            totalViewTimeMs: 30,
+            totalViews: 1,
+            uniqueFileIds: [3],
+            lastViewedFileId: 3,
+        };
+        const merged = mergeCloudViewSessions(
+            { sessions: [older, other] },
+            { sessions: [newer] },
+        );
+        expect(merged.sessions.map((s) => s.id).sort()).toEqual(["a", "b"]);
+        expect(merged.sessions.find((s) => s.id === "a")?.endTime).toBe(200);
+
+        const deleted = mergeCloudViewSessions(
+            { sessions: [newer], tombstones: [{ id: "b", deletedAt: 80 }] },
+            { sessions: [other] },
+        );
+        expect(deleted.sessions.map((s) => s.id)).toEqual(["a"]);
+        expect(deleted.tombstones?.some((t) => t.id === "b")).toBe(true);
+    });
+
+    it("tombstone loses when session endTime is newer", () => {
+        const session: ViewSession = {
+            id: "a",
+            startedAt: 1,
+            endTime: 500,
+            views: [{ fileId: 1, openedAt: 100, closedAt: 500 }],
+            totalViewTimeMs: 400,
+            totalViews: 1,
+            uniqueFileIds: [1],
+            lastViewedFileId: 1,
+        };
+        const merged = mergeCloudViewSessions(
+            { sessions: [session] },
+            { sessions: [], tombstones: [{ id: "a", deletedAt: 200 }] },
+        );
+        expect(merged.sessions).toHaveLength(1);
+        expect(merged.tombstones ?? []).toHaveLength(0);
+    });
+
+    it("parse preserves consecutive endTime bumps", () => {
+        const raw = {
+            sessions: [
+                {
+                    id: "a",
+                    startedAt: 1,
+                    endTime: 900,
+                    views: [{ fileId: 1, openedAt: 100, closedAt: 500 }],
+                },
+            ],
+        };
+        const parsed = parseCloudViewSessions(raw);
+        expect(parsed?.sessions[0]?.endTime).toBe(900);
+        expect(parsed?.sessions[0]?.views[0]?.closedAt).toBe(500);
     });
 });

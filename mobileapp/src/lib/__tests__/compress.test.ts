@@ -15,7 +15,6 @@ import {
     isAlreadyCompressed,
     isCompressibleMediaType,
     isWorthReplacing,
-    resolveMarqueeDragIntent,
     sortCompressCandidatesBySize,
     MIN_SIZE_FILTER_PRESETS,
     DEFAULT_MIN_SIZE_BYTES,
@@ -180,12 +179,6 @@ describe("compress", () => {
         expect(isWorthReplacing(1_000_000, 900_000)).toBe(true);
         expect(isWorthReplacing(100_000, 120_000)).toBe(false);
         expect(isWorthReplacing(100_000, 99_000)).toBe(false);
-    });
-
-    it("resolveMarqueeDragIntent prefers horizontal-first marquee", () => {
-        expect(resolveMarqueeDragIntent(20, 4, 12)).toBe("marquee");
-        expect(resolveMarqueeDragIntent(4, 20, 12)).toBe("scroll");
-        expect(resolveMarqueeDragIntent(4, 4, 12)).toBe("pending");
     });
 
     it("MIN_SIZE_FILTER_PRESETS includes the 800 KB PhotoHoard floor", () => {

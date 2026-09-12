@@ -29,10 +29,12 @@ import { cn } from "@/lib/utils";
 import { stampTagsFromNearnessFilter } from "@/lib/tag-presets";
 import { isTagFilterActive } from "@/lib/tags";
 import { useSelectionStore } from "@/stores/selection-store";
+import type { TagFilterTarget } from "@/stores/tag-store";
 import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useUIStore } from "@/stores/ui-store";
 
 type GalleryToolsMenuProps = {
+    filterTarget?: TagFilterTarget;
     /** When set, include Query builder (gallery filter bar). */
     query?: TagQueryBuilderContentProps & { hasQueryContent: boolean };
 };
@@ -41,7 +43,10 @@ type GalleryToolsMenuProps = {
  * Gallery/album tools: wrench dropdown below `md`, individual icon buttons at `md+`.
  * Mobile: re-tap wrench exits the active tool; opens the menu only when none is active.
  */
-export function GalleryToolsMenu({ query }: GalleryToolsMenuProps): JSX.Element {
+export function GalleryToolsMenu({
+    query,
+    filterTarget = "gallery",
+}: GalleryToolsMenuProps): JSX.Element {
     const selectionEnabled = useSelectionStore((s) => s.enabled);
     const stampActive = useSelectionStore((s) => s.stampActive);
     const rotateActive = useSelectionStore((s) => s.rotateActive);
@@ -178,6 +183,7 @@ export function GalleryToolsMenu({ query }: GalleryToolsMenuProps): JSX.Element 
                                             Query builder
                                         </DropdownMenuLabel>
                                         <TagQueryBuilderContent
+                                            filterTarget={filterTarget}
                                             taggedCount={query.taggedCount}
                                             untaggedCount={query.untaggedCount}
                                             favoritesCount={
@@ -244,6 +250,7 @@ export function GalleryToolsMenu({ query }: GalleryToolsMenuProps): JSX.Element 
             <div className="hidden items-center gap-1 md:flex">
                 {query ? (
                     <TagQueryBuilderPanel
+                        filterTarget={filterTarget}
                         hasQueryContent={query.hasQueryContent}
                         taggedCount={query.taggedCount}
                         untaggedCount={query.untaggedCount}

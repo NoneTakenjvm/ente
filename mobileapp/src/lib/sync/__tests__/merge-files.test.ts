@@ -4,6 +4,7 @@ import type { CollectionFileChange } from "@/core/api/files";
 import {
     dedupeFilesById,
     filterFilesForCollection,
+    mergeFavoritesCollectionIntoLibrary,
     mergeFileChangesIntoLibrary,
 } from "@/lib/sync/merge-files";
 
@@ -38,6 +39,30 @@ describe("merge-files", () => {
 
         expect(library.has(1)).toBe(false);
         expect(library.get(2)?.id).toBe(2);
+    });
+
+    it("mergeFavoritesCollectionIntoLibrary keeps album collectionID and does not delete on unfavourite", () => {
+        const library = new Map([[1, file(1, 10)]]);
+        const changes: CollectionFileChange[] = [
+            {
+                id: 1,
+                updationTime: 2,
+                isDeleted: false,
+                file: file(1, 99),
+            },
+            { id: 1, updationTime: 3, isDeleted: true },
+            {
+                id: 2,
+                updationTime: 4,
+                isDeleted: false,
+                file: file(2, 99),
+            },
+        ];
+
+        mergeFavoritesCollectionIntoLibrary(library, changes);
+
+        expect(library.get(1)?.collectionID).toBe(10);
+        expect(library.get(2)?.collectionID).toBe(99);
     });
 
     it("dedupeFilesById keeps one entry per id", () => {

@@ -7,7 +7,7 @@
  * never used as medoids or scored (poster thumbnail ≠ content).
  */
 import type { EnteFile } from "ente-media/file";
-import { KIT_EMBEDDING_DIMS } from "@/lib/kit-embedding";
+import { KIT_EMBEDDING_DIMS, type ReadonlyEmbeddingMap } from "@/lib/kit-embedding";
 import { isEnteVideoFile } from "@/lib/media-kind";
 import {
     kitEmbeddingMinDistance,
@@ -27,7 +27,7 @@ export type TagFilterFitSort = "none" | "best" | "worst";
 export const sortFilesByTagFilterFit = (
     files: readonly EnteFile[],
     mode: TagFilterFitSort,
-    embeddings: ReadonlyMap<number, number[]>,
+    embeddings: ReadonlyEmbeddingMap,
 ): EnteFile[] => {
     if (mode === "none" || files.length < 2) {
         return [...files];

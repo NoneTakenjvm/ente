@@ -6,6 +6,7 @@ import {
     setClauseModeOnFilter,
     setKitModeOnFilter,
     setTagFilterModeOnFilter,
+    setTagFilterScope,
 } from "@/lib/tag-filter-mutations";
 import {
     createEmptyTagFilterRoot,
@@ -31,6 +32,8 @@ const andRoot = (...children: TagFilterGroup["children"]): TagFilterGroup => ({
     op: "and",
     children,
 });
+
+const presenceOff = new Map([["junk", false]]);
 
 describe("tag-filter-mutations", () => {
     it("isFlatTagFilterRoot is true for flat and empty roots", () => {
@@ -154,5 +157,56 @@ describe("tag-filter-mutations", () => {
         expect(filter.tagScope).toBe("all");
         const updated = filter.root.children[0] as TagFilterClauseNode;
         expect(updated.mode).toBe("include");
+    });
+
+    it("presence-off include keeps tagged and untagged scopes", () => {
+        let tagged = {
+            ...emptyTagFilter(),
+            tagScope: "tagged" as const,
+        };
+        tagged = setTagFilterModeOnFilter(
+            tagged,
+            "junk",
+            "include",
+            presenceOff,
+        );
+        expect(tagged.tagScope).toBe("tagged");
+        expect(findClauseInGroup(tagged.root, "junk")?.mode).toBe("include");
+
+        let untagged = {
+            ...emptyTagFilter(),
+            tagScope: "untagged" as const,
+        };
+        untagged = setTagFilterModeOnFilter(
+            untagged,
+            "junk",
+            "include",
+            presenceOff,
+        );
+        expect(untagged.tagScope).toBe("untagged");
+        expect(findClauseInGroup(untagged.root, "junk")?.mode).toBe("include");
+    });
+
+    it("setTagFilterScope to untagged keeps presence-off clauses only", () => {
+        let filter = emptyTagFilter();
+        filter = setTagFilterModeOnFilter(filter, "selfie", "include");
+        filter = setTagFilterModeOnFilter(
+            filter,
+            "junk",
+            "include",
+            presenceOff,
+        );
+        filter = setTagFilterScope(filter, "untagged", presenceOff);
+        expect(filter.tagScope).toBe("untagged");
+        expect(findClauseInGroup(filter.root, "junk")?.mode).toBe("include");
+        expect(findClauseInGroup(filter.root, "selfie")).toBeNull();
+    });
+
+    it("setTagFilterScope to untagged clears all when no presence map", () => {
+        let filter = emptyTagFilter();
+        filter = setTagFilterModeOnFilter(filter, "selfie", "include");
+        filter = setTagFilterScope(filter, "untagged");
+        expect(filter.tagScope).toBe("untagged");
+        expect(filter.root.children).toHaveLength(0);
     });
 });

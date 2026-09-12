@@ -273,29 +273,6 @@ export const isWorthReplacing = (
     return compressedBytes < minBytes;
 };
 
-export type MarqueeDragIntent = "pending" | "scroll" | "marquee";
-
-/**
- * Resolve pointer drag intent for mass-selection vs vertical scroll.
- * Marquee requires a horizontal-first gesture (Apple Photos pattern).
- */
-export const resolveMarqueeDragIntent = (
-    dx: number,
-    dy: number,
-    thresholdPx: number,
-): MarqueeDragIntent | null => {
-    if (Math.abs(dx) < thresholdPx && Math.abs(dy) < thresholdPx) {
-        return "pending";
-    }
-    if (Math.abs(dx) >= thresholdPx && Math.abs(dx) > Math.abs(dy)) {
-        return "marquee";
-    }
-    if (Math.abs(dy) >= thresholdPx && Math.abs(dy) >= Math.abs(dx)) {
-        return "scroll";
-    }
-    return null;
-};
-
 /**
  * Merge source organizer tags and ensure the compressed tag is present.
  */

@@ -4,6 +4,7 @@
  */
 
 import { flushFavoriteOutboxPersist, getFavoriteOutboxEntries } from "@/lib/favorite-outbox";
+import { flushFavoriteMembershipPersist } from "@/lib/favorite-membership";
 import {
     flushTagOutboxPersist,
     getTagOutboxEntries,
@@ -39,13 +40,24 @@ export const flushAllDurableState = (): Promise<void> => {
             await Promise.all([
                 flushTagOutboxPersist(),
                 flushFavoriteOutboxPersist(),
+                flushFavoriteMembershipPersist(),
                 flushVisibilityOutboxPersist(),
                 flushDerivedReplaceOutboxPersist(),
             ]);
-            const { flushLibraryCachePersist } = await import(
-                "@/stores/library-store"
-            );
-            await flushLibraryCachePersist();
+            const [
+                { flushLibraryCachePersist },
+                { flushThumbnailLruTouches },
+                { flushFileCiphertextLruTouches },
+            ] = await Promise.all([
+                import("@/stores/library-store"),
+                import("@/db/thumbnails"),
+                import("@/db/file-ciphertexts"),
+            ]);
+            await Promise.all([
+                flushLibraryCachePersist(),
+                flushThumbnailLruTouches(),
+                flushFileCiphertextLruTouches(),
+            ]);
         });
     return flushChain;
 };

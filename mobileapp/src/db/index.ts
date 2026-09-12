@@ -11,6 +11,7 @@ export type KvKey =
     "embeddingIndex" |
     "tagOutbox" |
     "favoriteOutbox" |
+    "favoriteMembership" |
     "visibilityOutbox" |
     "derivedReplaceOutbox" |
     "trashItems" |

@@ -2,10 +2,11 @@
  * Sharded encrypted library cache — fileId%64 buckets so tag/favourite
  * saves rewrite one small blob instead of the full EnteFile[].
  *
- * [Note: Library file shards] Membership is stable by file id modulus, so
- * adding/removing a file only dirties that file's shard. Full sync still
- * rewrites changed shards. Legacy monolith kv key {@code files} is migrated
- * once on load (then deleted).
+ * [Note: Library file shards] Membership is stable by file id modulus.
+ * Call {@link markLibraryCacheFilesDirty} for optimistic edits that keep the
+ * same {@link EnteFile.updationTime} (tags, visibility). Sync-driven changes
+ * are detected via updationTime. Never fingerprint the whole library with
+ * JSON.stringify — that froze tagging on large libraries.
  */
 
 import type { EnteFile } from "ente-media/file";
@@ -28,8 +29,13 @@ export type FileShardsMeta = {
 
 const shardsMetaKey = "file-shards-meta";
 
-/** Last persisted id → content fingerprint for dirty-shard detection. */
-let lastPersistedFingerprints = new Map<number, string>();
+/** Last persisted id → updationTime (sync / structural dirty detection). */
+let lastPersistedUpdation = new Map<number, number>();
+
+/** Optimistic local edits that did not bump updationTime. */
+let pendingDirtyFileIds = new Set<number>();
+
+let pendingDirtyAll = false;
 
 /**
  * Stable shard bucket for a file id.
@@ -46,23 +52,28 @@ export const fileLibraryShardId = (
  * Drop in-memory dirty baseline (logout / DB wipe).
  */
 export const clearFileShardPersistState = (): void => {
-    lastPersistedFingerprints = new Map();
+    lastPersistedUpdation = new Map();
+    pendingDirtyFileIds = new Set();
+    pendingDirtyAll = false;
 };
 
 /**
- * Fingerprint local+remote fields that must hit disk (tags often keep the same
- * {@link EnteFile.updationTime} until museum ack).
+ * Mark files whose local metadata changed without a new updationTime (tags,
+ * archive, etc.) so the next save rewrites their shards.
  */
-export const fileLibraryPersistFingerprint = (file: EnteFile): string => {
-    const pub = file.pubMagicMetadata;
-    const priv = file.magicMetadata;
-    return [
-        file.updationTime,
-        pub?.version ?? "",
-        priv?.version ?? "",
-        JSON.stringify(pub?.data ?? null),
-        JSON.stringify(priv?.data ?? null),
-    ].join("\0");
+export const markLibraryCacheFilesDirty = (
+    fileIds: Iterable<number>,
+): void => {
+    for (const fileId of fileIds) {
+        pendingDirtyFileIds.add(fileId);
+    }
+};
+
+/**
+ * Force every non-empty shard to rewrite on the next save.
+ */
+export const markLibraryCacheFullyDirty = (): void => {
+    pendingDirtyAll = true;
 };
 
 const loadShardsMeta = async (): Promise<FileShardsMeta | undefined> => {
@@ -109,12 +120,12 @@ const groupFilesByShard = (
 };
 
 /**
- * Which shard ids need a rewrite given the next library snapshot.
+ * Shards dirty from updationTime / membership changes (not optimistic tags).
  */
-export const dirtyFileShardIds = (
+export const dirtyFileShardIdsFromUpdation = (
     files: readonly EnteFile[],
     shardCount: number,
-    previous: ReadonlyMap<number, string>,
+    previous: ReadonlyMap<number, number>,
 ): Set<number> => {
     const dirty = new Set<number>();
     const nextIds = new Set<number>();
@@ -122,10 +133,7 @@ export const dirtyFileShardIds = (
     for (const file of files) {
         nextIds.add(file.id);
         const prev = previous.get(file.id);
-        if (
-            prev === undefined ||
-            prev !== fileLibraryPersistFingerprint(file)
-        ) {
+        if (prev === undefined || prev !== file.updationTime) {
             dirty.add(fileLibraryShardId(file.id, shardCount));
         }
     }
@@ -137,12 +145,39 @@ export const dirtyFileShardIds = (
     return dirty;
 };
 
-const snapshotFingerprints = (
+/**
+ * Combine updationTime dirty set with explicitly marked optimistic file ids.
+ */
+export const resolveDirtyFileShardIds = (
     files: readonly EnteFile[],
-): Map<number, string> => {
-    const map = new Map<number, string>();
+    shardCount: number,
+    previous: ReadonlyMap<number, number>,
+    markedFileIds: ReadonlySet<number>,
+    forceAll: boolean,
+): Set<number> => {
+    if (forceAll || previous.size === 0) {
+        const all = new Set<number>();
+        for (const file of files) {
+            all.add(fileLibraryShardId(file.id, shardCount));
+        }
+        for (const fileId of previous.keys()) {
+            all.add(fileLibraryShardId(fileId, shardCount));
+        }
+        return all;
+    }
+    const dirty = dirtyFileShardIdsFromUpdation(files, shardCount, previous);
+    for (const fileId of markedFileIds) {
+        dirty.add(fileLibraryShardId(fileId, shardCount));
+    }
+    return dirty;
+};
+
+const snapshotUpdation = (
+    files: readonly EnteFile[],
+): Map<number, number> => {
+    const map = new Map<number, number>();
     for (const file of files) {
-        map.set(file.id, fileLibraryPersistFingerprint(file));
+        map.set(file.id, file.updationTime);
     }
     return map;
 };
@@ -195,7 +230,9 @@ export const loadEncryptedFilesSharded = async (
         for (const record of records) {
             files.push(...(await decryptShardFiles(record, cacheKey)));
         }
-        lastPersistedFingerprints = snapshotFingerprints(files);
+        lastPersistedUpdation = snapshotUpdation(files);
+        pendingDirtyFileIds = new Set();
+        pendingDirtyAll = false;
         const meta = await loadShardsMeta();
         if (!meta) {
             await saveShardsMeta({
@@ -209,7 +246,7 @@ export const loadEncryptedFilesSharded = async (
     const db = await getOrganizerDB();
     const legacy = await db.get("kv", "files");
     if (!legacy) {
-        lastPersistedFingerprints = new Map();
+        lastPersistedUpdation = new Map();
         return undefined;
     }
     const files = await decryptCachePayload<EnteFile[]>(
@@ -220,7 +257,7 @@ export const loadEncryptedFilesSharded = async (
         cacheKey,
     );
     if (!Array.isArray(files)) {
-        lastPersistedFingerprints = new Map();
+        lastPersistedUpdation = new Map();
         return undefined;
     }
     await saveEncryptedFilesSharded(files, cacheKey, { forceAllShards: true });
@@ -234,7 +271,7 @@ export type SaveEncryptedFilesOptions = {
 };
 
 /**
- * Persist library files; only encrypts shards whose membership/updation changed.
+ * Persist library files; only encrypts shards whose membership/updation/marks changed.
  */
 export const saveEncryptedFilesSharded = async (
     files: EnteFile[],
@@ -248,21 +285,26 @@ export const saveEncryptedFilesSharded = async (
     });
 
     const groups = groupFilesByShard(files, shardCount);
-    let dirty: Set<number>;
-    if (options?.forceAllShards) {
-        dirty = new Set(groups.keys());
+    const marked = pendingDirtyFileIds;
+    const forceAll = Boolean(options?.forceAllShards) || pendingDirtyAll;
+    pendingDirtyFileIds = new Set();
+    pendingDirtyAll = false;
+
+    const dirty = resolveDirtyFileShardIds(
+        files,
+        shardCount,
+        lastPersistedUpdation,
+        marked,
+        forceAll,
+    );
+
+    if (options?.forceAllShards || forceAll) {
         const existing = await loadAllShardRecords();
         for (const record of existing) {
             if (!groups.has(record.shardId)) {
                 dirty.add(record.shardId);
             }
         }
-    } else {
-        dirty = dirtyFileShardIds(
-            files,
-            shardCount,
-            lastPersistedFingerprints,
-        );
     }
 
     if (dirty.size === 0) {
@@ -283,5 +325,5 @@ export const saveEncryptedFilesSharded = async (
         await db.delete("kv", "files");
     }
 
-    lastPersistedFingerprints = snapshotFingerprints(files);
+    lastPersistedUpdation = snapshotUpdation(files);
 };

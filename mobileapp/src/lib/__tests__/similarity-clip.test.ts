@@ -18,6 +18,12 @@ import {
     type Stage1Item,
 } from "@/lib/similarity-stage1-core";
 
+const toEmb = (values: number[]): Float32Array => Float32Array.from(values);
+const embMap = (
+    entries: Array<[number, number[]]>,
+): Map<number, Float32Array> =>
+    new Map(entries.map(([id, v]) => [id, toEmb(v)]));
+
 const unit = (value: number, dim = 4): number[] => {
     const v = new Array(dim).fill(0);
     v[0] = value;
@@ -110,7 +116,7 @@ describe("runStage1ClusteringSync CLIP-first", () => {
 
     it("groups CLIP-near files even when hashes differ", () => {
         const [a, b] = nearPair();
-        const embeddings = new Map<number, number[]>([
+        const embeddings = embMap([
             [1, a],
             [2, b],
             [3, [0, 1]],
@@ -123,7 +129,7 @@ describe("runStage1ClusteringSync CLIP-first", () => {
     });
 
     it("does not group orthogonal embeddings", () => {
-        const embeddings = new Map<number, number[]>([
+        const embeddings = embMap([
             [1, [1, 0]],
             [2, [0, 1]],
         ]);
@@ -144,7 +150,7 @@ describe("clusterFromFileEdges CLIP scores", () => {
         const edges: Stage1FileEdge[] = [
             { leftFileId: 1, rightFileId: 2, distance: 10 },
         ];
-        const embeddings = new Map<number, number[]>([
+        const embeddings = embMap([
             [1, unit(1)],
             [2, unit(1)],
         ]);

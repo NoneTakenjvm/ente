@@ -9,6 +9,7 @@ import {
 } from "@/lib/kit-nearness-margins-job";
 import { fileWithOrganizerTags } from "@/lib/tag-writes";
 
+const toEmb = (values: number[]): Float32Array => Float32Array.from(values);
 const file = (id: number, tags: string[], fileType = FileType.image): EnteFile =>
     fileWithOrganizerTags(
         { id, metadata: { fileType } } as unknown as EnteFile,
@@ -27,7 +28,7 @@ const axis = (d: number): number[] => {
  */
 const buildLibrary = (count: number) => {
     const files: EnteFile[] = [];
-    const embeddings = new Map<number, number[]>();
+    const embeddings = new Map<number, Float32Array>();
     const groups: [string[], number][] = [
         [["a", "b"], 0],
         [["a"], 1],
@@ -38,7 +39,7 @@ const buildLibrary = (count: number) => {
         for (let i = 0; i < count; i += 1) {
             const id = group * 100 + i;
             files.push(file(id, tags));
-            embeddings.set(id, axis(group));
+            embeddings.set(id, toEmb(axis(group)));
         }
     }
     return { files, embeddings };
@@ -109,9 +110,9 @@ describe("buildKitMarginsRanking", () => {
         const untagged = file(901, []);
         const notAllowlisted = file(902, ["z"]);
         const unembedded = file(903, ["a"]);
-        library.embeddings.set(900, axis(0));
-        library.embeddings.set(901, axis(0));
-        library.embeddings.set(902, axis(0));
+        library.embeddings.set(900, toEmb(axis(0)));
+        library.embeddings.set(901, toEmb(axis(0)));
+        library.embeddings.set(902, toEmb(axis(0)));
         const files = [...library.files, video, untagged, notAllowlisted, unembedded];
         const ranking = buildKitMarginsRanking(
             inputFor(library, {

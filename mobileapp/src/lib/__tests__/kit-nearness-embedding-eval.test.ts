@@ -12,6 +12,12 @@ import {
     type KitEmbeddingEvalFold,
 } from "@/lib/kit-nearness-embedding-eval";
 
+const toEmb = (values: number[]): Float32Array => Float32Array.from(values);
+const embMap = (
+    entries: Array<[number, number[]]>,
+): Map<number, Float32Array> =>
+    new Map(entries.map(([id, v]) => [id, toEmb(v)]));
+
 const axis = (dim: number, dims = 512): number[] => {
     const out = new Array(dims).fill(0);
     out[dim] = 1;
@@ -77,7 +83,7 @@ describe("kit-nearness-embedding-eval", () => {
     });
 
     it("scores a coherent kit above chance", () => {
-        const embeddings = new Map<number, number[]>([
+        const embeddings = embMap([
             [1, axis(0)],
             [2, axis(0)],
             [3, axis(0)],
@@ -103,7 +109,7 @@ describe("kit-nearness-embedding-eval", () => {
     });
 
     it("buildKitEmbeddingPrototypes respects useCentroid", () => {
-        const embeddings = new Map<number, number[]>([
+        const embeddings = embMap([
             [1, axis(0)],
             [2, axis(0)],
         ]);

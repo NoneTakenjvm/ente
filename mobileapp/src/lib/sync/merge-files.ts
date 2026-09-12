@@ -30,6 +30,31 @@ export const mergeFileChangesIntoLibrary = (
 };
 
 /**
+ * Merge Favourites collection diffs without stealing the library row's
+ * `collectionID` or deleting the file when unfavourited.
+ *
+ * [Note: Favourite membership vs library collectionID] Favourites are tracked
+ * in {@link applyFavoriteMembershipChanges}; the library stays keyed by file
+ * id for gallery/albums.
+ */
+export const mergeFavoritesCollectionIntoLibrary = (
+    libraryById: Map<number, EnteFile>,
+    changes: CollectionFileChange[],
+): void => {
+    for (const change of changes) {
+        if (change.isDeleted) {
+            continue;
+        }
+        if (!change.file) {
+            continue;
+        }
+        if (!libraryById.has(change.id)) {
+            libraryById.set(change.id, change.file);
+        }
+    }
+};
+
+/**
  * Return true when thumbnail cache should be invalidated for a file update.
  */
 export const didFileContentChange = (

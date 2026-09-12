@@ -453,11 +453,14 @@ export function UploadPanel({
         });
     }, [staging, uploading]);
 
-    const selectMany = useCallback((ids: string[], mode: "add" | "toggle"): void => {
+    const selectMany = useCallback((ids: string[], mode: "add" | "toggle" | "set"): void => {
         if (staging || uploading) {
             return;
         }
         setSelectedIds((current) => {
+            if (mode === "set") {
+                return new Set(ids);
+            }
             const next = new Set(current);
             for (const id of ids) {
                 if (mode === "add") {
@@ -560,6 +563,9 @@ export function UploadPanel({
             selectedIds: activeSelectedIds,
             onToggle: toggleFile,
             onSelectMany: selectMany,
+            onSetSelection: (ids: string[]): void => {
+                selectMany(ids, "set");
+            },
             disabled: staging || uploading,
         }),
         [activeSelectedIds, selectMany, staging, toggleFile, uploading],

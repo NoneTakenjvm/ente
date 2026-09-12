@@ -1,5 +1,5 @@
+import { isTagIncludedInEffectsPresence } from "@/lib/tag-types";
 import {
-    createEmptyTagFilterRoot,
     isTagFilterClause,
     isTagFilterGroup,
     isTagFilterKit,
@@ -24,11 +24,37 @@ export interface KitFilterInput {
     tags: string[];
 }
 
-/** Untagged scope cannot hold tag clauses; include clauses replace the tagged scope. */
+type EffectsPresenceMap = ReadonlyMap<string, boolean> | undefined;
+
+/**
+ * Whether the tag counts toward tagged/untagged. Absent map → all tags do.
+ */
+const tagAffectsPresence = (
+    tag: string,
+    includeInEffectsPresenceByName: EffectsPresenceMap,
+): boolean =>
+    !includeInEffectsPresenceByName ||
+    isTagIncludedInEffectsPresence(tag, includeInEffectsPresenceByName);
+
+/** True when any kit tag counts toward presence. */
+const kitAffectsPresence = (
+    tags: readonly string[],
+    includeInEffectsPresenceByName: EffectsPresenceMap,
+): boolean =>
+    tags.some((tag) => tagAffectsPresence(tag, includeInEffectsPresenceByName));
+
+/**
+ * Presence-counting clauses clear conflicting scopes; presence-off tags keep
+ * tagged/untagged so they can coexist with the presence filter.
+ */
 const tagScopeAfterClauseChange = (
     tagScope: TagScope,
     mode: TagFilterMode | null,
+    affectsPresence: boolean,
 ): TagScope => {
+    if (!affectsPresence) {
+        return tagScope;
+    }
     if (tagScope === "untagged") {
         return "all";
     }
@@ -36,6 +62,67 @@ const tagScopeAfterClauseChange = (
         return "all";
     }
     return tagScope;
+};
+
+/**
+ * Drop presence-counting clauses/kits (and empty groups) so untagged can keep
+ * only effects-presence-off tags.
+ */
+const prunePresenceAffectingNodes = (
+    root: TagFilterGroup,
+    includeInEffectsPresenceByName: EffectsPresenceMap,
+): TagFilterGroup => {
+    const nextChildren: TagFilterNode[] = [];
+    for (const child of root.children) {
+        if (isTagFilterClause(child)) {
+            if (!tagAffectsPresence(child.tag, includeInEffectsPresenceByName)) {
+                nextChildren.push(child);
+            }
+            continue;
+        }
+        if (isTagFilterKit(child)) {
+            if (!kitAffectsPresence(child.tags, includeInEffectsPresenceByName)) {
+                nextChildren.push(child);
+            }
+            continue;
+        }
+        const pruned = prunePresenceAffectingNodes(
+            child,
+            includeInEffectsPresenceByName,
+        );
+        if (pruned.children.length > 0) {
+            nextChildren.push(pruned);
+        }
+    }
+    return { ...root, children: nextChildren };
+};
+
+/** Whether the clause/kit with {@link nodeId} counts toward presence. */
+const nodeAffectsPresence = (
+    root: TagFilterGroup,
+    nodeId: string,
+    includeInEffectsPresenceByName: EffectsPresenceMap,
+): boolean => {
+    for (const child of root.children) {
+        if (isTagFilterClause(child) && child.id === nodeId) {
+            return tagAffectsPresence(child.tag, includeInEffectsPresenceByName);
+        }
+        if (isTagFilterKit(child) && child.id === nodeId) {
+            return kitAffectsPresence(child.tags, includeInEffectsPresenceByName);
+        }
+        if (isTagFilterGroup(child)) {
+            if (
+                nodeAffectsPresence(
+                    child,
+                    nodeId,
+                    includeInEffectsPresenceByName,
+                )
+            ) {
+                return true;
+            }
+        }
+    }
+    return false;
 };
 
 const removeClauseByTagFromRoot = (
@@ -184,10 +271,17 @@ const wrapSiblingsInGroup = (
 export const setTagFilterScope = (
     filter: TagFilterSelection,
     scope: TagScope,
+    includeInEffectsPresenceByName?: EffectsPresenceMap,
 ): TagFilterSelection => ({
     ...filter,
     tagScope: scope,
-    root: scope === "untagged" ? createEmptyTagFilterRoot() : filter.root,
+    root:
+        scope === "untagged" ?
+            prunePresenceAffectingNodes(
+                filter.root,
+                includeInEffectsPresenceByName,
+            ) :
+            filter.root,
 });
 
 export const setTagFilterFavoritesScope = (
@@ -218,12 +312,18 @@ export const setTagFilterModeOnFilter = (
     filter: TagFilterSelection,
     tag: string,
     mode: TagFilterMode | null,
+    includeInEffectsPresenceByName?: EffectsPresenceMap,
 ): TagFilterSelection => {
     const withoutTag = removeClauseByTagFromRoot(filter.root, tag);
+    const nextScope = tagScopeAfterClauseChange(
+        filter.tagScope,
+        mode,
+        tagAffectsPresence(tag, includeInEffectsPresenceByName),
+    );
     if (mode === null) {
         return {
             ...filter,
-            tagScope: tagScopeAfterClauseChange(filter.tagScope, mode),
+            tagScope: nextScope,
             root: withoutTag,
         };
     }
@@ -235,7 +335,7 @@ export const setTagFilterModeOnFilter = (
     };
     return {
         ...filter,
-        tagScope: tagScopeAfterClauseChange(filter.tagScope, mode),
+        tagScope: nextScope,
         root: {
             ...withoutTag,
             children: [...withoutTag.children, clause],
@@ -341,9 +441,18 @@ export const setClauseModeOnFilter = (
     filter: TagFilterSelection,
     clauseId: string,
     mode: TagFilterMode,
+    includeInEffectsPresenceByName?: EffectsPresenceMap,
 ): TagFilterSelection => ({
     ...filter,
-    tagScope: tagScopeAfterClauseChange(filter.tagScope, mode),
+    tagScope: tagScopeAfterClauseChange(
+        filter.tagScope,
+        mode,
+        nodeAffectsPresence(
+            filter.root,
+            clauseId,
+            includeInEffectsPresenceByName,
+        ),
+    ),
     root: updateClauseModeInTree(filter.root, clauseId, mode),
 });
 
@@ -353,6 +462,7 @@ export const setClauseInGroupOnFilter = (
     groupId: string,
     tag: string,
     mode: TagFilterMode | null,
+    includeInEffectsPresenceByName?: EffectsPresenceMap,
 ): TagFilterSelection => {
     const updatedRoot = updateGroupInTree(filter.root, groupId, (group) => {
         if (mode === null) {
@@ -382,7 +492,11 @@ export const setClauseInGroupOnFilter = (
     });
     return {
         ...filter,
-        tagScope: tagScopeAfterClauseChange(filter.tagScope, mode),
+        tagScope: tagScopeAfterClauseChange(
+            filter.tagScope,
+            mode,
+            tagAffectsPresence(tag, includeInEffectsPresenceByName),
+        ),
         root: updatedRoot,
     };
 };
@@ -430,9 +544,14 @@ export const setKitModeOnFilter = (
     filter: TagFilterSelection,
     kit: KitFilterInput,
     mode: TagFilterMode | null,
+    includeInEffectsPresenceByName?: EffectsPresenceMap,
 ): TagFilterSelection => ({
     ...filter,
-    tagScope: tagScopeAfterClauseChange(filter.tagScope, mode),
+    tagScope: tagScopeAfterClauseChange(
+        filter.tagScope,
+        mode,
+        kitAffectsPresence(kit.tags, includeInEffectsPresenceByName),
+    ),
     root: applyKitToGroup(filter.root, kit, mode),
 });
 
@@ -444,12 +563,17 @@ export const setKitInGroupOnFilter = (
     groupId: string,
     kit: KitFilterInput,
     mode: TagFilterMode | null,
+    includeInEffectsPresenceByName?: EffectsPresenceMap,
 ): TagFilterSelection => {
     const updatedRoot = updateGroupInTree(filter.root, groupId, (group) =>
         applyKitToGroup(group, kit, mode));
     return {
         ...filter,
-        tagScope: tagScopeAfterClauseChange(filter.tagScope, mode),
+        tagScope: tagScopeAfterClauseChange(
+            filter.tagScope,
+            mode,
+            kitAffectsPresence(kit.tags, includeInEffectsPresenceByName),
+        ),
         root: updatedRoot,
     };
 };

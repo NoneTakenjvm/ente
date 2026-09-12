@@ -63,6 +63,7 @@ export function AppShell({
 }: AppShellProps): JSX.Element {
     const router = useRouter();
     const pathname = router.pathname;
+    const [pendingHref, setPendingHref] = useState<string | undefined>();
     const uploadPanelOpen = useUploadJobStore((s) => s.panelOpen);
     const uploadStatus = useUploadJobStore((s) => s.status);
     const mountUploadPanel =
@@ -72,6 +73,12 @@ export function AppShell({
     const rotateActive = useSelectionStore((s) => s.rotateActive);
     const hideBottomNav =
         selectionEnabled || stampActive || rotateActive;
+
+    // Optimistic tab: keep pending highlight until pathname catches up.
+    const activeHref =
+        pendingHref !== undefined && pendingHref !== pathname ?
+            pendingHref :
+            pathname;
 
     return (
         // [Note: bottom nav] Do not use position:fixed for the tab bar. On iOS
@@ -133,11 +140,16 @@ export function AppShell({
                 >
                     <div className="grid grid-cols-4 gap-1 px-2 py-1.5">
                         {navItems.map(({ href, label, icon: Icon }) => {
-                            const active = pathname === href;
+                            const active = activeHref === href;
                             return (
                                 <Link
                                     key={href}
                                     href={href}
+                                    onClick={() => {
+                                        if (pathname !== href) {
+                                            setPendingHref(href);
+                                        }
+                                    }}
                                     className={cn(
                                         "flex flex-col items-center gap-0.5 rounded-lg px-1 py-2 text-[0.65rem] font-medium transition-colors",
                                         active ?

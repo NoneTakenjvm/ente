@@ -29,7 +29,7 @@ interface SelectionState {
     rotateBusy: boolean;
     setEnabled: (enabled: boolean) => void;
     toggle: (fileId: number) => void;
-    selectMany: (fileIds: number[], mode: "add" | "toggle") => void;
+    selectMany: (fileIds: number[], mode: "add" | "toggle" | "set") => void;
     selectAll: (fileIds: number[]) => void;
     clear: () => void;
     pruneToVisible: (visibleIds: Set<number>) => void;
@@ -98,8 +98,19 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
         set({ selectedIds: next });
     },
 
-    selectMany: (fileIds: number[], mode: "add" | "toggle"): void => {
+    selectMany: (fileIds: number[], mode: "add" | "toggle" | "set"): void => {
         set((state) => {
+            if (mode === "set") {
+                const unique = [...new Set(fileIds)];
+                const current = new Set(state.selectedIds);
+                if (
+                    unique.length === current.size &&
+                    unique.every((id) => current.has(id))
+                ) {
+                    return state;
+                }
+                return { selectedIds: unique };
+            }
             const next = new Set(state.selectedIds);
             for (const fileId of fileIds) {
                 if (mode === "add") {

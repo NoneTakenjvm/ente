@@ -13,7 +13,6 @@ import {
 } from "@/lib/tag-types";
 import {
     buildTagIndex,
-    createEmptyTagFilterRoot,
     emptyTagFilter,
     isSystemTag,
     isTagFilterActive,
@@ -40,10 +39,14 @@ import {
     setKitInGroupOnFilter,
     setKitModeOnFilter,
     setTagFilterModeOnFilter,
+    setTagFilterScope,
     type KitFilterInput,
 } from "@/lib/tag-filter-mutations";
 
 import type { EnteFile } from "ente-media/file";
+
+/** Which tag filter slice gallery vs album view controls read and write. */
+export type TagFilterTarget = "gallery" | "album";
 
 interface TagState {
     tags: string[];
@@ -54,6 +57,8 @@ interface TagState {
     includeInKitNearnessByName: Map<string, boolean>;
     includeInEffectsPresenceByName: Map<string, boolean>;
     tagFilter: TagFilterSelection;
+    /** Session overlay filter when refining an open album view. */
+    albumViewFilter: TagFilterSelection;
     /** Bumps whenever the tag→file index changes. */
     tagIndexRevision: number;
     /**
@@ -66,28 +71,54 @@ interface TagState {
     hydrateTagTypes: (config: PersistedTagTypeConfig | undefined) => void;
     hydrateRegisteredTags: (names: string[] | undefined) => void;
     rebuildFromFiles: (files: EnteFile[]) => void;
-    setTagScope: (scope: TagScope) => void;
-    setFavoritesScope: (favoritesScope: FavoritesScope) => void;
-    setMediaScope: (mediaScope: MediaScope) => void;
-    setCroppedScope: (croppedScope: CroppedScope) => void;
-    setTagFilterMode: (tag: string, mode: TagFilterMode | null) => void;
-    setClauseMode: (clauseId: string, mode: TagFilterMode) => void;
+    setTagScope: (scope: TagScope, target?: TagFilterTarget) => void;
+    setFavoritesScope: (
+        favoritesScope: FavoritesScope,
+        target?: TagFilterTarget,
+    ) => void;
+    setMediaScope: (mediaScope: MediaScope, target?: TagFilterTarget) => void;
+    setCroppedScope: (croppedScope: CroppedScope, target?: TagFilterTarget) => void;
+    setTagFilterMode: (
+        tag: string,
+        mode: TagFilterMode | null,
+        target?: TagFilterTarget,
+    ) => void;
+    setClauseMode: (
+        clauseId: string,
+        mode: TagFilterMode,
+        target?: TagFilterTarget,
+    ) => void;
     setClauseInGroup: (
         groupId: string,
         tag: string,
         mode: TagFilterMode | null,
+        target?: TagFilterTarget,
     ) => void;
-    setKitMode: (kit: KitFilterInput, mode: TagFilterMode | null) => void;
+    setKitMode: (
+        kit: KitFilterInput,
+        mode: TagFilterMode | null,
+        target?: TagFilterTarget,
+    ) => void;
     setKitInGroup: (
         groupId: string,
         kit: KitFilterInput,
         mode: TagFilterMode | null,
+        target?: TagFilterTarget,
     ) => void;
-    setGroupOp: (groupId: string, op: TagFilterJoin) => void;
-    wrapInGroup: (nodeIds: string[], op: TagFilterJoin) => void;
-    ungroup: (groupId: string) => void;
-    removeNode: (nodeId: string) => void;
-    clearFilters: () => void;
+    setGroupOp: (
+        groupId: string,
+        op: TagFilterJoin,
+        target?: TagFilterTarget,
+    ) => void;
+    wrapInGroup: (
+        nodeIds: string[],
+        op: TagFilterJoin,
+        target?: TagFilterTarget,
+    ) => void;
+    ungroup: (groupId: string, target?: TagFilterTarget) => void;
+    removeNode: (nodeId: string, target?: TagFilterTarget) => void;
+    clearFilters: (target?: TagFilterTarget) => void;
+    clearAlbumViewFilter: () => void;
     ensureTagType: (typeName: string) => void;
     setTagType: (tagName: string, typeName: string) => void;
     setIncludeInKitNearness: (tagName: string, include: boolean) => void;
@@ -120,6 +151,7 @@ const initialTagState: Pick<
     "includeInKitNearnessByName" |
     "includeInEffectsPresenceByName" |
     "tagFilter" |
+    "albumViewFilter" |
     "tagIndexRevision" |
     "lastTagTouchFileIds"
 > = {
@@ -132,9 +164,24 @@ const initialTagState: Pick<
     includeInEffectsPresenceByName:
         initialTypeState.includeInEffectsPresenceByName,
     tagFilter: emptyTagFilter(),
+    albumViewFilter: emptyTagFilter(),
     tagIndexRevision: 0,
     lastTagTouchFileIds: undefined,
 };
+
+const filterForTarget = (
+    state: TagState,
+    target: TagFilterTarget,
+): TagFilterSelection =>
+    target === "gallery" ? state.tagFilter : state.albumViewFilter;
+
+const patchFilterForTarget = (
+    target: TagFilterTarget,
+    filter: TagFilterSelection,
+): Partial<Pick<TagState, "tagFilter" | "albumViewFilter">> =>
+    target === "gallery" ?
+        { tagFilter: filter } :
+        { albumViewFilter: filter };
 
 const indexFromMaps = (
     tags: string[],
@@ -653,112 +700,175 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         persistCurrentIndexNow(merged.tags, merged.fileIdsByTag);
     },
 
-    setTagScope: (scope: TagScope): void => {
-        const { tagFilter } = get();
-        set({
-            tagFilter: {
-                ...tagFilter,
-                tagScope: scope,
-                root: scope === "untagged" ?
-                    createEmptyTagFilterRoot() :
-                    tagFilter.root,
-            },
-        });
+    setTagScope: (scope: TagScope, target: TagFilterTarget = "gallery"): void => {
+        set(
+            patchFilterForTarget(
+                target,
+                setTagFilterScope(
+                    filterForTarget(get(), target),
+                    scope,
+                    get().includeInEffectsPresenceByName,
+                ),
+            ),
+        );
     },
 
-    setFavoritesScope: (favoritesScope: FavoritesScope): void => {
-        const { tagFilter } = get();
-        set({
-            tagFilter: {
+    setFavoritesScope: (
+        favoritesScope: FavoritesScope,
+        target: TagFilterTarget = "gallery",
+    ): void => {
+        const tagFilter = filterForTarget(get(), target);
+        set(
+            patchFilterForTarget(target, {
                 ...tagFilter,
                 favoritesScope,
-            },
-        });
+            }),
+        );
     },
 
-    setMediaScope: (mediaScope: MediaScope): void => {
-        const { tagFilter } = get();
-        set({
-            tagFilter: {
+    setMediaScope: (
+        mediaScope: MediaScope,
+        target: TagFilterTarget = "gallery",
+    ): void => {
+        const tagFilter = filterForTarget(get(), target);
+        set(
+            patchFilterForTarget(target, {
                 ...tagFilter,
                 mediaScope,
-            },
-        });
+            }),
+        );
     },
 
-    setCroppedScope: (croppedScope: CroppedScope): void => {
-        const { tagFilter } = get();
-        set({
-            tagFilter: {
+    setCroppedScope: (
+        croppedScope: CroppedScope,
+        target: TagFilterTarget = "gallery",
+    ): void => {
+        const tagFilter = filterForTarget(get(), target);
+        set(
+            patchFilterForTarget(target, {
                 ...tagFilter,
                 croppedScope,
-            },
-        });
+            }),
+        );
     },
 
-    setTagFilterMode: (tag: string, mode: TagFilterMode | null): void => {
-        set({
-            tagFilter: setTagFilterModeOnFilter(get().tagFilter, tag, mode),
-        });
+    setTagFilterMode: (
+        tag: string,
+        mode: TagFilterMode | null,
+        target: TagFilterTarget = "gallery",
+    ): void => {
+        set(
+            patchFilterForTarget(
+                target,
+                setTagFilterModeOnFilter(
+                    filterForTarget(get(), target),
+                    tag,
+                    mode,
+                    get().includeInEffectsPresenceByName,
+                ),
+            ),
+        );
     },
 
-    setClauseMode: (clauseId: string, mode: TagFilterMode): void => {
-        set({
-            tagFilter: setClauseModeOnFilter(get().tagFilter, clauseId, mode),
-        });
+    setClauseMode: (
+        clauseId: string,
+        mode: TagFilterMode,
+        target: TagFilterTarget = "gallery",
+    ): void => {
+        set(
+            patchFilterForTarget(
+                target,
+                setClauseModeOnFilter(
+                    filterForTarget(get(), target),
+                    clauseId,
+                    mode,
+                    get().includeInEffectsPresenceByName,
+                ),
+            ),
+        );
     },
 
     setClauseInGroup: (
         groupId: string,
         tag: string,
         mode: TagFilterMode | null,
+        target: TagFilterTarget = "gallery",
     ): void => {
-        set({
-            tagFilter: setClauseInGroupOnFilter(
-                get().tagFilter,
-                groupId,
-                tag,
-                mode,
+        set(
+            patchFilterForTarget(
+                target,
+                setClauseInGroupOnFilter(
+                    filterForTarget(get(), target),
+                    groupId,
+                    tag,
+                    mode,
+                    get().includeInEffectsPresenceByName,
+                ),
             ),
-        });
+        );
     },
 
-    setKitMode: (kit: KitFilterInput, mode: TagFilterMode | null): void => {
-        set({
-            tagFilter: setKitModeOnFilter(get().tagFilter, kit, mode),
-        });
+    setKitMode: (
+        kit: KitFilterInput,
+        mode: TagFilterMode | null,
+        target: TagFilterTarget = "gallery",
+    ): void => {
+        set(
+            patchFilterForTarget(
+                target,
+                setKitModeOnFilter(
+                    filterForTarget(get(), target),
+                    kit,
+                    mode,
+                    get().includeInEffectsPresenceByName,
+                ),
+            ),
+        );
     },
 
     setKitInGroup: (
         groupId: string,
         kit: KitFilterInput,
         mode: TagFilterMode | null,
+        target: TagFilterTarget = "gallery",
     ): void => {
-        set({
-            tagFilter: setKitInGroupOnFilter(
-                get().tagFilter,
-                groupId,
-                kit,
-                mode,
+        set(
+            patchFilterForTarget(
+                target,
+                setKitInGroupOnFilter(
+                    filterForTarget(get(), target),
+                    groupId,
+                    kit,
+                    mode,
+                    get().includeInEffectsPresenceByName,
+                ),
             ),
-        });
+        );
     },
 
-    setGroupOp: (groupId: string, op: TagFilterJoin): void => {
-        const { tagFilter } = get();
-        set({
-            tagFilter: {
+    setGroupOp: (
+        groupId: string,
+        op: TagFilterJoin,
+        target: TagFilterTarget = "gallery",
+    ): void => {
+        const tagFilter = filterForTarget(get(), target);
+        set(
+            patchFilterForTarget(target, {
                 ...tagFilter,
                 root: updateGroupOp(tagFilter.root, groupId, op),
-            },
-        });
+            }),
+        );
     },
 
-    wrapInGroup: (nodeIds: string[], op: TagFilterJoin): void => {
+    wrapInGroup: (
+        nodeIds: string[],
+        op: TagFilterJoin,
+        target: TagFilterTarget = "gallery",
+    ): void => {
         if (nodeIds.length < 2) {
             return;
         }
-        const { tagFilter } = get();
+        const tagFilter = filterForTarget(get(), target);
         const parent = findParentGroup(tagFilter.root, nodeIds[0]);
         if (!parent) {
             return;
@@ -770,8 +880,8 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         if (!allSameParent) {
             return;
         }
-        set({
-            tagFilter: {
+        set(
+            patchFilterForTarget(target, {
                 ...tagFilter,
                 root: wrapSiblingsInGroup(
                     tagFilter.root,
@@ -779,38 +889,42 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
                     op,
                     parent.id,
                 ),
-            },
-        });
+            }),
+        );
     },
 
-    ungroup: (groupId: string): void => {
-        const { tagFilter } = get();
+    ungroup: (groupId: string, target: TagFilterTarget = "gallery"): void => {
+        const tagFilter = filterForTarget(get(), target);
         if (tagFilter.root.id === groupId) {
             return;
         }
-        set({
-            tagFilter: {
+        set(
+            patchFilterForTarget(target, {
                 ...tagFilter,
                 root: ungroupNode(tagFilter.root, groupId),
-            },
-        });
+            }),
+        );
     },
 
-    removeNode: (nodeId: string): void => {
-        const { tagFilter } = get();
+    removeNode: (nodeId: string, target: TagFilterTarget = "gallery"): void => {
+        const tagFilter = filterForTarget(get(), target);
         if (tagFilter.root.id === nodeId) {
             return;
         }
-        set({
-            tagFilter: {
+        set(
+            patchFilterForTarget(target, {
                 ...tagFilter,
                 root: removeNodeFromTree(tagFilter.root, nodeId),
-            },
-        });
+            }),
+        );
     },
 
-    clearFilters: (): void => {
-        set({ tagFilter: emptyTagFilter() });
+    clearFilters: (target: TagFilterTarget = "gallery"): void => {
+        set(patchFilterForTarget(target, emptyTagFilter()));
+    },
+
+    clearAlbumViewFilter: (): void => {
+        set({ albumViewFilter: emptyTagFilter() });
     },
 
     ensureTagType: (typeName: string): void => {

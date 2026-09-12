@@ -22,7 +22,7 @@ interface BuildMediaGridSelectionArgs {
     rotateActive?: boolean;
     bumpRotate?: (fileId: number) => void;
     toggleSelection: (fileId: number) => void;
-    selectMany: (fileIds: number[], mode: "add" | "toggle") => void;
+    selectMany: (fileIds: number[], mode: "add" | "toggle" | "set") => void;
     disabled?: boolean;
 }
 
@@ -83,5 +83,8 @@ export function buildMediaGridSelection(
             args.toggleSelection(file.id);
         },
         onSelectMany: args.selectMany,
+        onSetSelection: (fileIds: number[]): void => {
+            args.selectMany(fileIds, "set");
+        },
     };
 }

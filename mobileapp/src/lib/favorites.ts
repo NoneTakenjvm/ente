@@ -1,6 +1,10 @@
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
 import { metadataHash } from "ente-media/file-metadata";
+import {
+    getFavoriteMembershipIds,
+    isFavoriteMembershipReady,
+} from "@/lib/favorite-membership";
 
 export type UnsyncedFavoriteUpdateKey = number | string;
 
@@ -136,8 +140,26 @@ export const applyFavoriteUpdateToIds = (
     return next;
 };
 
+export interface DeriveFavoriteFileIDsOptions {
+    /**
+     * File IDs in the user's Favourites collection on remote. When omitted,
+     * reads the hydrated membership oracle.
+     */
+    membershipFileIds?: Set<number>;
+    /**
+     * When false, also treat `collectionID === favorites` as a hint (pre-sync
+     * bootstrap). Defaults to {@link isFavoriteMembershipReady}.
+     */
+    membershipReady?: boolean;
+}
+
 /**
- * Compute favourite file IDs from synced library state plus optimistic overrides.
+ * Compute favourite file IDs from server membership plus optimistic overlays.
+ *
+ * [Note: Favourite membership vs library collectionID] Baseline membership is
+ * the Favourites collection file-id set, not `file.collectionID` on the
+ * id-deduped library. Shared (non-owned) gallery rows are marked favourite when
+ * their hash/type matches a membership file — same as the official app.
  */
 export const deriveFavoriteFileIDs = (
     userId: number,
@@ -147,6 +169,7 @@ export const deriveFavoriteFileIDs = (
         UnsyncedFavoriteUpdateKey,
         UnsyncedFavoriteUpdate
     > = new Map(),
+    options?: DeriveFavoriteFileIDsOptions,
 ): { favoritesCollectionId: number | null; favoriteFileIds: Set<number> } => {
     const favoritesCollection = findUserFavoritesCollection(
         collections,
@@ -156,19 +179,42 @@ export const deriveFavoriteFileIDs = (
         return { favoritesCollectionId: null, favoriteFileIds: new Set() };
     }
 
-    const favoriteFiles = allFiles.filter(
-        (file) => file.collectionID === favoritesCollection.id,
-    );
-    const favoriteFileIds = new Set(favoriteFiles.map((file) => file.id));
-    const favoriteFileHashAndTypeKeys = new Set(
-        favoriteFiles.flatMap((file) => {
-            const key = hashAndTypeKey(file);
-            return key ? [key] : [];
-        }),
-    );
+    const membershipFileIds =
+        options?.membershipFileIds ?? getFavoriteMembershipIds();
+    const membershipReady =
+        options?.membershipReady ?? isFavoriteMembershipReady();
+
+    const favoriteFileIds = new Set(membershipFileIds);
+
+    // Until the membership oracle has synced once, keep any library rows that
+    // still carry Favorites as collectionID so stars do not all vanish mid-pull.
+    if (!membershipReady) {
+        for (const file of allFiles) {
+            if (file.collectionID === favoritesCollection.id) {
+                favoriteFileIds.add(file.id);
+            }
+        }
+    }
+
+    const favoriteFileHashAndTypeKeys = new Set<string>();
+    const filesById = new Map(allFiles.map((file) => [file.id, file]));
+    for (const membershipId of favoriteFileIds) {
+        const membershipFile = filesById.get(membershipId);
+        if (!membershipFile) {
+            continue;
+        }
+        const key = hashAndTypeKey(membershipFile);
+        if (key) {
+            favoriteFileHashAndTypeKeys.add(key);
+        }
+    }
+    // Membership ids may not be in the deduped library (same id, other album).
+    // Hash keys for those come only when we have a library row; shared matching
+    // still works once the owned favourite copy is present in allFiles under
+    // any collectionID, or when optimistic updates carry hash keys.
 
     for (const file of allFiles) {
-        if (file.collectionID === favoritesCollection.id) {
+        if (file.ownerID === userId) {
             continue;
         }
         const key = hashAndTypeKey(file);
@@ -176,6 +222,9 @@ export const deriveFavoriteFileIDs = (
             favoriteFileIds.add(file.id);
         }
     }
+
+    // Also mark owned library rows whose id is in membership (explicit).
+    // Already covered by favoriteFileIds = Set(membershipFileIds).
 
     for (const update of unsyncedFavoriteUpdates.values()) {
         for (const fileID of fileIdsForFavoriteUpdate(
@@ -209,12 +258,14 @@ export const isFileFavorited = (
         UnsyncedFavoriteUpdateKey,
         UnsyncedFavoriteUpdate
     > = new Map(),
+    options?: DeriveFavoriteFileIDsOptions,
 ): boolean =>
     deriveFavoriteFileIDs(
         userId,
         collections,
         allFiles,
         unsyncedFavoriteUpdates,
+        options,
     ).favoriteFileIds.has(file.id);
 
 export const createUnsyncedFavoriteUpdate = (

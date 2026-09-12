@@ -5,18 +5,24 @@ import {
 } from "@/db/kv";
 import { getSessionCacheKey, hasSessionCacheKey } from "@/lib/cache-key";
 import { isLocalDevToolsEnabled } from "@/lib/dev-flags";
+import { enqueueOrganizerConfigPatch } from "@/lib/organizer-config-save-queue";
 import {
     beginViewOnSession,
+    cloudViewSessionsEqual,
     createEmptySession,
     endViewOnSession,
+    mergeCloudViewSessions,
+    packCloudViewSessions,
     pickResumeSession,
     remapSessionsFileId,
     sortSessionsNewestFirst,
     toPersistedSession,
     VIEW_SESSION_RESUME_MS,
     type ActiveViewSession,
+    type CloudViewSessionsPayload,
     type ViewOpenKind,
     type ViewSession,
+    type ViewSessionTombstone,
 } from "@/lib/view-sessions";
 
 const VIEW_SESSIONS_SAVE_DEBOUNCE_MS = 1500;
@@ -28,9 +34,15 @@ interface OpenViewState {
 
 interface ViewSessionsState {
     sessions: ViewSession[];
+    tombstones: ViewSessionTombstone[];
     activeSession: ActiveViewSession | undefined;
     isHydrated: boolean;
     hydrateFromCache: () => Promise<void>;
+    /**
+     * Merge remote organizer `viewSessions` into local state (LWW) and push
+     * back when local wins on any id.
+     */
+    hydrateFromCloud: (cloud: CloudViewSessionsPayload | undefined) => void;
     ensureActiveSession: (now?: number) => void;
     beginView: (fileId: number, openedAt?: number) => void;
     endView: (fileId: number, closedAt?: number) => void;
@@ -44,32 +56,54 @@ interface ViewSessionsState {
 let openView: OpenViewState | undefined;
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let persistChain: Promise<void> = Promise.resolve();
-let pendingSessions: ViewSession[] | undefined;
+let pendingLocal: CloudViewSessionsPayload | undefined;
 
-const enqueuePersist = (sessions: ViewSession[]): Promise<void> => {
+const enqueueLocalPersist = (
+    payload: CloudViewSessionsPayload,
+): Promise<void> => {
     if (!hasSessionCacheKey()) {
         return Promise.resolve();
     }
     persistChain = persistChain
         .catch(() => undefined)
         .then(() =>
-            saveEncryptedViewSessions({ sessions }, getSessionCacheKey()));
+            saveEncryptedViewSessions(
+                {
+                    sessions: payload.sessions,
+                    tombstones: payload.tombstones,
+                },
+                getSessionCacheKey(),
+            ));
     return persistChain;
 };
 
-const schedulePersist = (sessions: ViewSession[]): void => {
-    pendingSessions = sessions;
+const enqueueCloudPersist = (payload: CloudViewSessionsPayload): void => {
+    enqueueOrganizerConfigPatch({
+        viewSessions: packCloudViewSessions(
+            payload.sessions,
+            payload.tombstones ?? [],
+        ),
+    });
+};
+
+const schedulePersist = (
+    sessions: ViewSession[],
+    tombstones: ViewSessionTombstone[],
+): void => {
+    const payload = packCloudViewSessions(sessions, tombstones);
+    pendingLocal = payload;
     if (saveTimer !== undefined) {
         clearTimeout(saveTimer);
     }
     saveTimer = setTimeout(() => {
         saveTimer = undefined;
-        const pending = pendingSessions;
-        pendingSessions = undefined;
+        const pending = pendingLocal;
+        pendingLocal = undefined;
         if (!pending) {
             return;
         }
-        void enqueuePersist(pending);
+        void enqueueLocalPersist(pending);
+        enqueueCloudPersist(pending);
     }, VIEW_SESSIONS_SAVE_DEBOUNCE_MS);
 };
 
@@ -78,12 +112,13 @@ const flushPersist = (): Promise<void> => {
         clearTimeout(saveTimer);
         saveTimer = undefined;
     }
-    const pending = pendingSessions;
-    pendingSessions = undefined;
+    const pending = pendingLocal;
+    pendingLocal = undefined;
     if (!pending) {
         return persistChain;
     }
-    return enqueuePersist(pending);
+    enqueueCloudPersist(pending);
+    return enqueueLocalPersist(pending);
 };
 
 const upsertActiveIntoList = (
@@ -108,6 +143,7 @@ const createViewSessionsStore: StateCreator<ViewSessionsState> = (
     get,
 ) => ({
     sessions: [],
+    tombstones: [],
     activeSession: undefined,
     isHydrated: false,
 
@@ -116,13 +152,65 @@ const createViewSessionsStore: StateCreator<ViewSessionsState> = (
             const cached = await loadEncryptedViewSessions(
                 getSessionCacheKey(),
             );
-            const sessions = sortSessionsNewestFirst(cached?.sessions ?? []);
-            set({ sessions, isHydrated: true });
+            const packed = packCloudViewSessions(
+                cached?.sessions ?? [],
+                cached?.tombstones ?? [],
+            );
+            set({
+                sessions: packed.sessions,
+                tombstones: packed.tombstones ?? [],
+                isHydrated: true,
+            });
             get().ensureActiveSession(Date.now());
         } catch {
-            set({ sessions: [], isHydrated: true });
+            set({ sessions: [], tombstones: [], isHydrated: true });
             get().ensureActiveSession(Date.now());
         }
+    },
+
+    hydrateFromCloud: (cloud: CloudViewSessionsPayload | undefined): void => {
+        const { sessions, tombstones, activeSession, isHydrated } = get();
+        const local = packCloudViewSessions(sessions, tombstones);
+        const merged = mergeCloudViewSessions(local, cloud);
+        const cloudNormalized = cloud ?
+            packCloudViewSessions(cloud.sessions, cloud.tombstones ?? []) :
+            { sessions: [], tombstones: [] as ViewSessionTombstone[] };
+
+        if (cloudViewSessionsEqual(local, merged)) {
+            if (
+                isHydrated &&
+                !cloudViewSessionsEqual(merged, cloudNormalized) &&
+                (merged.sessions.length > 0 ||
+                    (merged.tombstones?.length ?? 0) > 0)
+            ) {
+                enqueueCloudPersist(merged);
+            }
+            return;
+        }
+
+        let nextActive = activeSession;
+        if (!openView && activeSession?.persisted) {
+            const fromMerged = merged.sessions.find(
+                (session) => session.id === activeSession.id,
+            );
+            if (!fromMerged) {
+                nextActive = createEmptySession(Date.now());
+            } else if (fromMerged.endTime >= activeSession.endTime) {
+                nextActive = { ...fromMerged, persisted: true };
+            }
+        }
+
+        set({
+            sessions: merged.sessions,
+            tombstones: merged.tombstones ?? [],
+            activeSession: nextActive,
+            isHydrated: true,
+        });
+        void enqueueLocalPersist(merged);
+        if (!cloudViewSessionsEqual(merged, cloudNormalized)) {
+            enqueueCloudPersist(merged);
+        }
+        get().ensureActiveSession(Date.now());
     },
 
     ensureActiveSession: (now = Date.now()): void => {
@@ -173,7 +261,7 @@ const createViewSessionsStore: StateCreator<ViewSessionsState> = (
         const sessions = upsertActiveIntoList(get().sessions, result.session);
         set({ activeSession: result.session, sessions });
         if (result.session.persisted) {
-            schedulePersist(sessions);
+            schedulePersist(sessions, get().tombstones);
         }
     },
 
@@ -193,12 +281,12 @@ const createViewSessionsStore: StateCreator<ViewSessionsState> = (
         const sessions = upsertActiveIntoList(get().sessions, next);
         set({ activeSession: next, sessions });
         if (next.persisted) {
-            schedulePersist(sessions);
+            schedulePersist(sessions, get().tombstones);
         }
     },
 
     remapFileId: (fromFileId: number, toFileId: number): void => {
-        const { sessions, activeSession } = get();
+        const { sessions, activeSession, tombstones } = get();
         const nextSessions = remapSessionsFileId(
             sessions,
             fromFileId,
@@ -222,48 +310,57 @@ const createViewSessionsStore: StateCreator<ViewSessionsState> = (
             openView = { ...openView, fileId: toFileId };
         }
         set({ sessions: nextSessions, activeSession: nextActive });
-        schedulePersist(nextSessions);
+        schedulePersist(nextSessions, tombstones);
     },
 
     deleteSession: (sessionId: string): void => {
-        const { sessions, activeSession } = get();
+        const { sessions, activeSession, tombstones } = get();
         const nextSessions = sessions.filter(
             (session) => session.id !== sessionId,
         );
+        const deletedAt = Date.now();
+        const nextTombstones = [
+            ...tombstones.filter((entry) => entry.id !== sessionId),
+            { id: sessionId, deletedAt },
+        ];
         const deletedActive = activeSession?.id === sessionId;
         if (deletedActive) {
             openView = undefined;
         }
         set({
             sessions: nextSessions,
+            tombstones: nextTombstones,
             activeSession: deletedActive ?
                 createEmptySession(Date.now()) :
                 activeSession,
         });
-        schedulePersist(nextSessions);
+        schedulePersist(nextSessions, nextTombstones);
     },
 
     replaceSessionsForTest: (sessions: ViewSession[]): void => {
-        const sorted = sortSessionsNewestFirst(sessions);
+        const packed = packCloudViewSessions(sessions, []);
         set({
-            sessions: sorted,
+            sessions: packed.sessions,
+            tombstones: [],
             activeSession: undefined,
         });
         openView = undefined;
-        void enqueuePersist(sorted);
+        void enqueueLocalPersist(packed);
+        enqueueCloudPersist(packed);
     },
 
     getSessionsForTest: (): ViewSession[] => get().sessions,
 
     reset: (): void => {
         openView = undefined;
-        pendingSessions = undefined;
+        pendingLocal = undefined;
         if (saveTimer !== undefined) {
             clearTimeout(saveTimer);
             saveTimer = undefined;
         }
         set({
             sessions: [],
+            tombstones: [],
             activeSession: undefined,
             isHydrated: false,
         });

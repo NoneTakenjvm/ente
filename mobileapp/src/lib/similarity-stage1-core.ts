@@ -63,7 +63,7 @@ export type Stage1FileEdge = {
 };
 
 /** Optional CLIP vectors keyed by Ente file id (L2-normalized). */
-export type Stage1EmbeddingMap = ReadonlyMap<number, readonly number[]>;
+export type Stage1EmbeddingMap = ReadonlyMap<number, ArrayLike<number>>;
 
 export type Stage1ClipOptions = {
     embeddings: Stage1EmbeddingMap;
@@ -403,7 +403,7 @@ const runClipNearestClusteringCore = (
     const numericItems = toNumericItems(items);
     const embedded: Array<{
         itemIndex: number;
-        vector: readonly number[];
+        vector: ArrayLike<number>;
     }> = [];
     for (let i = 0; i < numericItems.length; i++) {
         const vector = embeddings.get(numericItems[i]!.fileId);
@@ -459,7 +459,7 @@ const runClipNearestClusteringAsync = async (
     const numericItems = toNumericItems(items);
     const embedded: Array<{
         itemIndex: number;
-        vector: readonly number[];
+        vector: ArrayLike<number>;
     }> = [];
     for (let i = 0; i < numericItems.length; i++) {
         const vector = embeddings.get(numericItems[i]!.fileId);

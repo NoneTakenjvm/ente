@@ -6,14 +6,43 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-09-11 |
-| **Last agent / session** | Pre-ship check (`0.3.159` shard dirty-detect fix) |
+| **Last updated** | 2026-09-12 |
+| **Last agent / session** | Stamp no longer instant-resorts nearness/relative (`0.3.171`) |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable |
-| **Next recommended action** | Phone QA Manage `0.3.159` — shards + CLIP sync + tools chrome from prior batch. |
+| **Next recommended action** | Phone QA Manage `0.3.171`: stamp under kit likeness / relative — order holds until Reapply / New start. |
 
 **This session shipped:**
-1. **`0.3.159`** — library shard dirty detection uses content fingerprint (tags/visibility without `updationTime` bump were skipped). Prior: `0.3.158` fileShards; `0.3.157` CLIP mldata; `0.3.156` durable flush/tools.
+1. **`0.3.171` stamp vs expensive sorts** — kit nearness / relative freeze no longer rebuilds when stamp patches `libraryFiles`; only Reapply / New start (and mode/tip/embedding hydrate) rebuilds order. Filter membership still patches in place.
+2. Prior: **`0.3.170` cache memory** — CLIP `Float32Array` + IDB LRU touch coalesce.
+
+**Previous session shipped:**
+1. **`0.3.169`** — marquee edge / programmatic `setScrollTop` calls `noteGalleryScrollActivity()` so thumbnail cache throttles like a real fling (amplifier called out by memory investigation).
+2. **`0.3.168` memory** — thumbnail / file-ciphertext IDB eviction no longer materializes every ciphertext via `getAll()` (cursor + LRU meta only). Dev-login stress: 2500 synthetic thumbs, heap stayed ~441MB / 12% limit.
+3. **`0.3.168` Media tab** — optimistic bottom-nav highlight; gallery shell paints first with “Preparing media…” (+ count); heavy pipeline deferred. Fixed albums list passing a fresh `[]` into the display pipeline (infinite update loop on Media nav).
+4. **Favourites audit** — membership oracle + `mergeFavoritesCollectionIntoLibrary` + tests still coherent; logout clears membership; durable flush includes membership persist.
+
+**Previous session shipped:**
+1. **`0.3.167`** — favourites reliability: durable encrypted membership set (server Favourites collection file IDs) as oracle; pull applies Favourites diffs without stealing `collectionID` / deleting library rows; patch membership after favourite API success; first-run full Favourites re-pull. UI unchanged.
+
+**Previous session shipped:**
+1. **`0.3.166`** — select marquee retract deselects: keeps pre-drag baseline and live-syncs to baseline ∪ current box (`onSetSelection` / `selectMany(..., "set")`). Stamp stays add-only.
+
+**Previous session shipped:**
+1. **`0.3.165`** — organizer-config: refetch-before-write (museum never 409s collection magic) + optional 409 retry; Recents cloud via `_organizer_app_v1.viewSessions` (cap 50 / 100 views, LWW + tombstones); parse preserves consecutive `endTime`; save-queue no tight-loop, awaitable flush before hydrate.
+
+**Previous session shipped:**
+1. **`0.3.164`** — iOS-style select drag: any-direction marquee, content-space hit testing (fixes fit false positives), live selection while dragging, edge auto-scroll grows selection. Shared `marquee-selection` + `useMarqueeSelection` in ThumbnailGrid / LocalUploadGrid.
+
+**Previous session:**
+1. **Review only (no code)** — image sharding, CLIP `mldata` sync, organizer “session” config: not fully production-hardened. View-sessions still local.
+
+**Previous session shipped:**
+1. **`0.3.163`** — tags with Effects presence off stay in the query when changing Tag presence (untagged only drops presence-counting clauses); adding those tags no longer clears tagged/untagged scope.
+
+**Previous session shipped:**
+1. **`0.3.162`** — remove full-library JSON.stringify dirty scan on tag save; explicit dirty file-id marks + cheap updationTime. (0.3.159 fingerprint was the freeze.)
+2. Prior IDE-only Java LS settings in `.vscode/settings.json`.
 
 **Previous session shipped:**
 1. **`0.3.156` durability + tools** — durable flush, 401→logout, favourite local patch, IO hard-pause, tools chrome.

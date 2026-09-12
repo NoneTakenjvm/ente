@@ -55,7 +55,36 @@ export const KIT_EMBEDDING_MODEL_ID = "Xenova/mobileclip_s2";
 
 export const KIT_EMBEDDING_DIMS = 512;
 
+/**
+ * In-RAM CLIP vector. Packed floats use ~4 bytes/dim instead of JS number[]
+ * (~8+ bytes/element plus array overhead) across the full index.
+ */
+export type EmbeddingVector = Float32Array;
+
+export type EmbeddingMap = Map<number, EmbeddingVector>;
+export type ReadonlyEmbeddingMap = ReadonlyMap<number, EmbeddingVector>;
+
 export type KitEmbeddingDevice = ClipEmbeddingDevice;
+
+/**
+ * Ensure a dims-checked Float32Array (returns the same instance when already packed).
+ */
+export const packEmbeddingVector = (
+    data: ArrayLike<number>,
+): EmbeddingVector | undefined => {
+    if (data.length !== KIT_EMBEDDING_DIMS) {
+        return undefined;
+    }
+    if (data instanceof Float32Array) {
+        return data;
+    }
+    return Float32Array.from(data);
+};
+
+/** JSON / mldata wire form — number[] only. */
+export const embeddingToNumberArray = (
+    vector: ArrayLike<number>,
+): number[] => (Array.isArray(vector) ? vector : Array.from(vector));
 
 const thumbnailPrefetchConcurrency = 20;
 /** Flush dirty vectors once this many accumulate. */
@@ -312,21 +341,24 @@ const embedBatchInWorker = (
         worker.postMessage(message, transferables);
     });
 
-/** L2-normalize; returns undefined when empty / non-finite. */
+/** L2-normalize into a packed Float32Array; undefined when empty / non-finite. */
 export const l2NormalizeEmbedding = (
-    data: number[] | Float32Array,
-): number[] | undefined => {
+    data: ArrayLike<number>,
+): EmbeddingVector | undefined => {
     let norm = 0;
-    for (const value of data) {
+    // Indexed: ArrayLike is not necessarily Iterable.
+    // eslint-disable-next-line @typescript-eslint/prefer-for-of -- ArrayLike
+    for (let i = 0; i < data.length; i += 1) {
+        const value = data[i]!;
         norm += value * value;
     }
     norm = Math.sqrt(norm);
     if (!Number.isFinite(norm) || norm <= 0) {
         return undefined;
     }
-    const out: number[] = [];
-    for (const value of data) {
-        out.push(Math.round((value / norm) * 1e5) / 1e5);
+    const out = new Float32Array(data.length);
+    for (let i = 0; i < data.length; i += 1) {
+        out[i] = Math.round((data[i]! / norm) * 1e5) / 1e5;
     }
     return out;
 };
@@ -340,17 +372,16 @@ const emptyMeta = (): PersistedEmbeddingMeta => ({
 
 /**
  * Load the chunked embedding index (v2). Legacy v1 monolith is ignored.
+ * Vectors are packed as {@link Float32Array} in RAM.
  */
-export const hydrateEmbeddingIndex = async (): Promise<
-    Map<number, number[]>
-> => {
+export const hydrateEmbeddingIndex = async (): Promise<EmbeddingMap> => {
     const cacheKey = getSessionCacheKey();
     const meta = await loadEmbeddingMeta(cacheKey);
     if (meta?.modelId !== KIT_EMBEDDING_MODEL_ID) {
         return new Map();
     }
     const map = await loadAllEmbeddingChunks(meta, cacheKey);
-    const normalized = new Map<number, number[]>();
+    const normalized: EmbeddingMap = new Map();
     for (const [id, vector] of map) {
         if (vector.length !== KIT_EMBEDDING_DIMS) {
             continue;
@@ -369,9 +400,9 @@ export const hydrateEmbeddingIndex = async (): Promise<
  * Returns the same map instance when nothing was removed.
  */
 export const stripVideoEmbeddings = (
-    entries: ReadonlyMap<number, number[]>,
+    entries: ReadonlyEmbeddingMap,
     files: readonly EnteFile[],
-): Map<number, number[]> => {
+): EmbeddingMap => {
     let removed = false;
     for (const file of files) {
         if (isEnteVideoFile(file) && entries.has(file.id)) {
@@ -396,7 +427,7 @@ export const stripVideoEmbeddings = (
  * blocking the embed loop. Each flush is O(dirty), not O(full library).
  */
 class EmbeddingWriteQueue {
-    private dirty = new Map<number, number[]>();
+    private dirty: EmbeddingMap = new Map();
     private meta: PersistedEmbeddingMeta;
     private readonly cacheKey: string;
     private flushChain = Promise.resolve();
@@ -407,7 +438,7 @@ class EmbeddingWriteQueue {
         this.cacheKey = cacheKey;
     }
 
-    enqueue(fileId: number, vector: number[]): void {
+    enqueue(fileId: number, vector: EmbeddingVector): void {
         this.dirty.set(fileId, vector);
         if (this.dirty.size >= writeChunkSize) {
             this.scheduleFlush();
@@ -490,7 +521,7 @@ export type KitEmbeddingProgress = {
 export type RunKitEmbeddingJobOptions = {
     files: readonly EnteFile[];
     userId: number;
-    existing?: Map<number, number[]>;
+    existing?: EmbeddingMap;
     /**
      * When set, only these files are candidates (still must be owned images).
      * Default: every owned image in {@link files}.
@@ -500,7 +531,7 @@ export type RunKitEmbeddingJobOptions = {
     /**
      * Called after chunk flushes / job end so UI can refresh rankings.
      */
-    onBatchPersisted?: (entries: Map<number, number[]>) => void;
+    onBatchPersisted?: (entries: EmbeddingMap) => void;
     /** When true, the job waits (like phash scan pause) instead of aborting. */
     shouldPause?: () => boolean;
     signal?: AbortSignal;
@@ -552,7 +583,7 @@ const runWithConcurrency = async <T>(
  */
 export const runKitEmbeddingJob = async (
     options: RunKitEmbeddingJobOptions,
-): Promise<Map<number, number[]>> => {
+): Promise<EmbeddingMap> => {
     const cacheKey = getSessionCacheKey();
     // Always copy — the job mutates the map; don't alias the zustand store.
     const entries = new Map(
@@ -737,9 +768,12 @@ export const runKitEmbeddingJob = async (
         results: Array<{ fileId: number; vector?: number[] }>,
     ): void => {
         for (const result of results) {
-            if (result.vector?.length === KIT_EMBEDDING_DIMS) {
-                entries.set(result.fileId, result.vector);
-                writeQueue.enqueue(result.fileId, result.vector);
+            const packed = result.vector ?
+                packEmbeddingVector(result.vector) :
+                undefined;
+            if (packed) {
+                entries.set(result.fileId, packed);
+                writeQueue.enqueue(result.fileId, packed);
             }
             completed += 1;
         }

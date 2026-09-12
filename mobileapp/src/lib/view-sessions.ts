@@ -3,6 +3,10 @@
  *
  * Sessions track full-screen PhotoViewer dwells (>1s). Persistence and the
  * active-session lifecycle live in {@link useViewSessionsStore}.
+ *
+ * [Note: View sessions cloud] Cross-device copy lives in organizer
+ * `_organizer_app_v1.viewSessions` (cap 50, LWW per id via endTime, tombstones
+ * for deletes). Local encrypted IDB remains the fast cache.
  */
 
 /** Resume the latest session when activity returns within this window. */
@@ -10,6 +14,15 @@ export const VIEW_SESSION_RESUME_MS = 60 * 60 * 1000;
 
 /** Full-view dwell required before a view counts. */
 export const VIEW_SESSION_QUALIFY_MS = 1000;
+
+/** Max sessions kept in organizer config / merged lists. */
+export const VIEW_SESSIONS_CLOUD_CAP = 50;
+
+/** Bound magic-metadata size — keep the newest views per session. */
+export const VIEW_SESSION_CLOUD_MAX_VIEWS = 100;
+
+/** Cap deleted-session tombstones retained in organizer config. */
+export const VIEW_SESSION_TOMBSTONE_CAP = 100;
 
 export interface ViewRecord {
     fileId: number;
@@ -27,6 +40,18 @@ export interface ViewSession {
     totalViews: number;
     uniqueFileIds: number[];
     lastViewedFileId: number;
+}
+
+/** Tombstone so a delete wins over a stale remote session copy. */
+export interface ViewSessionTombstone {
+    id: string;
+    deletedAt: number;
+}
+
+/** Payload stored under organizer `_organizer_app_v1.viewSessions`. */
+export interface CloudViewSessionsPayload {
+    sessions: ViewSession[];
+    tombstones?: ViewSessionTombstone[];
 }
 
 export interface ActiveViewSession extends ViewSession {
@@ -284,4 +309,248 @@ const newSessionId = (): string => {
 export const toPersistedSession = (session: ActiveViewSession): ViewSession => {
     const { persisted: _persisted, ...rest } = session;
     return rest;
+};
+
+const isFiniteNumber = (value: unknown): value is number =>
+    typeof value === "number" && Number.isFinite(value);
+
+/**
+ * Prefer the session with the newer endTime (LWW); ties break on view count.
+ */
+export const preferViewSession = (
+    a: ViewSession,
+    b: ViewSession,
+): ViewSession => {
+    if (a.endTime !== b.endTime) {
+        return a.endTime >= b.endTime ? a : b;
+    }
+    if (a.totalViews !== b.totalViews) {
+        return a.totalViews >= b.totalViews ? a : b;
+    }
+    return a.startedAt >= b.startedAt ? a : b;
+};
+
+/**
+ * Drop oldest views when over the cloud cap and recompute aggregates.
+ * Preserves a consecutive-view {@link ViewSession.endTime} bump that is not
+ * reflected in the last view's closedAt.
+ */
+export const trimSessionViewsForCloud = (
+    session: ViewSession,
+    maxViews: number = VIEW_SESSION_CLOUD_MAX_VIEWS,
+): ViewSession => {
+    if (session.views.length <= maxViews) {
+        return session;
+    }
+    const views = session.views.slice(session.views.length - maxViews);
+    const next = recomputeSessionAggregates({ ...session, views });
+    return {
+        ...next,
+        endTime: Math.max(session.endTime, next.endTime),
+    };
+};
+
+/**
+ * Newest-first list capped to {@link VIEW_SESSIONS_CLOUD_CAP}.
+ */
+export const capViewSessions = (
+    sessions: readonly ViewSession[],
+    cap: number = VIEW_SESSIONS_CLOUD_CAP,
+): ViewSession[] => sortSessionsNewestFirst([...sessions]).slice(0, cap);
+
+/**
+ * Keep the newest tombstones only.
+ */
+export const capViewSessionTombstones = (
+    tombstones: readonly ViewSessionTombstone[],
+    cap: number = VIEW_SESSION_TOMBSTONE_CAP,
+): ViewSessionTombstone[] =>
+    [...tombstones]
+        .sort((a, b) => b.deletedAt - a.deletedAt)
+        .slice(0, cap);
+
+/**
+ * LWW-merge two cloud payloads (sessions by id via endTime; tombstones by id).
+ */
+export const mergeCloudViewSessions = (
+    local: CloudViewSessionsPayload | undefined,
+    remote: CloudViewSessionsPayload | undefined,
+): CloudViewSessionsPayload => {
+    const tombstoneMap = new Map<string, number>();
+    for (const list of [local?.tombstones, remote?.tombstones]) {
+        for (const entry of list ?? []) {
+            const prev = tombstoneMap.get(entry.id);
+            if (prev === undefined || entry.deletedAt > prev) {
+                tombstoneMap.set(entry.id, entry.deletedAt);
+            }
+        }
+    }
+
+    const sessionMap = new Map<string, ViewSession>();
+    for (const list of [local?.sessions, remote?.sessions]) {
+        for (const session of list ?? []) {
+            const existing = sessionMap.get(session.id);
+            sessionMap.set(
+                session.id,
+                existing ? preferViewSession(existing, session) : session,
+            );
+        }
+    }
+
+    for (const [id, deletedAt] of tombstoneMap) {
+        const session = sessionMap.get(id);
+        if (!session) {
+            continue;
+        }
+        if (deletedAt >= session.endTime) {
+            sessionMap.delete(id);
+        } else {
+            tombstoneMap.delete(id);
+        }
+    }
+
+    return {
+        sessions: capViewSessions(
+            [...sessionMap.values()].map((session) =>
+                trimSessionViewsForCloud(session)),
+        ),
+        tombstones: capViewSessionTombstones(
+            [...tombstoneMap.entries()].map(([id, deletedAt]) => ({
+                id,
+                deletedAt,
+            })),
+        ),
+    };
+};
+
+/**
+ * Normalize unknown organizer-config JSON into a cloud payload.
+ */
+export const parseCloudViewSessions = (
+    raw: unknown,
+): CloudViewSessionsPayload | undefined => {
+    if (raw === undefined || raw === null) {
+        return undefined;
+    }
+    if (typeof raw !== "object") {
+        return undefined;
+    }
+    const record = raw as Record<string, unknown>;
+    const sessionsRaw = record.sessions;
+    if (!Array.isArray(sessionsRaw)) {
+        return undefined;
+    }
+    const sessions: ViewSession[] = [];
+    for (const entry of sessionsRaw) {
+        if (!entry || typeof entry !== "object") {
+            continue;
+        }
+        const s = entry as Record<string, unknown>;
+        if (typeof s.id !== "string" || s.id.length === 0) {
+            continue;
+        }
+        if (!isFiniteNumber(s.startedAt) || !isFiniteNumber(s.endTime)) {
+            continue;
+        }
+        const viewsRaw = Array.isArray(s.views) ? s.views : [];
+        const views: ViewRecord[] = [];
+        for (const view of viewsRaw) {
+            if (!view || typeof view !== "object") {
+                continue;
+            }
+            const v = view as Record<string, unknown>;
+            if (
+                !isFiniteNumber(v.fileId) ||
+                !isFiniteNumber(v.openedAt) ||
+                !isFiniteNumber(v.closedAt)
+            ) {
+                continue;
+            }
+            views.push({
+                fileId: v.fileId,
+                openedAt: v.openedAt,
+                closedAt: v.closedAt,
+            });
+        }
+        const recomputed = recomputeSessionAggregates({
+            id: s.id,
+            startedAt: s.startedAt,
+            endTime: s.endTime,
+            views,
+            totalViewTimeMs: 0,
+            totalViews: 0,
+            uniqueFileIds: [],
+            lastViewedFileId: 0,
+        });
+        // Consecutive re-views bump endTime without changing closedAt.
+        sessions.push({
+            ...recomputed,
+            endTime: Math.max(s.endTime, recomputed.endTime),
+        });
+    }
+
+    const tombstones: ViewSessionTombstone[] = [];
+    if (Array.isArray(record.tombstones)) {
+        for (const entry of record.tombstones) {
+            if (!entry || typeof entry !== "object") {
+                continue;
+            }
+            const t = entry as Record<string, unknown>;
+            if (typeof t.id !== "string" || !isFiniteNumber(t.deletedAt)) {
+                continue;
+            }
+            tombstones.push({ id: t.id, deletedAt: t.deletedAt });
+        }
+    }
+
+    return mergeCloudViewSessions({ sessions, tombstones }, undefined);
+};
+
+/**
+ * Pack local state for an organizer-config patch.
+ */
+export const packCloudViewSessions = (
+    sessions: readonly ViewSession[],
+    tombstones: readonly ViewSessionTombstone[] = [],
+): CloudViewSessionsPayload =>
+    mergeCloudViewSessions({ sessions: [...sessions], tombstones: [...tombstones] }, undefined);
+
+/**
+ * True when two cloud payloads match for sync short-circuiting.
+ */
+export const cloudViewSessionsEqual = (
+    a: CloudViewSessionsPayload | undefined,
+    b: CloudViewSessionsPayload | undefined,
+): boolean => {
+    const left = mergeCloudViewSessions(a, undefined);
+    const right = mergeCloudViewSessions(b, undefined);
+    if (left.sessions.length !== right.sessions.length) {
+        return false;
+    }
+    if ((left.tombstones?.length ?? 0) !== (right.tombstones?.length ?? 0)) {
+        return false;
+    }
+    for (let i = 0; i < left.sessions.length; i += 1) {
+        const ls = left.sessions[i]!;
+        const rs = right.sessions[i]!;
+        if (
+            ls.id !== rs.id ||
+            ls.endTime !== rs.endTime ||
+            ls.totalViews !== rs.totalViews ||
+            ls.views.length !== rs.views.length
+        ) {
+            return false;
+        }
+    }
+    const leftTombs = left.tombstones ?? [];
+    const rightTombs = right.tombstones ?? [];
+    for (let i = 0; i < leftTombs.length; i += 1) {
+        if (
+            leftTombs[i]!.id !== rightTombs[i]!.id ||
+            leftTombs[i]!.deletedAt !== rightTombs[i]!.deletedAt
+        ) {
+            return false;
+        }
+    }
+    return true;
 };

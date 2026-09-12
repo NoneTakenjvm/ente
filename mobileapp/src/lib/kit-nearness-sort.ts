@@ -10,7 +10,7 @@
  * Files without an embedding sort last.
  */
 import type { PhashEntry } from "@/lib/crop-match";
-import { KIT_EMBEDDING_DIMS } from "@/lib/kit-embedding";
+import { KIT_EMBEDDING_DIMS, type ReadonlyEmbeddingMap } from "@/lib/kit-embedding";
 import {
     hammingDistancePacked,
     parseDHashHex,
@@ -668,7 +668,7 @@ export const MAX_KIT_EMBEDDING_MEDOIDS = 3;
  */
 export const KIT_EMBEDDING_MEDOID_MIN_SEPARATION = 0.08;
 
-const embeddingDot = (a: readonly number[], b: readonly number[]): number => {
+const embeddingDot = (a: ArrayLike<number>, b: ArrayLike<number>): number => {
     let sum = 0;
     const n = Math.min(a.length, b.length);
     for (let i = 0; i < n; i++) {
@@ -679,8 +679,8 @@ const embeddingDot = (a: readonly number[], b: readonly number[]): number => {
 
 /** Cosine distance between two L2-normalized vectors (0 = identical). */
 export const embeddingCosineDistanceVectors = (
-    left: readonly number[] | undefined,
-    right: readonly number[] | undefined,
+    left: ArrayLike<number> | undefined,
+    right: ArrayLike<number> | undefined,
 ): number => {
     if (!left?.length || !right?.length || left.length !== right.length) {
         return Number.POSITIVE_INFINITY;
@@ -690,7 +690,7 @@ export const embeddingCosineDistanceVectors = (
 
 export type KitEmbeddingMedoid = {
     fileId: number;
-    vector: number[];
+    vector: Float32Array;
 };
 
 /**
@@ -725,7 +725,7 @@ const kitEmbeddingLocalDensity = (
  */
 export const pickKitEmbeddingMedoids = (
     seedFileIds: readonly number[],
-    embeddings: ReadonlyMap<number, number[]>,
+    embeddings: ReadonlyEmbeddingMap,
     options?: {
         maxMedoids?: number;
         maxSeeds?: number;
@@ -831,10 +831,10 @@ export const pickKitEmbeddingMedoids = (
  */
 export const buildKitEmbeddingCentroid = (
     seedIds: readonly number[],
-    embeddings: ReadonlyMap<number, number[]>,
+    embeddings: ReadonlyEmbeddingMap,
     maxSeeds: number = MAX_KIT_SEEDS,
-): number[] | undefined => {
-    const acc = new Array(KIT_EMBEDDING_DIMS).fill(0) as number[];
+): Float32Array | undefined => {
+    const acc = new Float32Array(KIT_EMBEDDING_DIMS);
     let count = 0;
     for (const id of seedIds) {
         if (count >= maxSeeds) {
@@ -869,8 +869,8 @@ export const buildKitEmbeddingCentroid = (
  */
 export const kitEmbeddingDistance = (
     fileId: number,
-    prototype: readonly number[] | undefined,
-    embeddings: ReadonlyMap<number, number[]>,
+    prototype: ArrayLike<number> | undefined,
+    embeddings: ReadonlyEmbeddingMap,
 ): number => {
     if (!prototype?.length) {
         return Number.POSITIVE_INFINITY;
@@ -887,8 +887,8 @@ export const kitEmbeddingDistance = (
  */
 export const kitEmbeddingMinDistance = (
     fileId: number,
-    medoids: readonly (readonly number[])[],
-    embeddings: ReadonlyMap<number, number[]>,
+    medoids: readonly ArrayLike<number>[],
+    embeddings: ReadonlyEmbeddingMap,
 ): number => {
     if (!medoids.length) {
         return Number.POSITIVE_INFINITY;
@@ -907,14 +907,14 @@ export const kitEmbeddingMinDistance = (
  * Cosine distance between two prototypes (0 = identical).
  */
 export const kitEmbeddingCentroidDistance = (
-    left: readonly number[] | undefined,
-    right: readonly number[] | undefined,
+    left: ArrayLike<number> | undefined,
+    right: ArrayLike<number> | undefined,
 ): number => embeddingCosineDistanceVectors(left, right);
 
 /** Min distance between any pair across two medoid sets. */
 const kitEmbeddingMedoidSetDistance = (
-    left: readonly (readonly number[])[],
-    right: readonly (readonly number[])[],
+    left: readonly ArrayLike<number>[],
+    right: readonly ArrayLike<number>[],
 ): number => {
     let best = Number.POSITIVE_INFINITY;
     for (const a of left) {
@@ -934,9 +934,9 @@ const kitEmbeddingMedoidSetDistance = (
  */
 export const kitEmbeddingDistanceCompetitive = (
     fileId: number,
-    selectedMedoids: readonly (readonly number[])[],
-    rivalMedoidSets: readonly (readonly (readonly number[])[])[],
-    embeddings: ReadonlyMap<number, number[]>,
+    selectedMedoids: readonly ArrayLike<number>[],
+    rivalMedoidSets: readonly (readonly ArrayLike<number>[])[],
+    embeddings: ReadonlyEmbeddingMap,
     options?: {
         lambda?: number;
         tau?: number;
@@ -989,8 +989,8 @@ export const kitEmbeddingDistanceCompetitive = (
  * without medoids weigh 0.
  */
 export const kitEmbeddingRivalWeights = (
-    selectedMedoids: readonly (readonly number[])[],
-    rivalMedoidSets: readonly (readonly (readonly number[])[])[],
+    selectedMedoids: readonly ArrayLike<number>[],
+    rivalMedoidSets: readonly (readonly ArrayLike<number>[])[],
     tau: number = KIT_EMBEDDING_RIVAL_TAU,
 ): number[] =>
     rivalMedoidSets.map((rival) =>
@@ -1009,9 +1009,9 @@ export const kitEmbeddingRivalWeights = (
  */
 export const sortFilesByKitEmbeddingCompetitive = (
     files: EnteFile[],
-    selectedMedoids: readonly (readonly number[])[],
-    rivalMedoidSets: readonly (readonly (readonly number[])[])[],
-    embeddings: ReadonlyMap<number, number[]>,
+    selectedMedoids: readonly ArrayLike<number>[],
+    rivalMedoidSets: readonly (readonly ArrayLike<number>[])[],
+    embeddings: ReadonlyEmbeddingMap,
     options?: {
         lambda?: number;
         tau?: number;
