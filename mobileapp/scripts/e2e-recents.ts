@@ -281,9 +281,9 @@ const main = async (): Promise<void> => {
     );
     assert(
         resume.freshId !== "resume-stale",
-        `expected new session after 1h, got ${resume.freshId}`,
+        `expected new session after 30m, got ${resume.freshId}`,
     );
-    console.log("OK: 1h resume window");
+    console.log("OK: 30m resume window");
 
     await browser.close();
     console.log("All Recents e2e checks passed.");

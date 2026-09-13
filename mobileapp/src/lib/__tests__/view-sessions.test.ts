@@ -52,7 +52,7 @@ describe("view-sessions", () => {
         expect(session.views).toHaveLength(0);
     });
 
-    it("resumes within one hour and starts new after", () => {
+    it("resumes within 30 minutes and starts new after", () => {
         const sessions: ViewSession[] = [
             {
                 id: "old",
@@ -73,7 +73,7 @@ describe("view-sessions", () => {
         expect(
             shouldResumeSession(1000, 1000 + VIEW_SESSION_RESUME_MS + 1),
         ).toBe(false);
-        expect(pickResumeSession(sessions, 1000 + 30 * 60 * 1000)?.id).toBe(
+        expect(pickResumeSession(sessions, 1000 + 15 * 60 * 1000)?.id).toBe(
             "old",
         );
         expect(

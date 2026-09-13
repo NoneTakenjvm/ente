@@ -30,6 +30,7 @@ import { cn } from "@/lib/utils";
 import { UploadPanel } from "@/components/UploadPanel";
 import { UploadProgressBar } from "@/components/UploadProgressBar";
 import { useUploadJobStore } from "@/stores/ui-store";
+import { useVisualViewportHeight } from "@/hooks/use-visual-viewport-height";
 
 interface AppShellProps {
     title: string;
@@ -73,6 +74,7 @@ export function AppShell({
     const rotateActive = useSelectionStore((s) => s.rotateActive);
     const hideBottomNav =
         selectionEnabled || stampActive || rotateActive;
+    const viewportHeight = useVisualViewportHeight();
 
     // Optimistic tab: keep pending highlight until pathname catches up.
     const activeHref =
@@ -84,8 +86,13 @@ export function AppShell({
         // [Note: bottom nav] Do not use position:fixed for the tab bar. On iOS
         // standalone PWAs, fixed bottom:0 often sits above the true screen
         // bottom until a later navigation/reflow. Keep the shell exactly one
-        // dvh tall and pin the nav as a normal flex child instead.
-        <div className="flex h-dvh flex-col overflow-hidden bg-background">
+        // visual-viewport tall and pin the nav as a normal flex child instead.
+        <div
+            className="flex flex-col overflow-hidden bg-background"
+            style={{
+                height: viewportHeight > 0 ? viewportHeight : "100dvh",
+            }}
+        >
             <header className="z-40 shrink-0 border-b border-border bg-background/95 pt-[env(safe-area-inset-top)] backdrop-blur supports-backdrop-filter:bg-background/80">
                 <UploadProgressBar />
                 <div className="flex items-center gap-2 px-4 py-3">
@@ -179,8 +186,9 @@ function AccountMenu(): JSX.Element {
     const [panicWorking, setPanicWorking] = useState<boolean>(false);
 
     const handleLock = (): void => {
-        lock();
-        void router.replace("/login");
+        void lock().then(() => {
+            void router.replace("/login");
+        });
     };
 
     const handleLogout = (): void => {

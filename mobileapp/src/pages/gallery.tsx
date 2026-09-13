@@ -7,7 +7,6 @@ import {
     type JSX,
 } from "react";
 import dynamic from "next/dynamic";
-import { useRouter } from "next/router";
 import { ArrowDownUp, Upload } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { PageLoader } from "@/components/PageLoader";
@@ -20,15 +19,10 @@ import { ThumbnailGrid } from "@/components/ThumbnailGrid";
 import { Button } from "@/components/ui/button";
 import { useLibraryBootstrap } from "@/hooks/use-library-bootstrap";
 import { useMediaDisplayPipeline } from "@/hooks/use-media-display-pipeline";
-import {
-    SELECTION_FOOTER_INSET_PX,
-    buildMediaGridSelection,
-} from "@/lib/selection";
-import {
-    isSessionAuthenticated,
-    reconcileSessionWithCore,
-    useSessionStore,
-} from "@/stores/session-store";
+import { useMediaGridSelection } from "@/hooks/use-media-grid-selection";
+import { useRequireSession } from "@/hooks/use-require-session";
+import { SELECTION_FOOTER_INSET_PX } from "@/lib/selection";
+import { useSessionStore } from "@/stores/session-store";
 import { dedupeFilesById } from "@/lib/sync/merge-files";
 import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 import {
@@ -63,21 +57,13 @@ const formatPhotoCount = (count: number): string =>
  * filter/sort/grid subtree mounts (see {@link GalleryMediaBody}).
  */
 export default function GalleryPage(): JSX.Element {
-    const router = useRouter();
+    const { ready, authenticated } = useRequireSession();
     const email = useSessionStore((s) => s.email);
     const libraryFileCount = useLibraryStore((s) => s.allFiles.length);
     const setUploadPanelOpen = useUploadJobStore((s) => s.setPanelOpen);
     const gallerySortBy = useSettingsStore((s) => s.gallerySortBy);
     const patchSettings = useSettingsStore((s) => s.patchSettings);
     const [bodyMounted, setBodyMounted] = useState(false);
-
-    useEffect(() => {
-        reconcileSessionWithCore();
-        if (!isSessionAuthenticated()) {
-            void router.replace("/login");
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only auth gate
-    }, []);
 
     useEffect(() => {
         let cancelled = false;
@@ -98,8 +84,12 @@ export default function GalleryPage(): JSX.Element {
         });
     };
 
-    if (!isSessionAuthenticated()) {
-        return <PageLoader message="Redirecting to sign in…" />;
+    if (!ready || !authenticated) {
+        return (
+            <PageLoader
+                message={ready ? "Redirecting to sign in…" : "Restoring session…"}
+            />
+        );
     }
 
     return (
@@ -248,18 +238,12 @@ function GalleryMediaBody(): JSX.Element {
     }
 
     const selectionEnabled = useSelectionStore((s) => s.enabled);
-    const selectedIds = useSelectionStore((s) => s.selectedIds);
-    const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
-    const toggleSelection = useSelectionStore((s) => s.toggle);
-    const selectMany = useSelectionStore((s) => s.selectMany);
     const pruneToVisible = useSelectionStore((s) => s.pruneToVisible);
     const setSelectionEnabled = useSelectionStore((s) => s.setEnabled);
     const resetSelection = useSelectionStore((s) => s.reset);
     const stampActive = useSelectionStore((s) => s.stampActive);
-    const stampTags = useSelectionStore((s) => s.stampTags);
     const rotateActive = useSelectionStore((s) => s.rotateActive);
     const pendingRotations = useSelectionStore((s) => s.pendingRotations);
-    const bumpRotate = useSelectionStore((s) => s.bumpRotate);
     const rotateBusy = useSelectionStore((s) => s.rotateBusy);
 
     useEffect(() => {
@@ -290,31 +274,7 @@ function GalleryMediaBody(): JSX.Element {
         };
     }, [resetSelection]);
 
-    const gridSelection = useMemo(
-        () =>
-            buildMediaGridSelection({
-                selectionEnabled,
-                selectedIds: selectedIdSet,
-                stampActive,
-                stampTags,
-                rotateActive,
-                bumpRotate,
-                toggleSelection,
-                selectMany,
-                disabled: rotateBusy,
-            }),
-        [
-            bumpRotate,
-            rotateActive,
-            rotateBusy,
-            selectMany,
-            selectedIdSet,
-            selectionEnabled,
-            stampActive,
-            stampTags,
-            toggleSelection,
-        ],
-    );
+    const gridSelection = useMediaGridSelection({ disabled: rotateBusy });
 
     const footerInsetPx =
         stampActive || rotateActive || selectionEnabled ?

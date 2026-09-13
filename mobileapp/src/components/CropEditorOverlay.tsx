@@ -58,6 +58,8 @@ export function CropEditorOverlay({
     );
     const viewportTargetWidth = useUIStore((s) => s.viewportTargetWidth);
     const viewportTargetHeight = useUIStore((s) => s.viewportTargetHeight);
+    const lockAspect = useUIStore((s) => s.cropLockAspect);
+    const setCropLockAspect = useUIStore((s) => s.setCropLockAspect);
     const targetAspect = viewportTargetAspectRatio(
         viewportTargetWidth,
         viewportTargetHeight,
@@ -67,7 +69,6 @@ export function CropEditorOverlay({
     const [workingUrl, setWorkingUrl] = useState<string | undefined>();
     const [crop, setCrop] = useState<Crop>();
     const [completedCrop, setCompletedCrop] = useState<PixelCrop>();
-    const [lockAspect, setLockAspect] = useState<boolean>(true);
     const [cropAspect, setCropAspect] = useState<number | undefined>();
     const [loading, setLoading] = useState<boolean>(true);
     const [rotating, setRotating] = useState<boolean>(false);
@@ -293,7 +294,7 @@ export function CropEditorOverlay({
 
     const handleLockAspectChange = useCallback(
         (checked: boolean): void => {
-            setLockAspect(checked);
+            setCropLockAspect(checked);
             if (!checked) {
                 return;
             }
@@ -324,7 +325,7 @@ export function CropEditorOverlay({
                 ),
             );
         },
-        [crop, cropAspect, targetAspect],
+        [crop, cropAspect, setCropLockAspect, targetAspect],
     );
 
     return (

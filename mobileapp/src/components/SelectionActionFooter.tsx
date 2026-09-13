@@ -371,7 +371,7 @@ export function SelectionActionFooter(): JSX.Element | null {
 
     if (count === 0) {
         return (
-            <footer className="fixed inset-x-0 bottom-[env(safe-area-inset-bottom)] z-30 flex items-center justify-between gap-2 border-t border-border bg-background/95 px-3 py-2.5 backdrop-blur">
+            <footer className="fixed inset-x-0 bottom-0 z-30 flex items-center justify-between gap-2 border-t border-border bg-background/95 px-3 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] backdrop-blur">
                 <p className="min-w-0 truncate text-sm text-muted-foreground">
                     Select · tap photos
                 </p>
@@ -389,7 +389,7 @@ export function SelectionActionFooter(): JSX.Element | null {
 
     return (
         <>
-            <footer className="fixed inset-x-0 bottom-[env(safe-area-inset-bottom)] z-30 flex flex-col gap-2 border-t border-border bg-background/95 px-3 py-2.5 backdrop-blur">
+            <footer className="fixed inset-x-0 bottom-0 z-30 flex flex-col gap-2 border-t border-border bg-background/95 px-3 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] backdrop-blur">
                 <div className="flex items-center justify-between gap-2">
                     <p className="min-w-0 truncate text-sm text-muted-foreground">
                         {count} selected

@@ -21,7 +21,7 @@ export interface PanBounds {
 
 interface PinchLayout {
     container: HTMLElement;
-    image: HTMLImageElement;
+    image: HTMLImageElement | HTMLVideoElement;
 }
 
 interface PinchZoomOptions {
@@ -47,7 +47,7 @@ interface PinchZoomState {
     reset: () => void;
     updatePanBounds: (
         container: HTMLElement,
-        image: HTMLImageElement,
+        image: HTMLImageElement | HTMLVideoElement,
     ) => void;
     transformStyle: { transform: string; transition?: string };
 }
@@ -290,9 +290,9 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
 
     const updatePanBounds: (
         container: HTMLElement,
-        image: HTMLImageElement,
+        image: HTMLImageElement | HTMLVideoElement,
     ) => void = useCallback(
-        (container: HTMLElement, image: HTMLImageElement): void => {
+        (container: HTMLElement, image: HTMLImageElement | HTMLVideoElement): void => {
             if (!enabled || scale <= 1.01) {
                 boundsRef.current = { minX: 0, maxX: 0, minY: 0, maxY: 0 };
                 return;
@@ -501,12 +501,15 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
 
     const onWheel: (event: ReactWheelEvent<HTMLElement>) => void = useCallback(
         (event: ReactWheelEvent<HTMLElement>): void => {
-            if (!enabled || !event.ctrlKey) {
+            if (!enabled) {
                 return;
             }
+            // Trackpad pinch sends ctrlKey; plain mouse wheel should zoom too.
             event.preventDefault();
             event.stopPropagation();
-            const delta: number = event.deltaY > 0 ? -0.1 : 0.1;
+            const intensity: number =
+                event.deltaMode === 1 ? 0.12 : Math.min(0.25, Math.abs(event.deltaY) * 0.0015);
+            const delta: number = event.deltaY > 0 ? -intensity : intensity;
             setScale((current: number): number =>
                 Math.min(MAX_SCALE, Math.max(MIN_SCALE, current + delta)));
         },

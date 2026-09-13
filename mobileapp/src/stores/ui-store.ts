@@ -198,6 +198,12 @@ interface UIState {
     setViewportTargetSize: (width: number, height: number) => void;
     /** Re-fill target W×H from the current live device viewport. */
     resetViewportTargetToDevice: () => void;
+    /**
+     * Crop editor "Lock aspect ratio" (session-only). Default on; survives
+     * lock/unlock in this tab until the PWA process is discarded.
+     */
+    cropLockAspect: boolean;
+    setCropLockAspect: (locked: boolean) => void;
     /** Gallery reorder by last update time (session-only). */
     updatedAtSort: UpdatedAtSort;
     setUpdatedAtSort: (mode: UpdatedAtSort) => void;
@@ -321,6 +327,10 @@ export const useUIStore = create<UIState>((set) => {
                 viewportTargetWidth: size.width,
                 viewportTargetHeight: size.height,
             });
+        },
+        cropLockAspect: true,
+        setCropLockAspect: (locked: boolean): void => {
+            set({ cropLockAspect: locked });
         },
         updatedAtSort: "none",
         setUpdatedAtSort: (mode: UpdatedAtSort): void => {

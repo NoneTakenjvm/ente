@@ -10,7 +10,7 @@
  */
 
 /** Resume the latest session when activity returns within this window. */
-export const VIEW_SESSION_RESUME_MS = 60 * 60 * 1000;
+export const VIEW_SESSION_RESUME_MS = 30 * 60 * 1000;
 
 /** Full-view dwell required before a view counts. */
 export const VIEW_SESSION_QUALIFY_MS = 1000;
@@ -33,7 +33,7 @@ export interface ViewRecord {
 export interface ViewSession {
     id: string;
     startedAt: number;
-    /** Last qualifying view close — drives the 1h resume clock. */
+    /** Last qualifying view close — drives the 30m resume clock. */
     endTime: number;
     views: ViewRecord[];
     totalViewTimeMs: number;

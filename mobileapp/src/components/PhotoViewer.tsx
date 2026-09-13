@@ -388,7 +388,7 @@ export const PhotoViewer = memo(function PhotoViewer({
     const activeImageRef = useRef<HTMLImageElement>(null);
     const activeVideoRef = useRef<HTMLVideoElement>(null);
     const pinchLayoutRef = useRef<
-        { container: HTMLElement; image: HTMLImageElement } | null
+        { container: HTMLElement; image: HTMLImageElement | HTMLVideoElement } | null
     >(null);
     const carouselDragStartRef = useRef<CarouselDragStart | undefined>(undefined);
     const carouselPointerIdRef = useRef<number | undefined>(undefined);
@@ -476,7 +476,8 @@ export const PhotoViewer = memo(function PhotoViewer({
         file !== undefined &&
         !isEnteVideoFile(file) &&
         hasClipEmbedding;
-    const zoomEnabled = mediaKind === "image" || mediaKind === "gif";
+    const zoomEnabled =
+        mediaKind === "image" || mediaKind === "gif" || mediaKind === "video";
     const chromePaused =
         cropMode ||
         showDeleteConfirm ||
@@ -678,13 +679,13 @@ export const PhotoViewer = memo(function PhotoViewer({
 
     useEffect((): void => {
         const viewport = viewportRef.current;
-        const image = activeImageRef.current;
-        if (!viewport || !image || zoomScale <= 1.01) {
+        const media = activeImageRef.current ?? activeVideoRef.current;
+        if (!viewport || !media || zoomScale <= 1.01) {
             return;
         }
-        updatePanBounds(viewport, image);
-        pinchLayoutRef.current = { container: viewport, image };
-    }, [updatePanBounds, zoomScale, file?.id, viewportWidth]);
+        updatePanBounds(viewport, media);
+        pinchLayoutRef.current = { container: viewport, image: media };
+    }, [updatePanBounds, zoomScale, file?.id, viewportWidth, mediaKind]);
 
     useEffect(() => {
         const loadingIds = loadingIdsRef.current;
@@ -1392,7 +1393,9 @@ export const PhotoViewer = memo(function PhotoViewer({
         const start = zoomPointerStartRef.current;
         zoomPointerStartRef.current = undefined;
         pinchZoom.onPointerUp(event);
-        if (!start || skipChromeTapRef.current) {
+        const skipChrome = skipChromeTapRef.current;
+        skipChromeTapRef.current = false;
+        if (!start || skipChrome) {
             return;
         }
         const deltaX = event.clientX - start.x;
@@ -1901,7 +1904,9 @@ export const PhotoViewer = memo(function PhotoViewer({
             slideFile ?
                 (() => {
                     const kind = mediaKindForFile(slideFile);
-                    return kind === "image" || kind === "gif";
+                    return (
+                        kind === "image" || kind === "gif" || kind === "video"
+                    );
                 })() :
                 false;
 
@@ -1953,7 +1958,39 @@ export const PhotoViewer = memo(function PhotoViewer({
                         </div>
                     ) : null
                 ) : isVideo ? (
-                    <div className="absolute inset-0">
+                    <div
+                        className="absolute inset-0"
+                        style={
+                            isActive && slideZoomEnabled ?
+                                pinchZoom.transformStyle :
+                                undefined
+                        }
+                        onPointerDown={
+                            isActive && slideZoomEnabled ?
+                                handleZoomPointerDown :
+                                undefined
+                        }
+                        onPointerMove={
+                            isActive && slideZoomEnabled ?
+                                pinchZoom.onPointerMove :
+                                undefined
+                        }
+                        onPointerUp={
+                            isActive && slideZoomEnabled ?
+                                handleZoomPointerUp :
+                                undefined
+                        }
+                        onPointerCancel={
+                            isActive && slideZoomEnabled ?
+                                handleZoomPointerUp :
+                                undefined
+                        }
+                        onWheel={
+                            isActive && slideZoomEnabled ?
+                                pinchZoom.onWheel :
+                                undefined
+                        }
+                    >
                         <VideoSlidePoster file={slideFile!} />
                         <video
                             ref={isActive ? activeVideoRef : undefined}
@@ -1970,6 +2007,22 @@ export const PhotoViewer = memo(function PhotoViewer({
                             onError={() => {
                                 if (slideFile) {
                                     handleBrokenSlideMedia(slideFile.id);
+                                }
+                            }}
+                            onLoadedData={() => {
+                                if (
+                                    isActive &&
+                                    viewportRef.current &&
+                                    activeVideoRef.current
+                                ) {
+                                    pinchLayoutRef.current = {
+                                        container: viewportRef.current,
+                                        image: activeVideoRef.current,
+                                    };
+                                    updatePanBounds(
+                                        viewportRef.current,
+                                        activeVideoRef.current,
+                                    );
                                 }
                             }}
                         />
@@ -2003,7 +2056,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                                 undefined
                         }
                         onWheel={
-                            isActive && slideZoomEnabled && zoomScale > 1.01 ?
+                            isActive && slideZoomEnabled ?
                                 pinchZoom.onWheel :
                                 undefined
                         }
