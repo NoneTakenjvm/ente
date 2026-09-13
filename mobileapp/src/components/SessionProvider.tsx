@@ -37,6 +37,7 @@ export function SessionProvider({ children }: SessionProviderProps): JSX.Element
 
     useEffect(() => {
         let idleTimer: ReturnType<typeof setTimeout> | undefined;
+        let lockInFlight = false;
 
         const scheduleIdleLock = (): void => {
             if (idleTimer) {
@@ -46,14 +47,27 @@ export function SessionProvider({ children }: SessionProviderProps): JSX.Element
                 return;
             }
             idleTimer = setTimeout(() => {
-                if (!isSessionAuthenticated()) {
-                    return;
-                }
-                lock();
-                const path = router.pathname;
-                if (path !== "/login" && path !== "/" && path !== "/offline") {
-                    void router.replace("/login");
-                }
+                void (async (): Promise<void> => {
+                    if (lockInFlight || !isSessionAuthenticated()) {
+                        return;
+                    }
+                    lockInFlight = true;
+                    try {
+                        // Await flush + key wipe before navigating so login
+                        // cannot race restore-and-bounce back to the app.
+                        await lock();
+                        const path = router.pathname;
+                        if (
+                            path !== "/login" &&
+                            path !== "/" &&
+                            path !== "/offline"
+                        ) {
+                            void router.replace("/login");
+                        }
+                    } finally {
+                        lockInFlight = false;
+                    }
+                })();
             }, idleLockMs);
         };
 

@@ -81,11 +81,8 @@ import {
     similarityIndexKey,
 } from "@/lib/similarity-match-cache";
 import { APP_VERSION } from "@/lib/app-version";
-import {
-    isSessionAuthenticated,
-    reconcileSessionWithCore,
-    useSessionStore,
-} from "@/stores/session-store";
+import { useRequireSession } from "@/hooks/use-require-session";
+import { useSessionStore } from "@/stores/session-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { usePhashIndexStore } from "@/stores/phash-index-store";
 import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
@@ -120,6 +117,7 @@ const parseManageSection = (value: string | string[] | undefined): ManageSection
 
 export default function ManagePage(): JSX.Element {
     const router = useRouter();
+    const { ready, authenticated } = useRequireSession();
     const email = useSessionStore((s) => s.email);
     const userId = useSessionStore((s) => s.userID) ?? 0;
 
@@ -195,13 +193,6 @@ export default function ManagePage(): JSX.Element {
     const cropMergeAbort = useRef<AbortController | undefined>(undefined);
     /** Uncapped groups from the last similar find (trim for display / max-size). */
     const lastFullSimilarGroups = useRef<SimilarityGroup[]>([]);
-
-    useEffect(() => {
-        reconcileSessionWithCore();
-        if (!isSessionAuthenticated()) {
-            void router.replace("/login");
-        }
-    }, [router]);
 
     useEffect(() => {
         if (!router.isReady) {
@@ -632,8 +623,12 @@ export default function ManagePage(): JSX.Element {
     const shellTitle =
         section === "hub" ? "Manage" : manageSectionTitle(section);
 
-    if (!isSessionAuthenticated()) {
-        return <PageLoader message="Redirecting to sign in…" />;
+    if (!ready || !authenticated) {
+        return (
+            <PageLoader
+                message={ready ? "Redirecting to sign in…" : "Restoring session…"}
+            />
+        );
     }
 
     return (

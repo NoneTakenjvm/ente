@@ -8,10 +8,8 @@ import {
 } from "react";
 import { PageLoader } from "@/components/PageLoader";
 import { ThumbnailGrid } from "@/components/ThumbnailGrid";
-import {
-    SELECTION_FOOTER_INSET_PX,
-    buildMediaGridSelection,
-} from "@/lib/selection";
+import { useMediaGridSelection } from "@/hooks/use-media-grid-selection";
+import { SELECTION_FOOTER_INSET_PX } from "@/lib/selection";
 import { useSelectionStore } from "@/stores/selection-store";
 import type { EnteFile } from "ente-media/file";
 
@@ -44,16 +42,10 @@ export function FilteredMediaView({
     const [viewerFileId, setViewerFileId] = useState<number | undefined>();
 
     const selectionEnabled = useSelectionStore((s) => s.enabled);
-    const selectedIds = useSelectionStore((s) => s.selectedIds);
-    const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
-    const toggleSelection = useSelectionStore((s) => s.toggle);
-    const selectMany = useSelectionStore((s) => s.selectMany);
     const pruneToVisible = useSelectionStore((s) => s.pruneToVisible);
     const stampActive = useSelectionStore((s) => s.stampActive);
-    const stampTags = useSelectionStore((s) => s.stampTags);
     const rotateActive = useSelectionStore((s) => s.rotateActive);
     const pendingRotations = useSelectionStore((s) => s.pendingRotations);
-    const bumpRotate = useSelectionStore((s) => s.bumpRotate);
     const rotateBusy = useSelectionStore((s) => s.rotateBusy);
 
     const visibleFileIds = useMemo(
@@ -68,31 +60,7 @@ export function FilteredMediaView({
         pruneToVisible(visibleFileIds);
     }, [pruneToVisible, selectionEnabled, visibleFileIds]);
 
-    const gridSelection = useMemo(
-        () =>
-            buildMediaGridSelection({
-                selectionEnabled,
-                selectedIds: selectedIdSet,
-                stampActive,
-                stampTags,
-                rotateActive,
-                bumpRotate,
-                toggleSelection,
-                selectMany,
-                disabled: rotateBusy,
-            }),
-        [
-            bumpRotate,
-            rotateActive,
-            rotateBusy,
-            selectMany,
-            selectedIdSet,
-            selectionEnabled,
-            stampActive,
-            stampTags,
-            toggleSelection,
-        ],
-    );
+    const gridSelection = useMediaGridSelection({ disabled: rotateBusy });
 
     const footerInsetPx =
         stampActive || rotateActive || selectionEnabled ?

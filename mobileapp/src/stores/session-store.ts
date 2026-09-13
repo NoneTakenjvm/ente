@@ -36,7 +36,8 @@ interface SessionState {
     errorMessage: string | undefined;
     login: (credentials: LoginCredentials) => Promise<void>;
     logout: () => void;
-    lock: () => void;
+    /** Wipe in-memory keys and mark locked; resolves when flush + clear finish. */
+    lock: () => Promise<void>;
     unlock: () => Promise<boolean>;
     restoreFromPersistence: () => Promise<boolean>;
     panic: () => Promise<void>;
@@ -210,25 +211,23 @@ const createSessionStore: StateCreator<SessionState> = (set) => ({
         })();
     },
 
-    lock: (): void => {
+    lock: async (): Promise<void> => {
         const { email, status } = useSessionStore.getState();
         if (status !== "authenticated" || !email) {
             return;
         }
-        void (async (): Promise<void> => {
-            try {
-                await flushAllDurableState();
-            } catch {
-                // Best-effort.
-            }
-            clearMemoryState();
-            markSessionLocked(email);
-            set({
-                status: "idle",
-                userID: undefined,
-                errorMessage: undefined,
-            });
-        })();
+        try {
+            await flushAllDurableState();
+        } catch {
+            // Best-effort.
+        }
+        clearMemoryState();
+        markSessionLocked(email);
+        set({
+            status: "idle",
+            userID: undefined,
+            errorMessage: undefined,
+        });
     },
 
     unlock: async (): Promise<boolean> => {

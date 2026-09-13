@@ -110,7 +110,7 @@ export function RotateToolFooter(): JSX.Element | null {
     }
 
     return (
-        <footer className="fixed inset-x-0 bottom-[env(safe-area-inset-bottom)] z-30 flex flex-col gap-2 border-t border-border bg-background/95 px-3 py-2.5 backdrop-blur">
+        <footer className="fixed inset-x-0 bottom-0 z-30 flex flex-col gap-2 border-t border-border bg-background/95 px-3 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] backdrop-blur">
             <div className="flex items-center justify-between gap-2">
                 <p className="flex min-w-0 items-center gap-1.5 truncate text-sm text-muted-foreground">
                     <RotateCw className="size-3.5 shrink-0" />

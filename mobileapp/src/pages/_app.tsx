@@ -31,7 +31,13 @@ export default function App({ Component, pageProps }: AppProps) {
                 <SessionProvider>
                     <Component {...pageProps} />
                 </SessionProvider>
-                <Toaster position="top-center" richColors closeButton />
+                <Toaster
+                    position="top-center"
+                    richColors
+                    closeButton
+                    offset="max(1rem, env(safe-area-inset-top, 0px))"
+                    mobileOffset="max(1rem, env(safe-area-inset-top, 0px))"
+                />
             </div>
         </>
     );

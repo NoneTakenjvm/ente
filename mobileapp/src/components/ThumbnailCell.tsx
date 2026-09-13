@@ -19,6 +19,7 @@ import type { RotationDegrees } from "@/lib/rotate";
 import { Check, CircleCheck, Play } from "lucide-react";
 import { FileType } from "ente-media/file-type";
 import type { EnteFile } from "ente-media/file";
+import { useSelectionStore } from "@/stores/selection-store";
 
 const LONG_PRESS_MS = 450;
 const LONG_PRESS_MOVE_PX = 10;
@@ -40,6 +41,11 @@ interface ThumbnailCellProps {
     showFileSize?: boolean;
     /** Draft quick-rotate preview (CSS only). */
     previewRotationDegrees?: RotationDegrees;
+    /**
+     * When true, selected chrome follows the selection store for this file id
+     * so virtualized grids do not rebuild every cell on each toggle.
+     */
+    observeStoreSelection?: boolean;
 }
 
 /** Skip re-render when the same file is shown with the same chrome. */
@@ -56,13 +62,14 @@ const thumbnailCellPropsAreEqual = (
     prev.height === next.height &&
     prev.objectFit === next.objectFit &&
     prev.onOpen === next.onOpen &&
-    prev.isSelected === next.isSelected &&
     prev.onToggleSelect === next.onToggleSelect &&
     prev.isAlreadyCompressed === next.isAlreadyCompressed &&
     prev.disabled === next.disabled &&
     prev.tapSelects === next.tapSelects &&
     prev.showFileSize === next.showFileSize &&
-    prev.previewRotationDegrees === next.previewRotationDegrees;
+    prev.previewRotationDegrees === next.previewRotationDegrees &&
+    prev.observeStoreSelection === next.observeStoreSelection &&
+    (Boolean(prev.observeStoreSelection) || prev.isSelected === next.isSelected);
 
 export const ThumbnailCell = memo(function ThumbnailCell({
     file,
@@ -78,12 +85,18 @@ export const ThumbnailCell = memo(function ThumbnailCell({
     tapSelects = false,
     showFileSize = false,
     previewRotationDegrees,
+    observeStoreSelection = false,
 }: ThumbnailCellProps): JSX.Element {
     const cellWidth = width ?? size ?? 0;
     const cellHeight = height ?? size ?? 0;
     const imageFitClass =
         objectFit === "contain" ? "object-contain" : "object-cover";
     const sizeBytes = fileByteSize(file);
+    const selectedFromStore = useSelectionStore((s) =>
+        observeStoreSelection && s.enabled ?
+            s.selectedIds.includes(file.id) :
+            false);
+    const showSelected = observeStoreSelection ? selectedFromStore : isSelected;
     const previewTransform =
         previewRotationDegrees !== undefined ?
             previewTransformForRotation(
@@ -194,12 +207,12 @@ export const ThumbnailCell = memo(function ThumbnailCell({
                     tapSelects ?
                         previewRotationDegrees !== undefined ?
                             `Rotate media ${file.id}, pending ${previewRotationDegrees} degrees` :
-                            isSelected ?
+                            showSelected ?
                                 `Deselect media ${file.id}` :
                                 `Select media ${file.id}` :
                         `Open media ${file.id}`
                 }
-                aria-pressed={tapSelects ? isSelected : undefined}
+                aria-pressed={tapSelects ? showSelected : undefined}
             >
                 {file.metadata.fileType === FileType.video && !tapSelects ? (
                     <span className="absolute bottom-1 right-1 z-10 rounded-full bg-black/60 p-1 text-white">
@@ -258,7 +271,7 @@ export const ThumbnailCell = memo(function ThumbnailCell({
                     {formatFileSize(sizeBytes)}
                 </span>
             ) : null}
-            {tapSelects && isSelected ? (
+            {tapSelects && showSelected ? (
                 <>
                     <span
                         className="pointer-events-none absolute inset-0 z-[1] bg-primary/30"

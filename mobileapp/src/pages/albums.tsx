@@ -6,7 +6,6 @@ import {
     useState,
     type JSX,
 } from "react";
-import { useRouter } from "next/router";
 import { ArrowDownUp, Check, GripVertical, Pencil, Plus } from "lucide-react";
 import { AlbumEditorPanel } from "@/components/albums/AlbumEditorPanel";
 import { AlbumListCard } from "@/components/albums/AlbumListCard";
@@ -29,6 +28,7 @@ import {
 } from "@/components/ui/empty";
 import { useLibraryBootstrap } from "@/hooks/use-library-bootstrap";
 import { useMediaDisplayPipeline } from "@/hooks/use-media-display-pipeline";
+import { useRequireSession } from "@/hooks/use-require-session";
 import { resolveAlbumCoverFile } from "@/lib/album-cover";
 import { queryAlbumFilter } from "@/lib/query-albums";
 import { dedupeFilesById } from "@/lib/sync/merge-files";
@@ -43,11 +43,7 @@ import {
     sortFilesByUpload,
 } from "@/lib/sort-files";
 import type { EnteFile } from "ente-media/file";
-import {
-    isSessionAuthenticated,
-    reconcileSessionWithCore,
-    useSessionStore,
-} from "@/stores/session-store";
+import { useSessionStore } from "@/stores/session-store";
 import { useAlbumStore } from "@/stores/album-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
@@ -63,7 +59,7 @@ type AlbumsMode = "list" | "view" | "edit";
 type ListSubMode = "browse" | "reorder";
 
 export default function AlbumsPage(): JSX.Element {
-    const router = useRouter();
+    const { ready, authenticated } = useRequireSession();
     const email = useSessionStore((s) => s.email);
 
     const albums = useAlbumStore((s) => s.albums);
@@ -218,14 +214,6 @@ export default function AlbumsPage(): JSX.Element {
     }, [activeAlbum, albumFiles]);
 
     useEffect(() => {
-        reconcileSessionWithCore();
-        if (!isSessionAuthenticated()) {
-            void router.replace("/login");
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only auth gate
-    }, []);
-
-    useEffect(() => {
         return (): void => {
             useSelectionStore.getState().reset();
         };
@@ -373,8 +361,12 @@ export default function AlbumsPage(): JSX.Element {
         (syncStatus === "loadingFromCache" || syncStatus === "syncing") &&
         libraryFiles.length === 0;
 
-    if (!isSessionAuthenticated()) {
-        return <PageLoader message="Redirecting to sign in…" />;
+    if (!ready || !authenticated) {
+        return (
+            <PageLoader
+                message={ready ? "Redirecting to sign in…" : "Restoring session…"}
+            />
+        );
     }
 
     return (

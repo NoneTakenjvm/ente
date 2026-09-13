@@ -1,12 +1,10 @@
 import {
     useCallback,
-    useEffect,
     useMemo,
     useState,
     type JSX,
 } from "react";
 import dynamic from "next/dynamic";
-import { useRouter } from "next/router";
 import { Trash2 } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { PageLoader } from "@/components/PageLoader";
@@ -31,17 +29,14 @@ import {
     EmptyTitle,
 } from "@/components/ui/empty";
 import { useLibraryBootstrap } from "@/hooks/use-library-bootstrap";
+import { useRequireSession } from "@/hooks/use-require-session";
 import {
     formatSessionLore,
     formatSessionName,
     type ViewSession,
 } from "@/lib/view-sessions";
 import type { EnteFile } from "ente-media/file";
-import {
-    isSessionAuthenticated,
-    reconcileSessionWithCore,
-    useSessionStore,
-} from "@/stores/session-store";
+import { useSessionStore } from "@/stores/session-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useViewSessionsStore } from "@/stores/view-sessions-store";
 
@@ -54,7 +49,7 @@ const PhotoViewer = dynamic(
 type RecentsMode = "list" | "view";
 
 export default function RecentsPage(): JSX.Element {
-    const router = useRouter();
+    const { ready, authenticated } = useRequireSession();
     const email = useSessionStore((s) => s.email);
     const sessions = useViewSessionsStore((s) => s.sessions);
     const deleteSession = useViewSessionsStore((s) => s.deleteSession);
@@ -116,13 +111,6 @@ export default function RecentsPage(): JSX.Element {
         [sessionTiles],
     );
 
-    useEffect(() => {
-        reconcileSessionWithCore();
-        if (!isSessionAuthenticated()) {
-            void router.replace("/login");
-        }
-    }, [router]);
-
     const handleOpenSession = (sessionId: string): void => {
         setActiveSessionId(sessionId);
         setMode("view");
@@ -161,8 +149,12 @@ export default function RecentsPage(): JSX.Element {
         (syncStatus === "loadingFromCache" || syncStatus === "syncing") &&
         allFiles.length === 0;
 
-    if (!isSessionAuthenticated()) {
-        return <PageLoader message="Redirecting to sign in…" />;
+    if (!ready || !authenticated) {
+        return (
+            <PageLoader
+                message={ready ? "Redirecting to sign in…" : "Restoring session…"}
+            />
+        );
     }
 
     const title =

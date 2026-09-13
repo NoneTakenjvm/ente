@@ -6,16 +6,18 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-09-12 |
-| **Last agent / session** | AGENTS.md audit of unpushed batch (`0.3.172`) |
+| **Last updated** | 2026-09-13 |
+| **Last agent / session** | UX bugfixes batch `0.3.173` (9 issues + crop lock session + 30m resume) |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable |
-| **Next recommended action** | Commit audit fixes, push `ntphotos`, Deploy CI; phone QA Manage `0.3.172`. |
+| **Next recommended action** | Phone QA Manage `0.3.173`; commit + push `ntphotos` when happy. |
 
 **This session shipped:**
-1. **`0.3.172` production audit** — LWW-merge `viewSessions` in organizer save-queue coalesce; logout/tab flush includes organizer-config queue; 401 on `authFetchResponse`; validate favourite membership payload after decrypt; JSDoc / duplicate sync helper cleanup.
-2. Prior unpushed (now audited): **`0.3.171` stamp vs expensive sorts** — kit nearness / relative freeze no longer rebuilds when stamp patches `libraryFiles`.
-3. Prior: **`0.3.170` cache memory** — CLIP `Float32Array` + IDB LRU touch coalesce.
+1. **`0.3.173` UX batch** — stamp tap-only; idle-lock await + `useRequireSession`; zoom chrome tap while zoomed; tool footers safe-area; toaster island offset; wheel zoom; video zoom; AppShell `visualViewport` height; select perf via store-observed cells; crop lock aspect session pref; view-session resume **30m**. Notes in `mobileapp/ux-bugs-investigation.md`.
+
+**Previous session shipped:**
+1. **Investigation only** — nine reported UX issues documented in [`mobileapp/ux-bugs-investigation.md`](mobileapp/ux-bugs-investigation.md).
+2. Prior: **`0.3.172` production audit** — LWW-merge `viewSessions`; logout flush; 401; favourite membership validate.
 
 **Previous session shipped:**
 1. **`0.3.169`** — marquee edge / programmatic `setScrollTop` calls `noteGalleryScrollActivity()` so thumbnail cache throttles like a real fling (amplifier called out by memory investigation).

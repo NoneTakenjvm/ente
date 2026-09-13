@@ -61,12 +61,8 @@ export function buildMediaGridSelection(
                 }
                 void bulkAddTags([file.id], tags);
             },
-            onSelectMany: (fileIds: number[]): void => {
-                if (tags.length === 0 || fileIds.length === 0) {
-                    return;
-                }
-                void bulkAddTags(fileIds, tags);
-            },
+            // Tap-only: marquee must not bulk-stamp tags.
+            onSelectMany: undefined,
         };
     }
     if (!args.selectionEnabled) {

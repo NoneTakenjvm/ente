@@ -38,6 +38,7 @@ import {
     type MarqueeScrollController,
 } from "@/hooks/use-marquee-selection";
 import { useSettingsStore } from "@/stores/settings-store";
+import { useSelectionStore } from "@/stores/selection-store";
 import type { EnteFile } from "ente-media/file";
 import {
     Empty,
@@ -60,6 +61,11 @@ export interface ThumbnailGridSelection {
     onSetSelection?: (fileIds: number[]) => void;
     isAlreadyCompressed?: (file: EnteFile) => boolean;
     disabled?: boolean;
+    /**
+     * Cells read selected state from the selection store (avoids rebuilding the
+     * whole virtualized window on each toggle).
+     */
+    observeStoreSelection?: boolean;
 }
 
 interface ThumbnailGridProps {
@@ -110,6 +116,7 @@ const GridRow = memo(function GridRow({
                 tapSelects={selection !== undefined}
                 showFileSize={showFileSize}
                 previewRotationDegrees={previewRotationById?.[file.id]}
+                observeStoreSelection={selection?.observeStoreSelection}
             />,
         );
     }
@@ -361,6 +368,9 @@ function SizedMasonryGrid({
                                 previewRotationDegrees={
                                     previewRotationById?.[item.fileId]
                                 }
+                                observeStoreSelection={
+                                    selection?.observeStoreSelection
+                                }
                             />
                         </div>
                     );
@@ -500,11 +510,15 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
 
     const handlePointerDown = useCallback(
         (event: ReactPointerEvent<HTMLDivElement>): void => {
-            marqueeBaselineRef.current = new Set(selection?.selectedIds ?? []);
+            const baselineIds =
+                selection?.observeStoreSelection ?
+                    useSelectionStore.getState().selectedIds :
+                    [...(selection?.selectedIds ?? [])];
+            marqueeBaselineRef.current = new Set(baselineIds);
             marqueeAppliedIdsRef.current = new Set();
             onPointerDown(event);
         },
-        [onPointerDown, selection?.selectedIds],
+        [onPointerDown, selection?.observeStoreSelection, selection?.selectedIds],
     );
 
     if (files.length === 0) {
