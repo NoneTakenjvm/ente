@@ -6,13 +6,17 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-09-13 |
-| **Last agent / session** | UX bugfixes batch `0.3.173` (9 issues + crop lock session + 30m resume) |
+| **Last updated** | 2026-09-20 |
+| **Last agent / session** | Upload stall + speed `0.3.175` (CF proxy, crypto pool, parallel PUT) |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable |
-| **Next recommended action** | Phone QA Manage `0.3.173`; commit + push `ntphotos` when happy. |
+| **Next recommended action** | Phone QA Manage `0.3.175` multi-file upload; commit + push `ntphotos` when happy. |
 
 **This session shipped:**
+1. **`0.3.174` upload stall** — HEIC/video hang timeouts; URL-pool refill mutex; off-critical-path library persist; concurrency 4.
+2. **`0.3.175` upload speed** — production PUTs via `uploader.ente.com` (official CF proxy); 4 dedicated crypto workers (no shared-worker serialize); parallel hash∥thumbnail, encrypt steps, and file∥thumbnail PUT; JPEG SOF dimensions (skip decode for `w`/`h`).
+
+**Previous session shipped:**
 1. **`0.3.173` UX batch** — stamp tap-only; idle-lock await + `useRequireSession`; zoom chrome tap while zoomed; tool footers safe-area; toaster island offset; wheel zoom; video zoom; AppShell `visualViewport` height; select perf via store-observed cells; crop lock aspect session pref; view-session resume **30m**. Notes in `mobileapp/ux-bugs-investigation.md`.
 
 **Previous session shipped:**

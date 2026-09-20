@@ -84,6 +84,7 @@ import {
     organizerAppConfigFromCollection,
 } from "@/lib/organizer-config";
 import { registerShuffleFileSubstitution } from "@/lib/shuffle-file-substitutions";
+import type { UploadCryptoWorker } from "@/core/upload/upload-crypto-pool";
 import {
     clearLocalMediaOverride,
     getLocalMediaOverride,
@@ -243,6 +244,7 @@ interface LibraryState {
         dimensions: { width: number; height: number },
         title: string,
         creationTime: number,
+        crypto?: UploadCryptoWorker,
     ) => Promise<EnteFile>;
     uploadVideoFile: (
         collectionId: number,
@@ -252,6 +254,7 @@ interface LibraryState {
         title: string,
         creationTime: number,
         mimeType: string,
+        crypto?: UploadCryptoWorker,
     ) => Promise<EnteFile>;
     moveFilesToTrash: (fileIds: number[]) => Promise<void>;
     /** Re-add files restored from trash into the local library snapshot. */
@@ -434,9 +437,13 @@ const appendUploadedFile = async (
 ): Promise<EnteFile> => {
     const nextFiles = [...get().allFiles, uploaded];
     commitAllFiles(set, get, nextFiles);
-    await saveEncryptedFiles(nextFiles, getSessionCacheKey());
     useTagStore.getState().rebuildFromFiles(nextFiles);
     requestThumbnail(uploaded);
+    // Don't await a full-library encrypt on the upload critical path — that
+    // serialized every concurrent worker behind one IDB write and left the UI
+    // at 0/x. Memory is updated; durable write is queued (logout still flushes).
+    markLibraryCacheFilesDirty([uploaded.id]);
+    void enqueueEncryptedFilesPersist(() => get().allFiles);
     return uploaded;
 };
 
@@ -1758,6 +1765,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         dimensions: { width: number; height: number },
         title: string,
         creationTime: number,
+        crypto?: UploadCryptoWorker,
     ): Promise<EnteFile> => {
         const collection = get().collections.find(
             (entry) => entry.id === collectionId,
@@ -1774,6 +1782,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 creationTime,
                 width: dimensions.width,
                 height: dimensions.height,
+                crypto,
             },
         );
 
@@ -1788,6 +1797,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         title: string,
         creationTime: number,
         mimeType: string,
+        crypto?: UploadCryptoWorker,
     ): Promise<EnteFile> => {
         const collection = get().collections.find(
             (entry) => entry.id === collectionId,
@@ -1806,6 +1816,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 height: dimensions.height,
                 duration,
                 mimeType,
+                crypto,
             },
         );
 
