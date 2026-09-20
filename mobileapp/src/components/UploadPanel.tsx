@@ -26,6 +26,11 @@ import {
     beginUploadBatch,
     endUploadBatch,
 } from "@/core/upload/upload-url-pool";
+import {
+    beginUploadCryptoPool,
+    endUploadCryptoPool,
+    getUploadCryptoWorker,
+} from "@/core/upload/upload-crypto-pool";
 import { prepareLocalImage } from "@/lib/prepare-local-image";
 import {
     ACCEPT_LOCAL_MEDIA,
@@ -55,7 +60,7 @@ interface StagedFile {
 }
 
 const UPLOAD_FOOTER_INSET_PX = 120;
-const maxConcurrentUploads = 3;
+const maxConcurrentUploads = 4;
 
 const uploadableCollections = (collections: Collection[]): Collection[] =>
     collections.filter(
@@ -184,9 +189,14 @@ export function UploadPanel({
         current: 0,
         total: 0,
     });
-    const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number }>({
+    const [uploadProgress, setUploadProgress] = useState<{
+        current: number;
+        total: number;
+        inFlight: number;
+    }>({
         current: 0,
         total: 0,
+        inFlight: 0,
     });
     const [resultMessage, setResultMessage] = useState<string | undefined>();
     const stagedFilesRef = useRef<StagedFile[]>([]);
@@ -223,16 +233,20 @@ export function UploadPanel({
             setPhase("uploading");
             setError(undefined);
             setResultMessage(undefined);
-            setUploadProgress({ current: 0, total: filesToUpload.length });
+            setUploadProgress({ current: 0, total: filesToUpload.length, inFlight: 0 });
             setUploadJobStatus("running");
             setUploadJobProgress(0, filesToUpload.length);
 
             let completed = 0;
             let failed = 0;
+            let inFlight = 0;
             const errors: string[] = [];
             let nextIndex = 0;
 
-            const uploadStagedFile = async (entry: StagedFile): Promise<void> => {
+            const uploadStagedFile = async (
+                entry: StagedFile,
+                crypto: Awaited<ReturnType<typeof getUploadCryptoWorker>>,
+            ): Promise<void> => {
                 if (entry.kind === "video") {
                     const prepared = await prepareLocalVideo(entry.file);
                     await uploadVideoFile(
@@ -246,6 +260,7 @@ export function UploadPanel({
                         sanitizeUploadVideoTitle(entry.file.name),
                         entry.file.lastModified * 1000,
                         prepared.mimeType,
+                        crypto,
                     );
                     return;
                 }
@@ -260,16 +275,22 @@ export function UploadPanel({
                     },
                     sanitizeUploadImageTitle(entry.file.name),
                     entry.file.lastModified * 1000,
+                    crypto,
                 );
             };
 
-            const reportFileFinished = (): void => {
-                const finished = completed + failed;
-                setUploadProgress({ current: finished, total: filesToUpload.length });
-                setUploadJobProgress(finished, filesToUpload.length);
+            const reportProgress = (): void => {
+                const current = completed + failed;
+                setUploadProgress({
+                    current,
+                    total: filesToUpload.length,
+                    inFlight,
+                });
+                setUploadJobProgress(current, filesToUpload.length);
             };
 
-            const worker = async (): Promise<void> => {
+            const worker = async (workerIndex: number): Promise<void> => {
+                const crypto = await getUploadCryptoWorker(workerIndex);
                 while (true) {
                     if (useUploadJobStore.getState().cancelRequested) {
                         return;
@@ -280,8 +301,10 @@ export function UploadPanel({
                         return;
                     }
                     const entry = filesToUpload[index]!;
+                    inFlight += 1;
+                    reportProgress();
                     try {
-                        await uploadStagedFile(entry);
+                        await uploadStagedFile(entry, crypto);
                         completed += 1;
                     } catch (uploadError: unknown) {
                         failed += 1;
@@ -290,8 +313,10 @@ export function UploadPanel({
                                 `${entry.file.name}: ${uploadError.message}` :
                                 `${entry.file.name}: upload failed`,
                         );
+                    } finally {
+                        inFlight -= 1;
+                        reportProgress();
                     }
-                    reportFileFinished();
                 }
             };
 
@@ -305,8 +330,9 @@ export function UploadPanel({
                     maxConcurrentUploads,
                     filesToUpload.length,
                 );
+                beginUploadCryptoPool(workerCount);
                 await Promise.all(
-                    Array.from({ length: workerCount }, () => worker()),
+                    Array.from({ length: workerCount }, (_, i) => worker(i)),
                 );
 
                 const cancelled = useUploadJobStore.getState().cancelRequested;
@@ -342,6 +368,7 @@ export function UploadPanel({
                 );
                 toast.error(errors[0] ?? "Some uploads failed");
             } finally {
+                endUploadCryptoPool();
                 endUploadBatch();
                 resetUploadJob();
                 uploadStartedRef.current = false;
@@ -707,8 +734,9 @@ export function UploadPanel({
                         <div className="flex flex-col gap-3 py-2">
                             <p className="flex items-center gap-2 text-sm text-muted-foreground">
                                 <Spinner />
-                                Encrypting and uploading {uploadProgress.current} of{" "}
-                                {uploadProgress.total}…
+                                {uploadProgress.inFlight > 0 ?
+                                    `Encrypting and uploading ${uploadProgress.current} of ${uploadProgress.total} (${uploadProgress.inFlight} in progress)…` :
+                                    `Encrypting and uploading ${uploadProgress.current} of ${uploadProgress.total}…`}
                             </p>
                             <Progress value={progressPercent} />
                         </div>

@@ -2,6 +2,7 @@ import { FFFSType, FFmpeg } from "@ffmpeg/ffmpeg";
 import { PromiseQueue } from "ente-utils/promise";
 import { blobFromUint8Array } from "@/lib/bytes-blob";
 import { logJsHeap } from "@/lib/memory-probe";
+import { withTimeout } from "@/lib/with-timeout";
 
 const CORE_BASE = "https://assets.ente.com/ffmpeg-core-0.12.10/";
 /** Reclaim the WASM heap shortly after the last job (mobile Chrome). */
@@ -198,10 +199,15 @@ const extractVideoFrameViaCanvas = async (
         video.playsInline = true;
         video.preload = "metadata";
         video.src = url;
-        await new Promise<void>((resolve, reject) => {
-            video.onloadedmetadata = () => resolve();
-            video.onerror = () => reject(new Error("Video frame decode failed"));
-        });
+        await withTimeout(
+            new Promise<void>((resolve, reject) => {
+                video.onloadedmetadata = () => resolve();
+                video.onerror = () =>
+                    reject(new Error("Video frame decode failed"));
+            }),
+            20_000,
+            "Timed out decoding video frame",
+        );
         if (video.videoWidth <= 0 || video.videoHeight <= 0) {
             throw new Error("Video frame dimensions unavailable");
         }
@@ -211,10 +217,15 @@ const extractVideoFrameViaCanvas = async (
                 0;
         if (seekTime > 0) {
             video.currentTime = seekTime;
-            await new Promise<void>((resolve, reject) => {
-                video.onseeked = () => resolve();
-                video.onerror = () => reject(new Error("Video seek failed"));
-            });
+            await withTimeout(
+                new Promise<void>((resolve, reject) => {
+                    video.onseeked = () => resolve();
+                    video.onerror = () =>
+                        reject(new Error("Video seek failed"));
+                }),
+                20_000,
+                "Timed out seeking video frame",
+            );
         }
         try {
             await video.play();

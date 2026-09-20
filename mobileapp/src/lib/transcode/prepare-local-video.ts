@@ -1,3 +1,5 @@
+import { withTimeout } from "@/lib/with-timeout";
+
 export interface PreparedLocalVideo {
     bytes: Uint8Array;
     width: number;
@@ -5,6 +7,9 @@ export interface PreparedLocalVideo {
     duration: number;
     mimeType: string;
 }
+
+/** Cap metadata probe so a hung decoder cannot stall the upload batch at 0/x. */
+const VIDEO_PROBE_TIMEOUT_MS = 20_000;
 
 export const mimeTypeForVideoFile = (file: File): string => {
     if (file.type.startsWith("video/")) {
@@ -29,30 +34,34 @@ const probeVideoFile = async (
         video.preload = "auto";
         video.muted = true;
         video.playsInline = true;
-        await new Promise<void>((resolve, reject) => {
-            let settled = false;
-            const finish = (): void => {
-                if (settled) {
-                    return;
+        await withTimeout(
+            new Promise<void>((resolve, reject) => {
+                let settled = false;
+                const finish = (): void => {
+                    if (settled) {
+                        return;
+                    }
+                    settled = true;
+                    resolve();
+                };
+                const fail = (): void => {
+                    if (settled) {
+                        return;
+                    }
+                    settled = true;
+                    reject(new Error("Could not read video metadata"));
+                };
+                video.onloadedmetadata = finish;
+                video.onloadeddata = finish;
+                video.onerror = fail;
+                video.src = url;
+                if (typeof video.load === "function") {
+                    video.load();
                 }
-                settled = true;
-                resolve();
-            };
-            const fail = (): void => {
-                if (settled) {
-                    return;
-                }
-                settled = true;
-                reject(new Error("Could not read video metadata"));
-            };
-            video.onloadedmetadata = finish;
-            video.onloadeddata = finish;
-            video.onerror = fail;
-            video.src = url;
-            if (typeof video.load === "function") {
-                video.load();
-            }
-        });
+            }),
+            VIDEO_PROBE_TIMEOUT_MS,
+            "Timed out reading video metadata",
+        );
         const rawDuration = video.duration;
         if (!Number.isFinite(rawDuration) || rawDuration <= 0) {
             throw new Error("Could not determine video duration");

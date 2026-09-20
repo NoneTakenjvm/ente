@@ -9,6 +9,8 @@ interface BatchUploadState {
     http: HttpClient;
     urls: ObjectUploadURL[];
     filesRemaining: number;
+    /** In-flight refill so concurrent workers share one fetch (official UploadService pattern). */
+    activeRefill?: Promise<void>;
 }
 
 let batchState: BatchUploadState | undefined;
@@ -27,6 +29,19 @@ export const beginUploadBatch = async (
     };
 };
 
+const refillUploadURLs = async (state: BatchUploadState): Promise<void> => {
+    if (!state.activeRefill) {
+        state.activeRefill = (async (): Promise<void> => {
+            const countHint = Math.max(1, state.filesRemaining);
+            const urls = await fetchUploadURLs(state.http, countHint);
+            state.urls.push(...urls);
+        })().finally(() => {
+            state.activeRefill = undefined;
+        });
+    }
+    await state.activeRefill;
+};
+
 /**
  * Take the next pre-signed upload URL from the batch pool.
  */
@@ -37,13 +52,17 @@ export const takeUploadURL = async (
         return fetchUploadURL(http);
     }
 
-    if (batchState.urls.length === 0) {
-        const countHint = Math.max(1, batchState.filesRemaining);
-        const urls = await fetchUploadURLs(batchState.http, countHint);
-        batchState.urls.push(...urls);
+    const state = batchState;
+    // Refill under a shared promise so concurrent workers don't stampede;
+    // loop in case another worker drained the pool between refill and pop.
+    while (state.urls.length === 0) {
+        await refillUploadURLs(state);
+        if (state.urls.length === 0) {
+            throw new Error("Failed to obtain upload URL");
+        }
     }
 
-    const url = batchState.urls.pop();
+    const url = state.urls.pop();
     if (!url) {
         throw new Error("Failed to obtain upload URL");
     }

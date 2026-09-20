@@ -1,3 +1,4 @@
+import { ensureArrayBufferBacked } from "ente-base/bytes";
 import {
     chunkHashFinal,
     chunkHashInit,
@@ -24,6 +25,7 @@ import { ensureInteger } from "ente-utils/ensure";
 import type { HttpClient } from "../api/http";
 import { extractVideoFrameJpeg } from "@/lib/ffmpeg";
 import { generateImageThumbnail } from "./thumbnail";
+import type { UploadCryptoWorker } from "./upload-crypto-pool";
 import {
     markBatchUploadFileComplete,
     takeUploadURL,
@@ -41,9 +43,19 @@ export interface UploadLocalVideoOptions {
     height: number;
     duration: number;
     mimeType: string;
+    /** Dedicated crypto worker for this upload slot (batch uploads). */
+    crypto?: UploadCryptoWorker;
 }
 
-const computeContentHash = async (data: Uint8Array): Promise<string> => {
+const computeContentHash = async (
+    data: Uint8Array,
+    crypto?: UploadCryptoWorker,
+): Promise<string> => {
+    if (crypto) {
+        const hashState = await crypto.chunkHashInit();
+        await crypto.chunkHashUpdate(hashState, data);
+        return crypto.chunkHashFinal(hashState);
+    }
     const hashState = await chunkHashInit();
     await chunkHashUpdate(hashState, data);
     return chunkHashFinal(hashState);
@@ -57,7 +69,7 @@ const buildMetadata = async (
     title: options.title,
     creationTime: ensureInteger(options.creationTime),
     modificationTime: ensureInteger(Date.now() * 1000),
-    hash: await computeContentHash(videoBytes),
+    hash: await computeContentHash(videoBytes, options.crypto),
     duration: ensureInteger(options.duration),
 });
 
@@ -72,6 +84,8 @@ const buildPublicMagicData = (
 
 /**
  * Encrypt, upload, and finalize a new video in the given collection.
+ *
+ * Hash overlaps with poster-frame extract; encrypt and PUTs run in parallel.
  */
 export const uploadLocalVideo = async (
     http: HttpClient,
@@ -79,32 +93,82 @@ export const uploadLocalVideo = async (
     videoBytes: Uint8Array,
     options: UploadLocalVideoOptions,
 ): Promise<EnteFile> => {
-    const metadata = await buildMetadata(videoBytes, options);
-    const frame = await extractVideoFrameJpeg(videoBytes, options.mimeType);
+    const crypto = options.crypto;
+    const [metadata, frame] = await Promise.all([
+        buildMetadata(videoBytes, options),
+        extractVideoFrameJpeg(videoBytes, options.mimeType),
+    ]);
     const thumbnail = await generateImageThumbnail(frame);
-    const fileKey = await generateBlobOrStreamKey();
 
-    const encryptedFile = await encryptStreamBytes(videoBytes, fileKey);
-    const encryptedThumbnail = await encryptBlobBytes(thumbnail, fileKey);
-    const encryptedMetadata = await encryptMetadataJSON(metadata, fileKey);
+    const fileKey = crypto ?
+        await crypto.generateBlobOrStreamKey() :
+        await generateBlobOrStreamKey();
 
     const publicMagicData = buildPublicMagicData(options);
     const publicMagicMetadata = createMagicMetadata(publicMagicData);
-    const encryptedPubMagicMetadata = publicMagicMetadata.count ?
-        await encryptMagicMetadata(publicMagicMetadata, fileKey) :
-        undefined;
 
-    const encryptedFileKey = await encryptBox(fileKey, collection.key);
+    const encryptPubMagic = async (): Promise<
+        PostEnteFileRequest["pubMagicMetadata"]
+    > => {
+        if (!publicMagicMetadata.count) {
+            return undefined;
+        }
+        if (crypto) {
+            const { encryptedData: data, decryptionHeader: header } =
+                await crypto.encryptMetadataJSON(publicMagicMetadata.data, fileKey);
+            return {
+                version: publicMagicMetadata.version,
+                count: publicMagicMetadata.count,
+                data,
+                header,
+            };
+        }
+        return encryptMagicMetadata(publicMagicMetadata, fileKey);
+    };
 
-    const fileUploadURL = await takeUploadURL(http);
-    await putFile(http, fileUploadURL.url, encryptedFile.encryptedData);
+    const [
+        encryptedFile,
+        encryptedThumbnail,
+        encryptedMetadata,
+        encryptedPubMagicMetadata,
+        encryptedFileKey,
+    ] = await Promise.all([
+        crypto ?
+            crypto.encryptStreamBytes(videoBytes, fileKey) :
+            encryptStreamBytes(videoBytes, fileKey),
+        crypto ?
+            crypto.encryptBlobBytes(thumbnail, fileKey) :
+            encryptBlobBytes(thumbnail, fileKey),
+        crypto ?
+            crypto.encryptMetadataJSON(metadata, fileKey) :
+            encryptMetadataJSON(metadata, fileKey),
+        encryptPubMagic(),
+        crypto ?
+            crypto.encryptBox(fileKey, collection.key) :
+            encryptBox(fileKey, collection.key),
+    ]);
 
-    const thumbnailUploadURL = await takeUploadURL(http);
-    await putFile(
-        http,
-        thumbnailUploadURL.url,
-        encryptedThumbnail.encryptedData,
-    );
+    const [fileUploadURL, thumbnailUploadURL] = await Promise.all([
+        takeUploadURL(http),
+        takeUploadURL(http),
+    ]);
+
+    const thumbnailDecryptionHeader = crypto ?
+        await crypto.toB64(encryptedThumbnail.decryptionHeader) :
+        await toB64(encryptedThumbnail.decryptionHeader);
+
+    await Promise.all([
+        putFile(
+            http,
+            fileUploadURL.url,
+            ensureArrayBufferBacked(encryptedFile.encryptedData),
+        ),
+        putFile(
+            http,
+            thumbnailUploadURL.url,
+            ensureArrayBufferBacked(encryptedThumbnail.encryptedData),
+        ),
+    ]);
 
     const newFileRequest: PostEnteFileRequest = {
         collectionID: collection.id,
@@ -117,7 +181,7 @@ export const uploadLocalVideo = async (
         },
         thumbnail: {
             objectKey: thumbnailUploadURL.objectKey,
-            decryptionHeader: await toB64(encryptedThumbnail.decryptionHeader),
+            decryptionHeader: thumbnailDecryptionHeader,
             size: encryptedThumbnail.encryptedData.length,
         },
         metadata: encryptedMetadata,

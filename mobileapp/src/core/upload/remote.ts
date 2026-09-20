@@ -1,6 +1,7 @@
 import { RemoteEnteFile } from "ente-media/file";
 import { z } from "zod";
 import type { HttpClient } from "../api/http";
+import { isProductionEnteOrigin } from "../api/http";
 
 const ObjectUploadURL = z.object({
     objectKey: z.string(),
@@ -33,6 +34,16 @@ export interface PostEnteFileRequest {
         header: string;
     };
 }
+
+/** Official Photos CF upload proxy — see [Note: Faster uploads via workers]. */
+const UPLOADER_ORIGIN = "https://uploader.ente.com";
+
+/**
+ * Use the Cloudflare upload proxy on production Ente (same as the official app).
+ * Self-hosted / custom API origins PUT directly to the pre-signed URL.
+ */
+const shouldUseUploadProxy = (http: HttpClient): boolean =>
+    isProductionEnteOrigin(http.apiOrigin());
 
 /**
  * Fetch pre-signed URLs for uploading multiple objects.
@@ -113,8 +124,9 @@ export const withUploadRetry = async <T>(
 /**
  * Upload encrypted bytes to a pre-signed S3 URL, retrying transient failures.
  *
- * When {@link onProgress} is set, uses XHR so upload byte progress is available
- * (fetch does not report request-body progress).
+ * On production Ente, routes through `uploader.ente.com` (Cloudflare) like the
+ * official app for faster PUTs. When {@link onProgress} is set, uses XHR so
+ * upload byte progress is available (fetch does not report request-body progress).
  */
 export const putFile = async (
     http: HttpClient,
@@ -122,11 +134,18 @@ export const putFile = async (
     fileData: Uint8Array<ArrayBuffer>,
     onProgress?: (loaded: number, total: number) => void,
 ): Promise<void> => {
+    const useProxy = shouldUseUploadProxy(http);
+    const requestURL = useProxy ? `${UPLOADER_ORIGIN}/file-upload` : uploadURL;
+    const headers: Record<string, string> = {
+        ...http.publicHeaders(),
+        ...(useProxy ? { "UPLOAD-URL": uploadURL } : {}),
+    };
+
     await withUploadRetry(async () => {
         if (!onProgress) {
-            const res = await fetch(uploadURL, {
+            const res = await fetch(requestURL, {
                 method: "PUT",
-                headers: http.publicHeaders(),
+                headers,
                 body: fileData,
             });
             http.ensureOk(res);
@@ -135,8 +154,7 @@ export const putFile = async (
 
         await new Promise<void>((resolve, reject) => {
             const xhr = new XMLHttpRequest();
-            xhr.open("PUT", uploadURL);
-            const headers = http.publicHeaders();
+            xhr.open("PUT", requestURL);
             for (const [key, value] of Object.entries(headers)) {
                 xhr.setRequestHeader(key, value);
             }

@@ -14,6 +14,7 @@ vi.stubGlobal("fetch", mockFetch);
 
 const http = {
     publicHeaders: (): Record<string, string> => ({}),
+    apiOrigin: (): string => "https://api.example.test",
     ensureOk: (res: Response): void => {
         if (!res.ok) {
             throw new Error(`HTTP ${res.status} for ${res.url}`);

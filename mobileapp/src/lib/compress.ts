@@ -412,15 +412,33 @@ const postCompressRequest = (
             return;
         }
 
+        const timeoutMs = 45_000;
+        const timer = setTimeout(() => {
+            cleanup();
+            reject(new Error("Image encode timed out"));
+        }, timeoutMs);
+
+        const cleanup = (): void => {
+            clearTimeout(timer);
+            compressWorker.removeEventListener("message", onMessage);
+            compressWorker.removeEventListener("error", onError);
+        };
+
         const onMessage = (event: MessageEvent<CompressWorkerResponse>): void => {
             if (event.data.id !== request.id) {
                 return;
             }
-            compressWorker.removeEventListener("message", onMessage);
+            cleanup();
             resolve(event.data);
         };
 
+        const onError = (): void => {
+            cleanup();
+            reject(new Error("Image encode worker failed"));
+        };
+
         compressWorker.addEventListener("message", onMessage);
+        compressWorker.addEventListener("error", onError);
         compressWorker.postMessage(request, transfer);
     });
 
