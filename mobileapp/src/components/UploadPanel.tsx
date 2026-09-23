@@ -27,11 +27,12 @@ import {
     endUploadBatch,
 } from "@/core/upload/upload-url-pool";
 import {
-    beginUploadCryptoPool,
-    endUploadCryptoPool,
-    getUploadCryptoWorker,
-} from "@/core/upload/upload-crypto-pool";
+    abortUploadBatch,
+    beginUploadAbort,
+    endUploadAbort,
+} from "@/core/upload/remote";
 import { prepareLocalImage } from "@/lib/prepare-local-image";
+import { withTimeout } from "@/lib/with-timeout";
 import {
     ACCEPT_LOCAL_MEDIA,
     isUploadableLocalFile,
@@ -243,12 +244,15 @@ export function UploadPanel({
             const errors: string[] = [];
             let nextIndex = 0;
 
-            const uploadStagedFile = async (
-                entry: StagedFile,
-                crypto: Awaited<ReturnType<typeof getUploadCryptoWorker>>,
-            ): Promise<void> => {
+            const uploadStagedFile = async (entry: StagedFile): Promise<void> => {
+                if (useUploadJobStore.getState().cancelRequested) {
+                    throw new Error("Upload cancelled");
+                }
                 if (entry.kind === "video") {
                     const prepared = await prepareLocalVideo(entry.file);
+                    if (useUploadJobStore.getState().cancelRequested) {
+                        throw new Error("Upload cancelled");
+                    }
                     await uploadVideoFile(
                         selectedCollectionId,
                         prepared.bytes,
@@ -260,12 +264,14 @@ export function UploadPanel({
                         sanitizeUploadVideoTitle(entry.file.name),
                         entry.file.lastModified * 1000,
                         prepared.mimeType,
-                        crypto,
                     );
                     return;
                 }
 
                 const prepared = await prepareLocalImage(entry.file);
+                if (useUploadJobStore.getState().cancelRequested) {
+                    throw new Error("Upload cancelled");
+                }
                 await uploadImageFile(
                     selectedCollectionId,
                     prepared.bytes,
@@ -275,7 +281,6 @@ export function UploadPanel({
                     },
                     sanitizeUploadImageTitle(entry.file.name),
                     entry.file.lastModified * 1000,
-                    crypto,
                 );
             };
 
@@ -289,8 +294,7 @@ export function UploadPanel({
                 setUploadJobProgress(current, filesToUpload.length);
             };
 
-            const worker = async (workerIndex: number): Promise<void> => {
-                const crypto = await getUploadCryptoWorker(workerIndex);
+            const worker = async (): Promise<void> => {
                 while (true) {
                     if (useUploadJobStore.getState().cancelRequested) {
                         return;
@@ -304,15 +308,18 @@ export function UploadPanel({
                     inFlight += 1;
                     reportProgress();
                     try {
-                        await uploadStagedFile(entry, crypto);
+                        await uploadStagedFile(entry);
                         completed += 1;
                     } catch (uploadError: unknown) {
-                        failed += 1;
-                        errors.push(
+                        const message =
                             uploadError instanceof Error ?
-                                `${entry.file.name}: ${uploadError.message}` :
-                                `${entry.file.name}: upload failed`,
-                        );
+                                uploadError.message :
+                                "upload failed";
+                        if (/upload cancelled/i.test(message)) {
+                            return;
+                        }
+                        failed += 1;
+                        errors.push(`${entry.file.name}: ${message}`);
                     } finally {
                         inFlight -= 1;
                         reportProgress();
@@ -321,18 +328,22 @@ export function UploadPanel({
             };
 
             try {
-                await beginUploadBatch(
-                    getEnteCore().getHttpClient(),
-                    filesToUpload.length,
+                beginUploadAbort();
+                await withTimeout(
+                    beginUploadBatch(
+                        getEnteCore().getHttpClient(),
+                        filesToUpload.length,
+                    ),
+                    30_000,
+                    "Timed out fetching upload URLs",
                 );
 
                 const workerCount = Math.min(
                     maxConcurrentUploads,
                     filesToUpload.length,
                 );
-                beginUploadCryptoPool(workerCount);
                 await Promise.all(
-                    Array.from({ length: workerCount }, (_, i) => worker(i)),
+                    Array.from({ length: workerCount }, () => worker()),
                 );
 
                 const cancelled = useUploadJobStore.getState().cancelRequested;
@@ -367,8 +378,16 @@ export function UploadPanel({
                     `Uploaded ${completed} · ${failed} failed`,
                 );
                 toast.error(errors[0] ?? "Some uploads failed");
+            } catch (batchError: unknown) {
+                const message =
+                    batchError instanceof Error ?
+                        batchError.message :
+                        "Upload failed";
+                setPhase("error");
+                setError(message);
+                toast.error(message);
             } finally {
-                endUploadCryptoPool();
+                endUploadAbort();
                 endUploadBatch();
                 resetUploadJob();
                 uploadStartedRef.current = false;
@@ -572,6 +591,7 @@ export function UploadPanel({
             return;
         }
         requestCancel();
+        abortUploadBatch();
     }, [requestCancel, uploading]);
 
     const handleSheetOpenChange = useCallback(

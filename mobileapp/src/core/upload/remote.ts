@@ -1,7 +1,6 @@
 import { RemoteEnteFile } from "ente-media/file";
 import { z } from "zod";
 import type { HttpClient } from "../api/http";
-import { isProductionEnteOrigin } from "../api/http";
 
 const ObjectUploadURL = z.object({
     objectKey: z.string(),
@@ -9,10 +8,6 @@ const ObjectUploadURL = z.object({
 });
 
 export type ObjectUploadURL = z.infer<typeof ObjectUploadURL>;
-
-const ObjectUploadURLResponse = z.object({
-    urls: ObjectUploadURL.array(),
-});
 
 export interface UploadedFileObjectAttributes {
     objectKey: string;
@@ -35,56 +30,102 @@ export interface PostEnteFileRequest {
     };
 }
 
-/** Official Photos CF upload proxy — see [Note: Faster uploads via workers]. */
-const UPLOADER_ORIGIN = "https://uploader.ente.com";
+/** Bound PUTs so a stalled S3 connection cannot freeze the batch forever. */
+const PUT_FILE_TIMEOUT_MS = 120_000;
+
+/** Optional abort from "Cancel upload" — set for the duration of a batch. */
+let batchAbort: AbortController | undefined;
 
 /**
- * Use the Cloudflare upload proxy on production Ente (same as the official app).
- * Self-hosted / custom API origins PUT directly to the pre-signed URL.
+ * Arm a batch-wide abort signal (Cancel upload). Clears any previous controller.
  */
-const shouldUseUploadProxy = (http: HttpClient): boolean =>
-    isProductionEnteOrigin(http.apiOrigin());
-
-/**
- * Fetch pre-signed URLs for uploading multiple objects.
- */
-export const fetchUploadURLs = async (
-    http: HttpClient,
-    countHint: number,
-): Promise<ObjectUploadURL[]> => {
-    const count = Math.min(50, countHint * 2);
-    const response = await http.authFetchJSON<{ urls: ObjectUploadURL[] }>(
-        "/files/upload-urls",
-        { count, ts: Date.now() },
-    );
-    const parsed = ObjectUploadURLResponse.parse(response);
-    return parsed.urls;
+export const beginUploadAbort = (): AbortSignal => {
+    batchAbort?.abort();
+    batchAbort = new AbortController();
+    return batchAbort.signal;
 };
 
 /**
- * Fetch a pre-signed URL for uploading one object.
+ * Abort in-flight PUTs for the current batch.
  */
-export const fetchUploadURL = async (
-    http: HttpClient,
-): Promise<ObjectUploadURL> => {
-    const urls = await fetchUploadURLs(http, 1);
-    const url = urls[0];
-    if (!url) {
-        throw new Error("Failed to obtain upload URL");
+export const abortUploadBatch = (): void => {
+    batchAbort?.abort();
+};
+
+/**
+ * Clear the batch abort controller after the batch finishes.
+ */
+export const endUploadAbort = (): void => {
+    batchAbort = undefined;
+};
+
+const abortableTimeout = (
+    ms: number,
+    outer?: AbortSignal,
+): { signal: AbortSignal; clear: () => void } => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ms);
+    const onOuterAbort = (): void => controller.abort();
+    if (outer) {
+        if (outer.aborted) {
+            controller.abort();
+        } else {
+            outer.addEventListener("abort", onOuterAbort, { once: true });
+        }
     }
-    return url;
+    return {
+        signal: controller.signal,
+        clear: (): void => {
+            clearTimeout(timer);
+            outer?.removeEventListener("abort", onOuterAbort);
+        },
+    };
+};
+
+/**
+ * Mint a pre-signed upload URL bound to content length + MD5.
+ *
+ * Production museum rejected the legacy bulk `GET /files/upload-urls` (HTTP 410
+ * "no longer supported"). Matches official Photos `fetchUploadURLWithMetadata`.
+ */
+export const fetchUploadURLWithMetadata = async (
+    http: HttpClient,
+    {
+        contentLength,
+        contentMd5,
+    }: { contentLength: number; contentMd5: string },
+): Promise<ObjectUploadURL> => {
+    const response = await http.authFetch(
+        "/files/upload-url",
+        { ts: Date.now() },
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                contentLength,
+                contentMD5: contentMd5,
+            }),
+        },
+    );
+    return ObjectUploadURL.parse(await response.json());
 };
 
 const retryableStatus = (status: number): boolean =>
     status === 429 || status >= 500;
 
 const isRetryableError = (error: unknown): boolean => {
+    if (error instanceof DOMException && error.name === "AbortError") {
+        return false;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    if (/upload cancelled|upload timed out/i.test(message)) {
+        return false;
+    }
     // A network-level failure (TypeError from fetch), or a retryable status
     // wrapped by ensureOk's `HTTP <status>` message.
     if (error instanceof TypeError) {
         return true;
     }
-    const message = error instanceof Error ? error.message : String(error);
     if (/failed to fetch|network|load failed/i.test(message)) {
         return true;
     }
@@ -121,43 +162,82 @@ export const withUploadRetry = async <T>(
     throw lastError;
 };
 
+const mapAbortError = (error: unknown): never => {
+    if (
+        (error instanceof DOMException && error.name === "AbortError") ||
+        (error instanceof Error && /aborted/i.test(error.message))
+    ) {
+        if (batchAbort?.signal.aborted) {
+            throw new Error("Upload cancelled");
+        }
+        throw new TypeError("Upload timed out");
+    }
+    throw error;
+};
+
+export interface PutFileOptions {
+    contentMd5?: string;
+    onProgress?: (loaded: number, total: number) => void;
+}
+
 /**
  * Upload encrypted bytes to a pre-signed S3 URL, retrying transient failures.
  *
- * On production Ente, routes through `uploader.ente.com` (Cloudflare) like the
- * official app for faster PUTs. When {@link onProgress} is set, uses XHR so
- * upload byte progress is available (fetch does not report request-body progress).
+ * Uses the pre-signed URL directly (no CF upload proxy) — the proxy path was
+ * hanging indefinitely on mobile Safari with no usable cancel. When museum
+ * minted the URL with checksum metadata, pass the same {@link PutFileOptions.contentMd5}.
  */
 export const putFile = async (
     http: HttpClient,
     uploadURL: string,
     fileData: Uint8Array<ArrayBuffer>,
-    onProgress?: (loaded: number, total: number) => void,
+    options?: PutFileOptions,
 ): Promise<void> => {
-    const useProxy = shouldUseUploadProxy(http);
-    const requestURL = useProxy ? `${UPLOADER_ORIGIN}/file-upload` : uploadURL;
     const headers: Record<string, string> = {
         ...http.publicHeaders(),
-        ...(useProxy ? { "UPLOAD-URL": uploadURL } : {}),
+        ...(options?.contentMd5 ?
+            { "Content-MD5": options.contentMd5 } :
+            {}),
     };
+    const onProgress = options?.onProgress;
 
     await withUploadRetry(async () => {
         if (!onProgress) {
-            const res = await fetch(requestURL, {
-                method: "PUT",
-                headers,
-                body: fileData,
-            });
-            http.ensureOk(res);
+            const timeout = abortableTimeout(
+                PUT_FILE_TIMEOUT_MS,
+                batchAbort?.signal,
+            );
+            try {
+                const res = await fetch(uploadURL, {
+                    method: "PUT",
+                    headers,
+                    body: fileData,
+                    signal: timeout.signal,
+                });
+                http.ensureOk(res);
+            } catch (error: unknown) {
+                mapAbortError(error);
+            } finally {
+                timeout.clear();
+            }
             return;
         }
 
         await new Promise<void>((resolve, reject) => {
             const xhr = new XMLHttpRequest();
-            xhr.open("PUT", requestURL);
+            xhr.open("PUT", uploadURL);
             for (const [key, value] of Object.entries(headers)) {
                 xhr.setRequestHeader(key, value);
             }
+            const timer = setTimeout(() => {
+                xhr.abort();
+            }, PUT_FILE_TIMEOUT_MS);
+            const onBatchAbort = (): void => {
+                xhr.abort();
+            };
+            batchAbort?.signal.addEventListener("abort", onBatchAbort, {
+                once: true,
+            });
             xhr.upload.onprogress = (event: ProgressEvent): void => {
                 if (event.lengthComputable) {
                     onProgress(event.loaded, event.total);
@@ -169,6 +249,8 @@ export const putFile = async (
                 }
             };
             xhr.onload = (): void => {
+                clearTimeout(timer);
+                batchAbort?.signal.removeEventListener("abort", onBatchAbort);
                 const res = new Response(null, {
                     status: xhr.status,
                     statusText: xhr.statusText,
@@ -182,7 +264,18 @@ export const putFile = async (
                 }
             };
             xhr.onerror = (): void => {
+                clearTimeout(timer);
+                batchAbort?.signal.removeEventListener("abort", onBatchAbort);
                 reject(new TypeError("Failed to fetch"));
+            };
+            xhr.onabort = (): void => {
+                clearTimeout(timer);
+                batchAbort?.signal.removeEventListener("abort", onBatchAbort);
+                if (batchAbort?.signal.aborted) {
+                    reject(new Error("Upload cancelled"));
+                } else {
+                    reject(new TypeError("Upload timed out"));
+                }
             };
             xhr.send(fileData);
         });
