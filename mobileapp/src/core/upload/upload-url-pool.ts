@@ -1,86 +1,55 @@
 import type { HttpClient } from "../api/http";
+import { computeMd5Base64 } from "./md5";
 import {
-    fetchUploadURL,
-    fetchUploadURLs,
+    fetchUploadURLWithMetadata,
+    putFile,
     type ObjectUploadURL,
 } from "./remote";
 
-interface BatchUploadState {
-    http: HttpClient;
-    urls: ObjectUploadURL[];
-    filesRemaining: number;
-    /** In-flight refill so concurrent workers share one fetch (official UploadService pattern). */
-    activeRefill?: Promise<void>;
-}
-
-let batchState: BatchUploadState | undefined;
-
 /**
- * Prefetch upload URLs for a multi-file upload batch.
- */
-export const beginUploadBatch = async (
-    http: HttpClient,
-    fileCount: number,
-): Promise<void> => {
-    batchState = {
-        http,
-        urls: await fetchUploadURLs(http, fileCount),
-        filesRemaining: fileCount,
-    };
-};
-
-const refillUploadURLs = async (state: BatchUploadState): Promise<void> => {
-    if (!state.activeRefill) {
-        state.activeRefill = (async (): Promise<void> => {
-            const countHint = Math.max(1, state.filesRemaining);
-            const urls = await fetchUploadURLs(state.http, countHint);
-            state.urls.push(...urls);
-        })().finally(() => {
-            state.activeRefill = undefined;
-        });
-    }
-    await state.activeRefill;
-};
-
-/**
- * Take the next pre-signed upload URL from the batch pool.
+ * Mint a checksum-bound upload URL for encrypted object bytes.
+ *
+ * Replaces the legacy bulk URL pool — production museum returns HTTP 410 for
+ * `GET /files/upload-urls`.
  */
 export const takeUploadURL = async (
     http: HttpClient,
+    encryptedBytes: Uint8Array,
+): Promise<{ upload: ObjectUploadURL; contentMd5: string }> => {
+    const contentMd5 = computeMd5Base64(encryptedBytes);
+    const upload = await fetchUploadURLWithMetadata(http, {
+        contentLength: encryptedBytes.length,
+        contentMd5,
+    });
+    return { upload, contentMd5 };
+};
+
+/**
+ * Mint URL + PUT encrypted bytes with matching Content-MD5.
+ */
+export const putEncryptedObject = async (
+    http: HttpClient,
+    encryptedBytes: Uint8Array<ArrayBuffer>,
+    onProgress?: (loaded: number, total: number) => void,
 ): Promise<ObjectUploadURL> => {
-    if (!batchState) {
-        return fetchUploadURL(http);
-    }
-
-    const state = batchState;
-    // Refill under a shared promise so concurrent workers don't stampede;
-    // loop in case another worker drained the pool between refill and pop.
-    while (state.urls.length === 0) {
-        await refillUploadURLs(state);
-        if (state.urls.length === 0) {
-            throw new Error("Failed to obtain upload URL");
-        }
-    }
-
-    const url = state.urls.pop();
-    if (!url) {
-        throw new Error("Failed to obtain upload URL");
-    }
-    return url;
+    const { upload, contentMd5 } = await takeUploadURL(http, encryptedBytes);
+    await putFile(http, upload.url, encryptedBytes, {
+        contentMd5,
+        onProgress,
+    });
+    return upload;
 };
 
-/**
- * Mark one file in the batch as finished (file + thumbnail uploaded).
- */
-export const markBatchUploadFileComplete = (): void => {
-    if (batchState) {
-        batchState.filesRemaining = Math.max(0, batchState.filesRemaining - 1);
-    }
+/** No-op retained so callers can keep batch try/finally structure. */
+export const beginUploadBatch = async (
+    _http: HttpClient,
+    _fileCount: number,
+): Promise<void> => {
+    // Checksum URLs are minted per object after encrypt; nothing to prefetch.
 };
 
-/**
- * Clear batch upload URL pool state.
- */
-export const endUploadBatch = (): void => {
-    batchState = undefined;
-};
+/** No-op — see {@link beginUploadBatch}. */
+export const markBatchUploadFileComplete = (): void => {};
+
+/** No-op — see {@link beginUploadBatch}. */
+export const endUploadBatch = (): void => {};

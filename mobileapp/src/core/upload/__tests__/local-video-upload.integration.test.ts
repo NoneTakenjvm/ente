@@ -13,14 +13,12 @@ import { prepareLocalVideo } from "@/lib/transcode/prepare-local-video";
 const {
     mockExtractVideoFrameJpeg,
     mockGenerateImageThumbnail,
-    mockTakeUploadURL,
-    mockPutFile,
+    mockPutEncryptedObject,
     mockPostEnteFile,
 } = vi.hoisted(() => ({
     mockExtractVideoFrameJpeg: vi.fn(),
     mockGenerateImageThumbnail: vi.fn(),
-    mockTakeUploadURL: vi.fn(),
-    mockPutFile: vi.fn(),
+    mockPutEncryptedObject: vi.fn(),
     mockPostEnteFile: vi.fn(),
 }));
 
@@ -33,12 +31,11 @@ vi.mock("@/core/upload/thumbnail", () => ({
 }));
 
 vi.mock("@/core/upload/upload-url-pool", () => ({
-    takeUploadURL: mockTakeUploadURL,
+    putEncryptedObject: mockPutEncryptedObject,
     markBatchUploadFileComplete: vi.fn(),
 }));
 
 vi.mock("@/core/upload/remote", () => ({
-    putFile: mockPutFile,
     postEnteFile: mockPostEnteFile,
 }));
 
@@ -68,8 +65,7 @@ afterEach(() => {
     vi.restoreAllMocks();
     mockExtractVideoFrameJpeg.mockReset();
     mockGenerateImageThumbnail.mockReset();
-    mockTakeUploadURL.mockReset();
-    mockPutFile.mockReset();
+    mockPutEncryptedObject.mockReset();
     mockPostEnteFile.mockReset();
 });
 
@@ -89,10 +85,9 @@ describe("local video upload pipeline", () => {
         mockGenerateImageThumbnail.mockResolvedValue(thumbnail);
         stubVideoProbe(1920, 1080, 8.2);
 
-        mockTakeUploadURL
+        mockPutEncryptedObject
             .mockResolvedValueOnce({ objectKey: "file-object", url: "https://upload/file" })
             .mockResolvedValueOnce({ objectKey: "thumb-object", url: "https://upload/thumb" });
-        mockPutFile.mockResolvedValue(undefined);
         mockPostEnteFile.mockImplementation(async (_http, request) => ({
             id: 9001,
             collectionID: request.collectionID,
@@ -133,7 +128,7 @@ describe("local video upload pipeline", () => {
             prepared.bytes,
             "video/quicktime",
         );
-        expect(mockPutFile).toHaveBeenCalledTimes(2);
+        expect(mockPutEncryptedObject).toHaveBeenCalledTimes(2);
         expect(mockPostEnteFile).toHaveBeenCalledOnce();
 
         expect(uploaded.metadata.fileType).toBe(FileType.video);

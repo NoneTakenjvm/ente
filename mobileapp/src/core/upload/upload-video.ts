@@ -28,11 +28,10 @@ import { generateImageThumbnail } from "./thumbnail";
 import type { UploadCryptoWorker } from "./upload-crypto-pool";
 import {
     markBatchUploadFileComplete,
-    takeUploadURL,
+    putEncryptedObject,
 } from "./upload-url-pool";
 import {
     postEnteFile,
-    putFile,
     type PostEnteFileRequest,
 } from "./remote";
 
@@ -148,27 +147,18 @@ export const uploadLocalVideo = async (
             encryptBox(fileKey, collection.key),
     ]);
 
-    const [fileUploadURL, thumbnailUploadURL] = await Promise.all([
-        takeUploadURL(http),
-        takeUploadURL(http),
-    ]);
+    const fileUploadURL = await putEncryptedObject(
+        http,
+        ensureArrayBufferBacked(encryptedFile.encryptedData),
+    );
+    const thumbnailUploadURL = await putEncryptedObject(
+        http,
+        ensureArrayBufferBacked(encryptedThumbnail.encryptedData),
+    );
 
     const thumbnailDecryptionHeader = crypto ?
         await crypto.toB64(encryptedThumbnail.decryptionHeader) :
         await toB64(encryptedThumbnail.decryptionHeader);
-
-    await Promise.all([
-        putFile(
-            http,
-            fileUploadURL.url,
-            ensureArrayBufferBacked(encryptedFile.encryptedData),
-        ),
-        putFile(
-            http,
-            thumbnailUploadURL.url,
-            ensureArrayBufferBacked(encryptedThumbnail.encryptedData),
-        ),
-    ]);
 
     const newFileRequest: PostEnteFileRequest = {
         collectionID: collection.id,

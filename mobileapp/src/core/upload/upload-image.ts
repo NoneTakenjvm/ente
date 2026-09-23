@@ -27,12 +27,11 @@ import { generateImageThumbnail } from "./thumbnail";
 import type { UploadCryptoWorker } from "./upload-crypto-pool";
 import {
     markBatchUploadFileComplete,
-    takeUploadURL,
+    putEncryptedObject,
 } from "./upload-url-pool";
 import {
     postEnteFile,
     putEnteFileUpdate,
-    putFile,
     type PostEnteFileRequest,
 } from "./remote";
 import { updatePublicMetadata } from "../metadata";
@@ -168,27 +167,20 @@ export const uploadJpegImage = async (
             encryptBox(fileKey, collection.key),
     ]);
 
-    const [fileUploadURL, thumbnailUploadURL] = await Promise.all([
-        takeUploadURL(http),
-        takeUploadURL(http),
-    ]);
+    // Sequential mint+PUT — parallel URL-pool take raced on mobile; checksum
+    // URLs also require the encrypted payload first.
+    const fileUploadURL = await putEncryptedObject(
+        http,
+        ensureArrayBufferBacked(encryptedFile.encryptedData),
+    );
+    const thumbnailUploadURL = await putEncryptedObject(
+        http,
+        ensureArrayBufferBacked(encryptedThumbnail.encryptedData),
+    );
 
     const thumbnailDecryptionHeader = crypto ?
         await crypto.toB64(encryptedThumbnail.decryptionHeader) :
         await toB64(encryptedThumbnail.decryptionHeader);
-
-    await Promise.all([
-        putFile(
-            http,
-            fileUploadURL.url,
-            ensureArrayBufferBacked(encryptedFile.encryptedData),
-        ),
-        putFile(
-            http,
-            thumbnailUploadURL.url,
-            ensureArrayBufferBacked(encryptedThumbnail.encryptedData),
-        ),
-    ]);
 
     const newFileRequest: PostEnteFileRequest = {
         collectionID: collection.id,
@@ -353,17 +345,12 @@ export const updateImageBytesInPlace = async (
     const encryptedThumbnail = await encryptBlobBytes(thumbnail, fileKey);
     const encryptedMetadata = await encryptMetadataJSON(metadata, fileKey);
 
-    const fileUploadURL = await takeUploadURL(http);
-    await putFile(
+    const fileUploadURL = await putEncryptedObject(
         http,
-        fileUploadURL.url,
         ensureArrayBufferBacked(encryptedFile.encryptedData),
     );
-
-    const thumbnailUploadURL = await takeUploadURL(http);
-    await putFile(
+    const thumbnailUploadURL = await putEncryptedObject(
         http,
-        thumbnailUploadURL.url,
         ensureArrayBufferBacked(encryptedThumbnail.encryptedData),
     );
 

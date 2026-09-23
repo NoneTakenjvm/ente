@@ -6,15 +6,23 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-09-20 |
-| **Last agent / session** | Upload stall + speed `0.3.175` (CF proxy, crypto pool, parallel PUT) |
+| **Last updated** | 2026-09-23 |
+| **Last agent / session** | Mobile upload `0.3.178` — checksum `POST /files/upload-url` (legacy bulk URLs 410) |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable |
-| **Next recommended action** | Phone QA Manage `0.3.175` multi-file upload; commit + push `ntphotos` when happy. |
+| **Next recommended action** | Phone QA Manage `0.3.178` at http://192.168.0.182:3080; then commit if good. |
 
-**This session shipped:**
+**This session (local only — not pushed):**
+1. **Agentic upload test** — login OK; upload failed with `HTTP 410` on `GET /files/upload-urls` (`"This upload API is no longer supported"`). Storage was fine (~61MB/10GB).
+2. **`0.3.178`** — mint per-object URLs via `POST /files/upload-url` + MD5; PUT sends `Content-MD5`. Dropped legacy URL pool prefetch. Smoke script: `scripts/e2e-upload-smoke.ts`.
+
+**Previous session (local only — not pushed):**
+1. **`0.3.177`** — disable CF `uploader.ente.com` proxy (direct S3 PUT again); drop dedicated crypto workers from the upload path; sequential URL take/PUT; Cancel aborts in-flight fetches. Keeps HEIC/timeouts/concurrency 4 / parallel encrypt.
+2. Prior `0.3.176` iOS worker-skip was insufficient — CF proxy and/or remaining worker path still hung; cancel never aborted PUTs.
+
+**Previous session shipped:**
 1. **`0.3.174` upload stall** — HEIC/video hang timeouts; URL-pool refill mutex; off-critical-path library persist; concurrency 4.
-2. **`0.3.175` upload speed** — production PUTs via `uploader.ente.com` (official CF proxy); 4 dedicated crypto workers (no shared-worker serialize); parallel hash∥thumbnail, encrypt steps, and file∥thumbnail PUT; JPEG SOF dimensions (skip decode for `w`/`h`).
+2. **`0.3.175` upload speed** — production PUTs via `uploader.ente.com` (official CF proxy); 4 dedicated crypto workers; parallel hash∥thumbnail, encrypt, file∥thumbnail PUT; JPEG SOF dimensions.
 
 **Previous session shipped:**
 1. **`0.3.173` UX batch** — stamp tap-only; idle-lock await + `useRequireSession`; zoom chrome tap while zoomed; tool footers safe-area; toaster island offset; wheel zoom; video zoom; AppShell `visualViewport` height; select perf via store-observed cells; crop lock aspect session pref; view-session resume **30m**. Notes in `mobileapp/ux-bugs-investigation.md`.

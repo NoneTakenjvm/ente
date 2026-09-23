@@ -1,3 +1,4 @@
+import { ensureArrayBufferBacked } from "ente-base/bytes";
 import {
     chunkHashFinal,
     chunkHashInit,
@@ -23,14 +24,13 @@ import {
 import { ensureInteger } from "ente-utils/ensure";
 import type { HttpClient } from "../api/http";
 import { extractVideoFrameJpeg } from "@/lib/ffmpeg";
+import type { CompressMediaResult } from "@/lib/transcode/compress-media";
 import { generateImageThumbnail } from "./thumbnail";
 import {
-    fetchUploadURL,
     postEnteFile,
-    putFile,
     type PostEnteFileRequest,
 } from "./remote";
-import type { CompressMediaResult } from "@/lib/transcode/compress-media";
+import { putEncryptedObject } from "./upload-url-pool";
 
 const computeContentHash = async (data: Uint8Array): Promise<string> => {
     const hashState = await chunkHashInit();
@@ -131,11 +131,9 @@ export const uploadCompressedMedia = async (
 
     const encryptedFileKey = await encryptBox(fileKey, collection.key);
 
-    const fileUploadURL = await fetchUploadURL(http);
-    await putFile(
+    const fileUploadURL = await putEncryptedObject(
         http,
-        fileUploadURL.url,
-        encryptedFile.encryptedData,
+        ensureArrayBufferBacked(encryptedFile.encryptedData),
         onProgress ?
             (loaded, total) => {
                 const putRatio = total > 0 ? loaded / total : 1;
@@ -144,12 +142,10 @@ export const uploadCompressedMedia = async (
             undefined,
     );
 
-    const thumbnailUploadURL = await fetchUploadURL(http);
     onProgress?.(0.92);
-    await putFile(
+    const thumbnailUploadURL = await putEncryptedObject(
         http,
-        thumbnailUploadURL.url,
-        encryptedThumbnail.encryptedData,
+        ensureArrayBufferBacked(encryptedThumbnail.encryptedData),
     );
 
     const newFileRequest: PostEnteFileRequest = {
