@@ -109,6 +109,40 @@ export const listKitSeedFiles = (
         .sort((a, b) => a.id - b.id);
 };
 
+/**
+ * Ids of {@link listKitSeedFiles}, read from the tag posting lists: walks the
+ * kit's rarest tag and checks the others by set lookup, so the cost scales
+ * with kit size rather than library size.
+ *
+ * @param seedFileById library files eligible as seeds, by id
+ */
+export const listKitSeedIds = (
+    kitTags: readonly string[],
+    fileIdsByTag: ReadonlyMap<string, ReadonlySet<number>>,
+    seedFileById: ReadonlyMap<number, EnteFile>,
+): number[] => {
+    const postings = kitTags
+        .map((tag) => fileIdsByTag.get(tag) ?? new Set<number>())
+        .sort((a, b) => a.size - b.size);
+    const [rarest, ...others] = postings;
+    if (!rarest) {
+        return [];
+    }
+    const ids: number[] = [];
+    for (const id of rarest) {
+        const file = seedFileById.get(id);
+        if (
+            file &&
+            !isEnteVideoFile(file) &&
+            !isFileArchivedLocally(file) &&
+            others.every((posting) => posting.has(id))
+        ) {
+            ids.push(id);
+        }
+    }
+    return ids.sort((a, b) => a - b);
+};
+
 const packedHashesFromEntry = (
     entry: PhashEntry | undefined,
 ): PackedDHash[] | undefined => {
@@ -1005,7 +1039,8 @@ export const kitEmbeddingRivalWeights = (
  * Reorder gallery by CLIP competitive nearness (lowest distance first).
  *
  * Videos are appended in original order after ranked stills — never scored by
- * poster-thumbnail embeddings.
+ * poster-thumbnail embeddings. Each still is scored once; `distanceById`
+ * returns those scores so callers can reuse them instead of rescoring.
  */
 export const sortFilesByKitEmbeddingCompetitive = (
     files: EnteFile[],
@@ -1016,9 +1051,10 @@ export const sortFilesByKitEmbeddingCompetitive = (
         lambda?: number;
         tau?: number;
     },
-): EnteFile[] => {
+): { files: EnteFile[]; distanceById: ReadonlyMap<number, number> } => {
+    const distanceById = new Map<number, number>();
     if (!selectedMedoids.length) {
-        return [...files];
+        return { files: [...files], distanceById };
     }
     const stills: EnteFile[] = [];
     const videos: EnteFile[] = [];
@@ -1035,25 +1071,25 @@ export const sortFilesByKitEmbeddingCompetitive = (
         options?.tau,
     );
     const scoreOptions = { ...options, rivalWeights };
+    for (const file of stills) {
+        distanceById.set(
+            file.id,
+            kitEmbeddingDistanceCompetitive(
+                file.id,
+                selectedMedoids,
+                rivalMedoidSets,
+                embeddings,
+                scoreOptions,
+            ),
+        );
+    }
     stills.sort((a, b) => {
-        const scoreA = kitEmbeddingDistanceCompetitive(
-            a.id,
-            selectedMedoids,
-            rivalMedoidSets,
-            embeddings,
-            scoreOptions,
-        );
-        const scoreB = kitEmbeddingDistanceCompetitive(
-            b.id,
-            selectedMedoids,
-            rivalMedoidSets,
-            embeddings,
-            scoreOptions,
-        );
+        const scoreA = distanceById.get(a.id)!;
+        const scoreB = distanceById.get(b.id)!;
         if (scoreA !== scoreB) {
             return scoreA - scoreB;
         }
         return a.id - b.id;
     });
-    return [...stills, ...videos];
+    return { files: [...stills, ...videos], distanceById };
 };

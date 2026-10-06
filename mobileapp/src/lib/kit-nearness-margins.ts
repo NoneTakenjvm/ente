@@ -42,14 +42,17 @@ export type KitMarginsWorkerRequest = {
     kind: "rank";
     requestId: number;
     dim: number;
-    /** Training population: ids, row-major vectors and production scores. */
-    trainingIds: Int32Array;
+    /**
+     * Training population: ids, row-major vectors and production scores.
+     * Ids are Float64 — Ente file ids exceed the Int32 range.
+     */
+    trainingIds: Float64Array;
     trainingVectors: Float32Array;
     trainingProductionScores: Float32Array;
     /** One entry per kit tag; `labels[row]` is 1 when the row carries it. */
     tags: { name: string; labels: Uint8Array }[];
     /** Embedded stills to rank, with their production scores. */
-    candidateIds: Int32Array;
+    candidateIds: Float64Array;
     candidateVectors: Float32Array;
     candidateProductionScores: Float32Array;
 };
@@ -59,11 +62,11 @@ export type KitPresenceWorkerRequest = {
     kind: "presence";
     requestId: number;
     dim: number;
-    trainingIds: Int32Array;
+    trainingIds: Float64Array;
     trainingVectors: Float32Array;
     /** Every kit tag with enough examples; `labels[row]` is 1 when the row carries it. */
     tags: { name: string; labels: Uint8Array }[];
-    candidateIds: Int32Array;
+    candidateIds: Float64Array;
     candidateVectors: Float32Array;
 };
 
@@ -71,7 +74,7 @@ export type KitWorkerRequest = KitMarginsWorkerRequest | KitPresenceWorkerReques
 
 export type KitMarginsWorkerResponse = {
     requestId: number;
-    orderIds?: Int32Array;
+    orderIds?: Float64Array;
     error?: string;
 };
 
@@ -253,7 +256,7 @@ export const rankByKitMargins = (
     tagModels: readonly TagLogOddsModel[],
     hardWeight: number = KIT_MARGIN_HARD_WEIGHT,
     tagWeight: number = KIT_MARGIN_TAG_WEIGHT,
-): Int32Array | undefined => {
+): Float64Array | undefined => {
     const {
         dim,
         trainingVectors,
@@ -313,7 +316,7 @@ export const rankByKitMargins = (
         (a, b) =>
             scores[b]! - scores[a]! || candidateIds[a]! - candidateIds[b]!,
     );
-    return Int32Array.from(order, (index) => candidateIds[index]!);
+    return Float64Array.from(order, (index) => candidateIds[index]!);
 };
 
 /**
@@ -358,8 +361,10 @@ export const tagPresenceProbabilities = (
 /**
  * Count, per kit, the shown files assigned to it as closest fit.
  *
- * Every file is credited to exactly one included kit (never orphaned while
- * any kit remains). Fit is the mean tag presence on the kit's tags: 1 when
+ * Every file with some evidence for an included kit is credited to exactly
+ * one of them; a file with zero fit everywhere stays uncounted rather than
+ * padding whichever kit wins the tie. Fit is the mean tag presence on the
+ * kit's tags: 1 when
  * the file already carries the tag, else the worker probability, else 0.
  * Higher mean wins; ties go to more tags, then lower id — so a complete
  * child still beats its parent, and unchecking the child sends those photos
@@ -424,6 +429,9 @@ export const countKitPresence = (
                 best = kit;
                 bestScore = score;
             }
+        }
+        if (bestScore === 0) {
+            continue;
         }
         counts.set(best.id, (counts.get(best.id) ?? 0) + 1);
     }

@@ -5,6 +5,7 @@
  */
 
 import type { EnteFile } from "ente-media/file";
+import { wait } from "ente-utils/promise";
 import { getEnteCore } from "@/core";
 import { syncUpdatedFileDataFileIDs } from "@/core/api/file-data";
 import { getOrganizerDB } from "@/db";
@@ -35,6 +36,12 @@ const uploadedIdsMetaKey = "organizer-clip-uploaded-ids";
 
 const uploadConcurrency = 3;
 const fetchBatchSize = 200;
+/** Uploaded ids are persisted in groups this size (each save rewrites the set). */
+const markUploadedBatchSize = 100;
+/** First retry delay after a failed upload batch; doubles per failed batch. */
+const uploadRetryBaseMs = 2_000;
+/** Failed batches in a row before the drain stops until the next enqueue. */
+const maxUploadFailureStreak = 5;
 
 let uploadChain: Promise<void> = Promise.resolve();
 const pendingUpload: EmbeddingMap = new Map();
@@ -125,43 +132,64 @@ const drainOrganizerClipUploads = async (): Promise<void> => {
             .allFiles.map((file) => [file.id, file] as const),
     );
 
-    while (pendingUpload.size > 0) {
-        await waitWhileGalleryScrolling();
-        const batch: Array<{ file: EnteFile; vector: EmbeddingVector }> = [];
-        for (const [fileId, vector] of pendingUpload) {
-            const file = filesById.get(fileId);
-            pendingUpload.delete(fileId);
-            if (!file?.key || vector.length !== KIT_EMBEDDING_DIMS) {
+    const uploaded: number[] = [];
+    let failureStreak = 0;
+    try {
+        while (pendingUpload.size > 0) {
+            await waitWhileGalleryScrolling();
+            const batch: Array<{ file: EnteFile; vector: EmbeddingVector }> =
+                [];
+            for (const [fileId, vector] of pendingUpload) {
+                const file = filesById.get(fileId);
+                pendingUpload.delete(fileId);
+                if (!file?.key || vector.length !== KIT_EMBEDDING_DIMS) {
+                    continue;
+                }
+                batch.push({ file, vector });
+                if (batch.length >= uploadConcurrency) {
+                    break;
+                }
+            }
+            if (batch.length === 0) {
                 continue;
             }
-            batch.push({ file, vector });
-            if (batch.length >= uploadConcurrency) {
-                break;
+            let failed = false;
+            await Promise.all(
+                batch.map(async ({ file, vector }) => {
+                    try {
+                        await putOrganizerClip(
+                            http,
+                            file,
+                            embeddingToNumberArray(vector),
+                        );
+                        uploaded.push(file.id);
+                    } catch (error) {
+                        console.warn(
+                            `[organizer-clip] upload failed for ${file.id}`,
+                            error,
+                        );
+                        // Retry later.
+                        pendingUpload.set(file.id, vector);
+                        failed = true;
+                    }
+                }),
+            );
+            if (uploaded.length >= markUploadedBatchSize) {
+                await markUploaded(uploaded.splice(0));
             }
+            if (!failed) {
+                failureStreak = 0;
+                continue;
+            }
+            // Back off instead of hammering a failing endpoint (offline,
+            // 429, 5xx); leave the rest queued for the next enqueue.
+            failureStreak += 1;
+            if (failureStreak >= maxUploadFailureStreak) {
+                return;
+            }
+            await wait(uploadRetryBaseMs * 2 ** (failureStreak - 1));
         }
-        if (batch.length === 0) {
-            continue;
-        }
-        const uploaded: number[] = [];
-        await Promise.all(
-            batch.map(async ({ file, vector }) => {
-                try {
-                    await putOrganizerClip(
-                        http,
-                        file,
-                        embeddingToNumberArray(vector),
-                    );
-                    uploaded.push(file.id);
-                } catch (error) {
-                    console.warn(
-                        `[organizer-clip] upload failed for ${file.id}`,
-                        error,
-                    );
-                    // Retry later.
-                    pendingUpload.set(file.id, vector);
-                }
-            }),
-        );
+    } finally {
         if (uploaded.length > 0) {
             await markUploaded(uploaded);
         }
@@ -191,20 +219,31 @@ export const pullOrganizerClipSync = async (
         let cursor = await loadMldataCursor();
         const pendingIds: number[] = [];
 
-        await syncUpdatedFileDataFileIDs(http, "mldata", cursor, async (page) => {
-            if (signal?.aborted) {
-                return;
-            }
-            cursor = page.lastUpdatedAt;
-            for (const fileId of page.fileIDs) {
-                if (filesById.has(fileId)) {
-                    pendingIds.push(fileId);
+        // The cursor is saved only once every listed vector is stored, so an
+        // abort or failed fetch replays those pages instead of skipping them.
+        await syncUpdatedFileDataFileIDs(
+            http,
+            "mldata",
+            cursor,
+            (page) => {
+                if (signal?.aborted) {
+                    return Promise.resolve();
                 }
-            }
-            await saveMldataCursor(cursor);
-        });
+                cursor = page.lastUpdatedAt;
+                for (const fileId of page.fileIDs) {
+                    if (filesById.has(fileId)) {
+                        pendingIds.push(fileId);
+                    }
+                }
+                return Promise.resolve();
+            },
+        );
 
-        if (signal?.aborted || pendingIds.length === 0) {
+        if (signal?.aborted) {
+            return applied;
+        }
+        if (pendingIds.length === 0) {
+            await saveMldataCursor(cursor);
             return applied;
         }
 
@@ -248,6 +287,9 @@ export const pullOrganizerClipSync = async (
                 await markUploaded(chunk.keys());
             }
         }
+        if (!signal?.aborted) {
+            await saveMldataCursor(cursor);
+        }
         return applied;
     })().finally(() => {
         pullInFlight = undefined;
@@ -257,11 +299,11 @@ export const pullOrganizerClipSync = async (
 
 /**
  * One-shot: upload local vectors not yet marked uploaded (migration / backfill).
+ * Resolves once the upload queue drains or backs off.
  */
 export const backfillOrganizerClipUploads = async (
     files: readonly EnteFile[],
     localEntries: ReadonlyEmbeddingMap,
-    signal?: AbortSignal,
 ): Promise<number> => {
     const uploaded = await loadUploadedIdSet();
     const filesById = new Map(files.map((file) => [file.id, file]));
@@ -279,12 +321,6 @@ export const backfillOrganizerClipUploads = async (
         return 0;
     }
     enqueueOrganizerClipUpload(todo);
-    // Wait for drain unless aborted.
-    while (pendingUpload.size > 0 && !signal?.aborted) {
-        await uploadChain.catch(() => undefined);
-        await new Promise<void>((resolve) => {
-            setTimeout(resolve, 50);
-        });
-    }
+    await uploadChain.catch(() => undefined);
     return todo.size;
 };

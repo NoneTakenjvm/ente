@@ -72,11 +72,11 @@ export interface Stage1Message {
     items: Stage1Item[];
     threshold: number;
     /**
-     * Optional CLIP vectors keyed by file id string. When present, Stage-1
-     * uses CLIP nearest-neighbour propose + mutual/tight confirm (edge
-     * distance = round(cosine * 100)). Without CLIP, dHash Hamming is used.
+     * Optional packed L2-normalized CLIP vectors (row i belongs to fileIds[i]),
+     * transferred rather than copied. When present, Stage-1 uses CLIP
+     * nearest-neighbour propose + mutual/tight confirm; without, dHash Hamming.
      */
-    embeddingsByFileId?: Record<string, number[]>;
+    embeddings?: { vectors: Float32Array; fileIds: Float64Array; dims: number };
 }
 
 export interface Stage1AbortMessage {

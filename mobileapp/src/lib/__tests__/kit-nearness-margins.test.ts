@@ -177,7 +177,7 @@ describe("rankByKitMargins", () => {
             productionScoreOf,
         ),
         tags: training.tags,
-        candidateIds: Int32Array.from(candidates, (c) => c.id),
+        candidateIds: Float64Array.from(candidates, (c) => c.id),
         candidateVectors: pack(candidates.map((c) => c.row)),
         candidateProductionScores: Float32Array.from(
             candidates,
@@ -229,6 +229,23 @@ describe("rankByKitMargins", () => {
         expect(order && Array.from(order)).toEqual([4, 9]);
     });
 
+    it("preserves Ente-scale file ids that do not fit in Int32", () => {
+        const member = noisyUnit([1, 1, 1, 0], 801);
+        const onlyA = noisyUnit([1, 0, 0, 0], 802);
+        const order = rankByKitMargins(
+            requestFor([
+                { id: 2_500_000_001, row: onlyA, productionScore: 0.7 },
+                { id: 5_000_000_123, row: member, productionScore: 0.7 },
+            ]),
+            whitening,
+            models,
+        );
+        expect(order && Array.from(order)).toEqual([
+            5_000_000_123,
+            2_500_000_001,
+        ]);
+    });
+
     it("returns undefined without complete or partial members", () => {
         const noMembers = {
             ...requestFor([{ id: 1, row: noisyUnit([1, 1, 1, 0], 700) }]),
@@ -275,18 +292,18 @@ describe("countKitPresence", () => {
         tagProbabilities: Float32Array.from([1, 0.9, 0.3, 1, 0.4, 0.9]),
     };
 
-    it("assigns every file to the closest remaining kit", () => {
+    it("assigns every file with evidence to the closest remaining kit", () => {
         const counts = countKitPresence(kits, [1, 2, 3, 4], fileIdsByTag, estimate);
         // File 1: known {a,b} → ab (mean 1 > abc 2/3).
         // File 2: a=1,b=0.9,c=0.3 → ab.
         // File 3: a=1,b=0.4,c=0.9 → abc (mean ~0.77 > ab 0.7).
-        // File 4: all 0 → abc (most tags among ties).
+        // File 4: all 0 → uncounted.
         expect(counts.get("ab")).toBe(2);
-        expect(counts.get("abc")).toBe(2);
+        expect(counts.get("abc")).toBe(1);
         expect(counts.get("z")).toBe(0);
         expect(
             [...counts.values()].reduce((sum, n) => sum + n, 0),
-        ).toBe(4);
+        ).toBe(3);
     });
 
     it("lets a nested child take the photo from its parent", () => {
@@ -356,17 +373,17 @@ describe("countKitPresence", () => {
         expect(siblings.get("b")).toBe(0);
     });
 
-    it("never orphans a file while any kit remains", () => {
+    it("leaves files with no evidence for any remaining kit unassigned", () => {
         const counts = countKitPresence(
             [{ id: "z", tags: ["z"] }],
             [1, 2, 3, 4],
             fileIdsByTag,
             estimate,
         );
-        expect(counts.get("z")).toBe(4);
+        expect(counts.get("z")).toBe(0);
     });
 
-    it("partitions the whole view for any non-empty remaining kit set", () => {
+    it("counts each file with evidence exactly once for any remaining kit set", () => {
         const view = [1, 2, 3, 4, 5, 6];
         const emptyEstimate = {
             tagNames: [] as string[],
@@ -390,10 +407,13 @@ describe("countKitPresence", () => {
             const remaining = kits.filter(
                 (kit) => kit.tags.length > 0 && !excluded?.has(kit.id),
             );
+            const withEvidence = view.filter((id) =>
+                remaining.some((kit) =>
+                    kit.tags.some((tag) => fileIdsByTag.get(tag)?.has(id))));
             expect(remaining.length).toBeGreaterThan(0);
             expect(
                 [...counts.values()].reduce((sum, n) => sum + n, 0),
-            ).toBe(view.length);
+            ).toBe(withEvidence.length);
             for (const kit of remaining) {
                 expect(counts.get(kit.id)).toBeGreaterThanOrEqual(0);
             }

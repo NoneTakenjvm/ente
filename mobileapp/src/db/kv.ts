@@ -1,5 +1,6 @@
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
+import type { PhashEntry } from "@/lib/crop-match";
 import type {
     ViewSession,
     ViewSessionTombstone,
@@ -90,45 +91,105 @@ export const saveEncryptedTagIndex = async (
     await putEncrypted("tagIndex", await encryptCachePayload(index, cacheKey));
 };
 
-/** A per-file entry as persisted on disk (v3). Legacy v1/v2 entries were just
- * a dHash string or array, which hydrate normalizes into {@link PhashEntry}. */
-export interface PersistedPhashEntry {
-    hashes: string[] | string;
-    color?: string;
-    grid?: string;
+/** Meta for chunked phash storage (v4); entries live in the `phashChunks` store. */
+export interface PersistedPhashMeta {
+    version: 4;
+    nextChunkId: number;
 }
 
-export interface PersistedPhashIndex {
-    version: 3;
-    /**
-     * fileId → the image's similarity signals.
-     *
-     * Legacy version-1/2 entries stored a single dHash string or array of
-     * variant hashes; hydrate normalizes those to {@link PersistedPhashEntry}
-     * so any-variant matching behaves exactly like the original whole-image
-     * dHash compare, and the crop stage is skipped when color/grid are absent.
-     */
-    entries: Record<number, PersistedPhashEntry | string | string[]>;
+/** fileId → entry, or null for a file removed since earlier chunks. */
+interface PhashChunkPayload {
+    entries: Record<number, PhashEntry | null>;
 }
 
-export const loadEncryptedPhashIndex = async (
+/**
+ * Load the phash chunk meta. Older monolithic indexes (v3 and below) hold
+ * point-sampled hashes that no longer compare against current ones, so they
+ * read as absent and the caller rescans.
+ */
+export const loadPhashMeta = async (
     cacheKey: string,
-): Promise<PersistedPhashIndex | undefined> => {
+): Promise<PersistedPhashMeta | undefined> => {
     const payload = await getEncrypted("phashIndex");
     if (!payload) {
         return undefined;
     }
-    return decryptCachePayload<PersistedPhashIndex>(payload, cacheKey);
+    const meta = await decryptCachePayload<{ version?: number }>(
+        payload,
+        cacheKey,
+    );
+    return meta.version === 4 ? (meta as PersistedPhashMeta) : undefined;
 };
 
-export const saveEncryptedPhashIndex = async (
-    index: PersistedPhashIndex,
+/**
+ * Append one encrypted chunk of phash entries; a `null` entry removes that
+ * file. Callers must serialize appends so chunk ids never collide.
+ *
+ * [Note: Chunked phash persistence]
+ *
+ * Hashing a library writes many small chunks instead of re-encrypting the
+ * whole index each time, and deletions are tombstones rather than rewrites.
+ * Chunk ids only grow and IndexedDB returns rows in key order, so on load a
+ * later chunk overrides an earlier one. {@link clearPhashChunks} compacts.
+ */
+export const appendPhashChunk = async (
+    entries: ReadonlyMap<number, PhashEntry | null>,
     cacheKey: string,
 ): Promise<void> => {
-    await putEncrypted(
-        "phashIndex",
-        await encryptCachePayload(index, cacheKey),
-    );
+    const meta = (await loadPhashMeta(cacheKey)) ?? {
+        version: 4,
+        nextChunkId: 0,
+    };
+    const chunkId = meta.nextChunkId;
+    const payload: PhashChunkPayload = {
+        entries: Object.fromEntries(entries),
+    };
+    const encrypted = await encryptCachePayload(payload, cacheKey);
+    const db = await getOrganizerDB();
+    await db.put("phashChunks", {
+        chunkId,
+        encryptedData: encrypted.encryptedData,
+        decryptionHeader: encrypted.decryptionHeader,
+    });
+    const nextMeta: PersistedPhashMeta = {
+        version: 4,
+        nextChunkId: chunkId + 1,
+    };
+    await putEncrypted("phashIndex", await encryptCachePayload(nextMeta, cacheKey));
+};
+
+/** Read every phash chunk, applying later chunks (and removals) over earlier ones. */
+export const loadAllPhashChunks = async (
+    cacheKey: string,
+): Promise<Map<number, PhashEntry>> => {
+    const db = await getOrganizerDB();
+    const records = await db.getAll("phashChunks");
+    const entries = new Map<number, PhashEntry>();
+    for (const record of records) {
+        const payload = await decryptCachePayload<PhashChunkPayload>(
+            {
+                encryptedData: record.encryptedData,
+                decryptionHeader: record.decryptionHeader,
+            },
+            cacheKey,
+        );
+        for (const [id, entry] of Object.entries(payload.entries)) {
+            if (entry) {
+                entries.set(Number(id), entry);
+            } else {
+                entries.delete(Number(id));
+            }
+        }
+    }
+    return entries;
+};
+
+/** Drop all phash chunks and reset the meta (before a compacting rewrite). */
+export const clearPhashChunks = async (cacheKey: string): Promise<void> => {
+    const db = await getOrganizerDB();
+    await db.clear("phashChunks");
+    const meta: PersistedPhashMeta = { version: 4, nextChunkId: 0 };
+    await putEncrypted("phashIndex", await encryptCachePayload(meta, cacheKey));
 };
 
 /** fileId → combined quality score in [0, 1] (higher = better). */

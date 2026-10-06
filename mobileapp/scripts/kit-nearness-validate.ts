@@ -27,7 +27,7 @@ import {
     sortFilesByKitNearnessCompetitive,
     type KitMedoid,
 } from "../src/lib/kit-nearness-sort";
-import { computeDHashFromImageData } from "../src/lib/phash";
+import { dHashVariantsFromImageData } from "../src/lib/phash";
 import type { EnteFile } from "ente-media/file";
 
 const outDir = join(process.cwd(), ".spike-out");
@@ -76,25 +76,6 @@ const downloadPhoto = (seed: number): Buffer => {
     return readFileSync(tmp);
 };
 
-const hashVariantFromImage = (
-    img: Image,
-    width: number,
-    height: number,
-    rotationDegrees: number,
-    mirror: boolean,
-): string => {
-    const canvas = createCanvas(width, height);
-    const ctx = canvas.getContext("2d");
-    ctx.translate(width / 2, height / 2);
-    ctx.rotate((rotationDegrees * Math.PI) / 180);
-    if (mirror) {
-        ctx.scale(-1, 1);
-    }
-    ctx.drawImage(img, -width / 2, -height / 2);
-    const imageData = ctx.getImageData(0, 0, width, height);
-    return computeDHashFromImageData(imageData.data, width, height);
-};
-
 const phashFromDrawable = async (
     source: Buffer | Image,
     draw: (
@@ -112,21 +93,7 @@ const phashFromDrawable = async (
     draw(img, ctx, width, height);
     const upright = ctx.getImageData(0, 0, width, height);
     const color = colorHashFromImageData(upright.data, width, height);
-    const hashes: string[] = [];
-    const variantSource = await loadImage(canvas.toBuffer("image/jpeg"));
-    for (const rotation of [0, 90, 180, 270]) {
-        for (const mirror of [false, true]) {
-            hashes.push(
-                hashVariantFromImage(
-                    variantSource,
-                    width,
-                    height,
-                    rotation,
-                    mirror,
-                ),
-            );
-        }
-    }
+    const hashes = dHashVariantsFromImageData(upright.data, width, height);
     return { hashes, color };
 };
 

@@ -163,10 +163,12 @@ interface TagScopeFilterDropdownProps {
     kitLikenessPresetId?: string;
     onKitLikenessPresetIdChange?: (presetId: string | undefined) => void;
     /**
-     * Shown files assigned to each kit as closest fit. Every file counts for
-     * exactly one remaining kit; excluded kits stay at 0.
+     * Shown files assigned to each kit as closest fit. A file with evidence
+     * counts for exactly one remaining kit; excluded kits stay at 0.
      */
     kitPresenceCountById?: ReadonlyMap<string, number>;
+    /** Menu opened or closed; lets the parent compute counts only while shown. */
+    onMenuOpenChange?: (open: boolean) => void;
     /**
      * Kit ids excluded from rival penalties; listed at the bottom of Choose kit.
      * Still selectable as the active likeness kit.
@@ -246,6 +248,7 @@ export function TagScopeFilterDropdown({
     kitLikenessPresetId,
     onKitLikenessPresetIdChange,
     kitPresenceCountById,
+    onMenuOpenChange,
     excludedKitLikenessIds,
     onToggleKitLikenessExcluded,
     kitLikenessRivalPenalty,
@@ -1225,6 +1228,7 @@ export function TagScopeFilterDropdown({
     return (
         <DropdownMenu
             onOpenChange={(open) => {
+                onMenuOpenChange?.(open);
                 if (open) {
                     setOptionsTab(sortActive ? "sort" : "filter");
                     return;

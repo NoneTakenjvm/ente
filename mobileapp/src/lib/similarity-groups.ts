@@ -24,6 +24,7 @@ import {
     defaultKeeperFileId,
     type DedupGroupItem,
     type DedupGroupSelection,
+    type KeeperContext,
 } from "@/lib/dedup-prune";
 import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 
@@ -658,9 +659,10 @@ export const mergeCropMatches = async (
 export const similarityGroupToSelection = (
     group: SimilarityGroup,
     isSelected = false,
+    keeperContext?: KeeperContext,
 ): DedupGroupSelection => ({
     id: group.id,
     items: group.items,
-    keeperFileId: defaultKeeperFileId(group.items),
+    keeperFileId: defaultKeeperFileId(group.items, keeperContext),
     isSelected,
 });

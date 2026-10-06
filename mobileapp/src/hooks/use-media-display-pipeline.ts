@@ -27,7 +27,7 @@ import {
     MAX_KIT_SEEDS,
     kitEmbeddingDistanceCompetitive,
     kitEmbeddingRivalWeights,
-    listKitSeedFiles,
+    listKitSeedIds,
     pickKitEmbeddingMedoids,
     sortFilesByKitEmbeddingCompetitive,
 } from "@/lib/kit-nearness-sort";
@@ -387,6 +387,9 @@ export function useMediaDisplayPipeline({
         const useRivalPenalty =
             matchedKit !== undefined &&
             (ui.nearnessSource !== "kit" || ui.kitLikenessRivalPenalty);
+        const seedFileById: ReadonlyMap<number, EnteFile> = useRivalPenalty ?
+            new Map(seedFiles.map((file) => [file.id, file])) :
+            new Map();
         const rivalMedoidSets = useRivalPenalty ?
             useTagSpeedStore
                 .getState()
@@ -403,8 +406,10 @@ export function useMediaDisplayPipeline({
                         entry.nearnessTune?.genome ??
                         DEFAULT_KIT_EMBEDDING_GENOME;
                     return buildKitEmbeddingPrototypes(
-                        listKitSeedFiles(seedFiles, entry.tags).map(
-                            (file) => file.id,
+                        listKitSeedIds(
+                            entry.tags,
+                            tagState.fileIdsByTag,
+                            seedFileById,
                         ),
                         embeddings,
                         rivalGenome,
@@ -416,13 +421,14 @@ export function useMediaDisplayPipeline({
             lambda: selectedGenome.rivalLambda,
             tau: selectedGenome.rivalTau,
         };
-        const orderIds = sortFilesByKitEmbeddingCompetitive(
+        const ranking = sortFilesByKitEmbeddingCompetitive(
             filtered,
             selectedMedoids,
             rivalMedoidSets,
             embeddings,
             scoreOptions,
-        ).map((file) => file.id);
+        );
+        const orderIds = ranking.files.map((file) => file.id);
         if (!matchedKit || !useRivalPenalty) {
             return { orderIds };
         }
@@ -440,13 +446,18 @@ export function useMediaDisplayPipeline({
                 embeddings,
                 fileIdsByTag: tagState.fileIdsByTag,
                 includeInKitNearnessByName: tagState.includeInKitNearnessByName,
+                // Shown files reuse the sort's scores; only sampled library
+                // rows outside the view are scored here.
                 productionScore: (fileId) =>
-                    -kitEmbeddingDistanceCompetitive(
-                        fileId,
-                        selectedMedoids,
-                        rivalMedoidSets,
-                        embeddings,
-                        { ...scoreOptions, rivalWeights },
+                    -(
+                        ranking.distanceById.get(fileId) ??
+                        kitEmbeddingDistanceCompetitive(
+                            fileId,
+                            selectedMedoids,
+                            rivalMedoidSets,
+                            embeddings,
+                            { ...scoreOptions, rivalWeights },
+                        )
                     ),
             },
         };

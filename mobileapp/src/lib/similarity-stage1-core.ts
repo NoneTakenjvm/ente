@@ -4,6 +4,8 @@
  * When CLIP embeddings are provided: nearest-neighbour propose (top-K within
  * collect band) → mutual/tight confirm → union-find. Edge `distance` is
  * {@code round(clipCosine * 100)} so the UI slider (8–16) maps to CLIP 0.08–0.16.
+ * Near-identical dHash pairs (≤ {@link TIGHT_MATCH_DISTANCE}) are added as
+ * edges too, so re-encodes and rotated copies group even when CLIP disagrees.
  *
  * Without embeddings: dHash buckets → Hamming edges → mutual-kNN → Kruskal.
  *
@@ -22,7 +24,8 @@ import {
     CLIP_SCORE_COLLECT_MAX,
     collectConfirmedClipEdges,
     findClipTopNeighbours,
-    findClipTopNeighboursForIndex,
+    scanClipNeighbourRow,
+    type ClipNeighbour,
 } from "@/lib/similarity-clip";
 import {
     parseDHashHex,
@@ -375,6 +378,36 @@ const finalizeClipScoreClusters = (
     return clustersFromUnionFind(uf, items, edgeDistanceByPair);
 };
 
+/**
+ * Add near-identical dHash pairs (≤ {@link TIGHT_MATCH_DISTANCE}) to CLIP
+ * edges. A pair already linked keeps the smaller distance; both scales sit
+ * below the CLIP slider floor, so these always group.
+ */
+const addTightHashEdges = (
+    items: NumericStage1Item[],
+    edgeByKey: Map<string, CandidateEdge>,
+): void => {
+    const buckets = buildHashBuckets(items);
+    const hashEdges = new Map<string, CandidateEdge>();
+    const provisionalUf = new UnionFind(items.length);
+    for (let i = 0; i < items.length; i++) {
+        compareFileAgainstLaterBucketMates(
+            i,
+            buckets,
+            items,
+            TIGHT_MATCH_DISTANCE,
+            hashEdges,
+            provisionalUf,
+        );
+    }
+    for (const [key, edge] of hashEdges) {
+        const existing = edgeByKey.get(key);
+        if (!existing || edge.distance < existing.distance) {
+            edgeByKey.set(key, edge);
+        }
+    }
+};
+
 const edgesToFileEdges = (
     items: NumericStage1Item[],
     edgeByKey: Map<string, CandidateEdge>,
@@ -392,8 +425,8 @@ const edgesToFileEdges = (
 
 /**
  * CLIP-first Stage-1: each embedded file proposes its top-K CLIP neighbours
- * within the collect band; mutual (or tight) edges are confirmed, then
- * clustered at {@link threshold}.
+ * within the collect band; mutual (or tight) edges are confirmed, tight dHash
+ * pairs are added, then everything is clustered at {@link threshold}.
  */
 const runClipNearestClusteringCore = (
     items: Stage1Item[],
@@ -436,6 +469,8 @@ const runClipNearestClusteringCore = (
         });
     }
 
+    addTightHashEdges(numericItems, edgeByKey);
+
     return {
         clusters: finalizeClipScoreClusters(
             numericItems,
@@ -474,18 +509,20 @@ const runClipNearestClusteringAsync = async (
     }
 
     const vectors = embedded.map((entry) => entry.vector);
-    const topByIndex: Array<
-        ReturnType<typeof findClipTopNeighboursForIndex>
-    > = Array.from({ length: total }, () => []);
+    const topByIndex: ClipNeighbour[][] = Array.from(
+        { length: total },
+        () => [],
+    );
     const yieldEvery = Math.max(1, Math.min(32, Math.floor(total / 100) || 1));
 
     for (let i = 0; i < total; i++) {
         if (shouldAbort?.()) {
             throw new DOMException("Similarity grouping aborted", "AbortError");
         }
-        topByIndex[i] = findClipTopNeighboursForIndex(
+        scanClipNeighbourRow(
             vectors,
             i,
+            topByIndex,
             CLIP_CONFIRM_TOP_K,
             CLIP_SCORE_COLLECT_MAX,
         );
@@ -516,6 +553,8 @@ const runClipNearestClusteringAsync = async (
             distance: edge.score,
         });
     }
+
+    addTightHashEdges(numericItems, edgeByKey);
 
     const clusters = finalizeClipScoreClusters(
         numericItems,

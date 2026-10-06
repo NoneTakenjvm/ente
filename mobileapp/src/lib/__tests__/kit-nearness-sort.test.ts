@@ -9,6 +9,7 @@ import {
     kitNearnessDistance,
     kitNearnessDistanceCompetitive,
     listKitSeedFiles,
+    listKitSeedIds,
     pickKitEmbeddingMedoids,
     pickKitMedoids,
     rankKitsByBestFitShare,
@@ -74,6 +75,34 @@ describe("fileMatchesKitTags / listKitSeedFiles", () => {
         expect(listKitSeedFiles([active, archived], ["a", "b"]).map((f) => f.id)).toEqual(
             [1],
         );
+    });
+
+    it("listKitSeedIds matches listKitSeedFiles via posting lists", () => {
+        const archived = {
+            ...fileWithTags(4, ["a", "b"]),
+            magicMetadata: {
+                version: 1,
+                count: 1,
+                data: { visibility: 1 },
+            },
+        } as EnteFile;
+        const files = [
+            fileWithTags(3, ["a", "b"]),
+            fileWithTags(1, ["a"]),
+            fileWithTags(2, ["a", "b"]),
+            archived,
+        ];
+        const fileIdsByTag = new Map<string, Set<number>>([
+            ["a", new Set([1, 2, 3, 4])],
+            // 9 is tagged but outside the seed library.
+            ["b", new Set([2, 3, 4, 9])],
+        ]);
+        const seedFileById = new Map(files.map((file) => [file.id, file]));
+        expect(listKitSeedIds(["a", "b"], fileIdsByTag, seedFileById)).toEqual(
+            listKitSeedFiles(files, ["a", "b"]).map((file) => file.id),
+        );
+        expect(listKitSeedIds(["a", "missing"], fileIdsByTag, seedFileById)).toEqual([]);
+        expect(listKitSeedIds([], fileIdsByTag, seedFileById)).toEqual([]);
     });
 });
 
@@ -418,13 +447,17 @@ describe("CLIP kit embedding nearness", () => {
             fileWithTags(2, []),
             fileWithTags(3, []),
         ];
-        const ordered = sortFilesByKitEmbeddingCompetitive(
+        const ranking = sortFilesByKitEmbeddingCompetitive(
             files,
             [medoid],
             [],
             embeddings,
         );
-        expect(ordered.map((f) => f.id)).toEqual([3, 1, 2]);
+        expect(ranking.files.map((f) => f.id)).toEqual([3, 1, 2]);
+        expect(ranking.distanceById.get(3)).toBeCloseTo(0);
+        expect(ranking.distanceById.get(1)!).toBeLessThan(
+            ranking.distanceById.get(2)!,
+        );
     });
 
     it("pickKitEmbeddingMedoids keeps dense modes, skips singleton outliers", () => {

@@ -1,10 +1,12 @@
 import type { EnteFile } from "ente-media/file";
+import { fileCreationTime } from "ente-media/file-metadata";
 import {
     addToCollection,
     type CollectionFilesContext,
 } from "@/core/api/collection-files";
 import { moveToTrash } from "@/core/api/trash";
 import { collectionNameByID } from "@/lib/collections";
+import { fileByteSize } from "@/lib/compress";
 
 export interface DedupGroupItem {
     file: EnteFile;
@@ -17,6 +19,18 @@ export interface DedupGroupSelection {
     items: DedupGroupItem[];
     keeperFileId: number;
     isSelected: boolean;
+}
+
+/** User edits to a group's keeper or selection, kept across regroups. */
+export type DedupGroupChoice = Partial<
+    Pick<DedupGroupSelection, "keeperFileId" | "isSelected">
+>;
+
+/** Library signals beyond the file itself that steer the default keeper. */
+export interface KeeperContext {
+    favoriteFileIds: ReadonlySet<number>;
+    /** Image quality in `[0, 1]` by file id (higher = better). */
+    qualityById: ReadonlyMap<number, number>;
 }
 
 export interface PruneDuplicateGroupsOptions {
@@ -100,35 +114,65 @@ export const planDuplicateGroupPrune = (
     return { filesToTrash, collectionsToLink: filesToAdd };
 };
 
-const duplicateGroupItemToRetain = (
+/**
+ * Default keeper for a duplicate group. Prefers, in order: a caption, other
+ * edits, a favourite, more pixels, a higher quality score, more bytes and the
+ * earliest creation time; full ties keep the first item.
+ */
+export const defaultKeeperFileId = (
     items: DedupGroupItem[],
-): DedupGroupItem => {
-    const itemsWithCaption: DedupGroupItem[] = [];
-    const itemsWithOtherEdits: DedupGroupItem[] = [];
-    for (const item of items) {
-        const pubMM = item.file.pubMagicMetadata?.data;
-        if (!pubMM) {
-            continue;
-        }
-        if (pubMM.caption) {
-            itemsWithCaption.push(item);
-        }
-        if (pubMM.editedName ?? pubMM.editedTime) {
-            itemsWithOtherEdits.push(item);
+    context?: KeeperContext,
+): number => {
+    let keeper = items[0]!.file;
+    for (const { file } of items.slice(1)) {
+        if (compareKeepers(file, keeper, context) < 0) {
+            keeper = file;
         }
     }
+    return keeper.id;
+};
+
+/** Stable key for a group's membership: its sorted file ids. */
+export const dedupGroupMembersKey = (items: readonly DedupGroupItem[]): string =>
+    items
+        .map((item) => item.file.id)
+        .sort((a, b) => a - b)
+        .join("-");
+
+/** Negative when `a` makes the better keeper. */
+const compareKeepers = (
+    a: EnteFile,
+    b: EnteFile,
+    context: KeeperContext | undefined,
+): number => {
+    const qualityA = context?.qualityById.get(a.id);
+    const qualityB = context?.qualityById.get(b.id);
     return (
-        itemsWithCaption[0] ??
-        itemsWithOtherEdits[0] ??
-        items[0]!
+        editRank(b) - editRank(a) ||
+        Number(context?.favoriteFileIds.has(b.id) ?? false) -
+            Number(context?.favoriteFileIds.has(a.id) ?? false) ||
+        pixelCount(b) - pixelCount(a) ||
+        // Only compare quality when both files have been scored.
+        (qualityA !== undefined && qualityB !== undefined ?
+            qualityB - qualityA :
+            0) ||
+        fileByteSize(b) - fileByteSize(a) ||
+        fileCreationTime(a) - fileCreationTime(b)
     );
 };
 
-/**
- * Default keeper for a duplicate group (caption > edits > first item).
- */
-export const defaultKeeperFileId = (items: DedupGroupItem[]): number =>
-    duplicateGroupItemToRetain(items).file.id;
+const editRank = (file: EnteFile): number => {
+    const data = file.pubMagicMetadata?.data;
+    if (data?.caption) {
+        return 2;
+    }
+    return data?.editedName ?? data?.editedTime ? 1 : 0;
+};
+
+const pixelCount = (file: EnteFile): number => {
+    const data = file.pubMagicMetadata?.data;
+    return (data?.w ?? 0) * (data?.h ?? 0);
+};
 
 /**
  * Symlink keepers into missing albums, then trash losers.
