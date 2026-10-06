@@ -4,6 +4,7 @@ import {
     gridIndicesInContentMarquee,
     keysInContentMarquee,
     marqueeEdgeScrollDelta,
+    marqueeTouchIntent,
     normalizeRect,
     rectsOverlap,
     shouldArmMarquee,
@@ -14,6 +15,14 @@ describe("marquee-selection", () => {
         expect(shouldArmMarquee(20, 4, 12)).toBe(true);
         expect(shouldArmMarquee(4, 20, 12)).toBe(true);
         expect(shouldArmMarquee(4, 4, 12)).toBe(false);
+    });
+
+    it("marqueeTouchIntent selects on sideways drags and scrolls on vertical", () => {
+        expect(marqueeTouchIntent(20, 4, 12)).toBe("select");
+        expect(marqueeTouchIntent(-20, 10, 12)).toBe("select");
+        expect(marqueeTouchIntent(4, 20, 12)).toBe("scroll");
+        expect(marqueeTouchIntent(14, 14, 12)).toBe("scroll");
+        expect(marqueeTouchIntent(4, 4, 12)).toBeUndefined();
     });
 
     it("marqueeEdgeScrollDelta scrolls near top and bottom", () => {
@@ -123,5 +132,31 @@ describe("marquee-selection", () => {
                 normalizeRect({ x: 0, y: 0 }, { x: 200, y: 250 }),
             ),
         ).toEqual([0, 1, 2, 3, 4, 5]);
+    });
+
+    it("gridIndicesInContentMarquee ignores rows outside the rect", () => {
+        // 1000 rows of 3; rect covers only row 500.
+        expect(
+            gridIndicesInContentMarquee(
+                3000,
+                3,
+                110,
+                100,
+                4,
+                10,
+                { x: 0, y: 500 * 110 + 10, width: 400, height: 20 },
+            ),
+        ).toEqual([1500, 1501, 1502]);
+        expect(
+            gridIndicesInContentMarquee(
+                6,
+                2,
+                110,
+                100,
+                4,
+                10,
+                { x: 0, y: 5000, width: 400, height: 20 },
+            ),
+        ).toEqual([]);
     });
 });

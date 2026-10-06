@@ -543,17 +543,25 @@ export function useMediaDisplayPipeline({
         }
         relativeInsufficientToastKeyRef.current = "";
 
-        applyOrder(
-            sortFilesByRelative(
-                filtered,
-                relativeSort,
-                embeddings,
-                relativeSeed,
-                relativeStartFileId,
-            ).map((file) => file.id),
-        );
+        const sortOnMainThread = (): void => {
+            if (jobId !== relativeJobRef.current) {
+                return;
+            }
+            applyOrder(
+                sortFilesByRelative(
+                    filtered,
+                    relativeSort,
+                    embeddings,
+                    relativeSeed,
+                    relativeStartFileId,
+                ).map((file) => file.id),
+            );
+        };
 
+        // The snake is O(n² · dims): large views sort only in the worker so the
+        // gallery does not freeze; the main thread is the fallback.
         if (withEmbeddingIds.length < 400) {
+            sortOnMainThread();
             return;
         }
         const packed = packRelativeEmbeddings(withEmbeddingIds, embeddings);
@@ -565,9 +573,7 @@ export function useMediaDisplayPipeline({
             relativeStartFileId,
         )
             .then(applyOrder)
-            .catch(() => {
-                // Main-thread order already applied.
-            });
+            .catch(sortOnMainThread);
         // Omit computeVisibleFiles: stamp/library patches must not rebuild the
         // snake; New start / mode / tip / embedding hydrate are the triggers.
         // eslint-disable-next-line react-hooks/exhaustive-deps -- snapshot on apply

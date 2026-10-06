@@ -75,6 +75,7 @@ describe("durable-flush", () => {
         const flushDerived = vi.fn(async () => undefined);
         const flushOrganizer = vi.fn(async () => undefined);
         const flushLibrary = vi.fn(async () => undefined);
+        const flushTagIndex = vi.fn(async () => undefined);
 
         vi.doMock("@/lib/tag-outbox", () => ({
             flushTagOutboxPersist: flushTag,
@@ -102,11 +103,17 @@ describe("durable-flush", () => {
         vi.doMock("@/stores/library-store", () => ({
             flushLibraryCachePersist: flushLibrary,
         }));
+        vi.doMock("@/stores/tag-store", () => ({
+            flushTagIndexPersist: flushTagIndex,
+        }));
         vi.doMock("@/db/thumbnails", () => ({
             flushThumbnailLruTouches: vi.fn(async () => undefined),
         }));
         vi.doMock("@/db/file-ciphertexts", () => ({
             flushFileCiphertextLruTouches: vi.fn(async () => undefined),
+        }));
+        vi.doMock("@/lib/cache-key", () => ({
+            hasSessionCacheKey: () => true,
         }));
 
         const { flushAllDurableState } = await import("@/lib/durable-flush");
@@ -119,6 +126,7 @@ describe("durable-flush", () => {
         expect(flushDerived).toHaveBeenCalledOnce();
         expect(flushOrganizer).toHaveBeenCalledOnce();
         expect(flushLibrary).toHaveBeenCalledOnce();
+        expect(flushTagIndex).toHaveBeenCalledOnce();
     });
 });
 

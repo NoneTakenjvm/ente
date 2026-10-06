@@ -156,17 +156,12 @@ export const undoLastBulkTagMutation = async (): Promise<boolean> => {
 
     useTagSpeedStore.getState().clearLastBulkUndo();
 
-    const library = useLibraryStore.getState();
-    let succeeded = 0;
-    let failed = 0;
-    for (const entry of entries) {
-        try {
-            await library.updateTagsOnFile(entry.fileId, () => entry.previousTags);
-            succeeded += 1;
-        } catch {
-            failed += 1;
-        }
-    }
+    // One commit for the whole snapshot; per-file updates re-ran the gallery
+    // pipeline once per photo.
+    const succeeded = useLibraryStore.getState().setTagsOnFiles(
+        new Map(entries.map((entry) => [entry.fileId, entry.previousTags])),
+    );
+    const failed = entries.length - succeeded;
 
     if (failed > 0) {
         toast.error(`Undid ${succeeded}, ${failed} failed`);

@@ -6,13 +6,21 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-09-23 |
-| **Last agent / session** | Mobile upload `0.3.178` — checksum `POST /files/upload-url` (legacy bulk URLs 410) |
+| **Last updated** | 2026-10-06 |
+| **Last agent / session** | Full audit `0.3.179` — reliability, memory, mobile selection, security fixes |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
-| **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable |
-| **Next recommended action** | Phone QA Manage `0.3.178` at http://192.168.0.182:3080; then commit if good. |
+| **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
+| **Next recommended action** | Phone + desktop QA of `0.3.179` (highlight-scroll select on mobile, viewer zoom/pan, tag rename/merge with kits + pins, bulk undo, lock/logout); then commit. |
 
 **This session (local only — not pushed):**
+1. **Security** — dev test credentials only load under `NODE_ENV=development` (absent from `out/`); pending crops/edits and derived-replace payloads encrypted at rest (old plaintext entries dropped on read); SW no longer caches cross-origin responses; 2FA/SRP/http error handling; wrong 2FA code shows an error instead of logging out.
+2. **Reliability** — serialised shard saves; panic/wipe closes DB first; uploads made during sync kept; logout/lock await durable flush (organizer upload capped at 5 s); CLIP job/worker no longer hang on batch failure or worker crash; relative sort runs in the worker (no gallery freeze).
+3. **Viewer** — bounded load retries, stall (not total) timeout, no download leaks after unmount, preloads don't seek the active video, undecodable media shows an error, Escape safe in crop mode, >120 MB videos not kept in session cache, native non-passive wheel (trackpad pinch no longer zooms the page), zoom-out resets pan.
+4. **Selection / perf** — mobile highlight-scroll (marquee) fixed; stable Manage grid selection; Set lookups in bulk favourite/archive/trash/delete-forever; thumbnail eviction skips the sort under budget; bulk tag undo is one commit (`setTagsOnFiles`).
+5. **Tag consistency** — kits, pinned tags and album-view filter follow tag rename/delete/merge.
+6. **Deferred** — M5 poison outbox; UploadPanel remount/concurrency; `_app` bundle split; worker decrypt; rAF gestures; undo delta model; Manage virtualization; upload previews use full-res; binary embedding packing; `video.src` release; ±1 preload window; `kv.ts` cursor chunks; `organizer-clip-sync` H5/H6/H7/M14; ffmpeg timeout.
+
+**Previous session (local only — not pushed):**
 1. **Agentic upload test** — login OK; upload failed with `HTTP 410` on `GET /files/upload-urls` (`"This upload API is no longer supported"`). Storage was fine (~61MB/10GB).
 2. **`0.3.178`** — mint per-object URLs via `POST /files/upload-url` + MD5; PUT sends `Content-MD5`. Dropped legacy URL pool prefetch. Smoke script: `scripts/e2e-upload-smoke.ts`.
 

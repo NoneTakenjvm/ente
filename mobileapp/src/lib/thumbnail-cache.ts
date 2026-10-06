@@ -152,6 +152,11 @@ const evictSessionUntilFit = (incomingBytes: number): void => {
         }
         return;
     }
+    // Called for every decoded thumb; skip the full-cache sort while scrolling
+    // under budget.
+    if (sessionReadyBytes + incomingBytes <= SESSION_BUDGET_BYTES) {
+        return;
+    }
 
     const ranked = [...cache.entries()]
         .filter(

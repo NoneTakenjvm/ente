@@ -1,6 +1,9 @@
-import { useMemo, useState, type JSX } from "react";
+import { useCallback, useMemo, useState, type JSX } from "react";
 import { ArchiveRestore } from "lucide-react";
-import { ThumbnailGrid } from "@/components/ThumbnailGrid";
+import {
+    ThumbnailGrid,
+    type ThumbnailGridSelection,
+} from "@/components/ThumbnailGrid";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,7 +40,7 @@ export function ManageArchivedPanel({
         return sortFilesByUpload(deduped);
     }, [files]);
 
-    const handleToggle = (file: EnteFile): void => {
+    const handleToggle = useCallback((file: EnteFile): void => {
         setSelectedIds((current) => {
             const next = new Set(current);
             if (next.has(file.id)) {
@@ -47,7 +50,16 @@ export function ManageArchivedPanel({
             }
             return next;
         });
-    };
+    }, []);
+    // Stable so the grid's visible cells only re-render when selection changes.
+    const selection = useMemo(
+        (): ThumbnailGridSelection => ({
+            selectedIds,
+            onToggle: handleToggle,
+            disabled: busy,
+        }),
+        [busy, handleToggle, selectedIds],
+    );
 
     const handleUnarchiveSelected = (): void => {
         const targets = archivedFiles.filter((file) =>
@@ -102,11 +114,7 @@ export function ManageArchivedPanel({
             <div className="flex min-h-0 flex-1 flex-col px-2">
                 <ThumbnailGrid
                     files={archivedFiles}
-                    selection={{
-                        selectedIds,
-                        onToggle: handleToggle,
-                        disabled: busy,
-                    }}
+                    selection={selection}
                 />
             </div>
             {selectedIds.size > 0 ? (

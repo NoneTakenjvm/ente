@@ -38,6 +38,14 @@ interface TagSpeedState {
         },
     ) => void;
     deletePreset: (id: string) => void;
+    /**
+     * Apply a tag rename, delete, or merge to kits and pinned tags. Lists that
+     * contain none of {@link affectedNames} are left as is.
+     */
+    rewritePresetTags: (
+        affectedNames: string[],
+        mutator: (tags: string[]) => string[],
+    ) => void;
     setPinnedTags: (tags: string[]) => void;
     togglePinnedTag: (tag: string) => void;
     recordRecentTags: (tags: string[]) => void;
@@ -125,6 +133,30 @@ export const useTagSpeedStore = create<TagSpeedState>((set, get) => ({
         const presets = get().presets.filter((preset) => preset.id !== id);
         set({ presets });
         persistPresets(presets);
+    },
+
+    rewritePresetTags: (affectedNames, mutator): void => {
+        const isAffected = (tags: string[]): boolean =>
+            tags.some((tag) => affectedNames.includes(tag));
+        const { presets, pinnedTags } = get();
+        if (presets.some((preset) => isAffected(preset.tags))) {
+            const nextPresets = presets
+                .map((preset) =>
+                    isAffected(preset.tags) ?
+                        { ...preset, tags: normalizePresetTags(mutator(preset.tags)) } :
+                        preset)
+                .filter((preset) => preset.tags.length > 0);
+            set({ presets: nextPresets });
+            persistPresets(nextPresets);
+        }
+        if (isAffected(pinnedTags)) {
+            const nextPinned = normalizeTagNameList(
+                mutator(pinnedTags),
+                MAX_PINNED_TAGS,
+            );
+            set({ pinnedTags: nextPinned });
+            persistPinned(nextPinned);
+        }
     },
 
     setPinnedTags: (tags): void => {

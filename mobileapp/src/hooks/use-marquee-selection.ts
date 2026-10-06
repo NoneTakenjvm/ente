@@ -2,8 +2,8 @@ import {
     useCallback,
     useEffect,
     useRef,
-    useState,
     type PointerEvent as ReactPointerEvent,
+    type RefCallback,
     type RefObject,
 } from "react";
 import { noteGalleryScrollActivity } from "@/lib/gallery-scroll-activity";
@@ -11,6 +11,7 @@ import {
     MARQUEE_ARM_THRESHOLD_PX,
     contentRectToViewport,
     marqueeEdgeScrollDelta,
+    marqueeTouchIntent,
     normalizeRect,
     shouldArmMarquee,
     type MarqueePoint,
@@ -26,19 +27,21 @@ export interface MarqueeScrollController {
 
 interface UseMarqueeSelectionArgs {
     enabled: boolean;
-    containerRef: RefObject<HTMLDivElement | null>;
     scrollControllerRef: RefObject<MarqueeScrollController | null>;
     /**
      * Called whenever the content-space marquee rect changes (armed drag).
-     * Use to live-update selection; final call may be omitted on cancel.
+     * Use to live-update selection; not called on cancel.
      */
     onMarqueeRect: (rect: MarqueeRect) => void;
+    /** Bottom chrome height overlapping the grid; edge scroll starts above it. */
+    bottomInsetPx?: number;
 }
 
 interface UseMarqueeSelectionResult {
-    /** Viewport-space overlay rect (undefined when idle). */
-    marqueeViewport: MarqueeRect | undefined;
-    marqueeArmed: boolean;
+    /** Attach to the grid container (pointer handlers + touch scroll lock). */
+    containerRef: RefCallback<HTMLDivElement>;
+    /** Attach to an absolutely positioned overlay; styled directly per frame. */
+    overlayRef: RefObject<HTMLDivElement | null>;
     onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
     onPointerMove: (event: ReactPointerEvent<HTMLDivElement>) => void;
     onPointerUp: (event: ReactPointerEvent<HTMLDivElement>) => void;
@@ -47,13 +50,24 @@ interface UseMarqueeSelectionResult {
 
 /**
  * Pointer marquee with content-space anchoring and edge auto-scroll.
+ *
+ * [Note: Marquee on touch screens]
+ *
+ * Scrollers carry `touch-action: pan-y`, so a vertical swipe scrolls natively
+ * (the browser then sends `pointercancel` and the gesture is dropped). A
+ * sideways swipe arms the marquee; from then on a non-passive `touchmove`
+ * listener calls `preventDefault` so the browser cannot start a pan and the
+ * drag keeps extending the selection. React's touch handlers are passive, so
+ * that listener is attached natively through the container ref callback.
  */
 export function useMarqueeSelection({
     enabled,
-    containerRef,
     scrollControllerRef,
     onMarqueeRect,
+    bottomInsetPx = 0,
 }: UseMarqueeSelectionArgs): UseMarqueeSelectionResult {
+    const containerNodeRef = useRef<HTMLDivElement | null>(null);
+    const overlayRef = useRef<HTMLDivElement | null>(null);
     const dragStartContentRef = useRef<MarqueePoint | undefined>(undefined);
     const pointerViewportRef = useRef<MarqueePoint | undefined>(undefined);
     const armedRef = useRef(false);
@@ -61,19 +75,35 @@ export function useMarqueeSelection({
     const rafRef = useRef<number>(0);
     const onMarqueeRectRef = useRef(onMarqueeRect);
     const enabledRef = useRef(enabled);
-
-    const [marqueeArmed, setMarqueeArmed] = useState(false);
-    const [marqueeViewport, setMarqueeViewport] = useState<
-        MarqueeRect | undefined
-    >();
+    const bottomInsetRef = useRef(bottomInsetPx);
 
     useEffect(() => {
         onMarqueeRectRef.current = onMarqueeRect;
-    }, [onMarqueeRect]);
-
-    useEffect(() => {
         enabledRef.current = enabled;
-    }, [enabled]);
+        bottomInsetRef.current = bottomInsetPx;
+    }, [bottomInsetPx, enabled, onMarqueeRect]);
+
+    const containerRef = useCallback(
+        (node: HTMLDivElement | null): (() => void) | undefined => {
+            containerNodeRef.current = node;
+            if (!node || !enabled) {
+                return undefined;
+            }
+            const blockPanWhileArmed = (event: TouchEvent): void => {
+                if (armedRef.current && event.cancelable) {
+                    event.preventDefault();
+                }
+            };
+            node.addEventListener("touchmove", blockPanWhileArmed, {
+                passive: false,
+            });
+            return (): void => {
+                node.removeEventListener("touchmove", blockPanWhileArmed);
+                containerNodeRef.current = null;
+            };
+        },
+        [enabled],
+    );
 
     const clearRaf = useCallback((): void => {
         if (rafRef.current !== 0) {
@@ -90,48 +120,57 @@ export function useMarqueeSelection({
             return;
         }
         const scrollTop = scroll.getScrollTop();
-        const contentEnd = { x: pointer.x, y: pointer.y + scrollTop };
-        const contentRect = normalizeRect(start, contentEnd);
-        setMarqueeViewport(contentRectToViewport(contentRect, scrollTop));
+        const contentRect = normalizeRect(start, {
+            x: pointer.x,
+            y: pointer.y + scrollTop,
+        });
+        const overlay = overlayRef.current;
+        if (overlay) {
+            const viewportRect = contentRectToViewport(contentRect, scrollTop);
+            overlay.style.left = `${viewportRect.x}px`;
+            overlay.style.top = `${viewportRect.y}px`;
+            overlay.style.width = `${viewportRect.width}px`;
+            overlay.style.height = `${viewportRect.height}px`;
+            overlay.style.display = "block";
+        }
         onMarqueeRectRef.current(contentRect);
     }, [scrollControllerRef]);
 
+    const edgeScrollDelta = useCallback((): number => {
+        const pointer = pointerViewportRef.current;
+        const bounds = containerNodeRef.current?.getBoundingClientRect();
+        if (!pointer || !bounds) {
+            return 0;
+        }
+        return marqueeEdgeScrollDelta(
+            pointer.y,
+            bounds.height - bottomInsetRef.current,
+        );
+    }, []);
+
     const scheduleEdgeScroll = useCallback((): void => {
-        if (rafRef.current !== 0) {
+        if (rafRef.current !== 0 || edgeScrollDelta() === 0) {
             return;
         }
         const step = (): void => {
             rafRef.current = 0;
-            if (!armedRef.current) {
-                return;
-            }
-            const pointer = pointerViewportRef.current;
             const scroll = scrollControllerRef.current;
-            const bounds = containerRef.current?.getBoundingClientRect();
-            if (!pointer || !scroll || !bounds) {
+            const delta = edgeScrollDelta();
+            if (!armedRef.current || !scroll || delta === 0) {
                 return;
             }
-            const delta = marqueeEdgeScrollDelta(pointer.y, bounds.height);
-            if (delta === 0) {
-                return;
-            }
+            const before = scroll.getScrollTop();
             // Programmatic edge-scroll must mark activity so thumbnail loads
             // throttle like a real fling (idle concurrency would thrash IDB).
             noteGalleryScrollActivity();
-            scroll.setScrollTop(Math.max(0, scroll.getScrollTop() + delta));
-            publishRect();
+            scroll.setScrollTop(before + delta);
+            if (scroll.getScrollTop() !== before) {
+                publishRect();
+            }
             rafRef.current = requestAnimationFrame(step);
         };
-        const pointer = pointerViewportRef.current;
-        const bounds = containerRef.current?.getBoundingClientRect();
-        if (!pointer || !bounds) {
-            return;
-        }
-        if (marqueeEdgeScrollDelta(pointer.y, bounds.height) === 0) {
-            return;
-        }
         rafRef.current = requestAnimationFrame(step);
-    }, [containerRef, publishRect, scrollControllerRef]);
+    }, [edgeScrollDelta, publishRect, scrollControllerRef]);
 
     const resetGesture = useCallback((): void => {
         clearRaf();
@@ -139,102 +178,117 @@ export function useMarqueeSelection({
         pointerViewportRef.current = undefined;
         armedRef.current = false;
         pointerIdRef.current = undefined;
-        setMarqueeArmed(false);
-        setMarqueeViewport(undefined);
+        if (overlayRef.current) {
+            overlayRef.current.style.display = "none";
+        }
     }, [clearRaf]);
 
     useEffect(() => (): void => clearRaf(), [clearRaf]);
 
-    const onPointerDown = useCallback(
-        (event: ReactPointerEvent<HTMLDivElement>): void => {
-            if (!enabledRef.current) {
-                return;
-            }
-            if (event.pointerType === "mouse" && event.button !== 0) {
-                return;
-            }
-            const bounds = containerRef.current?.getBoundingClientRect();
-            const scroll = scrollControllerRef.current;
-            if (!bounds || !scroll) {
-                return;
-            }
-            const x = event.clientX - bounds.left;
-            const y = event.clientY - bounds.top;
-            const scrollTop = scroll.getScrollTop();
-            armedRef.current = false;
-            pointerIdRef.current = event.pointerId;
-            pointerViewportRef.current = { x, y };
-            dragStartContentRef.current = { x, y: y + scrollTop };
-        },
-        [containerRef, scrollControllerRef],
-    );
+    const releaseCapture = (pointerId: number): void => {
+        const node = containerNodeRef.current;
+        if (node?.hasPointerCapture(pointerId)) {
+            node.releasePointerCapture(pointerId);
+        }
+    };
 
-    const onPointerMove = useCallback(
-        (event: ReactPointerEvent<HTMLDivElement>): void => {
-            const start = dragStartContentRef.current;
-            if (!start || pointerIdRef.current !== event.pointerId) {
-                return;
-            }
-            const bounds = containerRef.current?.getBoundingClientRect();
-            const scroll = scrollControllerRef.current;
-            if (!bounds || !scroll) {
-                return;
-            }
-            const x = event.clientX - bounds.left;
-            const y = event.clientY - bounds.top;
-            pointerViewportRef.current = { x, y };
+    const viewportPoint = (
+        event: ReactPointerEvent<HTMLDivElement>,
+    ): MarqueePoint | undefined => {
+        const bounds = containerNodeRef.current?.getBoundingClientRect();
+        return bounds ?
+            { x: event.clientX - bounds.left, y: event.clientY - bounds.top } :
+            undefined;
+    };
 
-            if (!armedRef.current) {
-                const scrollTop = scroll.getScrollTop();
-                const startViewportY = start.y - scrollTop;
-                const dx = x - start.x;
-                const dy = y - startViewportY;
+    const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
+        if (!enabledRef.current || pointerIdRef.current !== undefined) {
+            return;
+        }
+        if (event.pointerType === "mouse" && event.button !== 0) {
+            return;
+        }
+        const point = viewportPoint(event);
+        const scroll = scrollControllerRef.current;
+        if (!point || !scroll) {
+            return;
+        }
+        armedRef.current = false;
+        pointerIdRef.current = event.pointerId;
+        pointerViewportRef.current = point;
+        dragStartContentRef.current = {
+            x: point.x,
+            y: point.y + scroll.getScrollTop(),
+        };
+    };
+
+    const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>): void => {
+        const start = dragStartContentRef.current;
+        if (!start || pointerIdRef.current !== event.pointerId) {
+            return;
+        }
+        const point = viewportPoint(event);
+        const scroll = scrollControllerRef.current;
+        if (!point || !scroll) {
+            return;
+        }
+        pointerViewportRef.current = point;
+
+        if (!armedRef.current) {
+            const dx = point.x - start.x;
+            const dy = point.y - (start.y - scroll.getScrollTop());
+            if (event.pointerType === "mouse") {
                 if (!shouldArmMarquee(dx, dy, MARQUEE_ARM_THRESHOLD_PX)) {
                     return;
                 }
-                armedRef.current = true;
-                setMarqueeArmed(true);
-                event.preventDefault();
-                containerRef.current?.setPointerCapture(event.pointerId);
-                publishRect();
-                scheduleEdgeScroll();
-                return;
-            }
-
-            event.preventDefault();
-            publishRect();
-            scheduleEdgeScroll();
-        },
-        [containerRef, publishRect, scheduleEdgeScroll, scrollControllerRef],
-    );
-
-    const onPointerUp = useCallback(
-        (event: ReactPointerEvent<HTMLDivElement>): void => {
-            if (pointerIdRef.current !== event.pointerId) {
-                return;
-            }
-            if (armedRef.current) {
-                const bounds = containerRef.current?.getBoundingClientRect();
-                const scroll = scrollControllerRef.current;
-                if (bounds && scroll && dragStartContentRef.current) {
-                    const x = event.clientX - bounds.left;
-                    const y = event.clientY - bounds.top;
-                    pointerViewportRef.current = { x, y };
-                    publishRect();
+            } else {
+                const intent = marqueeTouchIntent(dx, dy);
+                if (intent === "scroll") {
+                    resetGesture();
+                    return;
                 }
-                containerRef.current?.releasePointerCapture(event.pointerId);
+                if (intent === undefined) {
+                    return;
+                }
             }
-            resetGesture();
-        },
-        [containerRef, publishRect, resetGesture, scrollControllerRef],
-    );
+            armedRef.current = true;
+            containerNodeRef.current?.setPointerCapture(event.pointerId);
+        }
+
+        event.preventDefault();
+        publishRect();
+        scheduleEdgeScroll();
+    };
+
+    const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>): void => {
+        if (pointerIdRef.current !== event.pointerId) {
+            return;
+        }
+        if (armedRef.current) {
+            const point = viewportPoint(event);
+            if (point) {
+                pointerViewportRef.current = point;
+                publishRect();
+            }
+            releaseCapture(event.pointerId);
+        }
+        resetGesture();
+    };
+
+    const onPointerCancel = (event: ReactPointerEvent<HTMLDivElement>): void => {
+        if (pointerIdRef.current !== event.pointerId) {
+            return;
+        }
+        releaseCapture(event.pointerId);
+        resetGesture();
+    };
 
     return {
-        marqueeViewport,
-        marqueeArmed,
+        containerRef,
+        overlayRef,
         onPointerDown,
         onPointerMove,
         onPointerUp,
-        onPointerCancel: onPointerUp,
+        onPointerCancel,
     };
 }

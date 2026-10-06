@@ -263,6 +263,11 @@ interface LibraryState {
         fileIds: number[],
         mutator: TagMutator,
     ) => Promise<BatchTagResult>;
+    /**
+     * Overwrite each file's tags in one local commit and queue the writes
+     * (e.g. bulk undo). Returns how many files were still in the library.
+     */
+    setTagsOnFiles: (tagsByFileId: Map<number, string[]>) => number;
     batchSetFavorite: (fileIds: number[], isFavorite: boolean) => Promise<void>;
     batchSetArchived: (fileIds: number[], archived: boolean) => Promise<void>;
     reset: () => void;
@@ -288,6 +293,26 @@ const excludeLocallyTrashedFiles = (
         return files;
     }
     return files.filter((file) => !trashedIds.has(file.id));
+};
+
+/**
+ * Keep files appended locally (uploads, derived replaces) while a pull was in
+ * flight — the pull started from a snapshot that predates them.
+ */
+const withFilesAddedDuringPull = (
+    pulled: EnteFile[],
+    snapshot: EnteFile[],
+    live: EnteFile[],
+): EnteFile[] => {
+    const knownIds = new Set<number>();
+    for (const file of snapshot) {
+        knownIds.add(file.id);
+    }
+    for (const file of pulled) {
+        knownIds.add(file.id);
+    }
+    const added = live.filter((file) => !knownIds.has(file.id));
+    return added.length ? [...pulled, ...added] : pulled;
 };
 
 /**
@@ -367,13 +392,13 @@ const commitAllFiles = (
 };
 
 /**
- * Apply a tag mutator locally (library + index) without waiting on encrypt or network.
+ * Apply new tags locally (library + index) without waiting on encrypt or network.
  */
 const applyOptimisticBatchTags = (
     set: (partial: Partial<LibraryState>) => void,
     get: () => LibraryState,
     fileIds: Set<number>,
-    mutator: TagMutator,
+    tagsFor: (file: EnteFile) => string[],
 ): void => {
     if (fileIds.size === 0) {
         return;
@@ -389,7 +414,7 @@ const applyOptimisticBatchTags = (
         if (!fileIds.has(file.id)) {
             continue;
         }
-        const tags = tagsForFile(file, mutator);
+        const tags = tagsFor(file);
         tagUpdates.push({
             fileId: file.id,
             tags,
@@ -407,6 +432,16 @@ const applyOptimisticBatchTags = (
     commitAllFiles(set, get, optimisticFiles);
     useTagStore.getState().applyFilesTags(tagUpdates);
     scheduleSaveEncryptedFiles(() => get().allFiles, fileIds);
+};
+
+/** Carry a tag rename, delete, or merge into kits and pinned tags. */
+const rewritePresetTags = (
+    affectedNames: string[],
+    mutator: TagMutator,
+): void => {
+    void import("@/stores/tag-speed-store").then(({ useTagSpeedStore }) => {
+        useTagSpeedStore.getState().rewritePresetTags(affectedNames, mutator);
+    });
 };
 
 const initialState: Pick<
@@ -771,15 +806,15 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                     },
                 );
 
+                const filesBeforePull = allFiles;
                 const filesPull = await pullFiles({
                     collections,
-                    files: allFiles,
+                    files: filesBeforePull,
                     onProgress: (current, total) => {
                         set({ syncProgress: { current, total } });
                     },
                 });
 
-                const liveFiles = get().allFiles;
                 allFiles = filesPull.files;
                 await ensureTagOutboxHydrated();
                 await ensureFavoriteOutboxHydrated();
@@ -792,8 +827,16 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                     allFiles,
                 );
                 await reconcileVisibilityOutboxWithFiles(allFiles);
+                // Read live state after the awaits above so uploads and acked
+                // tag writes that landed during the pull are kept.
+                const liveFiles = get().allFiles;
                 allFiles = applyOutboxTagsToFiles(allFiles);
                 allFiles = mergeAheadOrganizerTags(allFiles, liveFiles);
+                allFiles = withFilesAddedDuringPull(
+                    allFiles,
+                    filesBeforePull,
+                    liveFiles,
+                );
                 allFiles = applyOutboxVisibilityToFiles(allFiles);
                 allFiles = excludeLocallyTrashedFiles(allFiles);
                 useTagStore.getState().rebuildFromFiles(allFiles);
@@ -1001,7 +1044,9 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             replaceTagName(tags, oldName, newName);
 
         useTagStore.getState().applyTagRename(oldName, newName);
-        applyOptimisticBatchTags(set, get, fileIds, mutator);
+        applyOptimisticBatchTags(set, get, fileIds, (file) =>
+            tagsForFile(file, mutator));
+        rewritePresetTags([oldName], mutator);
 
         return renameTagOnFiles(
             getEnteCore().getHttpClient(),
@@ -1025,7 +1070,9 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         const mutator: TagMutator = (tags) => removeTagNames(tags, tagName);
 
         useTagStore.getState().applyTagDelete(tagName);
-        applyOptimisticBatchTags(set, get, fileIds, mutator);
+        applyOptimisticBatchTags(set, get, fileIds, (file) =>
+            tagsForFile(file, mutator));
+        rewritePresetTags([tagName], mutator);
 
         return deleteTagOnFiles(
             getEnteCore().getHttpClient(),
@@ -1057,7 +1104,9 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             mergeTagNames(tags, sourceNames, targetName);
 
         useTagStore.getState().applyTagMerge(sourceNames, targetName);
-        applyOptimisticBatchTags(set, get, affectedIds, mutator);
+        applyOptimisticBatchTags(set, get, affectedIds, (file) =>
+            tagsForFile(file, mutator));
+        rewritePresetTags(sourceNames, mutator);
 
         return mergeTagsOnFiles(
             getEnteCore().getHttpClient(),
@@ -1824,13 +1873,13 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
     },
 
     moveFilesToTrash: async (fileIds: number[]): Promise<void> => {
-        const uniqueIds = [...new Set(fileIds)];
-        if (!uniqueIds.length) {
+        const idSet = new Set(fileIds);
+        if (!idSet.size) {
             return;
         }
 
         const { allFiles } = get();
-        const files = allFiles.filter((file) => uniqueIds.includes(file.id));
+        const files = allFiles.filter((file) => idSet.has(file.id));
         if (!files.length) {
             throw new Error("No matching files to trash");
         }
@@ -1896,7 +1945,8 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             return { succeeded: 0, failed: 0, errors: [] };
         }
 
-        applyOptimisticBatchTags(set, get, idSet, mutator);
+        applyOptimisticBatchTags(set, get, idSet, (file) =>
+            tagsForFile(file, mutator));
 
         return applyTagMutatorOnFiles(
             getEnteCore().getHttpClient(),
@@ -1907,12 +1957,27 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         );
     },
 
+    setTagsOnFiles: (tagsByFileId: Map<number, string[]>): number => {
+        const entries = [...tagsByFileId]
+            .filter(([fileId]) => get().getFileById(fileId))
+            .map(([fileId, intendedTags]) => ({ fileId, intendedTags }));
+        applyOptimisticBatchTags(
+            set,
+            get,
+            new Set(entries.map((entry) => entry.fileId)),
+            (file) => tagsByFileId.get(file.id) ?? extractTags(file),
+        );
+        enqueueTagOutboxEntries(entries);
+        requestTagOutboxFlush();
+        return entries.length;
+    },
+
     batchSetFavorite: async (
         fileIds: number[],
         isFavorite: boolean,
     ): Promise<void> => {
-        const uniqueIds = [...new Set(fileIds)];
-        if (!uniqueIds.length) {
+        const idSet = new Set(fileIds);
+        if (!idSet.size) {
             return;
         }
 
@@ -1924,7 +1989,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
 
         const files = allFiles.filter(
             (file) =>
-                uniqueIds.includes(file.id) &&
+                idSet.has(file.id) &&
                 favoriteFileIds.has(file.id) !== isFavorite,
         );
         if (!files.length) {
@@ -1953,13 +2018,13 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         fileIds: number[],
         archived: boolean,
     ): Promise<void> => {
-        const uniqueIds = [...new Set(fileIds)];
-        if (!uniqueIds.length) {
+        const idSet = new Set(fileIds);
+        if (!idSet.size) {
             return;
         }
         const files = get().allFiles.filter(
             (file) =>
-                uniqueIds.includes(file.id) &&
+                idSet.has(file.id) &&
                 isFileArchivedLocally(file) !== archived,
         );
         if (!files.length) {

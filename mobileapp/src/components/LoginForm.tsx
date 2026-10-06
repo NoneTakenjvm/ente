@@ -1,6 +1,5 @@
 import { useState, type FormEvent, type JSX } from "react";
 import { useRouter } from "next/router";
-import { testAccountCredentials } from "@/dev/test-account";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -53,13 +52,20 @@ export function LoginForm(): JSX.Element {
     };
 
     const handleDevLogin = async (): Promise<void> => {
-        try {
-            await login(testAccountCredentials);
-            if (isSessionAuthenticated()) {
-                await router.replace("/gallery");
+        // Inline NODE_ENV block so webpack drops the import (and the test
+        // credentials chunk) from production builds.
+        if (process.env.NODE_ENV === "development") {
+            try {
+                const { testAccountCredentials } = await import(
+                    "@/dev/test-account"
+                );
+                await login(testAccountCredentials);
+                if (isSessionAuthenticated()) {
+                    await router.replace("/gallery");
+                }
+            } catch {
+                // Error state is set in the session store.
             }
-        } catch {
-            // Error state is set in the session store.
         }
     };
 

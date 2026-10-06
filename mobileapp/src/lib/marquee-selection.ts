@@ -48,6 +48,32 @@ export const shouldArmMarquee = (
 ): boolean => Math.abs(dx) >= thresholdPx || Math.abs(dy) >= thresholdPx;
 
 /**
+ * Classify an unarmed touch drag: horizontal-dominant arms selection,
+ * vertical-dominant hands the gesture to native scrolling.
+ *
+ * [Note: Touch marquee intent]
+ *
+ * On touch a vertical swipe must stay a scroll (iOS Photos behaviour), so
+ * only a sideways start arms the marquee. Once armed, vertical movement
+ * extends the selection and the edges auto-scroll.
+ */
+export const marqueeTouchIntent = (
+    dx: number,
+    dy: number,
+    thresholdPx: number = MARQUEE_ARM_THRESHOLD_PX,
+): "select" | "scroll" | undefined => {
+    const absX = Math.abs(dx);
+    const absY = Math.abs(dy);
+    if (absX >= thresholdPx && absX > absY) {
+        return "select";
+    }
+    if (absY >= thresholdPx && absY >= absX) {
+        return "scroll";
+    }
+    return undefined;
+};
+
+/**
  * Scroll delta for the current pointer Y within the viewport.
  * Negative = scroll up, positive = scroll down, 0 = no edge scroll.
  */
@@ -136,8 +162,17 @@ export const gridIndicesInContentMarquee = (
     rect: MarqueeRect,
 ): number[] => {
     const indices: number[] = [];
+    if (rowHeight <= 0 || columns <= 0) {
+        return indices;
+    }
     const rowCount = Math.ceil(itemCount / columns);
-    for (let row = 0; row < rowCount; row += 1) {
+    // Only rows the rect can touch; avoids an O(rows) scan on large libraries.
+    const firstRow = Math.max(0, Math.floor(rect.y / rowHeight));
+    const lastRow = Math.min(
+        rowCount - 1,
+        Math.floor((rect.y + rect.height) / rowHeight),
+    );
+    for (let row = firstRow; row <= lastRow; row += 1) {
         const rowTop = row * rowHeight;
         const rowBottom = rowTop + itemSize;
         if (rowBottom <= rect.y || rowTop >= rect.y + rect.height) {

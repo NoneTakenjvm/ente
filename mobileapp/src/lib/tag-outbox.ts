@@ -144,7 +144,11 @@ export const enqueueTagOutboxEntries = (
     }
     // Use ensure (not hydrate) so a concurrent bootstrap hydrate cannot clear
     // entries we are about to write after a second clear+reload race.
-    void ensureTagOutboxHydrated().then(apply);
+    ensureTagOutboxHydrated()
+        .then(apply)
+        .catch((error: unknown) => {
+            console.warn("Tag outbox hydrate failed; intents not queued", error);
+        });
 };
 
 /**

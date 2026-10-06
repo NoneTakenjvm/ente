@@ -30,7 +30,6 @@ import {
 import { hydrateTagOutbox } from "@/lib/tag-outbox";
 import {
     startTagOutboxRunner,
-    stopTagOutboxRunner,
     type FavoriteMutationsResult,
 } from "@/lib/tag-outbox-runner";
 import {
@@ -67,6 +66,22 @@ export interface UseLibraryBootstrapOptions {
 }
 
 /**
+ * [Note: One library bootstrap per session]
+ *
+ * Every page mounts {@link useLibraryBootstrap}. The cache decrypt, outbox
+ * hydrate, runner start and first sync run once per session and later pages
+ * await the same promise (then refresh with a background sync) instead of
+ * re-decrypting the whole library on each navigation. Logout and lock clear
+ * it through {@link resetLibraryBootstrap}.
+ */
+let sessionBootstrap: Promise<void> | undefined;
+
+/** Forget the session bootstrap so the next page mount loads from scratch. */
+export const resetLibraryBootstrap = (): void => {
+    sessionBootstrap = undefined;
+};
+
+/**
  * Load encrypted cache then sync from Ente once per authenticated session.
  */
 export const useLibraryBootstrap: (
@@ -80,107 +95,70 @@ export const useLibraryBootstrap: (
         (state: { syncRemote: () => Promise<void> }): (() => Promise<void>) =>
             state.syncRemote,
     );
-    const afterSync: (() => Promise<void>) | undefined = options.afterSync;
+    // Callers pass afterSync inline; a ref keeps it out of the effect deps so
+    // re-renders don't cancel the load before initialLoadDone is set.
+    const afterSyncRef = useRef(options.afterSync);
+    useEffect(() => {
+        afterSyncRef.current = options.afterSync;
+    });
 
     const [initialLoadDone, setInitialLoadDone]: [
         boolean,
         Dispatch<SetStateAction<boolean>>,
     ] = useState<boolean>(false);
-    const bootstrapStarted: { current: boolean } = useRef<boolean>(false);
 
     useEffect((): (() => void) => {
-        if (!isSessionAuthenticated() || bootstrapStarted.current) {
+        if (!isSessionAuthenticated()) {
             return (): void => {};
         }
-        bootstrapStarted.current = true;
 
         let cancelled: boolean = false;
 
         const bootstrap: () => Promise<void> = async (): Promise<void> => {
-            try {
-                await bootstrapFromCache();
-                await Promise.all([
-                    hydrateTagOutbox(),
-                    hydrateFavoriteOutbox(),
-                    hydrateFavoriteMembership(),
-                    hydrateVisibilityOutbox(),
-                    hydrateDerivedReplaceOutbox(),
-                ]);
-                startTagOutboxRunner({
-                    getFiles: (): EnteFile[] =>
-                        useLibraryStore.getState().allFiles,
-                    getCollections: (): Collection[] =>
-                        useLibraryStore.getState().collections,
-                    patchFile: (file: EnteFile): Promise<void> =>
-                        useLibraryStore.getState().patchFile(file),
-                    patchFiles: (files: EnteFile[]): void => {
-                        useLibraryStore.getState().patchFiles(files);
-                    },
-                    applyFavoriteMutations: async (
-                        entries: FavoriteOutboxEntry[],
-                    ): Promise<FavoriteMutationsResult> => {
-                        const library: ReturnType<
-                            typeof useLibraryStore.getState
-                        > = useLibraryStore.getState();
-                        const core: EnteCore = getEnteCore();
-                        const ctx: {
-                            collections: Collection[];
-                            allFiles: EnteFile[];
-                            pendingByHashAndType: typeof pendingFavoriteFilesByHashAndType;
-                        } = {
-                            collections: library.collections,
-                            allFiles: library.allFiles,
-                            pendingByHashAndType:
-                                pendingFavoriteFilesByHashAndType,
-                        };
+            await bootstrapFromCache();
+            await Promise.all([
+                hydrateTagOutbox(),
+                hydrateFavoriteOutbox(),
+                hydrateFavoriteMembership(),
+                hydrateVisibilityOutbox(),
+                hydrateDerivedReplaceOutbox(),
+            ]);
+            startTagOutboxRunner({
+                getFiles: (): EnteFile[] =>
+                    useLibraryStore.getState().allFiles,
+                getCollections: (): Collection[] =>
+                    useLibraryStore.getState().collections,
+                patchFile: (file: EnteFile): Promise<void> =>
+                    useLibraryStore.getState().patchFile(file),
+                patchFiles: (files: EnteFile[]): void => {
+                    useLibraryStore.getState().patchFiles(files);
+                },
+                applyFavoriteMutations: async (
+                    entries: FavoriteOutboxEntry[],
+                ): Promise<FavoriteMutationsResult> => {
+                    const library: ReturnType<
+                        typeof useLibraryStore.getState
+                    > = useLibraryStore.getState();
+                    const core: EnteCore = getEnteCore();
+                    const ctx: {
+                        collections: Collection[];
+                        allFiles: EnteFile[];
+                        pendingByHashAndType: typeof pendingFavoriteFilesByHashAndType;
+                    } = {
+                        collections: library.collections,
+                        allFiles: library.allFiles,
+                        pendingByHashAndType:
+                            pendingFavoriteFilesByHashAndType,
+                    };
 
-                        const ackedKeys: string[] = [];
-                        const toAdd: EnteFile[] = [];
-                        const toRemove: EnteFile[] = [];
-                        const addKeys: string[] = [];
-                        const removeKeys: string[] = [];
+                    const ackedKeys: string[] = [];
+                    const toAdd: EnteFile[] = [];
+                    const toRemove: EnteFile[] = [];
+                    const addKeys: string[] = [];
+                    const removeKeys: string[] = [];
 
-                        for (const entry of entries) {
-                            const key: string = favoriteEntryKey(entry);
-                            const file: EnteFile | undefined =
-                                library.allFiles.find(
-                                    (candidate: EnteFile): boolean =>
-                                        candidate.id === entry.fileId,
-                                );
-                            if (!file) {
-                                if (await isFileIdInTrash(entry.fileId)) {
-                                    ackedKeys.push(key);
-                                }
-                                continue;
-                            }
-                            if (entry.isFavorite) {
-                                toAdd.push(file);
-                                addKeys.push(key);
-                            } else {
-                                toRemove.push(file);
-                                removeKeys.push(key);
-                            }
-                        }
-                        if (toAdd.length) {
-                            const membershipIds =
-                                await core.addToFavorites(toAdd, ctx);
-                            await addFavoriteMembershipIds(membershipIds);
-                            ackedKeys.push(...addKeys);
-                        }
-                        if (toRemove.length) {
-                            const membershipIds =
-                                await core.removeFromFavorites(toRemove, ctx);
-                            await removeFavoriteMembershipIds(membershipIds);
-                            ackedKeys.push(...removeKeys);
-                        }
-                        return { ackedKeys };
-                    },
-                    applyFavoriteMutation: async (
-                        entry: FavoriteOutboxEntry,
-                    ): Promise<void> => {
-                        const library: ReturnType<
-                            typeof useLibraryStore.getState
-                        > = useLibraryStore.getState();
+                    for (const entry of entries) {
+                        const key: string = favoriteEntryKey(entry);
                         const file: EnteFile | undefined =
                             library.allFiles.find(
                                 (candidate: EnteFile): boolean =>
@@ -188,182 +166,242 @@ export const useLibraryBootstrap: (
                             );
                         if (!file) {
                             if (await isFileIdInTrash(entry.fileId)) {
-                                return;
+                                ackedKeys.push(key);
                             }
-                            throw new Error(
-                                `File ${entry.fileId} not in library`,
-                            );
+                            continue;
                         }
-                        const core: EnteCore = getEnteCore();
-                        const ctx: {
-                            collections: Collection[];
-                            allFiles: EnteFile[];
-                            pendingByHashAndType: typeof pendingFavoriteFilesByHashAndType;
-                        } = {
-                            collections: library.collections,
-                            allFiles: library.allFiles,
-                            pendingByHashAndType:
-                                pendingFavoriteFilesByHashAndType,
-                        };
                         if (entry.isFavorite) {
-                            const membershipIds = await core.addToFavorites(
-                                [file],
-                                ctx,
-                            );
-                            await addFavoriteMembershipIds(membershipIds);
+                            toAdd.push(file);
+                            addKeys.push(key);
                         } else {
-                            const membershipIds =
-                                await core.removeFromFavorites([file], ctx);
-                            await removeFavoriteMembershipIds(membershipIds);
+                            toRemove.push(file);
+                            removeKeys.push(key);
                         }
-                    },
-                    syncFavorites: async (): Promise<void> => {
-                        // Membership already patched after API success; rebuild
-                        // UI sets from oracle + remaining outbox overlays.
-                        const library: ReturnType<
-                            typeof useLibraryStore.getState
-                        > = useLibraryStore.getState();
-                        useFavoritesStore
-                            .getState()
-                            .rebuildFromLibrary(
-                                getEnteCore().getUserID(),
-                                library.collections,
-                                library.allFiles,
-                            );
-                    },
-                    applyVisibilityMutation: async (
-                        entry: VisibilityOutboxEntry,
-                    ): Promise<void> => {
-                        const library: ReturnType<
-                            typeof useLibraryStore.getState
-                        > = useLibraryStore.getState();
-                        const file: EnteFile | undefined =
+                    }
+                    if (toAdd.length) {
+                        const membershipIds =
+                            await core.addToFavorites(toAdd, ctx);
+                        await addFavoriteMembershipIds(membershipIds);
+                        ackedKeys.push(...addKeys);
+                    }
+                    if (toRemove.length) {
+                        const membershipIds =
+                            await core.removeFromFavorites(toRemove, ctx);
+                        await removeFavoriteMembershipIds(membershipIds);
+                        ackedKeys.push(...removeKeys);
+                    }
+                    return { ackedKeys };
+                },
+                applyFavoriteMutation: async (
+                    entry: FavoriteOutboxEntry,
+                ): Promise<void> => {
+                    const library: ReturnType<
+                        typeof useLibraryStore.getState
+                    > = useLibraryStore.getState();
+                    const file: EnteFile | undefined =
+                        library.allFiles.find(
+                            (candidate: EnteFile): boolean =>
+                                candidate.id === entry.fileId,
+                        );
+                    if (!file) {
+                        if (await isFileIdInTrash(entry.fileId)) {
+                            return;
+                        }
+                        throw new Error(
+                            `File ${entry.fileId} not in library`,
+                        );
+                    }
+                    const core: EnteCore = getEnteCore();
+                    const ctx: {
+                        collections: Collection[];
+                        allFiles: EnteFile[];
+                        pendingByHashAndType: typeof pendingFavoriteFilesByHashAndType;
+                    } = {
+                        collections: library.collections,
+                        allFiles: library.allFiles,
+                        pendingByHashAndType:
+                            pendingFavoriteFilesByHashAndType,
+                    };
+                    if (entry.isFavorite) {
+                        const membershipIds = await core.addToFavorites(
+                            [file],
+                            ctx,
+                        );
+                        await addFavoriteMembershipIds(membershipIds);
+                    } else {
+                        const membershipIds =
+                            await core.removeFromFavorites([file], ctx);
+                        await removeFavoriteMembershipIds(membershipIds);
+                    }
+                },
+                syncFavorites: async (): Promise<void> => {
+                    // Membership already patched after API success; rebuild
+                    // UI sets from oracle + remaining outbox overlays.
+                    const library: ReturnType<
+                        typeof useLibraryStore.getState
+                    > = useLibraryStore.getState();
+                    useFavoritesStore
+                        .getState()
+                        .rebuildFromLibrary(
+                            getEnteCore().getUserID(),
+                            library.collections,
+                            library.allFiles,
+                        );
+                },
+                applyVisibilityMutation: async (
+                    entry: VisibilityOutboxEntry,
+                ): Promise<void> => {
+                    const library: ReturnType<
+                        typeof useLibraryStore.getState
+                    > = useLibraryStore.getState();
+                    const file: EnteFile | undefined =
+                        library.allFiles.find(
+                            (candidate: EnteFile): boolean =>
+                                candidate.id === entry.fileId,
+                        );
+                    if (!file) {
+                        return;
+                    }
+                    const collection: Collection | undefined =
+                        library.collections.find(
+                            (candidate: Collection): boolean =>
+                                candidate.id === file.collectionID,
+                        );
+                    if (!collection?.key) {
+                        return;
+                    }
+                    const updated: EnteFile =
+                        await getEnteCore().updateFileVisibility(
+                            file,
+                            collection.key,
+                            entry.visibility,
+                        );
+                    await library.patchFile(updated);
+                },
+                retryDerivedReplace: async (
+                    entry: DerivedReplaceOutboxEntry,
+                ): Promise<void> => {
+                    const bytes: Uint8Array | undefined =
+                        await loadDerivedReplaceOutboxBytes(entry.fileId);
+                    if (!bytes) {
+                        const removeModule: {
+                            removeDerivedReplaceOutboxEntries: (
+                                fileIds: number[],
+                            ) => Promise<void>;
+                        } = await import("@/lib/derived-replace-outbox");
+                        await removeModule.removeDerivedReplaceOutboxEntries([
+                            entry.fileId,
+                        ]);
+                        return;
+                    }
+                    const library: ReturnType<
+                        typeof useLibraryStore.getState
+                    > = useLibraryStore.getState();
+                    if (entry.kind === "video-edit") {
+                        const duration: number =
+                            await probeVideoDurationSec(bytes, "video/mp4");
+                        const { finalize }: {
+                            finalize: Promise<EnteFile>;
+                        } = library.editVideoAndReplaceFileOptimistic(
+                            entry.fileId,
+                            {
+                                bytes,
+                                width: entry.width,
+                                height: entry.height,
+                                duration,
+                            },
+                        );
+                        await finalize;
+                        return;
+                    }
+                    if (entry.kind === "compress") {
+                        const source: EnteFile | undefined =
                             library.allFiles.find(
                                 (candidate: EnteFile): boolean =>
                                     candidate.id === entry.fileId,
                             );
-                        if (!file) {
-                            return;
-                        }
-                        const collection: Collection | undefined =
-                            library.collections.find(
-                                (candidate: Collection): boolean =>
-                                    candidate.id === file.collectionID,
-                            );
-                        if (!collection?.key) {
-                            return;
-                        }
-                        const updated: EnteFile =
-                            await getEnteCore().updateFileVisibility(
-                                file,
-                                collection.key,
-                                entry.visibility,
-                            );
-                        await library.patchFile(updated);
-                    },
-                    retryDerivedReplace: async (
-                        entry: DerivedReplaceOutboxEntry,
-                    ): Promise<void> => {
-                        const bytes: Uint8Array | undefined =
-                            await loadDerivedReplaceOutboxBytes(entry.fileId);
-                        if (!bytes) {
-                            const removeModule: {
-                                removeDerivedReplaceOutboxEntries: (
-                                    fileIds: number[],
-                                ) => Promise<void>;
-                            } = await import("@/lib/derived-replace-outbox");
-                            await removeModule.removeDerivedReplaceOutboxEntries([
-                                entry.fileId,
-                            ]);
-                            return;
-                        }
-                        const library: ReturnType<
-                            typeof useLibraryStore.getState
-                        > = useLibraryStore.getState();
-                        if (entry.kind === "video-edit") {
-                            const duration: number =
-                                await probeVideoDurationSec(bytes, "video/mp4");
-                            const { finalize }: {
-                                finalize: Promise<EnteFile>;
-                            } = library.editVideoAndReplaceFileOptimistic(
+                        const originalByteLength: number =
+                            source?.info?.fileSize &&
+                            source.info.fileSize > bytes.length ?
+                                source.info.fileSize :
+                                bytes.length * 2;
+                        const mediaKindModule: {
+                            mediaKindForFile: (
+                                file: EnteFile,
+                            ) => "image" | "gif" | "video" | null;
+                        } = await import("@/lib/media-kind");
+                        const kind: "image" | "gif" | "video" =
+                            (source ?
+                                mediaKindModule.mediaKindForFile(source) :
+                                undefined) ?? "image";
+                        const mimeType: string =
+                            kind === "video" ?
+                                "video/mp4" :
+                                kind === "gif" ?
+                                    "image/gif" :
+                                    "image/jpeg";
+                        const { finalize }: {
+                            finalize: Promise<EnteFile>;
+                        } =
+                            library.compressAndReplaceMediaOptimistic(
                                 entry.fileId,
                                 {
                                     bytes,
                                     width: entry.width,
                                     height: entry.height,
-                                    duration,
+                                    mimeType,
+                                    extension:
+                                        kind === "video" ?
+                                            "mp4" :
+                                            kind === "gif" ?
+                                                "gif" :
+                                                "jpg",
+                                    encoder:
+                                        kind === "video" || kind === "gif" ?
+                                            "ffmpeg" :
+                                            "photohoard",
+                                    audio: "none",
                                 },
-                            );
-                            await finalize;
-                            return;
-                        }
-                        if (entry.kind === "compress") {
-                            const source: EnteFile | undefined =
-                                library.allFiles.find(
-                                    (candidate: EnteFile): boolean =>
-                                        candidate.id === entry.fileId,
-                                );
-                            const originalByteLength: number =
-                                source?.info?.fileSize &&
-                                source.info.fileSize > bytes.length ?
-                                    source.info.fileSize :
-                                    bytes.length * 2;
-                            const mediaKindModule: {
-                                mediaKindForFile: (
-                                    file: EnteFile,
-                                ) => "image" | "gif" | "video" | null;
-                            } = await import("@/lib/media-kind");
-                            const kind: "image" | "gif" | "video" =
-                                (source ?
-                                    mediaKindModule.mediaKindForFile(source) :
-                                    undefined) ?? "image";
-                            const mimeType: string =
-                                kind === "video" ?
-                                    "video/mp4" :
-                                    kind === "gif" ?
-                                        "image/gif" :
-                                        "image/jpeg";
-                            const { finalize }: {
-                                finalize: Promise<EnteFile>;
-                            } =
-                                library.compressAndReplaceMediaOptimistic(
-                                    entry.fileId,
-                                    {
-                                        bytes,
-                                        width: entry.width,
-                                        height: entry.height,
-                                        mimeType,
-                                        extension:
-                                            kind === "video" ?
-                                                "mp4" :
-                                                kind === "gif" ?
-                                                    "gif" :
-                                                    "jpg",
-                                        encoder:
-                                            kind === "video" || kind === "gif" ?
-                                                "ffmpeg" :
-                                                "photohoard",
-                                        audio: "none",
-                                    },
-                                    originalByteLength,
-                                );
-                            await finalize;
-                            return;
-                        }
-                        const { finalize }: { finalize: Promise<EnteFile> } =
-                            library.cropAndReplaceFileOptimistic(
-                                entry.fileId,
-                                bytes,
-                                {
-                                    width: entry.width,
-                                    height: entry.height,
-                                },
+                                originalByteLength,
                             );
                         await finalize;
-                    },
-                });
-                await syncRemote();
-                await afterSync?.();
+                        return;
+                    }
+                    const { finalize }: { finalize: Promise<EnteFile> } =
+                        library.cropAndReplaceFileOptimistic(
+                            entry.fileId,
+                            bytes,
+                            {
+                                width: entry.width,
+                                height: entry.height,
+                            },
+                        );
+                    await finalize;
+                },
+            });
+            await syncRemote().catch((): void => {
+                // syncRemote records the error; later page mounts sync again.
+            });
+        };
+
+        const load = async (): Promise<void> => {
+            try {
+                if (sessionBootstrap) {
+                    await sessionBootstrap;
+                    void syncRemote().catch((): void => {
+                        // syncRemote records the error in the library store.
+                    });
+                } else {
+                    sessionBootstrap = bootstrap().catch((error: unknown) => {
+                        // Let the next page mount retry a failed bootstrap.
+                        sessionBootstrap = undefined;
+                        throw error;
+                    });
+                    await sessionBootstrap;
+                }
+                await afterSyncRef.current?.();
+            } catch (error) {
+                console.warn("[library] bootstrap failed", error);
             } finally {
                 if (!cancelled) {
                     setInitialLoadDone(true);
@@ -371,11 +409,10 @@ export const useLibraryBootstrap: (
             }
         };
 
-        void bootstrap();
+        void load();
         return (): void => {
             cancelled = true;
-            stopTagOutboxRunner();
         };
-    }, [afterSync, bootstrapFromCache, syncRemote]);
+    }, [bootstrapFromCache, syncRemote]);
     return initialLoadDone;
 };

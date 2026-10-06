@@ -50,10 +50,18 @@ export class HttpClient {
     };
 
     ensureOk = (res: Response): void => {
-        this.logRateLimitHeaders(res, res.url);
         if (res.status === 401) {
             notifyUnauthorized();
         }
+        this.ensurePublicOk(res);
+    };
+
+    /**
+     * Like {@link ensureOk} for unauthenticated calls, where a 401 means bad
+     * credentials (wrong password or 2FA code), not an expired session.
+     */
+    ensurePublicOk = (res: Response): void => {
+        this.logRateLimitHeaders(res, res.url);
         if (!res.ok) {
             throw new Error(`HTTP ${res.status} for ${res.url}`);
         }
@@ -71,7 +79,7 @@ export class HttpClient {
             ...init,
             headers: { ...publicHeaders(), ...init?.headers },
         });
-        this.ensureOk(res);
+        this.ensurePublicOk(res);
         return res;
     };
 

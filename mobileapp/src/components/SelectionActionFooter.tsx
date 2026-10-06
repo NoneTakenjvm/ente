@@ -36,7 +36,7 @@ import {
 import { extractUserTags } from "@/lib/tags";
 import { cn } from "@/lib/utils";
 import { useLibraryStore } from "@/stores/library-store";
-import { useSelectionStore } from "@/stores/selection-store";
+import { selectedIdSet, useSelectionStore } from "@/stores/selection-store";
 import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
 import { toast } from "sonner";
@@ -68,7 +68,10 @@ export function SelectionActionFooter(): JSX.Element | null {
     const tagFlushLockRef = useRef<boolean>(false);
 
     const selectedFiles = useMemo(
-        () => allFiles.filter((file) => selectedIds.includes(file.id)),
+        () => {
+            const idSet = selectedIdSet(selectedIds);
+            return allFiles.filter((file) => idSet.has(file.id));
+        },
         [allFiles, selectedIds],
     );
 

@@ -206,8 +206,10 @@ let pendingTagIndexMaps: {
 
 const enqueueTagIndexPersist = (index: PersistedTagIndex): Promise<void> => {
     tagIndexPersistChain = tagIndexPersistChain
-        .catch(() => undefined)
-        .then(() => saveEncryptedTagIndex(index, getSessionCacheKey()));
+        .then(() => saveEncryptedTagIndex(index, getSessionCacheKey()))
+        .catch((error: unknown) => {
+            console.warn("Tag index persist failed", error);
+        });
     return tagIndexPersistChain;
 };
 
@@ -1138,7 +1140,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         const existing = fileIdsByTag.get(newName) ?? new Set<number>();
         fileIdsByTag.set(newName, new Set([...existing, ...oldIds]));
         const tagList = [...fileIdsByTag.keys()].sort();
-        const tagFilter = get().tagFilter;
+        const { tagFilter, albumViewFilter } = get();
         const tagTypeByName = new Map(get().tagTypeByName);
         const oldType = tagTypeByName.get(oldName);
         if (oldType) {
@@ -1193,6 +1195,12 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
                     root: renameTagInTree(tagFilter.root, oldName, newName),
                 } :
                 tagFilter,
+            albumViewFilter: isTagFilterActive(albumViewFilter) ?
+                {
+                    ...albumViewFilter,
+                    root: renameTagInTree(albumViewFilter.root, oldName, newName),
+                } :
+                albumViewFilter,
             tagIndexRevision: get().tagIndexRevision + 1,
             lastTagTouchFileIds: undefined,
         });
@@ -1215,7 +1223,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         if (registeredTagNames.length !== get().registeredTagNames.length) {
             persistRegisteredTags(registeredTagNames);
         }
-        const tagFilter = get().tagFilter;
+        const { tagFilter, albumViewFilter } = get();
         const tagTypeByName = new Map(get().tagTypeByName);
         tagTypeByName.delete(tagName);
         const includeInKitNearnessByName = new Map(
@@ -1233,6 +1241,10 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             tagFilter: {
                 ...tagFilter,
                 root: removeTagFromTree(tagFilter.root, tagName),
+            },
+            albumViewFilter: {
+                ...albumViewFilter,
+                root: removeTagFromTree(albumViewFilter.root, tagName),
             },
             tagTypeByName,
             includeInKitNearnessByName,
@@ -1267,7 +1279,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             fileIdsByTag.set(targetName, merged);
         }
         const tagList = [...fileIdsByTag.keys()].sort();
-        let tagFilter = get().tagFilter;
+        let { tagFilter, albumViewFilter } = get();
         const tagTypeByName = new Map(get().tagTypeByName);
         const includeInKitNearnessByName = new Map(
             get().includeInKitNearnessByName,
@@ -1300,6 +1312,10 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             tagFilter = {
                 ...tagFilter,
                 root: removeTagFromTree(tagFilter.root, source),
+            };
+            albumViewFilter = {
+                ...albumViewFilter,
+                root: removeTagFromTree(albumViewFilter.root, source),
             };
             tagTypeByName.delete(source);
             if (includeInKitNearnessByName.get(source)) {
@@ -1350,6 +1366,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             fileIdsByTag: mergedIndex.fileIdsByTag,
             registeredTagNames,
             tagFilter,
+            albumViewFilter,
             tagTypeByName,
             includeInKitNearnessByName,
             includeInEffectsPresenceByName,

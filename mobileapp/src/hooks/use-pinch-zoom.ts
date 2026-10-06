@@ -4,7 +4,6 @@ import {
     useRef,
     useState,
     type PointerEvent as ReactPointerEvent,
-    type WheelEvent as ReactWheelEvent,
 } from "react";
 
 const MIN_SCALE: number = 1;
@@ -40,7 +39,7 @@ interface PinchZoomState {
     onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
     onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
     onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
-    onWheel: (event: ReactWheelEvent<HTMLElement>) => void;
+    wheelTargetRef: (element: HTMLElement | null) => (() => void) | undefined;
     registerPointer: (pointerId: number, x: number, y: number) => void;
     clearPointers: () => void;
     releasePointer: (pointerId: number) => void;
@@ -446,6 +445,12 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
                         ),
                     );
                     setScale(nextScale);
+                    if (nextScale <= 1.01) {
+                        // Back at fit size: drop the pan offset, which can no
+                        // longer be dragged back at 1x.
+                        setTranslateX(0);
+                        setTranslateY(0);
+                    }
                     return;
                 }
                 if (
@@ -499,8 +504,8 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
             [finishGesture, shouldCaptureGestures],
         );
 
-    const onWheel: (event: ReactWheelEvent<HTMLElement>) => void = useCallback(
-        (event: ReactWheelEvent<HTMLElement>): void => {
+    const onWheel: (event: WheelEvent) => void = useCallback(
+        (event: WheelEvent): void => {
             if (!enabled) {
                 return;
             }
@@ -510,11 +515,39 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
             const intensity: number =
                 event.deltaMode === 1 ? 0.12 : Math.min(0.25, Math.abs(event.deltaY) * 0.0015);
             const delta: number = event.deltaY > 0 ? -intensity : intensity;
-            setScale((current: number): number =>
-                Math.min(MAX_SCALE, Math.max(MIN_SCALE, current + delta)));
+            const nextScale: number = Math.min(
+                MAX_SCALE,
+                Math.max(MIN_SCALE, scaleRef.current + delta),
+            );
+            // Update the ref now so wheel events between renders accumulate.
+            scaleRef.current = nextScale;
+            setScale(nextScale);
+            if (nextScale <= 1.01) {
+                setTranslateX(0);
+                setTranslateY(0);
+            }
         },
         [enabled],
     );
+
+    // [Note: Non-passive wheel zoom]
+    //
+    // React registers wheel listeners as passive, so preventDefault in an
+    // onWheel prop cannot stop a trackpad pinch (ctrl+wheel) from zooming the
+    // whole page. Attach the listener natively instead.
+    const wheelTargetRef: (element: HTMLElement | null) => (() => void) | undefined =
+        useCallback(
+            (element: HTMLElement | null): (() => void) | undefined => {
+                if (!element) {
+                    return undefined;
+                }
+                element.addEventListener("wheel", onWheel, { passive: false });
+                return (): void => {
+                    element.removeEventListener("wheel", onWheel);
+                };
+            },
+            [onWheel],
+        );
 
     useEffect((): void => {
         if (scale > 1.01) {
@@ -547,7 +580,7 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
         onPointerDown,
         onPointerMove,
         onPointerUp,
-        onWheel,
+        wheelTargetRef,
         registerPointer,
         clearPointers,
         releasePointer,

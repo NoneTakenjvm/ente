@@ -192,8 +192,10 @@ function AccountMenu(): JSX.Element {
     };
 
     const handleLogout = (): void => {
-        logout();
-        void router.replace("/login");
+        // Navigate only after the session is cleared, or /login bounces back.
+        void logout().then(() => {
+            void router.replace("/login");
+        });
     };
 
     const handlePanicConfirm = (): void => {

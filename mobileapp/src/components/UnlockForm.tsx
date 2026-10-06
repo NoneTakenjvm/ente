@@ -60,8 +60,8 @@ export function UnlockForm({
     };
 
     const handleDifferentAccount = (): void => {
-        signOut();
-        onUseDifferentAccount();
+        // Wait for the clear so it cannot wipe a login started right after.
+        void signOut().then(onUseDifferentAccount);
     };
 
     return (
