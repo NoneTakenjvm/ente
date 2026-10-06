@@ -1,6 +1,5 @@
 import { useEffect, useState, type JSX } from "react";
 import { useRouter } from "next/router";
-import { testAccountCredentials } from "@/dev/test-account";
 import {
     isSessionAuthenticated,
     useSessionStore,
@@ -27,20 +26,24 @@ export default function DevLoginPage(): JSX.Element {
         let cancelled = false;
 
         const run = async (): Promise<void> => {
-            if (process.env.NODE_ENV !== "development") {
-                return;
-            }
-            setStep("logging-in");
-            try {
-                await login(testAccountCredentials);
-                const coreOk = isSessionAuthenticated();
-                if (!cancelled && coreOk) {
-                    setStep("navigating");
-                    await router.replace("/gallery");
-                }
-            } catch {
-                if (!cancelled) {
-                    setStep("error");
+            // Inline NODE_ENV block so webpack drops the import (and the test
+            // credentials chunk) from production builds.
+            if (process.env.NODE_ENV === "development") {
+                setStep("logging-in");
+                try {
+                    const { testAccountCredentials } = await import(
+                        "@/dev/test-account"
+                    );
+                    await login(testAccountCredentials);
+                    const coreOk = isSessionAuthenticated();
+                    if (!cancelled && coreOk) {
+                        setStep("navigating");
+                        await router.replace("/gallery");
+                    }
+                } catch {
+                    if (!cancelled) {
+                        setStep("error");
+                    }
                 }
             }
         };

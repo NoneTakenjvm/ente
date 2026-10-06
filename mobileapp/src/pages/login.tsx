@@ -1,4 +1,4 @@
-import { useEffect, useState, type JSX } from "react";
+import { useEffect, useLayoutEffect, useState, type JSX } from "react";
 import { useRouter } from "next/router";
 import { LoginForm } from "@/components/LoginForm";
 import { UnlockForm } from "@/components/UnlockForm";
@@ -12,7 +12,14 @@ import {
 export default function LoginPage(): JSX.Element {
     const router = useRouter();
     const restoreFromPersistence = useSessionStore((s) => s.restoreFromPersistence);
-    const [showUnlock, setShowUnlock] = useState<boolean>(isSessionLockedForLogin());
+    // Lock state lives in sessionStorage; read it after hydration (before paint)
+    // so the static HTML and the first client render match.
+    const [showUnlock, setShowUnlock] = useState<boolean>(false);
+
+    useLayoutEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- sessionStorage is only readable after hydration
+        setShowUnlock(isSessionLockedForLogin());
+    }, []);
 
     useEffect(() => {
         const bootstrap = async (): Promise<void> => {

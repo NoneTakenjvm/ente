@@ -35,7 +35,8 @@ interface SessionState {
     email: string | undefined;
     errorMessage: string | undefined;
     login: (credentials: LoginCredentials) => Promise<void>;
-    logout: () => void;
+    /** Flush, then clear the session; resolves once local state is gone. */
+    logout: () => Promise<void>;
     /** Wipe in-memory keys and mark locked; resolves when flush + clear finish. */
     lock: () => Promise<void>;
     unlock: () => Promise<boolean>;
@@ -63,6 +64,11 @@ const resetDependentStores = (): void => {
     void import("@/lib/tag-outbox-runner").then(({ stopTagOutboxRunner }) => {
         stopTagOutboxRunner();
     });
+    void import("@/hooks/use-library-bootstrap").then(
+        ({ resetLibraryBootstrap }) => {
+            resetLibraryBootstrap();
+        },
+    );
     void import("@/lib/tag-outbox").then(({ clearTagOutbox }) => {
         clearTagOutbox();
     });
@@ -192,23 +198,21 @@ const createSessionStore: StateCreator<SessionState> = (set) => ({
         }
     },
 
-    logout: (): void => {
-        void (async (): Promise<void> => {
-            try {
-                await flushAllDurableState();
-            } catch {
-                // Best-effort — still clear local session.
-            }
-            clearPersistedSession();
-            clearSessionLock();
-            clearLocalState();
-            set({
-                status: "idle",
-                userID: undefined,
-                email: undefined,
-                errorMessage: undefined,
-            });
-        })();
+    logout: async (): Promise<void> => {
+        try {
+            await flushAllDurableState();
+        } catch {
+            // Best-effort — still clear local session.
+        }
+        clearPersistedSession();
+        clearSessionLock();
+        clearLocalState();
+        set({
+            status: "idle",
+            userID: undefined,
+            email: undefined,
+            errorMessage: undefined,
+        });
     },
 
     lock: async (): Promise<void> => {
@@ -286,7 +290,7 @@ export const useSessionStore = create<SessionState>(createSessionStore);
 
 if (typeof window !== "undefined") {
     setUnauthorizedHandler((): void => {
-        useSessionStore.getState().logout();
+        void useSessionStore.getState().logout();
     });
 }
 

@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type JSX } from "react";
+import {
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+    type JSX,
+} from "react";
 import { RotateCcw, Trash2 } from "lucide-react";
 import {
     AlertDialog,
@@ -10,7 +17,10 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ThumbnailGrid } from "@/components/ThumbnailGrid";
+import {
+    ThumbnailGrid,
+    type ThumbnailGridSelection,
+} from "@/components/ThumbnailGrid";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -120,7 +130,7 @@ export function ManageTrashPanel(): JSX.Element {
         [items],
     );
 
-    const handleToggle = (file: EnteFile): void => {
+    const handleToggle = useCallback((file: EnteFile): void => {
         setSelectedIds((current) => {
             const next = new Set(current);
             if (next.has(file.id)) {
@@ -130,7 +140,16 @@ export function ManageTrashPanel(): JSX.Element {
             }
             return next;
         });
-    };
+    }, []);
+    // Stable so the grid's visible cells only re-render when selection changes.
+    const selection = useMemo(
+        (): ThumbnailGridSelection => ({
+            selectedIds,
+            onToggle: handleToggle,
+            disabled: busy,
+        }),
+        [busy, handleToggle, selectedIds],
+    );
 
     const runBusy = async (action: () => Promise<void>): Promise<void> => {
         setBusy(true);
@@ -228,11 +247,7 @@ export function ManageTrashPanel(): JSX.Element {
             <div className="flex min-h-0 flex-1 flex-col px-2">
                 <ThumbnailGrid
                     files={trashFiles}
-                    selection={{
-                        selectedIds,
-                        onToggle: handleToggle,
-                        disabled: busy,
-                    }}
+                    selection={selection}
                 />
             </div>
             <footer className="shrink-0 space-y-2 border-t border-border px-4 py-3">

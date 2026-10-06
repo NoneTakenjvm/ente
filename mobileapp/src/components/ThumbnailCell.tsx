@@ -19,7 +19,7 @@ import type { RotationDegrees } from "@/lib/rotate";
 import { Check, CircleCheck, Play } from "lucide-react";
 import { FileType } from "ente-media/file-type";
 import type { EnteFile } from "ente-media/file";
-import { useSelectionStore } from "@/stores/selection-store";
+import { selectedIdSet, useSelectionStore } from "@/stores/selection-store";
 
 const LONG_PRESS_MS = 450;
 const LONG_PRESS_MOVE_PX = 10;
@@ -94,7 +94,7 @@ export const ThumbnailCell = memo(function ThumbnailCell({
     const sizeBytes = fileByteSize(file);
     const selectedFromStore = useSelectionStore((s) =>
         observeStoreSelection && s.enabled ?
-            s.selectedIds.includes(file.id) :
+            selectedIdSet(s.selectedIds).has(file.id) :
             false);
     const showSelected = observeStoreSelection ? selectedFromStore : isSelected;
     const previewTransform =

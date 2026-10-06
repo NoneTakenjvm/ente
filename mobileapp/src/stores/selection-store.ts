@@ -47,6 +47,8 @@ interface SelectionState {
     reset: () => void;
 }
 
+const selectedIdSets = new WeakMap<number[], Set<number>>();
+
 const initialState = {
     enabled: false,
     selectedIds: [] as number[],
@@ -269,3 +271,16 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
         set(initialState);
     },
 }));
+
+/**
+ * Memoised Set view of `selectedIds` for O(1) membership checks. The store
+ * replaces the array on every change, so one Set is built per selection.
+ */
+export const selectedIdSet = (ids: number[]): Set<number> => {
+    let idSet = selectedIdSets.get(ids);
+    if (!idSet) {
+        idSet = new Set(ids);
+        selectedIdSets.set(ids, idSet);
+    }
+    return idSet;
+};

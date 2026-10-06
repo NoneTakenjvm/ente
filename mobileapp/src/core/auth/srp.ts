@@ -100,7 +100,7 @@ const getSRPAttributes = async (
     if (res.status === 404) {
         return undefined;
     }
-    http.ensureOk(res);
+    http.ensurePublicOk(res);
     const { attributes } = z
         .object({ attributes: RemoteSRPAttributes })
         .parse(await res.json());
@@ -144,7 +144,7 @@ const verifySRP = async (
     if (verifyRes.status === 401) {
         throw new Error("SRP verification failed — check email and password");
     }
-    http.ensureOk(verifyRes);
+    http.ensurePublicOk(verifyRes);
 
     const parsed = RemoteSRPVerificationResponse.parse(await verifyRes.json());
     srpClient.checkM2(b64ToBuffer(parsed.srpM2));
@@ -155,14 +155,21 @@ const verifyTwoFactor = async (
     http: HttpClient,
     code: string,
     sessionID: string,
-) =>
-    TwoFactorAuthorizationResponse.parse(
-        await http.publicFetchJSON("/users/two-factor/verify", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ code, sessionID }),
-        }),
-    );
+) => {
+    const res = await fetch(http.apiURL("/users/two-factor/verify"), {
+        method: "POST",
+        headers: {
+            ...http.publicHeaders(),
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ code, sessionID }),
+    });
+    if (res.status === 401) {
+        throw new Error("Incorrect two-factor code");
+    }
+    http.ensurePublicOk(res);
+    return TwoFactorAuthorizationResponse.parse(await res.json());
+};
 
 const unwrapSession = async (
     keyAttributes: KeyAttributes,

@@ -30,13 +30,6 @@ const sessionBytesUsed = (): number => {
 };
 
 const evictSessionUntilFit = (incomingBytes: number): void => {
-    if (incomingBytes > SESSION_BUDGET_BYTES) {
-        for (const [fileId, entry] of sessionCache) {
-            URL.revokeObjectURL(entry.url);
-            sessionCache.delete(fileId);
-        }
-        return;
-    }
     const ranked = [...sessionCache.entries()].sort(
         (a, b) => a[1].lastAccess - b[1].lastAccess,
     );
@@ -70,6 +63,12 @@ export const retainSessionVideoUrl = (
             byteSize: size > 0 ? size : existing.byteSize,
             lastAccess: Date.now(),
         });
+        return;
+    }
+    // A video larger than the whole budget would evict everything else and
+    // still pin its bytes after the viewer closes; release it instead.
+    if (size > SESSION_BUDGET_BYTES) {
+        URL.revokeObjectURL(url);
         return;
     }
     evictSessionUntilFit(size);

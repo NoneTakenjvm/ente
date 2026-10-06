@@ -147,7 +147,6 @@ type SlideStatus = "idle" | "loading" | "ready" | "error";
 interface SlideLoader {
     fileId: number;
     cancelled: boolean;
-    timedOut: boolean;
     timeoutId: number;
 }
 
@@ -231,7 +230,7 @@ const SWIPE_THRESHOLD_MIN_PX = 40;
 const VIEWER_HISTORY_STATE = { entePhotoViewer: true } as const;
 const CAROUSEL_DRAG_DEAD_ZONE_PX = 8;
 const CHROME_HIDE_MS = 2000;
-/** Full-res download + HEIC convert can exceed a few seconds on desktop. */
+/** A full-res load with no download progress for this long is abandoned. */
 const MEDIA_LOAD_TIMEOUT_MS = 60_000;
 /**
  * Decoded media kept in the viewer: prefer ahead (typical swipe direction)
@@ -342,6 +341,11 @@ const primeVideoFirstFrame = (video: HTMLVideoElement): void => {
         });
 };
 
+const isTextEntryTarget = (target: EventTarget | null): boolean =>
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    (target instanceof HTMLElement && target.isContentEditable);
+
 export const PhotoViewer = memo(function PhotoViewer({
     files,
     initialIndex,
@@ -406,6 +410,12 @@ export const PhotoViewer = memo(function PhotoViewer({
     const mediaByteSizesRef = useRef<Map<number, number>>(new Map());
     const loadingIdsRef = useRef<Set<number>>(new Set());
     const mediaLoadersRef = useRef<Map<number, SlideLoader>>(new Map());
+    /** Slides whose load failed; not retried until the user asks or they leave the window. */
+    const failedIdsRef = useRef<Set<number>>(new Set());
+    /** Slides already reloaded once after a media element error. */
+    const brokenReloadIdsRef = useRef<Set<number>>(new Set());
+    /** Load pump for the current window; a no-op after unmount. */
+    const pumpLoadsRef = useRef<() => void>(() => undefined);
     const viewerFileIdRef = useRef<number>(
         sessionFiles[resolveViewerStartIndex(sessionFiles, initialIndex, initialFileId)]
             ?.id ?? initialFileId ?? 0,
@@ -413,6 +423,8 @@ export const PhotoViewer = memo(function PhotoViewer({
     const currentIndexRef = useRef<number>(currentIndex);
     const sessionFilesRef = useRef<EnteFile[]>(sessionFiles);
     const tagBaselineRef = useRef<string[]>([]);
+    /** File the open tag draft belongs to; flush writes to it, not the current slide. */
+    const tagDraftFileRef = useRef<EnteFile | undefined>(undefined);
     /** Mirrors {@link stagedTags} so close flush always reads the latest draft. */
     const stagedTagsRef = useRef<string[] | null>(null);
     const viewerActiveRef = useRef<boolean>(true);
@@ -690,6 +702,7 @@ export const PhotoViewer = memo(function PhotoViewer({
     useEffect(() => {
         const loadingIds = loadingIdsRef.current;
         const loadersByFileId = mediaLoadersRef.current;
+        const failedIds = failedIdsRef.current;
         const keepIndices = preloadSlideIndices(
             currentIndex,
             sessionFiles.length,
@@ -736,8 +749,11 @@ export const PhotoViewer = memo(function PhotoViewer({
             loadingIds.delete(fileId);
             clearLoadingState(fileId);
         }
-
-        let pumpLoads = (): void => undefined;
+        for (const fileId of [...failedIds]) {
+            if (!keepIds.has(fileId)) {
+                failedIds.delete(fileId);
+            }
+        }
 
         const startNetworkLoad = (slideFile: EnteFile): void => {
             if (
@@ -752,17 +768,24 @@ export const PhotoViewer = memo(function PhotoViewer({
             const loader: SlideLoader = {
                 fileId: slideFile.id,
                 cancelled: false,
-                timedOut: false,
-                timeoutId: window.setTimeout(() => {
+                timeoutId: 0,
+            };
+            // Re-armed on every progress tick so a slow but moving download
+            // (large video on mobile data) is not abandoned; a stalled one is.
+            const armStallTimeout = (): void => {
+                window.clearTimeout(loader.timeoutId);
+                loader.timeoutId = window.setTimeout(() => {
                     if (loader.cancelled) {
                         return;
                     }
-                    loader.timedOut = true;
+                    loader.cancelled = true;
                     releaseLoader(loader);
+                    failedIds.add(slideFile.id);
                     setSlideMedia(slideFile.id, { status: "error" });
-                    pumpLoads();
-                }, MEDIA_LOAD_TIMEOUT_MS),
+                    pumpLoadsRef.current();
+                }, MEDIA_LOAD_TIMEOUT_MS);
             };
+            armStallTimeout();
             loadersByFileId.set(slideFile.id, loader);
 
             const isVideo = slideFile.metadata.fileType === FileType.video;
@@ -773,9 +796,10 @@ export const PhotoViewer = memo(function PhotoViewer({
                 loaded: number;
                 total: number;
             }): void => {
-                if (loader.cancelled || loader.timedOut) {
+                if (loader.cancelled) {
                     return;
                 }
+                armStallTimeout();
                 setSlideMedia(slideFile.id, {
                     status: "loading",
                     progress:
@@ -799,7 +823,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                     window.clearTimeout(loader.timeoutId);
                     if (loader.cancelled) {
                         releaseLoader(loader);
-                        pumpLoads();
+                        pumpLoadsRef.current();
                         return;
                     }
                     setSlideMedia(slideFile.id, {
@@ -816,7 +840,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                             await toRenderableImageBlob(slideFile, bytes);
                     if (loader.cancelled) {
                         releaseLoader(loader);
-                        pumpLoads();
+                        pumpLoadsRef.current();
                         return;
                     }
                     const url = URL.createObjectURL(blob);
@@ -826,19 +850,20 @@ export const PhotoViewer = memo(function PhotoViewer({
                     }
                     releaseLoader(loader);
                     setSlideMedia(slideFile.id, { status: "ready", url });
-                    pumpLoads();
+                    pumpLoadsRef.current();
                 })
                 .catch(() => {
                     window.clearTimeout(loader.timeoutId);
                     releaseLoader(loader);
                     if (!loader.cancelled) {
+                        failedIds.add(slideFile.id);
                         setSlideMedia(slideFile.id, { status: "error" });
                     }
-                    pumpLoads();
+                    pumpLoadsRef.current();
                 });
         };
 
-        pumpLoads = (): void => {
+        pumpLoadsRef.current = (): void => {
             let inFlight = loadersByFileId.size;
             for (const slideFile of keepFiles) {
                 if (inFlight >= MAX_CONCURRENT_MEDIA_LOADS) {
@@ -846,7 +871,8 @@ export const PhotoViewer = memo(function PhotoViewer({
                 }
                 if (
                     mediaUrlsRef.current.has(slideFile.id) ||
-                    loadingIds.has(slideFile.id)
+                    loadingIds.has(slideFile.id) ||
+                    failedIds.has(slideFile.id)
                 ) {
                     continue;
                 }
@@ -876,7 +902,6 @@ export const PhotoViewer = memo(function PhotoViewer({
                 const overrideLoader: SlideLoader = {
                     fileId: slideFile.id,
                     cancelled: false,
-                    timedOut: false,
                     timeoutId: 0,
                 };
                 loadersByFileId.set(slideFile.id, overrideLoader);
@@ -893,7 +918,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                                 );
                         if (overrideLoader.cancelled) {
                             releaseLoader(overrideLoader);
-                            pumpLoads();
+                            pumpLoadsRef.current();
                             return;
                         }
                         const url = URL.createObjectURL(blob);
@@ -912,13 +937,13 @@ export const PhotoViewer = memo(function PhotoViewer({
                         }
                         releaseLoader(overrideLoader);
                         setSlideMedia(slideFile.id, { status: "ready", url });
-                        pumpLoads();
+                        pumpLoadsRef.current();
                     } catch {
                         releaseLoader(overrideLoader);
                         if (!overrideLoader.cancelled) {
                             setSlideMedia(slideFile.id, { status: "error" });
                         }
-                        pumpLoads();
+                        pumpLoadsRef.current();
                     }
                 })();
                 continue;
@@ -944,7 +969,7 @@ export const PhotoViewer = memo(function PhotoViewer({
             }
         }
 
-        pumpLoads();
+        pumpLoadsRef.current();
 
         for (const [fileId, url] of [...mediaUrlsRef.current.entries()]) {
             if (keepIds.has(fileId)) {
@@ -982,7 +1007,10 @@ export const PhotoViewer = memo(function PhotoViewer({
         const sizes = mediaByteSizesRef.current;
         const loaders = mediaLoadersRef.current;
         const loadingIds = loadingIdsRef.current;
+        const pumpLoads = pumpLoadsRef;
         return (): void => {
+            // Cancelled loads settle after unmount; they must not start new ones.
+            pumpLoads.current = (): void => undefined;
             for (const loader of loaders.values()) {
                 loader.cancelled = true;
                 window.clearTimeout(loader.timeoutId);
@@ -1130,11 +1158,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                 }
             });
         }
-        if (file?.metadata.fileType !== FileType.video) {
-            return;
-        }
-        const slideMedia = mediaByFileId.get(file.id);
-        if (slideMedia?.status !== "ready") {
+        if (!isVideo || !activeSlideMedia?.url) {
             return;
         }
         const video = activeVideoRef.current;
@@ -1142,20 +1166,15 @@ export const PhotoViewer = memo(function PhotoViewer({
             return;
         }
 
+        // Muted/volume are applied by their own effect. Depending on the active
+        // slide only keeps neighbour preload progress from re-priming (seek to 0)
+        // or resuming a video the user is watching or paused.
         if (!videoAutoPlay) {
-            video.muted = videoMuted;
             primeVideoFirstFrame(video);
             return;
         }
         void video.play().catch(() => undefined);
-    }, [
-        currentIndex,
-        file?.id,
-        file?.metadata.fileType,
-        mediaByFileId,
-        videoAutoPlay,
-        videoMuted,
-    ]);
+    }, [currentIndex, isVideo, activeSlideMedia?.url, videoAutoPlay]);
 
     const handleRetry = useCallback((): void => {
         if (!file) {
@@ -1175,6 +1194,8 @@ export const PhotoViewer = memo(function PhotoViewer({
             URL.revokeObjectURL(url);
         }
         loadingIdsRef.current.delete(file.id);
+        failedIdsRef.current.delete(file.id);
+        brokenReloadIdsRef.current.delete(file.id);
         setSlideMedia(file.id, { status: "idle" });
         setRetryKey((k) => k + 1);
     }, [file, setSlideMedia]);
@@ -1198,6 +1219,14 @@ export const PhotoViewer = memo(function PhotoViewer({
             mediaByteSizesRef.current.delete(fileId);
             loadingIdsRef.current.delete(fileId);
             URL.revokeObjectURL(url);
+            // A second error on freshly loaded bytes means the browser cannot
+            // decode this file; show the error instead of reloading forever.
+            if (brokenReloadIdsRef.current.has(fileId)) {
+                failedIdsRef.current.add(fileId);
+                setSlideMedia(fileId, { status: "error" });
+                return;
+            }
+            brokenReloadIdsRef.current.add(fileId);
             setSlideMedia(fileId, { status: "idle" });
             setRetryKey((key) => key + 1);
         },
@@ -1451,20 +1480,29 @@ export const PhotoViewer = memo(function PhotoViewer({
 
     useEffect(() => {
         const onKeyDown = (event: KeyboardEvent): void => {
+            // Open sheets/dialogs, the crop/video editor (which guards Escape
+            // while saving) and text fields own their keys: an arrow in the tag
+            // search must not change slides mid-draft.
+            if (
+                event.defaultPrevented ||
+                cropMode ||
+                showTagPicker ||
+                showDeleteConfirm ||
+                showRevertConfirm ||
+                isTextEntryTarget(event.target)
+            ) {
+                return;
+            }
             resetChromeTimer();
             if (event.key === "Escape") {
-                if (cropMode) {
-                    setCropMode(false);
-                    return;
-                }
                 if (zoomScale > 1.01 && zoomEnabled) {
                     resetZoom();
                     return;
                 }
                 onClose();
-            } else if (!cropMode && event.key === "ArrowLeft") {
+            } else if (event.key === "ArrowLeft") {
                 goPrev();
-            } else if (!cropMode && event.key === "ArrowRight") {
+            } else if (event.key === "ArrowRight") {
                 goNext();
             }
         };
@@ -1472,7 +1510,19 @@ export const PhotoViewer = memo(function PhotoViewer({
         return (): void => {
             window.removeEventListener("keydown", onKeyDown);
         };
-    }, [cropMode, goNext, goPrev, onClose, resetChromeTimer, resetZoom, zoomEnabled, zoomScale]);
+    }, [
+        cropMode,
+        goNext,
+        goPrev,
+        onClose,
+        resetChromeTimer,
+        resetZoom,
+        showDeleteConfirm,
+        showRevertConfirm,
+        showTagPicker,
+        zoomEnabled,
+        zoomScale,
+    ]);
 
     const syncSessionFile = useCallback(
         (fileId: number): void => {
@@ -1489,6 +1539,7 @@ export const PhotoViewer = memo(function PhotoViewer({
 
     const beginTagDraft = useCallback((): void => {
         const baseline = displayFile ? extractUserTags(displayFile) : [];
+        tagDraftFileRef.current = displayFile;
         tagBaselineRef.current = [...baseline];
         stagedTagsRef.current = [...baseline];
         setStagedTags([...baseline]);
@@ -1497,15 +1548,19 @@ export const PhotoViewer = memo(function PhotoViewer({
     }, [displayFile]);
 
     const flushTagDraft = useCallback((): void => {
-        if (!displayFile) {
+        const draftFile = tagDraftFileRef.current;
+        tagDraftFileRef.current = undefined;
+        if (!draftFile) {
             stagedTagsRef.current = null;
             setStagedTags(null);
             setShowTagPicker(false);
             return;
         }
-        const fileId = displayFile.id;
+        const fileId = draftFile.id;
+        const latestFile =
+            useLibraryStore.getState().getFileById(fileId) ?? draftFile;
         const intendedTags =
-            stagedTagsRef.current ?? extractUserTags(displayFile);
+            stagedTagsRef.current ?? extractUserTags(latestFile);
         setShowTagPicker(false);
         if (tagsEqual(tagBaselineRef.current, intendedTags)) {
             stagedTagsRef.current = null;
@@ -1527,7 +1582,7 @@ export const PhotoViewer = memo(function PhotoViewer({
         enqueueTagOutboxEntries([
             {
                 fileId,
-                intendedTags: applyTagMutator(mutator, extractTags(displayFile)),
+                intendedTags: applyTagMutator(mutator, extractTags(latestFile)),
             },
         ]);
         requestTagOutboxFlush();
@@ -1552,7 +1607,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                     });
             });
         });
-    }, [displayFile, syncSessionFile, updateTagsOnFile]);
+    }, [syncSessionFile, updateTagsOnFile]);
 
     const handleAddTag = useCallback(
         (name: string): void => {
@@ -1985,9 +2040,9 @@ export const PhotoViewer = memo(function PhotoViewer({
                                 handleZoomPointerUp :
                                 undefined
                         }
-                        onWheel={
+                        ref={
                             isActive && slideZoomEnabled ?
-                                pinchZoom.onWheel :
+                                pinchZoom.wheelTargetRef :
                                 undefined
                         }
                     >
@@ -2055,9 +2110,9 @@ export const PhotoViewer = memo(function PhotoViewer({
                                 handleZoomPointerUp :
                                 undefined
                         }
-                        onWheel={
+                        ref={
                             isActive && slideZoomEnabled ?
-                                pinchZoom.onWheel :
+                                pinchZoom.wheelTargetRef :
                                 undefined
                         }
                     >

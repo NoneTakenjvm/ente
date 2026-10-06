@@ -197,6 +197,12 @@ const attachMessageRouter = (worker: Worker): void => {
         return;
     }
     messageRouterAttached = true;
+    // A crash (e.g. out of memory while loading the model) posts no reply;
+    // reject everything pending so callers do not wait forever.
+    worker.onerror = (event: ErrorEvent): void => {
+        console.warn("[kit-embedding] worker failed:", event.message);
+        terminateKitEmbeddingWorker();
+    };
     worker.onmessage = (event: MessageEvent<ClipEmbeddingOutbound>): void => {
         const data = event.data;
         if (data.kind === "init-done") {
@@ -662,6 +668,8 @@ export const runKitEmbeddingJob = async (
 
     const ready: ReadyThumb[] = [];
     let prefetchDone = false;
+    /** Set once the consumer exits (done, aborted, or a batch failed). */
+    let stopped = false;
     const consumerWaiters: Array<() => void> = [];
     const prefetchWaiters: Array<() => void> = [];
 
@@ -676,7 +684,7 @@ export const runKitEmbeddingJob = async (
 
     const waitForConsumerSpace = async (): Promise<void> => {
         while (ready.length >= maxReadyQueue) {
-            if (options.signal?.aborted) {
+            if (stopped || options.signal?.aborted) {
                 return;
             }
             await new Promise<void>((resolve) => {
@@ -716,7 +724,7 @@ export const runKitEmbeddingJob = async (
             return;
         }
         await waitForConsumerSpace();
-        if (options.signal?.aborted) {
+        if (stopped || options.signal?.aborted) {
             return;
         }
         const bytes = await getDecryptedThumbnailBytes(file);
@@ -820,6 +828,10 @@ export const runKitEmbeddingJob = async (
         }
     } finally {
         options.signal?.removeEventListener("abort", onAbort);
+        // A failed batch leaves the ready queue full; without this the
+        // prefetchers wait for consumer space forever and the job never ends.
+        stopped = true;
+        ready.length = 0;
         wakeAllWaiters();
         await prefetchPromise.catch(() => undefined);
         noteProgress(true);

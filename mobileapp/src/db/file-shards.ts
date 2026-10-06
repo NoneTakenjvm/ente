@@ -37,6 +37,9 @@ let pendingDirtyFileIds = new Set<number>();
 
 let pendingDirtyAll = false;
 
+/** Saves run one at a time so a slower, older save cannot overwrite a newer shard. */
+let saveChain: Promise<void> = Promise.resolve();
+
 /**
  * Stable shard bucket for a file id.
  */
@@ -272,8 +275,22 @@ export type SaveEncryptedFilesOptions = {
 
 /**
  * Persist library files; only encrypts shards whose membership/updation/marks changed.
+ *
+ * Calls are serialised — each one diffs against the previous save's result.
  */
-export const saveEncryptedFilesSharded = async (
+export const saveEncryptedFilesSharded = (
+    files: EnteFile[],
+    cacheKey: string,
+    options?: SaveEncryptedFilesOptions,
+): Promise<void> => {
+    const save = saveChain
+        .catch(() => undefined)
+        .then(() => saveChangedShards(files, cacheKey, options));
+    saveChain = save;
+    return save;
+};
+
+const saveChangedShards = async (
     files: EnteFile[],
     cacheKey: string,
     options?: SaveEncryptedFilesOptions,
@@ -311,13 +328,20 @@ export const saveEncryptedFilesSharded = async (
         return;
     }
 
-    for (const shardId of dirty) {
-        const group = groups.get(shardId);
-        if (!group || group.length === 0) {
-            await deleteShard(shardId);
-        } else {
-            await putShard(shardId, group, cacheKey);
+    try {
+        for (const shardId of dirty) {
+            const group = groups.get(shardId);
+            if (!group || group.length === 0) {
+                await deleteShard(shardId);
+            } else {
+                await putShard(shardId, group, cacheKey);
+            }
         }
+    } catch (error) {
+        // Keep the marks so the next save retries these files.
+        markLibraryCacheFilesDirty(marked);
+        pendingDirtyAll ||= forceAll;
+        throw error;
     }
 
     const db = await getOrganizerDB();

@@ -60,6 +60,10 @@ interface LocalUploadGridProps {
     footerInsetPx?: number;
 }
 
+type UploadMasonryLayout = ReturnType<
+    typeof computeMasonryLayoutFromAspects<LocalUploadItem>
+>;
+
 interface RowData {
     items: LocalUploadItem[];
     layout: ThumbnailGridLayout;
@@ -222,12 +226,19 @@ function SizedGrid({
         [items, layout, selection],
     );
     const scrollOffsetRef = useRef(0);
+    const outerRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         scrollControllerRef.current = {
             getScrollTop: (): number => scrollOffsetRef.current,
             setScrollTop: (next: number): void => {
-                const clamped = Math.max(0, next);
+                const outer = outerRef.current;
+                const maxScroll =
+                    outer ? Math.max(0, outer.scrollHeight - outer.clientHeight) : 0;
+                const clamped = Math.min(Math.max(0, next), maxScroll);
+                if (clamped === scrollOffsetRef.current) {
+                    return;
+                }
                 scrollOffsetRef.current = clamped;
                 listRef.current?.scrollTo(clamped);
                 onScrollOffsetChange(clamped);
@@ -241,6 +252,7 @@ function SizedGrid({
     return (
         <FixedSizeList
             ref={listRef}
+            outerRef={outerRef}
             key={`${width}-${layout.columns}`}
             height={height}
             width={width}
@@ -251,7 +263,7 @@ function SizedGrid({
                 scrollOffsetRef.current = props.scrollOffset;
                 onScrollOffsetChange(props.scrollOffset);
             }}
-            style={{ paddingBottom: footerInsetPx }}
+            style={{ paddingBottom: footerInsetPx, touchAction: "pan-y" }}
         >
             {GridRow}
         </FixedSizeList>
@@ -267,6 +279,8 @@ interface SizedMasonryGridProps {
     footerInsetPx: number;
     onScrollOffsetChange: (offset: number) => void;
     scrollControllerRef: RefObject<MarqueeScrollController | null>;
+    /** Receives the placed layout so marquee hit-tests reuse it. */
+    layoutRef: RefObject<UploadMasonryLayout | null>;
 }
 
 function SizedMasonryGrid({
@@ -278,6 +292,7 @@ function SizedMasonryGrid({
     footerInsetPx,
     onScrollOffsetChange,
     scrollControllerRef,
+    layoutRef,
 }: SizedMasonryGridProps): JSX.Element {
     const [scrollTop, setScrollTop] = useState<number>(0);
     const scrollerRef = useRef<HTMLDivElement>(null);
@@ -294,6 +309,9 @@ function SizedMasonryGrid({
             ),
         [columns, items, width],
     );
+    useEffect(() => {
+        layoutRef.current = layout;
+    }, [layout, layoutRef]);
     const visibleItems = useMemo(
         () => visibleMasonryItems(layout.items, scrollTop, height),
         [height, layout.items, scrollTop],
@@ -335,7 +353,7 @@ function SizedMasonryGrid({
         <div
             ref={scrollerRef}
             className="overflow-y-auto"
-            style={{ width, height }}
+            style={{ width, height, touchAction: "pan-y" }}
             onScroll={handleScroll}
         >
             <div
@@ -379,10 +397,11 @@ export function LocalUploadGrid({
     const galleryColumns = useSettingsStore((s) => s.galleryColumns);
     const galleryThumbnailMode = useSettingsStore((s) => s.galleryThumbnailMode);
     const listRef = useRef<FixedSizeList<RowData>>(null);
-    const containerRef = useRef<HTMLDivElement>(null);
     const scrollControllerRef = useRef<MarqueeScrollController | null>(null);
+    const masonryLayoutRef = useRef<UploadMasonryLayout | null>(null);
     const marqueeBaselineRef = useRef<Set<string>>(new Set());
     const marqueeAppliedIdsRef = useRef<Set<string>>(new Set());
+    const marqueeLastIdsRef = useRef<string[]>([]);
     const [gridWidth, setGridWidth] = useState<number>(0);
 
     const handleScrollOffsetChange = useCallback((_offset: number): void => {
@@ -395,16 +414,10 @@ export function LocalUploadGrid({
                 return [];
             }
             if (galleryThumbnailMode === "fit") {
-                const layout = computeMasonryLayoutFromAspects(
-                    items.map((item) => ({
-                        value: item,
-                        key: item.id,
-                        aspectRatio: 1,
-                    })),
-                    gridWidth,
-                    galleryColumns,
-                );
-                return masonryItemsInMarquee(layout.items, rect).map((id) => String(id));
+                const layout = masonryLayoutRef.current;
+                return layout ?
+                    masonryItemsInMarquee(layout.items, rect).map((id) => String(id)) :
+                    [];
             }
             const layout = computeThumbnailGridLayout(gridWidth, galleryColumns);
             const indices = gridIndicesInContentMarquee(
@@ -427,6 +440,10 @@ export function LocalUploadGrid({
                 return;
             }
             const itemIds = resolveMarqueeItemIds(rect);
+            if (sameIds(itemIds, marqueeLastIdsRef.current)) {
+                return;
+            }
+            marqueeLastIdsRef.current = itemIds;
             if (selection.onSetSelection) {
                 const next = new Set(marqueeBaselineRef.current);
                 for (const id of itemIds) {
@@ -453,22 +470,24 @@ export function LocalUploadGrid({
         Boolean(selection.onSelectMany) && !selection.disabled;
 
     const {
-        marqueeViewport,
+        containerRef,
+        overlayRef,
         onPointerDown,
         onPointerMove,
         onPointerUp,
         onPointerCancel,
     } = useMarqueeSelection({
         enabled: marqueeEnabled,
-        containerRef,
         scrollControllerRef,
         onMarqueeRect: handleMarqueeRect,
+        bottomInsetPx: footerInsetPx,
     });
 
     const handlePointerDown = useCallback(
         (event: ReactPointerEvent<HTMLDivElement>): void => {
             marqueeBaselineRef.current = new Set(selection.selectedIds);
             marqueeAppliedIdsRef.current = new Set();
+            marqueeLastIdsRef.current = [];
             onPointerDown(event);
         },
         [onPointerDown, selection.selectedIds],
@@ -478,7 +497,6 @@ export function LocalUploadGrid({
         <div
             ref={containerRef}
             className="relative min-h-0 flex-1 select-none overflow-hidden"
-            style={{ touchAction: marqueeEnabled ? "none" : "pan-y" }}
             onPointerDown={handlePointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
@@ -500,6 +518,7 @@ export function LocalUploadGrid({
                             footerInsetPx={footerInsetPx}
                             onScrollOffsetChange={handleScrollOffsetChange}
                             scrollControllerRef={scrollControllerRef}
+                            layoutRef={masonryLayoutRef}
                         />
                     ) : (
                         <SizedGrid
@@ -515,17 +534,14 @@ export function LocalUploadGrid({
                         />
                     )}
             </AutoSizer>
-            {marqueeViewport ? (
-                <div
-                    className="pointer-events-none absolute z-30 border border-primary bg-primary/20"
-                    style={{
-                        left: marqueeViewport.x,
-                        top: marqueeViewport.y,
-                        width: marqueeViewport.width,
-                        height: marqueeViewport.height,
-                    }}
-                />
-            ) : null}
+            <div
+                ref={overlayRef}
+                className="pointer-events-none absolute z-30 border border-primary bg-primary/20"
+                style={{ display: "none" }}
+            />
         </div>
     );
 }
+
+const sameIds = (a: string[], b: string[]): boolean =>
+    a.length === b.length && a.every((id, index) => id === b[index]);

@@ -187,12 +187,19 @@ function SizedGrid({
     );
 
     const scrollOffsetRef = useRef(0);
+    const outerRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         scrollControllerRef.current = {
             getScrollTop: (): number => scrollOffsetRef.current,
             setScrollTop: (next: number): void => {
-                const clamped = Math.max(0, next);
+                const outer = outerRef.current;
+                const maxScroll =
+                    outer ? Math.max(0, outer.scrollHeight - outer.clientHeight) : 0;
+                const clamped = Math.min(Math.max(0, next), maxScroll);
+                if (clamped === scrollOffsetRef.current) {
+                    return;
+                }
                 noteGalleryScrollActivity();
                 scrollOffsetRef.current = clamped;
                 listRef.current?.scrollTo(clamped);
@@ -207,6 +214,7 @@ function SizedGrid({
     return (
         <FixedSizeList
             ref={listRef}
+            outerRef={outerRef}
             key={`${width}-${layout.columns}`}
             height={height}
             width={width}
@@ -220,7 +228,7 @@ function SizedGrid({
                 scrollOffsetRef.current = props.scrollOffset;
                 onScrollOffsetChange(props.scrollOffset);
             }}
-            style={{ paddingBottom: footerInsetPx }}
+            style={{ paddingBottom: footerInsetPx, touchAction: "pan-y" }}
         >
             {GridRow}
         </FixedSizeList>
@@ -239,6 +247,8 @@ interface SizedMasonryGridProps {
     previewRotationById?: Record<number, 90 | 180 | 270>;
     onScrollOffsetChange: (offset: number) => void;
     scrollControllerRef: RefObject<MarqueeScrollController | null>;
+    /** Receives the placed layout so marquee hit-tests reuse it. */
+    layoutRef: RefObject<MasonryLayout | null>;
     /** Generation that changes when id order changes; layout is reused otherwise. */
     viewOrderKey: string;
 }
@@ -257,6 +267,7 @@ function SizedMasonryGrid({
     previewRotationById,
     onScrollOffsetChange,
     scrollControllerRef,
+    layoutRef,
     viewOrderKey,
 }: SizedMasonryGridProps): JSX.Element {
     const [scrollTop, setScrollTop] = useState<number>(0);
@@ -268,6 +279,9 @@ function SizedMasonryGrid({
         // eslint-disable-next-line react-hooks/exhaustive-deps -- viewOrderKey
         [columns, viewOrderKey, width],
     );
+    useEffect(() => {
+        layoutRef.current = placedLayout;
+    }, [layoutRef, placedLayout]);
     const visibleItems = useMemo(
         () =>
             visibleMasonryItemsFromColumns(
@@ -329,7 +343,7 @@ function SizedMasonryGrid({
         <div
             ref={scrollerRef}
             className="overflow-y-auto"
-            style={{ width, height, overflowAnchor: "none" }}
+            style={{ width, height, overflowAnchor: "none", touchAction: "pan-y" }}
             onScroll={handleScroll}
         >
             <div
@@ -391,10 +405,11 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
     const galleryColumns = useSettingsStore((s) => s.galleryColumns);
     const galleryThumbnailMode = useSettingsStore((s) => s.galleryThumbnailMode);
     const listRef = useRef<FixedSizeList<RowData>>(null);
-    const containerRef = useRef<HTMLDivElement>(null);
     const scrollControllerRef = useRef<MarqueeScrollController | null>(null);
+    const masonryLayoutRef = useRef<MasonryLayout | null>(null);
     const marqueeBaselineRef = useRef<Set<number>>(new Set());
     const marqueeAppliedIdsRef = useRef<Set<number>>(new Set());
+    const marqueeLastIdsRef = useRef<number[]>([]);
     const [gridWidth, setGridWidth] = useState<number>(0);
 
     const handleScrollOffsetChange = useCallback((_offset: number): void => {
@@ -441,12 +456,10 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
                 return [];
             }
             if (galleryThumbnailMode === "fit") {
-                const layout = computeMasonryLayout(
-                    files,
-                    gridWidth,
-                    galleryColumns,
-                );
-                return masonryItemsInMarquee(layout.items, rect).map((id) => Number(id));
+                const layout = masonryLayoutRef.current;
+                return layout ?
+                    masonryItemsInMarquee(layout.items, rect).map((id) => Number(id)) :
+                    [];
             }
             const layout = computeThumbnailGridLayout(gridWidth, galleryColumns);
             const indices = gridIndicesInContentMarquee(
@@ -469,6 +482,10 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
                 return;
             }
             const fileIds = resolveMarqueeFileIds(rect);
+            if (sameIds(fileIds, marqueeLastIdsRef.current)) {
+                return;
+            }
+            marqueeLastIdsRef.current = fileIds;
             if (selection.onSetSelection) {
                 const next = new Set(marqueeBaselineRef.current);
                 for (const id of fileIds) {
@@ -496,16 +513,17 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
         Boolean(selection?.onSelectMany) && !selection?.disabled;
 
     const {
-        marqueeViewport,
+        containerRef,
+        overlayRef,
         onPointerDown,
         onPointerMove,
         onPointerUp,
         onPointerCancel,
     } = useMarqueeSelection({
         enabled: marqueeEnabled,
-        containerRef,
         scrollControllerRef,
         onMarqueeRect: handleMarqueeRect,
+        bottomInsetPx: footerInsetPx,
     });
 
     const handlePointerDown = useCallback(
@@ -516,6 +534,7 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
                     [...(selection?.selectedIds ?? [])];
             marqueeBaselineRef.current = new Set(baselineIds);
             marqueeAppliedIdsRef.current = new Set();
+            marqueeLastIdsRef.current = [];
             onPointerDown(event);
         },
         [onPointerDown, selection?.observeStoreSelection, selection?.selectedIds],
@@ -544,9 +563,8 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
             ref={containerRef}
             className="relative min-h-0 flex-1 select-none overflow-hidden"
             style={{
-                // Select/stamp: block native pan so any-direction drag selects;
-                // navigate via edge auto-scroll while dragging (iOS Photos).
-                touchAction: marqueeEnabled ? "none" : "pan-y",
+                // Scrollers are pan-y; an armed marquee blocks the pan itself
+                // (see use-marquee-selection).
                 pointerEvents: interactionsReady ? "auto" : "none",
             }}
             onPointerDown={handlePointerDown}
@@ -573,6 +591,7 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
                             previewRotationById={previewRotationById}
                             onScrollOffsetChange={handleScrollOffsetChange}
                             scrollControllerRef={scrollControllerRef}
+                            layoutRef={masonryLayoutRef}
                             viewOrderKey={viewOrderKey}
                         />
                     ) : (
@@ -592,17 +611,14 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
                         />
                     )}
             </AutoSizer>
-            {marqueeViewport ? (
-                <div
-                    className="pointer-events-none absolute z-30 border border-primary bg-primary/20"
-                    style={{
-                        left: marqueeViewport.x,
-                        top: marqueeViewport.y,
-                        width: marqueeViewport.width,
-                        height: marqueeViewport.height,
-                    }}
-                />
-            ) : null}
+            <div
+                ref={overlayRef}
+                className="pointer-events-none absolute z-30 border border-primary bg-primary/20"
+                style={{ display: "none" }}
+            />
         </div>
     );
 });
+
+const sameIds = (a: number[], b: number[]): boolean =>
+    a.length === b.length && a.every((id, index) => id === b[index]);

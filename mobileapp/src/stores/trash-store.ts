@@ -186,8 +186,9 @@ const createTrashStore: StateCreator<TrashState> = (set, get) => ({
             return;
         }
         await getEnteCore().deleteFilesFromTrash(uniqueIds);
+        const deletedIds = new Set(uniqueIds);
         const remaining = get().items.filter(
-            (item) => !uniqueIds.includes(item.file.id),
+            (item) => !deletedIds.has(item.file.id),
         );
         set({ items: remaining });
         await persistItems(remaining);

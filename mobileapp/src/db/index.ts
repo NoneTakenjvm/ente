@@ -57,7 +57,9 @@ export interface FileCiphertextRecord {
  */
 export interface DerivedReplacePayloadRecord {
     fileId: number;
-    bytes: ArrayBuffer;
+    /** Edited file bytes encrypted with the session cacheKey. */
+    encryptedData: ArrayBuffer;
+    decryptionHeader: string;
     byteSize: number;
 }
 
@@ -182,6 +184,7 @@ const openOrganizerDB = (userId: number): Promise<IDBPDatabase<OrganizerDB>> =>
  */
 export const bindOrganizerDB = (userId: number): void => {
     if (activeUserId !== userId) {
+        closeConnection(dbPromise);
         activeUserId = userId;
         dbPromise = openOrganizerDB(userId);
     }
@@ -204,10 +207,7 @@ export const wipeOrganizerDB = async (): Promise<void> => {
         return;
     }
     const userId = activeUserId;
-    dbPromise = undefined;
-    activeUserId = undefined;
-    const { clearFileShardPersistState } = await import("./file-shards");
-    clearFileShardPersistState();
+    await unbindOrganizerDB();
     await deleteDB(dbNameForUser(userId));
 };
 
@@ -216,10 +216,7 @@ export const wipeOrganizerDB = async (): Promise<void> => {
  */
 export const wipeOrganizerDBForUser = async (userId: number): Promise<void> => {
     if (activeUserId === userId) {
-        dbPromise = undefined;
-        activeUserId = undefined;
-        const { clearFileShardPersistState } = await import("./file-shards");
-        clearFileShardPersistState();
+        await unbindOrganizerDB();
     }
     await deleteDB(dbNameForUser(userId));
 };
@@ -241,4 +238,26 @@ export const hasCachedLibrary = async (userId: number): Promise<boolean> => {
     } finally {
         await db.close();
     }
+};
+
+/**
+ * Drop the active binding and close its connection — an open connection
+ * blocks `deleteDB` indefinitely.
+ */
+const unbindOrganizerDB = async (): Promise<void> => {
+    closeConnection(dbPromise);
+    dbPromise = undefined;
+    activeUserId = undefined;
+    const { clearFileShardPersistState } = await import("./file-shards");
+    clearFileShardPersistState();
+};
+
+/** Close once in-flight transactions finish (IndexedDB close semantics). */
+const closeConnection = (
+    connection: Promise<IDBPDatabase<OrganizerDB>> | undefined,
+): void => {
+    void connection?.then(
+        (db) => db.close(),
+        () => undefined,
+    );
 };

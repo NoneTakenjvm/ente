@@ -10,12 +10,6 @@ declare global {
 
 declare const self: ServiceWorkerGlobalScope;
 
-const enteProductionHosts = new Set([
-    "api.ente.com",
-    "thumbnails.ente.com",
-    "files.ente.com",
-]);
-
 const customEnteApiHostname = (): string | undefined => {
     const endpoint = process.env.NEXT_PUBLIC_ENTE_ENDPOINT;
     if (!endpoint) {
@@ -28,22 +22,17 @@ const customEnteApiHostname = (): string | undefined => {
     }
 };
 
-const isEnteRemoteRequest = (url: URL): boolean => {
-    if (enteProductionHosts.has(url.hostname)) {
-        return true;
-    }
-    const customHost = customEnteApiHostname();
-    return customHost !== undefined && url.hostname === customHost;
-};
-
 /**
- * Ente sync, metadata writes, and media fetches must not go through
- * Serwist's cross-origin NetworkFirst handler — authenticated API responses
- * are not cacheable and timeouts surface as FetchEvent "no-response" errors.
+ * Cross-origin requests (Ente API, thumbnails, files, model and CDN downloads)
+ * and a custom Ente endpoint must not go through Serwist's NetworkFirst
+ * handlers — authenticated API responses are not cacheable, timeouts surface
+ * as FetchEvent "no-response" errors, and transformers.js already caches the
+ * large CLIP model files itself.
  */
-const enteRemoteCaching: RuntimeCaching[] = [
+const remoteCaching: RuntimeCaching[] = [
     {
-        matcher: ({ url }) => isEnteRemoteRequest(url),
+        matcher: ({ url, sameOrigin }) =>
+            !sameOrigin || url.hostname === customEnteApiHostname(),
         handler: new NetworkOnly(),
     },
 ];
@@ -53,7 +42,7 @@ const serwist: Serwist = new Serwist({
     skipWaiting: true,
     clientsClaim: true,
     navigationPreload: true,
-    runtimeCaching: [...enteRemoteCaching, ...defaultCache],
+    runtimeCaching: [...remoteCaching, ...defaultCache],
     fallbacks: {
         entries: [
             {
