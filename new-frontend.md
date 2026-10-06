@@ -7,12 +7,22 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-10-06 |
-| **Last agent / session** | Full audit `0.3.179` — reliability, memory, mobile selection, security fixes |
+| **Last agent / session** | Similar + kit nearness Batch A/B `0.3.180`, scan-stall fixes `0.3.181` — thumbnail cache eviction, phash pool errors |
 | **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
-| **Next recommended action** | Phone + desktop QA of `0.3.179` (highlight-scroll select on mobile, viewer zoom/pan, tag rename/merge with kits + pins, bulk undo, lock/logout); then commit. |
+| **Next recommended action** | QA `0.3.181` from a secure origin (`http://localhost:3080`, HTTPS, or the deployed site — a plain-HTTP LAN IP has no WebGPU, so CLIP falls back to single-thread WASM): Manage → Similar (phash index rescans once), CLIP vs hash groups, keeper picks, kit nearness sort/filter; then commit. Discuss Batch C (items 14–17) with the user. |
 
 **This session (local only — not pushed):**
+1. **Kit nearness (A1/A6/B11/B12/B13)** — ranking ids as `Float64Array`; files with no kit evidence stay unassigned; presence job only runs while the UI needs it; scores computed once per sort; seeds come from tag posting lists.
+2. **Similar keeper (A4/A5)** — keeper choice keyed by sorted fileIds (stable across re-runs) and ranked consistently across exact/similar/prune.
+3. **Stage-1 (A2/B8)** — CLIP mode also unions tight dHash pairs (≤2); symmetric j>i top-K scan over packed, transferred `Float32Array` with raw-dot reject; result cache key fingerprints vectors (not just count).
+4. **Hashing (A3/B10)** — one `getImageData`, box-averaged grids, 8 rotation/mirror variants by permutation (fixes clipped rotations); one `onmessage` per worker with Map dispatch; in-flight cap ~2× workers; thumbnail bytes transferred.
+5. **Phash persistence (B9)** — chunked encrypted `phashChunks` store (dbVersion 8, meta v4) — appends + tombstones, prune of deleted ids, compaction; old index reads as absent → one rescan.
+6. **CLIP sync (A7)** — cursor, backoff, batched `markUploaded`.
+7. **Scan stalls (`0.3.181`)** — thumbnail cache eviction now frees down to 320 MB (was: just enough for one row), and puts queued behind an eviction skip the rescan; before, every fetched thumbnail past the 400 MB budget re-read the whole store, so bulk scans crawled after a few thousand files. A phash pool worker error now rejects pending hashes instead of holding in-flight slots forever.
+8. **Deferred** — persisted incremental CLIP top-K (B8 follow-up); Batch C (14–17) and item 14 pending discussion.
+
+**Previous session (committed `5cbf953cd4`):**
 1. **Security** — dev test credentials only load under `NODE_ENV=development` (absent from `out/`); pending crops/edits and derived-replace payloads encrypted at rest (old plaintext entries dropped on read); SW no longer caches cross-origin responses; 2FA/SRP/http error handling; wrong 2FA code shows an error instead of logging out.
 2. **Reliability** — serialised shard saves; panic/wipe closes DB first; uploads made during sync kept; logout/lock await durable flush (organizer upload capped at 5 s); CLIP job/worker no longer hang on batch failure or worker crash; relative sort runs in the worker (no gallery freeze).
 3. **Viewer** — bounded load retries, stall (not total) timeout, no download leaks after unmount, preloads don't seek the active video, undecodable media shows an error, Escape safe in crop mode, >120 MB videos not kept in session cache, native non-passive wheel (trackpad pinch no longer zooms the page), zoom-out resets pan.

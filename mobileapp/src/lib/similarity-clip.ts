@@ -105,56 +105,58 @@ export const findClipTopNeighbours = (
     topK: number = CLIP_CONFIRM_TOP_K,
     collectMax: number = CLIP_SCORE_COLLECT_MAX,
 ): ClipNeighbour[][] => {
-    const n = vectors.length;
-    const result: ClipNeighbour[][] = Array.from({ length: n }, () => []);
-    for (let i = 0; i < n; i++) {
-        const left = vectors[i]!;
-        const neighbours: ClipNeighbour[] = [];
-        for (let j = 0; j < n; j++) {
-            if (i === j) {
-                continue;
-            }
-            const dist = embeddingCosineDistance(left, vectors[j]);
-            if (!Number.isFinite(dist)) {
-                continue;
-            }
-            const score = clipDistanceToScore(dist);
-            if (score > collectMax) {
-                continue;
-            }
-            insertTopNeighbour(neighbours, { other: j, score }, topK);
-        }
-        result[i] = neighbours;
+    const topByIndex: ClipNeighbour[][] = vectors.map(() => []);
+    for (let row = 0; row < vectors.length; row++) {
+        scanClipNeighbourRow(vectors, row, topByIndex, topK, collectMax);
     }
-    return result;
+    return topByIndex;
 };
 
 /**
- * Fill one row of top-K neighbours (async Stage-1 progress loop).
+ * Score `vectors[row]` against every later vector and offer each pair within
+ * `collectMax` to both rows' top-K lists, so one pass over all rows compares
+ * each pair once. Row `row` is final once this returns.
+ *
+ * [Note: Symmetric top-K scan]
+ *
+ * {@link insertTopNeighbour} keeps each list sorted by (score, other) and
+ * bounded, so the result does not depend on the order pairs are offered in
+ * and matches a full per-row scan at half the dot products.
  */
-export const findClipTopNeighboursForIndex = (
+export const scanClipNeighbourRow = (
     vectors: readonly ArrayLike<number>[],
-    index: number,
+    row: number,
+    topByIndex: ClipNeighbour[][],
     topK: number = CLIP_CONFIRM_TOP_K,
     collectMax: number = CLIP_SCORE_COLLECT_MAX,
-): ClipNeighbour[] => {
-    const left = vectors[index]!;
-    const neighbours: ClipNeighbour[] = [];
-    for (let j = 0; j < vectors.length; j++) {
-        if (j === index) {
+): void => {
+    const left = vectors[row]!;
+    const dims = left.length;
+    if (dims === 0) {
+        return;
+    }
+    // Reject on the raw dot first; a point of slack leaves rounding at the
+    // band edge to the exact score check below.
+    const minDot = 1 - (collectMax + 1) / 100;
+    for (let other = row + 1; other < vectors.length; other++) {
+        const right = vectors[other]!;
+        if (right.length !== dims) {
             continue;
         }
-        const dist = embeddingCosineDistance(left, vectors[j]);
-        if (!Number.isFinite(dist)) {
+        let dot = 0;
+        for (let d = 0; d < dims; d++) {
+            dot += left[d]! * right[d]!;
+        }
+        if (dot < minDot) {
             continue;
         }
-        const score = clipDistanceToScore(dist);
+        const score = clipDistanceToScore(1 - dot);
         if (score > collectMax) {
             continue;
         }
-        insertTopNeighbour(neighbours, { other: j, score }, topK);
+        insertTopNeighbour(topByIndex[row]!, { other, score }, topK);
+        insertTopNeighbour(topByIndex[other]!, { other: row, score }, topK);
     }
-    return neighbours;
 };
 
 /**

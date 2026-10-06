@@ -27,7 +27,7 @@ type MarginsCache = {
 let cache: MarginsCache | undefined;
 
 /** FNV-1a over the view's bytes plus its length. */
-const hashOf = (view: Int32Array | Uint8Array): string => {
+const hashOf = (view: Float64Array | Uint8Array): string => {
     const bytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
     let hash = 0x811c9dc5;
     for (const byte of bytes) {

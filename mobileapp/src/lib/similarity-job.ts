@@ -2,10 +2,10 @@ import { FileType } from "ente-media/file-type";
 import type { EnteFile } from "ente-media/file";
 import type { PhashEntry } from "@/lib/crop-match";
 import {
-    loadEncryptedPhashIndex,
-    saveEncryptedPhashIndex,
-    type PersistedPhashEntry,
-    type PersistedPhashIndex,
+    appendPhashChunk,
+    clearPhashChunks,
+    loadAllPhashChunks,
+    loadPhashMeta,
 } from "@/db/kv";
 import { getSessionCacheKey } from "@/lib/cache-key";
 import {
@@ -31,29 +31,13 @@ import type {
 } from "@/workers/phash-worker-types";
 
 export interface PhashJobOptions {
+    /** Every file the index should cover; entries for other ids are dropped. */
     files: EnteFile[];
     entries: Map<number, PhashEntry>;
     onProgress?: (current: number, total: number) => void;
     shouldPause?: () => boolean;
     signal?: AbortSignal;
 }
-
-const emptyIndex = (): PersistedPhashIndex => ({
-    version: 3,
-    entries: {},
-});
-
-const indexFromMap = (entries: Map<number, PhashEntry>): PersistedPhashIndex => ({
-    version: 3,
-    entries: Object.fromEntries(entries.entries()),
-});
-
-const persistIndex = async (entries: Map<number, PhashEntry>): Promise<void> => {
-    await saveEncryptedPhashIndex(
-        indexFromMap(entries),
-        getSessionCacheKey(),
-    );
-};
 
 const phashWorkerCount = (): number => {
     if (typeof navigator === "undefined") {
@@ -63,15 +47,50 @@ const phashWorkerCount = (): number => {
 };
 
 let workers: Worker[] | undefined;
-let workerRoundRobin = 0;
+let nextWorkerIndex = 0;
 let requestCounter = 0;
+/**
+ * Reply handlers for requests posted to the shared pool, keyed by request id.
+ * Each worker has one `onmessage` that dispatches here; an `Error` means the
+ * pool was terminated before the worker replied.
+ */
+const pendingReplies = new Map<
+    number,
+    (reply: PhashWorkerOutbound | Error) => void
+>();
 
 const getPhashWorkers = (): Worker[] => {
     if (!workers) {
-        workers = Array.from({ length: phashWorkerCount() }, () =>
-            new Worker(new URL("../workers/phash.worker.ts", import.meta.url)));
+        workers = Array.from({ length: phashWorkerCount() }, () => {
+            const worker = new Worker(
+                new URL("../workers/phash.worker.ts", import.meta.url),
+            );
+            worker.onmessage = (
+                event: MessageEvent<PhashWorkerOutbound>,
+            ): void => {
+                const reply = pendingReplies.get(event.data.id);
+                if (reply) {
+                    pendingReplies.delete(event.data.id);
+                    reply(event.data);
+                }
+            };
+            // A worker that fails to load or crashes never replies; reject
+            // everything pending so the job's in-flight cap cannot stall.
+            worker.onerror = (): void => {
+                terminatePhashWorker();
+            };
+            return worker;
+        });
     }
     return workers;
+};
+
+/** Pick the next worker round-robin from the shared pool. */
+const nextWorker = (): Worker => {
+    const pool = getPhashWorkers();
+    const worker = pool[nextWorkerIndex % pool.length]!;
+    nextWorkerIndex += 1;
+    return worker;
 };
 
 const hashBytesInWorker = (
@@ -79,17 +98,20 @@ const hashBytesInWorker = (
     bytes: Uint8Array,
 ): Promise<PhashEntry> =>
     new Promise((resolve, reject) => {
-        const phashWorker = nextWorker();
+        const worker = nextWorker();
         const requestId = ++requestCounter;
-
-        const handleMessage = (event: MessageEvent<PhashWorkerOutbound>): void => {
-            const data = event.data;
-            if (!("fileId" in data) || data.id !== requestId) {
+        pendingReplies.set(requestId, (reply) => {
+            if (reply instanceof Error) {
+                reject(reply);
                 return;
             }
-            const response = data as PhashWorkerResponse;
-            phashWorker.removeEventListener("message", handleMessage);
-            if (response.error || !response.hashes || !response.color || !response.grid) {
+            const response = reply as PhashWorkerResponse;
+            if (
+                response.error ||
+                !response.hashes ||
+                !response.color ||
+                !response.grid
+            ) {
                 reject(new Error(response.error ?? "Hash failed"));
                 return;
             }
@@ -98,25 +120,16 @@ const hashBytesInWorker = (
                 color: response.color,
                 grid: response.grid,
             });
-        };
-
-        phashWorker.addEventListener("message", handleMessage);
+        });
         const request: PhashWorkerRequest = {
             kind: "hash",
             id: requestId,
             fileId,
-            bytes: bytes.slice(),
+            bytes,
         };
-        phashWorker.postMessage(request, [request.bytes.buffer]);
+        // Thumbnail bytes are a fresh decrypt per call, so hand the buffer over.
+        worker.postMessage(request, [bytes.buffer as ArrayBuffer]);
     });
-
-/** Pick the next worker round-robin from the shared pool. */
-const nextWorker = (): Worker => {
-    const pool = getPhashWorkers();
-    const worker = pool[workerRoundRobin % pool.length]!;
-    workerRoundRobin += 1;
-    return worker;
-};
 
 /**
  * Verify whether two images could be the same photo under a crop, entirely on
@@ -140,7 +153,8 @@ export type CropBatchEntry = { color: string; grid: string };
 
 /**
  * Batch crop checks across the worker pool. Unique grids are decoded once per
- * worker chunk; pairs are split round-robin so cores stay busy.
+ * worker chunk; pairs are split round-robin so cores stay busy. Rejects if the
+ * pool is terminated mid-batch.
  */
 export const checkCropMatchBatchInWorkers = (
     entries: Record<string, CropBatchEntry>,
@@ -159,7 +173,7 @@ export const checkCropMatchBatchInWorkers = (
         chunkPairs: Array<[string, string]>,
         absoluteIndexes: number[],
     ): Promise<void> =>
-        new Promise((resolve) => {
+        new Promise((resolve, reject) => {
             const usedKeys = new Set<string>();
             for (const [a, b] of chunkPairs) {
                 usedKeys.add(a);
@@ -174,27 +188,17 @@ export const checkCropMatchBatchInWorkers = (
             }
 
             const requestId = ++requestCounter;
-            const handleMessage = (
-                event: MessageEvent<PhashWorkerOutbound>,
-            ): void => {
-                const data = event.data;
-                if (
-                    !("kind" in data) ||
-                    data.kind !== "crop-check-batch" ||
-                    data.id !== requestId
-                ) {
+            pendingReplies.set(requestId, (reply) => {
+                if (reply instanceof Error) {
+                    reject(reply);
                     return;
                 }
-                const response = data as CropCheckBatchResult;
-                worker.removeEventListener("message", handleMessage);
-                const verdicts = response.matches;
+                const verdicts = (reply as CropCheckBatchResult).matches;
                 for (let i = 0; i < absoluteIndexes.length; i++) {
                     matches[absoluteIndexes[i]!] = verdicts[i] ?? false;
                 }
                 resolve();
-            };
-
-            worker.addEventListener("message", handleMessage);
+            });
             const message: CropCheckBatchMessage = {
                 kind: "crop-check-batch",
                 id: requestId,
@@ -247,57 +251,36 @@ export const imageFilesForPhash = (
             !isFileArchivedLocally(file),
     );
 
-/** Normalize a legacy (v1/v2) or current (v3) persisted value to a full {@link PhashEntry}. */
-const toPhashEntry = (
-    value: PersistedPhashEntry | string | string[],
-): PhashEntry => {
-    if (typeof value === "string") {
-        return { hashes: [value] };
-    }
-    if (Array.isArray(value)) {
-        return { hashes: value };
-    }
-    return {
-        hashes: Array.isArray(value.hashes) ? value.hashes : [value.hashes],
-        color: value.color,
-        grid: value.grid,
-    };
-};
+/** Serializes phash index writes so chunk ids are allocated one at a time. */
+let phashWriteChain: Promise<void> = Promise.resolve();
 
+/**
+ * Load the persisted phash index. A missing or outdated index is reset so its
+ * old blob stops being read on every launch; the next job rehashes.
+ */
 export const hydratePhashIndex = async (): Promise<Map<number, PhashEntry>> => {
-    const persisted = await loadEncryptedPhashIndex(getSessionCacheKey());
-    if (!persisted) {
+    const cacheKey = getSessionCacheKey();
+    await phashWriteChain;
+    if (!(await loadPhashMeta(cacheKey))) {
+        await queuePhashWrite(() => clearPhashChunks(cacheKey));
         return new Map();
     }
-    const entries = new Map<number, PhashEntry>();
-    for (const [fileId, value] of Object.entries(persisted.entries)) {
-        entries.set(Number(fileId), toPhashEntry(value));
-    }
-    return entries;
-};
-
-export const clearPersistedPhashIndex = async (): Promise<void> => {
-    await saveEncryptedPhashIndex(emptyIndex(), getSessionCacheKey());
+    return loadAllPhashChunks(cacheKey);
 };
 
 /**
  * Drop a single file from the persisted phash index (e.g. after thumbnail change).
  */
-export const removePhashEntry = async (fileId: number): Promise<void> => {
-    const persisted = await loadEncryptedPhashIndex(getSessionCacheKey());
-    if (!persisted || !(String(fileId) in persisted.entries)) {
-        return;
-    }
-    const nextEntries = { ...persisted.entries };
-    delete nextEntries[fileId];
-    await saveEncryptedPhashIndex(
-        { version: 3, entries: nextEntries },
-        getSessionCacheKey(),
-    );
-};
+export const removePhashEntry = (fileId: number): Promise<void> =>
+    queuePhashWrite(() =>
+        appendPhashChunk(new Map([[fileId, null]]), getSessionCacheKey()));
 
-/** Write the index every N hashes so progress survives interruption. */
-const persistEvery = 64;
+/** New hashes are persisted in chunks this size so progress survives interruption. */
+const flushEvery = 64;
+/** Entries per chunk when the index is rewritten whole. */
+const compactChunkSize = 1024;
+/** Chunks allowed beyond twice the compacted count before a rewrite. */
+const maxExtraChunks = 64;
 const cacheCheckConcurrency = 32;
 const cachedThumbnailConcurrency = 32;
 const networkThumbnailConcurrency = 8;
@@ -335,23 +318,47 @@ const waitIfPaused = async (
 };
 
 /**
- * Compute dHash + crop signals for image files missing from the index; persist
- * incrementally.
+ * Compute dHash + crop signals for image files missing from the index,
+ * persisting new entries in small encrypted chunks. Entries for files not in
+ * `files` (deleted, archived, or no longer owned) are dropped.
  */
 export const runPhashJob = async (
     options: PhashJobOptions,
 ): Promise<Map<number, PhashEntry>> => {
+    const cacheKey = getSessionCacheKey();
+    const liveIds = new Set(options.files.map((file) => file.id));
+    const entries = new Map<number, PhashEntry>();
+    const prunedIds: number[] = [];
+    for (const [fileId, entry] of options.entries) {
+        if (liveIds.has(fileId)) {
+            entries.set(fileId, entry);
+        } else {
+            prunedIds.push(fileId);
+        }
+    }
+
+    const meta = await loadPhashMeta(cacheKey);
+    const compactedChunkCount = Math.ceil(entries.size / compactChunkSize);
+    if (
+        !meta ||
+        meta.nextChunkId > 2 * compactedChunkCount + maxExtraChunks
+    ) {
+        const snapshot = new Map(entries);
+        void queuePhashWrite(() => rewritePhashChunks(snapshot, cacheKey));
+    } else if (prunedIds.length > 0) {
+        const removals = new Map(prunedIds.map((id) => [id, null] as const));
+        void queuePhashWrite(() => appendPhashChunk(removals, cacheKey));
+    }
+
     const candidates = options.files
-        .filter((file) => !options.entries.has(file.id))
+        .filter((file) => !entries.has(file.id))
         .sort((a, b) => a.id - b.id);
 
     const total = candidates.length;
     let completed = 0;
-    let hashesSincePersist = 0;
-    let persistChain = Promise.resolve();
-    const entries = new Map(options.entries);
 
     if (total === 0) {
+        await phashWriteChain;
         return entries;
     }
 
@@ -366,15 +373,19 @@ export const runPhashJob = async (
         }
     });
 
-    const noteHashed = async (): Promise<void> => {
-        hashesSincePersist += 1;
-        if (hashesSincePersist < persistEvery) {
-            return;
-        }
-        hashesSincePersist = 0;
-        persistChain = persistChain.then(() => persistIndex(entries));
-        await persistChain;
+    const pending = new Map<number, PhashEntry>();
+    const flushPending = (): void => {
+        const chunk = new Map(pending);
+        pending.clear();
+        void queuePhashWrite(() => appendPhashChunk(chunk, cacheKey));
     };
+
+    // Workers decode concurrently (their handler awaits `createImageBitmap`),
+    // so every posted hash holds a bitmap and canvas until it finishes. Cap
+    // the in-flight count; fetched thumbnails wait here as small byte buffers.
+    const maxInFlightHashes = 2 * phashWorkerCount();
+    let inFlightHashes = 0;
+    const hashSlotWaiters: Array<() => void> = [];
 
     const processOne = async (file: EnteFile): Promise<void> => {
         if (options.signal?.aborted) {
@@ -390,12 +401,27 @@ export const runPhashJob = async (
 
         const bytes = await getDecryptedThumbnailBytes(file);
         if (bytes) {
+            while (inFlightHashes >= maxInFlightHashes) {
+                await new Promise<void>((resolve) => {
+                    hashSlotWaiters.push(resolve);
+                });
+            }
+            if (options.signal?.aborted) {
+                return;
+            }
+            inFlightHashes += 1;
             try {
                 const entry = await hashBytesInWorker(file.id, bytes);
                 entries.set(file.id, entry);
-                await noteHashed();
+                pending.set(file.id, entry);
+                if (pending.size >= flushEvery) {
+                    flushPending();
+                }
             } catch {
                 // Skip files we cannot hash.
+            } finally {
+                inFlightHashes -= 1;
+                hashSlotWaiters.shift()?.();
             }
         }
 
@@ -408,16 +434,28 @@ export const runPhashJob = async (
         runWithConcurrency(networkFiles, networkThumbnailConcurrency, processOne),
     ]);
 
-    await persistIndex(entries);
+    if (pending.size > 0) {
+        flushPending();
+    }
+    await phashWriteChain;
     return entries;
 };
 
+/**
+ * Terminate the shared hash / crop-check pool. Requests still in flight
+ * reject so their callers (and the job's in-flight cap) settle.
+ */
 export const terminatePhashWorker = (): void => {
     workers?.forEach((worker) => {
         worker.terminate();
     });
     workers = undefined;
-    workerRoundRobin = 0;
+    nextWorkerIndex = 0;
+    const replies = [...pendingReplies.values()];
+    pendingReplies.clear();
+    for (const reply of replies) {
+        reply(new Error("Phash workers terminated"));
+    }
 };
 
 export interface Stage1WorkerOptions {
@@ -520,26 +558,83 @@ export const runStage1InWorker = (
             fail(new Error(event.message || "Stage-1 worker failed"));
         };
 
-        let embeddingsByFileId: Record<string, number[]> | undefined;
-        if (options.embeddings && options.embeddings.size > 0) {
-            embeddingsByFileId = {};
-            for (const item of items) {
-                const vector = options.embeddings.get(item.fileId);
-                if (vector) {
-                    embeddingsByFileId[String(item.fileId)] = [...vector];
-                }
-            }
-            if (Object.keys(embeddingsByFileId).length === 0) {
-                embeddingsByFileId = undefined;
-            }
-        }
-
+        const embeddings = options.embeddings ?
+            packStage1Embeddings(items, options.embeddings) :
+            undefined;
         const message: Stage1Message = {
             kind: "stage1",
             id: requestId,
             items,
             threshold,
-            embeddingsByFileId,
+            embeddings,
         };
-        worker.postMessage(message);
+        worker.postMessage(
+            message,
+            embeddings ?
+                [
+                    embeddings.vectors.buffer as ArrayBuffer,
+                    embeddings.fileIds.buffer as ArrayBuffer,
+                ] :
+                [],
+        );
     });
+
+/** Chain a phash index write after earlier ones; failures are logged, not thrown. */
+const queuePhashWrite = (task: () => Promise<void>): Promise<void> => {
+    phashWriteChain = phashWriteChain.then(task).catch((error: unknown) => {
+        console.warn("[phash] index write failed", error);
+    });
+    return phashWriteChain;
+};
+
+/** Replace the persisted index with `entries`, in large chunks. */
+const rewritePhashChunks = async (
+    entries: ReadonlyMap<number, PhashEntry>,
+    cacheKey: string,
+): Promise<void> => {
+    await clearPhashChunks(cacheKey);
+    let chunk = new Map<number, PhashEntry>();
+    for (const [fileId, entry] of entries) {
+        chunk.set(fileId, entry);
+        if (chunk.size >= compactChunkSize) {
+            await appendPhashChunk(chunk, cacheKey);
+            chunk = new Map();
+        }
+    }
+    if (chunk.size > 0) {
+        await appendPhashChunk(chunk, cacheKey);
+    }
+};
+
+/**
+ * Pack the items' CLIP vectors into one transferable buffer (row i belongs to
+ * `fileIds[i]`) instead of structured-cloning thousands of arrays. Files
+ * without a vector of the common length are left out.
+ */
+const packStage1Embeddings = (
+    items: Stage1Item[],
+    embeddings: ReadonlyEmbeddingMap,
+): Stage1Message["embeddings"] => {
+    let dims = 0;
+    const rows: Array<[number, ArrayLike<number>]> = [];
+    for (const item of items) {
+        const vector = embeddings.get(item.fileId);
+        if (!vector?.length) {
+            continue;
+        }
+        dims ||= vector.length;
+        if (vector.length === dims) {
+            rows.push([item.fileId, vector]);
+        }
+    }
+    if (rows.length === 0) {
+        return undefined;
+    }
+    const vectors = new Float32Array(rows.length * dims);
+    const fileIds = new Float64Array(rows.length);
+    rows.forEach(([fileId, vector], row) => {
+        vectors.set(vector, row * dims);
+        fileIds[row] = fileId;
+    });
+    return { vectors, fileIds, dims };
+};

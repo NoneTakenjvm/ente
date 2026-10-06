@@ -15,6 +15,13 @@ export interface ServerCiphertext {
 /** Soft cap on total encrypted thumbnail bytes kept in IndexedDB. */
 const DISK_BUDGET_BYTES = 400 * 1024 * 1024;
 
+/**
+ * Eviction frees space down to this level, not just enough for one row, so
+ * bulk fetches (hash / CLIP jobs) scan the store once per ~80 MB of new
+ * thumbnails instead of on every put.
+ */
+const EVICTION_TARGET_BYTES = 320 * 1024 * 1024;
+
 /** Skip scheduling a touch when the row was touched this recently. */
 const TOUCH_MIN_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -124,20 +131,26 @@ const adjustDiskBytes = (delta: number): void => {
 };
 
 /**
- * Delete oldest entries until {@link usedBytes} + {@link incomingBytes} fits
- * the disk budget. Only metadata is ranked in memory.
+ * Make room for {@link incomingBytes}: when the store would exceed the disk
+ * budget, delete oldest entries until it fits {@link EVICTION_TARGET_BYTES}.
+ * Only metadata is ranked in memory. Returns the bytes used excluding
+ * {@link excludeFileId}, whose current row is {@link excludedBytes} long.
  */
 const evictUntilFit = async (
     db: Awaited<ReturnType<typeof getOrganizerDB>>,
-    usedBytes: number,
+    excludedBytes: number,
     incomingBytes: number,
     excludeFileId?: number,
 ): Promise<number> => {
-    if (usedBytes + incomingBytes <= DISK_BUDGET_BYTES) {
-        return usedBytes;
-    }
-
     const run = async (): Promise<number> => {
+        // Concurrent puts queue here together; the first eviction usually
+        // makes room for the rest without another scan.
+        if (cachedDiskBytes !== undefined) {
+            const usedBytes = cachedDiskBytes - excludedBytes;
+            if (usedBytes + incomingBytes <= DISK_BUDGET_BYTES) {
+                return usedBytes;
+            }
+        }
         const { metas, usedBytes: scanned } = await collectThumbnailLruMeta(
             db,
             excludeFileId,
@@ -147,7 +160,7 @@ const evictUntilFit = async (
             metas.sort((a, b) => a.lastAccess - b.lastAccess);
             const tx = db.transaction("thumbnails", "readwrite");
             for (const entry of metas) {
-                if (remaining + incomingBytes <= DISK_BUDGET_BYTES) {
+                if (remaining + incomingBytes <= EVICTION_TARGET_BYTES) {
                     break;
                 }
                 await tx.store.delete(entry.fileId);
@@ -233,7 +246,7 @@ export const putThumbnailCiphertext = async (
         let usedBytes = (await ensureDiskBytes(db)) - previousSize;
 
         if (usedBytes + byteSize > DISK_BUDGET_BYTES) {
-            usedBytes = await evictUntilFit(db, usedBytes, byteSize, fileId);
+            usedBytes = await evictUntilFit(db, previousSize, byteSize, fileId);
         }
 
         if (usedBytes + byteSize > DISK_BUDGET_BYTES) {

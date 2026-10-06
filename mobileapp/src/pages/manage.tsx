@@ -46,7 +46,9 @@ import {
     sumPrunableStats,
 } from "@/lib/exact-duplicates";
 import {
+    dedupGroupMembersKey,
     planDuplicateGroupPrune,
+    type DedupGroupChoice,
     type DedupGroupSelection,
 } from "@/lib/dedup-prune";
 import {
@@ -86,6 +88,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { usePhashIndexStore } from "@/stores/phash-index-store";
 import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
+import { useFavoritesStore } from "@/stores/favorites-store";
 import { useQualityIndexStore } from "@/stores/quality-index-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { usePhashJobStore, useUIStore } from "@/stores/ui-store";
@@ -138,6 +141,8 @@ export default function ManagePage(): JSX.Element {
     const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.hydrate);
 
     const hydrateQuality = useQualityIndexStore((s) => s.hydrate);
+    const qualityById = useQualityIndexStore((s) => s.entries);
+    const favoriteFileIds = useFavoritesStore((s) => s.favoriteFileIds);
 
     const phashJobStatus = usePhashJobStore((s) => s.status);
     const phashProgress = usePhashJobStore((s) => s.progress);
@@ -153,6 +158,11 @@ export default function ManagePage(): JSX.Element {
 
     const [section, setSection] = useState<ManageSection>("hub");
     const [selections, setSelections] = useState<DedupGroupSelection[]>([]);
+    /**
+     * Keeper and checkbox edits by {@link dedupGroupMembersKey}, so a regroup
+     * (threshold, max size, progress emits) keeps them for unchanged groups.
+     */
+    const groupChoices = useRef(new Map<string, DedupGroupChoice>());
     const [threshold, setThreshold] = useState(
         () => clampClipScoreThreshold(defaultSimilarityThreshold),
     );
@@ -262,15 +272,24 @@ export default function ManagePage(): JSX.Element {
         );
         const stage1Items = toStage1Items(indexed);
         let clipOverlap = 0;
+        // Cheap per-vector sample so a re-embedded file (same count) misses the cache.
+        let clipFingerprint = 0;
         for (const item of stage1Items) {
-            if (embeddingEntries.get(item.fileId)?.length) {
+            const vector = embeddingEntries.get(item.fileId);
+            if (vector?.length) {
                 clipOverlap += 1;
+                clipFingerprint =
+                    (Math.imul(clipFingerprint, 31) +
+                        item.fileId +
+                        Math.round(vector[0]! * 1e6) +
+                        Math.round(vector[vector.length - 1]! * 1e3)) |
+                    0;
             }
         }
         const useClip = clipOverlap >= 2;
         const indexKey =
             similarityIndexKey(stage1Items) +
-            (useClip ? `|clip:${clipOverlap}` : "|hash");
+            (useClip ? `|clip:${clipOverlap}:${clipFingerprint}` : "|hash");
         const collectThreshold = useClip ?
             CLIP_SCORE_COLLECT_MAX :
             EDGE_COLLECT_THRESHOLD;
@@ -453,16 +472,26 @@ export default function ManagePage(): JSX.Element {
     }, [dedupMode, similarFindGeneration, similarMaxGroupSize]);
 
     useEffect(() => {
-        if (dedupMode === "exact") {
-            setSelections(exactGroups.map((group) => exactGroupToSelection(group)));
-        } else if (dedupMode === "similar") {
-            setSelections(
-                similarGroups.map((group) => similarityGroupToSelection(group)),
-            );
-        } else {
-            setSelections([]);
-        }
-    }, [dedupMode, exactGroups, similarGroups]);
+        groupChoices.current.clear();
+    }, [dedupMode]);
+
+    useEffect(() => {
+        const keeperContext = { favoriteFileIds, qualityById };
+        const groups =
+            dedupMode === "exact" ?
+                exactGroups.map((group) =>
+                    exactGroupToSelection(group, true, keeperContext)) :
+                dedupMode === "similar" ?
+                    similarGroups.map((group) =>
+                        similarityGroupToSelection(group, false, keeperContext)) :
+                    [];
+        setSelections(
+            groups.map((group) => ({
+                ...group,
+                ...groupChoices.current.get(dedupGroupMembersKey(group.items)),
+            })),
+        );
+    }, [dedupMode, exactGroups, similarGroups, favoriteFileIds, qualityById]);
 
     const selectedGroups = useMemo(
         () => selections.filter((group) => group.isSelected),
@@ -497,11 +526,16 @@ export default function ManagePage(): JSX.Element {
         return n;
     }, [phashEntries, embeddingEntries]);
 
-    const updateSelection = useCallback(
-        (groupId: string, updater: (group: DedupGroupSelection) => DedupGroupSelection): void => {
+    const updateGroupChoice = useCallback(
+        (target: DedupGroupSelection, choice: DedupGroupChoice): void => {
+            const key = dedupGroupMembersKey(target.items);
+            groupChoices.current.set(key, {
+                ...groupChoices.current.get(key),
+                ...choice,
+            });
             setSelections((current) =>
                 current.map((group) =>
-                    group.id === groupId ? updater(group) : group));
+                    group.id === target.id ? { ...group, ...choice } : group));
         },
         [],
     );
@@ -901,16 +935,14 @@ export default function ManagePage(): JSX.Element {
                                             )}`
                                     }
                                     onToggleSelected={() =>
-                                        updateSelection(group.id, (current) => ({
-                                            ...current,
-                                            isSelected: !current.isSelected,
-                                        }))
+                                        updateGroupChoice(group, {
+                                            isSelected: !group.isSelected,
+                                        })
                                     }
                                     onSelectKeeper={(fileId) =>
-                                        updateSelection(group.id, (current) => ({
-                                            ...current,
+                                        updateGroupChoice(group, {
                                             keeperFileId: fileId,
-                                        }))
+                                        })
                                     }
                                 />
                             ))}

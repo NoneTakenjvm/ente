@@ -1,6 +1,6 @@
 import { deleteDB, openDB, type IDBPDatabase } from "idb";
 
-const dbVersion = 7;
+const dbVersion = 8;
 
 export type KvKey =
     | "collections" |
@@ -98,6 +98,13 @@ export interface FileShardRecord {
     decryptionHeader: string;
 }
 
+/** One encrypted chunk of phash entries (append-only; later chunks win). */
+export interface PhashChunkRecord {
+    chunkId: number;
+    encryptedData: string;
+    decryptionHeader: string;
+}
+
 export interface OrganizerDB {
     kv: {
         key: KvKey;
@@ -130,6 +137,10 @@ export interface OrganizerDB {
     fileShards: {
         key: number;
         value: FileShardRecord;
+    };
+    phashChunks: {
+        key: number;
+        value: PhashChunkRecord;
     };
     meta: {
         key: string;
@@ -172,6 +183,9 @@ const openOrganizerDB = (userId: number): Promise<IDBPDatabase<OrganizerDB>> =>
             }
             if (!db.objectStoreNames.contains("fileShards")) {
                 db.createObjectStore("fileShards", { keyPath: "shardId" });
+            }
+            if (!db.objectStoreNames.contains("phashChunks")) {
+                db.createObjectStore("phashChunks", { keyPath: "chunkId" });
             }
             if (!db.objectStoreNames.contains("meta")) {
                 db.createObjectStore("meta");

@@ -138,6 +138,22 @@ describe("runStage1ClusteringSync CLIP-first", () => {
         });
         expect(clusters).toEqual([]);
     });
+
+    it("groups near-identical hashes even when CLIP disagrees", () => {
+        const twins: Stage1Item[] = [
+            { fileId: 1, hashes: ["aaaaaaaaaaaaaaaa"] },
+            { fileId: 2, hashes: ["aaaaaaaaaaaaaaab"] },
+        ];
+        const embeddings = embMap([
+            [1, [1, 0, 0, 0]],
+            [2, [0, 1, 0, 0]],
+        ]);
+        const clusters = runStage1ClusteringSync(twins, CLIP_SCORE_SLIDER_MIN, {
+            embeddings,
+        });
+        expect(clusters).toHaveLength(1);
+        expect(clusters[0]!.fileIds.sort()).toEqual([1, 2]);
+    });
 });
 
 describe("clusterFromFileEdges CLIP scores", () => {

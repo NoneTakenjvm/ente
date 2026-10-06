@@ -15,7 +15,7 @@ export type PackedDHash = {
  * Compute dHash hex string from greyscale luminance samples (9×8 grid).
  */
 export const computeDHashFromLuminance = (
-    samples: Uint8Array,
+    samples: ArrayLike<number>,
     width: number,
     height: number,
 ): string => {
@@ -143,45 +143,82 @@ export const variantHammingDistanceHex = (
     );
 
 /**
- * Average-channel luminance grid for dHash (9×8) from RGBA ImageData pixels.
+ * dHash hex for all 8 rotations / mirrors of an RGBA image. Index 0 is the
+ * upright hash.
+ *
+ * [Note: dHash variants by grid permutation]
+ *
+ * Each pixel's luminance is box-averaged into two grids in one pass: 9 cols ×
+ * 8 rows (the upright dHash layout) and 8 cols × 9 rows (the layout a 90°
+ * turn needs). A rotated or mirrored image's 9×8 grid is then an index
+ * permutation of one of them, so no canvas redraw happens and turned frames
+ * are never clipped to the original aspect ratio. Box averaging (instead of
+ * one sample per cell) keeps the hash stable across re-encodes and resizes.
+ *
+ * @param data RGBA pixels from `getImageData`
  */
-export const luminanceGridFromImageData = (
-    data: Uint8ClampedArray,
-    sourceWidth: number,
-    sourceHeight: number,
-): Uint8Array => {
-    const targetWidth = 9;
-    const targetHeight = 8;
-    const samples = new Uint8Array(targetWidth * targetHeight);
-
-    for (let row = 0; row < targetHeight; row++) {
-        for (let col = 0; col < targetWidth; col++) {
-            const sourceX = Math.min(
-                sourceWidth - 1,
-                Math.floor((col * sourceWidth) / targetWidth),
-            );
-            const sourceY = Math.min(
-                sourceHeight - 1,
-                Math.floor((row * sourceHeight) / targetHeight),
-            );
-            const index = (sourceY * sourceWidth + sourceX) * 4;
-            const r = data[index]!;
-            const g = data[index + 1]!;
-            const b = data[index + 2]!;
-            samples[row * targetWidth + col] = Math.round(
-                0.299 * r + 0.587 * g + 0.114 * b,
-            );
-        }
-    }
-
-    return samples;
-};
-
-export const computeDHashFromImageData = (
+export const dHashVariantsFromImageData = (
     data: Uint8ClampedArray,
     width: number,
     height: number,
-): string => {
-    const samples = luminanceGridFromImageData(data, width, height);
-    return computeDHashFromLuminance(samples, 9, 8);
+): string[] => {
+    const wideGrid = boxLuminanceGrid(data, width, height, 9, 8);
+    const tallGrid = boxLuminanceGrid(data, width, height, 8, 9);
+    const hashes: string[] = [];
+    const samples = new Float64Array(72);
+    for (const swap of [false, true]) {
+        for (const flipY of [false, true]) {
+            for (const flipX of [false, true]) {
+                for (let row = 0; row < 8; row++) {
+                    for (let col = 0; col < 9; col++) {
+                        const sourceRow = flipY ? 7 - row : row;
+                        const sourceCol = flipX ? 8 - col : col;
+                        // Swapped axes read the 8×9 grid transposed.
+                        samples[row * 9 + col] = swap ?
+                            tallGrid[sourceCol * 8 + sourceRow]! :
+                            wideGrid[sourceRow * 9 + sourceCol]!;
+                    }
+                }
+                hashes.push(computeDHashFromLuminance(samples, 9, 8));
+            }
+        }
+    }
+    return hashes;
+};
+
+/**
+ * Mean luminance per cell of a `cols` × `rows` grid laid over the image
+ * (row-major), averaging every pixel in each cell.
+ */
+const boxLuminanceGrid = (
+    data: Uint8ClampedArray,
+    width: number,
+    height: number,
+    cols: number,
+    rows: number,
+): Float64Array => {
+    const sums = new Float64Array(cols * rows);
+    const counts = new Uint32Array(cols * rows);
+    const colByX = new Uint8Array(width);
+    for (let x = 0; x < width; x++) {
+        colByX[x] = Math.floor((x * cols) / width);
+    }
+    for (let y = 0; y < height; y++) {
+        const rowOffset = Math.floor((y * rows) / height) * cols;
+        let index = y * width * 4;
+        for (let x = 0; x < width; x++, index += 4) {
+            const cell = rowOffset + colByX[x]!;
+            // Integer BT.601 weights (×1000); scale cancels in comparisons.
+            sums[cell] =
+                sums[cell]! +
+                299 * data[index]! +
+                587 * data[index + 1]! +
+                114 * data[index + 2]!;
+            counts[cell] = counts[cell]! + 1;
+        }
+    }
+    for (let cell = 0; cell < sums.length; cell++) {
+        sums[cell] = sums[cell]! / Math.max(1, counts[cell]!);
+    }
+    return sums;
 };

@@ -19,7 +19,6 @@ import {
 } from "@/lib/kit-nearness-margins";
 import { isEnteVideoFile } from "@/lib/media-kind";
 import { packRelativeEmbeddings } from "@/lib/relative-sort";
-import { shuffleIds } from "@/lib/shuffle-files";
 import { isTagIncludedInKitNearness } from "@/lib/tag-types";
 import type { EnteFile } from "ente-media/file";
 
@@ -67,6 +66,10 @@ const TRAINING_SAMPLE_SEED = 0x5a2f;
 
 let worker: Worker | undefined;
 let requestCounter = 0;
+
+/** Presence pass currently in the worker, and the newest caller's ticket. */
+let presenceInFlight: Promise<unknown> | undefined;
+let latestPresenceTicket = 0;
 
 /**
  * Build the worker payload, or `undefined` when the learned margins do not
@@ -116,11 +119,11 @@ export const buildKitMarginsRanking = (
         request: {
             kind: "rank",
             dim: KIT_EMBEDDING_DIMS,
-            trainingIds: Int32Array.from(training.ids),
+            trainingIds: Float64Array.from(training.ids),
             trainingVectors: packRelativeEmbeddings(training.ids, embeddings),
             trainingProductionScores: training.scores,
             tags,
-            candidateIds: Int32Array.from(candidates.ids),
+            candidateIds: Float64Array.from(candidates.ids),
             candidateVectors: packRelativeEmbeddings(
                 candidates.ids,
                 embeddings,
@@ -161,14 +164,29 @@ export const rankByKitMarginsInWorker = async (
 /**
  * Per-tag estimates for the shown embedded files. Missing tags use the
  * worker's models; kits with a tag that has too few training examples are
- * absent from {@link KitPresenceEstimate.tagNames}.
+ * absent from {@link KitPresenceEstimate.tagNames}. Resolves `undefined`
+ * when a newer call superseded this one.
+ *
+ * [Note: Latest-wins kit presence]
+ *
+ * The worker answers in order, so a burst of filter edits would queue one
+ * full presence pass each. Callers wait out the pass already in flight and
+ * only the newest waiter builds and posts its request.
  */
 export const estimateKitPresenceInWorker = async (
     input: TrainingPopulationInput & {
         kits: readonly { id: string; tags: readonly string[] }[];
         viewFiles: readonly EnteFile[];
     },
-): Promise<KitPresenceEstimate> => {
+): Promise<KitPresenceEstimate | undefined> => {
+    const ticket = ++latestPresenceTicket;
+    while (presenceInFlight) {
+        await presenceInFlight.catch(() => undefined);
+    }
+    if (ticket !== latestPresenceTicket) {
+        return undefined;
+    }
+
     const trainingIds = sampleTrainingIds(input);
     const tags = [...new Set(input.kits.flatMap((kit) => kit.tags))]
         .sort()
@@ -197,19 +215,26 @@ export const estimateKitPresenceInWorker = async (
         kind: "presence",
         requestId: ++requestCounter,
         dim: KIT_EMBEDDING_DIMS,
-        trainingIds: Int32Array.from(trainingIds),
+        trainingIds: Float64Array.from(trainingIds),
         trainingVectors: packRelativeEmbeddings(trainingIds, input.embeddings),
         tags,
-        candidateIds: Int32Array.from(candidateIds),
+        candidateIds: Float64Array.from(candidateIds),
         candidateVectors: packRelativeEmbeddings(candidateIds, input.embeddings),
     };
-    const response = await postToWorker<KitPresenceWorkerResponse>(request, [
+    const pending = postToWorker<KitPresenceWorkerResponse>(request, [
         request.trainingIds.buffer,
         request.trainingVectors.buffer,
         request.candidateIds.buffer,
         request.candidateVectors.buffer,
         ...request.tags.map((tag) => tag.labels.buffer),
     ]);
+    presenceInFlight = pending;
+    let response: KitPresenceWorkerResponse;
+    try {
+        response = await pending;
+    } finally {
+        presenceInFlight = undefined;
+    }
     if (response.error || !response.tagProbabilities) {
         throw new Error(response.error ?? "Kit presence failed");
     }
@@ -223,11 +248,15 @@ export const estimateKitPresenceInWorker = async (
 /**
  * Count, per kit, the shown files assigned as best fit (see
  * {@link countKitPresence}), estimating missing tags with the worker.
+ * `undefined` when a newer presence call superseded this one.
  */
 export const countKitPresenceInWorker = async (
     input: KitPresenceInput,
-): Promise<Map<string, number>> => {
+): Promise<Map<string, number> | undefined> => {
     const estimate = await estimateKitPresenceInWorker(input);
+    if (!estimate) {
+        return undefined;
+    }
     return countKitPresence(
         input.kits,
         input.viewFiles.map((file) => file.id),
@@ -285,6 +314,10 @@ export const terminateKitMarginsWorker = (): void => {
  * Embedded stills carrying at least one kit-nearness tag — the same population
  * as the research corpus — capped by a fixed-seed sample so the worker can
  * reuse its whitening across kits.
+ *
+ * The cap keeps the ids with the lowest {@link sampleRank} (bottom-k), so
+ * adding or removing one file swaps at most one sampled row and the worker's
+ * cached whitening survives most library edits.
  */
 const sampleTrainingIds = (input: TrainingPopulationInput): number[] => {
     const taggedIds = new Set<number>();
@@ -306,13 +339,22 @@ const sampleTrainingIds = (input: TrainingPopulationInput): number[] => {
             population.push(file.id);
         }
     }
-    population.sort((a, b) => a - b);
-    if (population.length <= KIT_MARGIN_TRAINING_ROW_CAP) {
-        return population;
+    if (population.length > KIT_MARGIN_TRAINING_ROW_CAP) {
+        const rankById = new Map(population.map((id) => [id, sampleRank(id)]));
+        population.sort((a, b) => rankById.get(a)! - rankById.get(b)! || a - b);
+        population.length = KIT_MARGIN_TRAINING_ROW_CAP;
     }
-    return shuffleIds(population, TRAINING_SAMPLE_SEED)
-        .slice(0, KIT_MARGIN_TRAINING_ROW_CAP)
-        .sort((a, b) => a - b);
+    return population.sort((a, b) => a - b);
+};
+
+/** Seeded 32-bit mix of both halves of a file id (Ente ids exceed 2^32). */
+const sampleRank = (id: number): number => {
+    let hash = Math.imul((id >>> 0) ^ TRAINING_SAMPLE_SEED, 0x85ebca6b);
+    hash = Math.imul(
+        hash ^ (hash >>> 13) ^ Math.floor(id / 0x1_0000_0000),
+        0xc2b2ae35,
+    );
+    return (hash ^ (hash >>> 16)) >>> 0;
 };
 
 const hasEmbedding = (

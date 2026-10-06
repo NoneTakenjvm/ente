@@ -8,7 +8,7 @@ import {
     encodeLuminanceGrid,
     luminanceGridFromImageData,
 } from "@/lib/crop-match";
-import { computeDHashFromImageData } from "@/lib/phash";
+import { dHashVariantsFromImageData } from "@/lib/phash";
 import { runStage1Clustering } from "@/lib/similarity-stage1-core";
 import type { Stage1ClipOptions } from "@/lib/similarity-stage1-core";
 import type {
@@ -27,42 +27,18 @@ import type {
 
 const abortedStage1Ids = new Set<number>();
 
-/**
- * Draw the decoded image into an OffscreenCanvas at the given rotation and
- * mirror, then hash the rendered pixels.
- */
-const hashVariant = (
-    bitmap: ImageBitmap,
-    canvasWidth: number,
-    canvasHeight: number,
-    rotationDegrees: number,
-    mirror: boolean,
-): string | undefined => {
-    const canvas = new OffscreenCanvas(canvasWidth, canvasHeight);
-    const context = canvas.getContext("2d");
-    if (!context) {
-        return undefined;
-    }
-    context.translate(canvasWidth / 2, canvasHeight / 2);
-    context.rotate((rotationDegrees * Math.PI) / 180);
-    if (mirror) {
-        context.scale(-1, 1);
-    }
-    context.drawImage(bitmap, -canvasWidth / 2, -canvasHeight / 2);
-    const imageData = context.getImageData(0, 0, canvasWidth, canvasHeight);
-    return computeDHashFromImageData(imageData.data, canvasWidth, canvasHeight);
-};
-
 const handleStage1 = async (message: Stage1Message): Promise<void> => {
     abortedStage1Ids.delete(message.id);
     try {
         let clip: Stage1ClipOptions | undefined;
-        if (message.embeddingsByFileId) {
-            const embeddings = new Map();
-            for (const [id, vector] of Object.entries(
-                message.embeddingsByFileId,
-            )) {
-                embeddings.set(Number(id), vector);
+        if (message.embeddings) {
+            const { vectors, fileIds, dims } = message.embeddings;
+            const embeddings = new Map<number, Float32Array>();
+            for (let row = 0; row < fileIds.length; row++) {
+                embeddings.set(
+                    fileIds[row]!,
+                    vectors.subarray(row * dims, (row + 1) * dims),
+                );
             }
             if (embeddings.size > 0) {
                 clip = { embeddings };
@@ -193,7 +169,7 @@ self.onmessage = async (
 
     const { id, fileId, bytes }: PhashWorkerRequest = message;
     try {
-        const blob: Blob = new Blob([Uint8Array.from(bytes)], {
+        const blob: Blob = new Blob([bytes as BlobPart], {
             type: "image/jpeg",
         });
         const bitmap: ImageBitmap = await createImageBitmap(blob);
@@ -210,36 +186,25 @@ self.onmessage = async (
             bitmap.width,
             bitmap.height,
         );
+        bitmap.close();
         const color = colorHashFromImageData(
             uprightData.data,
-            bitmap.width,
-            bitmap.height,
+            uprightData.width,
+            uprightData.height,
         );
         const grid = encodeLuminanceGrid(
             luminanceGridFromImageData(
                 uprightData.data,
-                bitmap.width,
-                bitmap.height,
+                uprightData.width,
+                uprightData.height,
             ),
         );
 
-        const hashes: string[] = [];
-        for (const rotation of [0, 90, 180, 270]) {
-            for (const mirror of [false, true]) {
-                const hash = hashVariant(
-                    bitmap,
-                    bitmap.width,
-                    bitmap.height,
-                    rotation,
-                    mirror,
-                );
-                if (!hash) {
-                    throw new Error("Canvas 2D unavailable in phash worker");
-                }
-                hashes.push(hash);
-            }
-        }
-        bitmap.close();
+        const hashes = dHashVariantsFromImageData(
+            uprightData.data,
+            uprightData.width,
+            uprightData.height,
+        );
 
         const response: PhashWorkerResponse = { id, fileId, hashes, color, grid };
         self.postMessage(response);

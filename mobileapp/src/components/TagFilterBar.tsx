@@ -186,14 +186,19 @@ export function TagFilterBar({
 
     /**
      * Shown files that fit each kit. Tag probabilities come from the worker;
-     * counts are derived here so toggling a kit recounts immediately.
+     * counts are derived here so toggling a kit recounts immediately. Only
+     * computed while the filter menu (where counts show) is open.
      */
     const [presenceEstimate, setPresenceEstimate] =
         useState<KitPresenceEstimate | null>(null);
+    const [filterMenuOpen, setFilterMenuOpen] = useState<boolean>(false);
 
     useEffect(() => {
         if (!presets.length || !embeddingHydrated) {
             setPresenceEstimate(null);
+            return;
+        }
+        if (!filterMenuOpen) {
             return;
         }
         let cancelled = false;
@@ -207,7 +212,7 @@ export function TagFilterBar({
                 includeInKitNearnessByName,
             })
                 .then((estimate) => {
-                    if (!cancelled) {
+                    if (!cancelled && estimate) {
                         setPresenceEstimate(estimate);
                     }
                 })
@@ -223,6 +228,7 @@ export function TagFilterBar({
         allFiles,
         embeddingCount,
         embeddingHydrated,
+        filterMenuOpen,
         fileIdsByTag,
         includeInKitNearnessByName,
         matchingFiles,
@@ -230,7 +236,7 @@ export function TagFilterBar({
     ]);
 
     const kitPresenceCountById = useMemo((): ReadonlyMap<string, number> => {
-        if (!presets.length) {
+        if (!presets.length || !filterMenuOpen) {
             return new Map();
         }
         const estimate = presenceEstimate ?? {
@@ -248,6 +254,7 @@ export function TagFilterBar({
     }, [
         excludedKitLikenessIds,
         fileIdsByTag,
+        filterMenuOpen,
         matchingFiles,
         presenceEstimate,
         presets,
@@ -482,6 +489,7 @@ export function TagFilterBar({
                             handleKitLikenessPresetIdChange
                         }
                         kitPresenceCountById={kitPresenceCountById}
+                        onMenuOpenChange={setFilterMenuOpen}
                         excludedKitLikenessIds={excludedKitLikenessIds}
                         onToggleKitLikenessExcluded={toggleKitLikenessExcluded}
                         kitLikenessRivalPenalty={kitLikenessRivalPenalty}
