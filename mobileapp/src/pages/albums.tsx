@@ -15,6 +15,7 @@ import { PageLoader } from "@/components/PageLoader";
 import { GalleryToolsMenu } from "@/components/GalleryToolsMenu";
 import { SelectionActionFooter } from "@/components/SelectionActionFooter";
 import { StampToolFooter } from "@/components/StampToolFooter";
+import { CropToolFooter } from "@/components/CropToolFooter";
 import { RotateToolFooter } from "@/components/RotateToolFooter";
 import { SyncBanner } from "@/components/SyncBanner";
 import { TagFilterBar } from "@/components/TagFilterBar";
@@ -242,6 +243,9 @@ export default function AlbumsPage(): JSX.Element {
         }
         if (state.rotateActive) {
             state.setRotateActive(false);
+        }
+        if (state.cropActive) {
+            state.setCropActive(false);
         }
     }, [albumViewFilter, mode, setSelectionEnabled]);
 
@@ -545,6 +549,7 @@ export default function AlbumsPage(): JSX.Element {
             <SelectionActionFooter />
             <StampToolFooter />
             <RotateToolFooter />
+            <CropToolFooter />
         </AppShell>
     );
 }

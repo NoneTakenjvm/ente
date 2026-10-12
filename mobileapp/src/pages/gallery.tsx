@@ -12,6 +12,7 @@ import { AppShell } from "@/components/AppShell";
 import { PageLoader } from "@/components/PageLoader";
 import { SelectionActionFooter } from "@/components/SelectionActionFooter";
 import { StampToolFooter } from "@/components/StampToolFooter";
+import { CropToolFooter } from "@/components/CropToolFooter";
 import { RotateToolFooter } from "@/components/RotateToolFooter";
 import { SyncBanner } from "@/components/SyncBanner";
 import { TagFilterBar } from "@/components/TagFilterBar";
@@ -245,6 +246,8 @@ function GalleryMediaBody(): JSX.Element {
     const rotateActive = useSelectionStore((s) => s.rotateActive);
     const pendingRotations = useSelectionStore((s) => s.pendingRotations);
     const rotateBusy = useSelectionStore((s) => s.rotateBusy);
+    const cropActive = useSelectionStore((s) => s.cropActive);
+    const cropBusy = useSelectionStore((s) => s.cropBusy);
 
     useEffect(() => {
         if (selectionEnabled) {
@@ -266,6 +269,9 @@ function GalleryMediaBody(): JSX.Element {
         if (state.rotateActive) {
             state.setRotateActive(false);
         }
+        if (state.cropActive) {
+            state.setCropActive(false);
+        }
     }, [setSelectionEnabled, tagFilter]);
 
     useEffect(() => {
@@ -274,10 +280,12 @@ function GalleryMediaBody(): JSX.Element {
         };
     }, [resetSelection]);
 
-    const gridSelection = useMediaGridSelection({ disabled: rotateBusy });
+    const gridSelection = useMediaGridSelection({
+        disabled: rotateBusy || cropBusy,
+    });
 
     const footerInsetPx =
-        stampActive || rotateActive || selectionEnabled ?
+        stampActive || rotateActive || cropActive || selectionEnabled ?
             SELECTION_FOOTER_INSET_PX :
             0;
 
@@ -286,8 +294,9 @@ function GalleryMediaBody(): JSX.Element {
             enabled,
             stampActive: stamping,
             rotateActive: rotating,
+            cropActive: cropping,
         } = useSelectionStore.getState();
-        if (enabled || stamping || rotating) {
+        if (enabled || stamping || rotating || cropping) {
             return;
         }
         setViewerFileId(file.id);
@@ -320,7 +329,10 @@ function GalleryMediaBody(): JSX.Element {
                 <ThumbnailGrid
                     files={displayFiles}
                     onOpenFile={
-                        selectionEnabled || stampActive || rotateActive ?
+                        selectionEnabled ||
+                        stampActive ||
+                        rotateActive ||
+                        cropActive ?
                             undefined :
                             handleOpenFile
                     }
@@ -335,6 +347,7 @@ function GalleryMediaBody(): JSX.Element {
             <SelectionActionFooter />
             <StampToolFooter />
             <RotateToolFooter />
+            <CropToolFooter />
 
             {viewerFileId !== undefined ? (
                 <PhotoViewer

@@ -43,6 +43,8 @@ export interface UploadJpegOptions {
      * the edit time is bumped instead.
      */
     uploadedAt?: number;
+    /** User-edited capture date carried over from a derived reupload's source. */
+    editedTime?: number;
     /** Dedicated crypto worker for this upload slot (batch uploads). */
     crypto?: UploadCryptoWorker;
 }
@@ -72,6 +74,9 @@ const buildPublicMagicData = (
         uploadedAt: ensureInteger(options.uploadedAt ?? Date.now() * 1000),
         editedAt: ensureInteger(Date.now() * 1000),
     };
+    if (options.editedTime !== undefined) {
+        data.editedTime = ensureInteger(options.editedTime);
+    }
     if (options.organizerTags?.length) {
         data._organizer_v1 = {
             tags: options.organizerTags,
@@ -175,6 +180,7 @@ export const uploadDerivedImage = async (
         height: dimensions.height,
         organizerTags: options.organizerTags,
         uploadedAt,
+        editedTime: sourceFile.pubMagicMetadata?.data.editedTime,
     });
 };
 

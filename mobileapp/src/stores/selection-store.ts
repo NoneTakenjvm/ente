@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { NormalizedCropRect, PendingCrop } from "@/lib/crop-draft";
 import type { RotationDegrees } from "@/lib/rotate";
 import { nextPendingRotation } from "@/lib/rotate-draft";
 
@@ -10,7 +11,7 @@ interface SelectionState {
     selectedIds: number[];
     /**
      * Stamp tool: pick tags/kits, then tap photos to apply.
-     * Mutually exclusive with selection and rotate modes.
+     * Mutually exclusive with selection, rotate and crop modes.
      */
     stampActive: boolean;
     stampTags: string[];
@@ -20,13 +21,22 @@ interface SelectionState {
     stampSheetOpen: boolean;
     /**
      * Quick rotate: tap images to draft +90° CW; Apply uploads.
-     * Mutually exclusive with selection and stamp.
+     * Mutually exclusive with selection, stamp and crop.
      */
     rotateActive: boolean;
     /** Pending clockwise degrees per file id (omitted when 0°). */
     pendingRotations: Record<number, RotationDegrees>;
     /** True while Apply is uploading rotations (locks the grid). */
     rotateBusy: boolean;
+    /**
+     * Quick crop: tap images to draft a crop box; Apply uploads.
+     * Mutually exclusive with selection, stamp and rotate.
+     */
+    cropActive: boolean;
+    /** Draft crop box per file id. */
+    pendingCrops: Record<number, PendingCrop>;
+    /** True while Apply is uploading crops (locks the grid). */
+    cropBusy: boolean;
     setEnabled: (enabled: boolean) => void;
     toggle: (fileId: number) => void;
     selectMany: (fileIds: number[], mode: "add" | "toggle" | "set") => void;
@@ -44,10 +54,24 @@ interface SelectionState {
     clearPendingRotations: () => void;
     removePendingRotation: (fileId: number) => void;
     setRotateBusy: (busy: boolean) => void;
+    setCropActive: (active: boolean) => void;
+    /** Add a draft crop; does nothing when the file already has one. */
+    addPendingCrop: (fileId: number, crop: PendingCrop) => void;
+    setPendingCropRect: (fileId: number, rect: NormalizedCropRect) => void;
+    removePendingCrop: (fileId: number) => void;
+    clearPendingCrops: () => void;
+    setCropBusy: (busy: boolean) => void;
     reset: () => void;
 }
 
 const selectedIdSets = new WeakMap<number[], Set<number>>();
+
+/** Crop fields with the tool off; spread into any set() that leaves crop mode. */
+const cropOff = {
+    cropActive: false,
+    pendingCrops: {} as Record<number, PendingCrop>,
+    cropBusy: false,
+};
 
 const initialState = {
     enabled: false,
@@ -59,6 +83,7 @@ const initialState = {
     rotateActive: false,
     pendingRotations: {} as Record<number, RotationDegrees>,
     rotateBusy: false,
+    ...cropOff,
 };
 
 export const useSelectionStore = create<SelectionState>((set, get) => ({
@@ -74,6 +99,7 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
                 rotateActive: false,
                 pendingRotations: {},
                 rotateBusy: false,
+                ...cropOff,
             });
             return;
         }
@@ -84,6 +110,7 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
             rotateActive: false,
             pendingRotations: {},
             rotateBusy: false,
+            ...cropOff,
             selectedIds: get().selectedIds,
         });
     },
@@ -135,6 +162,7 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
             rotateActive: false,
             pendingRotations: {},
             rotateBusy: false,
+            ...cropOff,
             selectedIds: [...new Set(fileIds)],
         });
     },
@@ -163,6 +191,7 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
                 rotateActive: false,
                 pendingRotations: {},
                 rotateBusy: false,
+                ...cropOff,
                 stampSheetOpen:
                     stampTags.length === 0 && stampPickMode === "tag",
             });
@@ -227,6 +256,7 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
                 stampSheetOpen: false,
                 pendingRotations: {},
                 rotateBusy: false,
+                ...cropOff,
             });
             return;
         }
@@ -265,6 +295,67 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
             delete pendingRotations[fileId];
             return { pendingRotations };
         });
+    },
+
+    setCropActive: (active: boolean): void => {
+        if (active) {
+            set({
+                ...cropOff,
+                cropActive: true,
+                enabled: false,
+                selectedIds: [],
+                stampActive: false,
+                stampSheetOpen: false,
+                rotateActive: false,
+                pendingRotations: {},
+                rotateBusy: false,
+            });
+            return;
+        }
+        set(cropOff);
+    },
+
+    setCropBusy: (busy: boolean): void => {
+        set({ cropBusy: busy });
+    },
+
+    addPendingCrop: (fileId: number, crop: PendingCrop): void => {
+        set((state) => {
+            if (state.pendingCrops[fileId] !== undefined) {
+                return state;
+            }
+            return { pendingCrops: { ...state.pendingCrops, [fileId]: crop } };
+        });
+    },
+
+    setPendingCropRect: (fileId: number, rect: NormalizedCropRect): void => {
+        set((state) => {
+            const current = state.pendingCrops[fileId];
+            if (current === undefined) {
+                return state;
+            }
+            return {
+                pendingCrops: {
+                    ...state.pendingCrops,
+                    [fileId]: { ...current, rect },
+                },
+            };
+        });
+    },
+
+    removePendingCrop: (fileId: number): void => {
+        set((state) => {
+            if (state.pendingCrops[fileId] === undefined) {
+                return state;
+            }
+            const pendingCrops = { ...state.pendingCrops };
+            delete pendingCrops[fileId];
+            return { pendingCrops };
+        });
+    },
+
+    clearPendingCrops: (): void => {
+        set({ pendingCrops: {} });
     },
 
     reset: (): void => {

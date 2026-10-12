@@ -6,6 +6,7 @@ import {
     type JSX,
     type PointerEvent as ReactPointerEvent,
 } from "react";
+import { QuickCropOverlay } from "@/components/QuickCropOverlay";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
@@ -32,7 +33,7 @@ interface ThumbnailCellProps {
     objectFit?: "cover" | "contain";
     onOpen?: (file: EnteFile) => void;
     isSelected?: boolean;
-    onToggleSelect?: (file: EnteFile) => void;
+    onToggleSelect?: (file: EnteFile, imageAspect?: number) => void;
     isAlreadyCompressed?: boolean;
     disabled?: boolean;
     /** When true, tap toggles selection instead of opening. */
@@ -46,6 +47,8 @@ interface ThumbnailCellProps {
      * so virtualized grids do not rebuild every cell on each toggle.
      */
     observeStoreSelection?: boolean;
+    /** Quick-crop tool: draw this file's draft crop box over the tile. */
+    cropMode?: boolean;
 }
 
 /** Skip re-render when the same file is shown with the same chrome. */
@@ -69,6 +72,7 @@ const thumbnailCellPropsAreEqual = (
     prev.showFileSize === next.showFileSize &&
     prev.previewRotationDegrees === next.previewRotationDegrees &&
     prev.observeStoreSelection === next.observeStoreSelection &&
+    prev.cropMode === next.cropMode &&
     (Boolean(prev.observeStoreSelection) || prev.isSelected === next.isSelected);
 
 export const ThumbnailCell = memo(function ThumbnailCell({
@@ -86,6 +90,7 @@ export const ThumbnailCell = memo(function ThumbnailCell({
     showFileSize = false,
     previewRotationDegrees,
     observeStoreSelection = false,
+    cropMode = false,
 }: ThumbnailCellProps): JSX.Element {
     const cellWidth = width ?? size ?? 0;
     const cellHeight = height ?? size ?? 0;
@@ -96,6 +101,8 @@ export const ThumbnailCell = memo(function ThumbnailCell({
         observeStoreSelection && s.enabled ?
             selectedIdSet(s.selectedIds).has(file.id) :
             false);
+    const pendingCrop = useSelectionStore((s) =>
+        cropMode ? s.pendingCrops[file.id] : undefined);
     const showSelected = observeStoreSelection ? selectedFromStore : isSelected;
     const previewTransform =
         previewRotationDegrees !== undefined ?
@@ -112,6 +119,7 @@ export const ThumbnailCell = memo(function ThumbnailCell({
         () => getThumbnailEntry(file.id),
     );
 
+    const imageRef = useRef<HTMLImageElement>(null);
     const pressTimerRef = useRef<number | undefined>(undefined);
     const pressStartRef = useRef<{ x: number; y: number } | undefined>(undefined);
     const longPressTriggeredRef = useRef<boolean>(false);
@@ -177,7 +185,13 @@ export const ThumbnailCell = memo(function ThumbnailCell({
         }
         clearPress();
         if (tapSelects && onToggleSelect) {
-            onToggleSelect(file);
+            const image = imageRef.current;
+            onToggleSelect(
+                file,
+                image && image.naturalHeight > 0 ?
+                    image.naturalWidth / image.naturalHeight :
+                    undefined,
+            );
             return;
         }
         onOpen?.(file);
@@ -221,6 +235,7 @@ export const ThumbnailCell = memo(function ThumbnailCell({
                 ) : null}
                 {entry.status === "ready" && entry.url ? (
                     <img
+                        ref={imageRef}
                         className={cn(
                             "pointer-events-none size-full",
                             imageFitClass,
@@ -247,6 +262,15 @@ export const ThumbnailCell = memo(function ThumbnailCell({
                     <Skeleton className="size-full rounded-none" aria-hidden />
                 )}
             </button>
+            {pendingCrop ? (
+                <QuickCropOverlay
+                    fileId={file.id}
+                    crop={pendingCrop}
+                    cellWidth={cellWidth}
+                    cellHeight={cellHeight}
+                    disabled={disabled}
+                />
+            ) : null}
             {previewRotationDegrees !== undefined ? (
                 <span
                     className="pointer-events-none absolute top-1 right-1 z-10 rounded bg-black/70 px-1 py-0.5 text-[10px] leading-none text-white"

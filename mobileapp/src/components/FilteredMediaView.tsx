@@ -47,6 +47,8 @@ export function FilteredMediaView({
     const rotateActive = useSelectionStore((s) => s.rotateActive);
     const pendingRotations = useSelectionStore((s) => s.pendingRotations);
     const rotateBusy = useSelectionStore((s) => s.rotateBusy);
+    const cropActive = useSelectionStore((s) => s.cropActive);
+    const cropBusy = useSelectionStore((s) => s.cropBusy);
 
     const visibleFileIds = useMemo(
         () => new Set(files.map((file) => file.id)),
@@ -60,10 +62,12 @@ export function FilteredMediaView({
         pruneToVisible(visibleFileIds);
     }, [pruneToVisible, selectionEnabled, visibleFileIds]);
 
-    const gridSelection = useMediaGridSelection({ disabled: rotateBusy });
+    const gridSelection = useMediaGridSelection({
+        disabled: rotateBusy || cropBusy,
+    });
 
     const footerInsetPx =
-        stampActive || rotateActive || selectionEnabled ?
+        stampActive || rotateActive || cropActive || selectionEnabled ?
             SELECTION_FOOTER_INSET_PX :
             0;
 
@@ -72,8 +76,9 @@ export function FilteredMediaView({
             enabled,
             stampActive: stamping,
             rotateActive: rotating,
+            cropActive: cropping,
         } = useSelectionStore.getState();
-        if (enabled || stamping || rotating) {
+        if (enabled || stamping || rotating || cropping) {
             return;
         }
         setViewerFileId(file.id);
@@ -97,7 +102,7 @@ export function FilteredMediaView({
             <ThumbnailGrid
                 files={files}
                 onOpenFile={
-                    selectionEnabled || stampActive || rotateActive ?
+                    selectionEnabled || stampActive || rotateActive || cropActive ?
                         undefined :
                         handleOpenFile
                 }

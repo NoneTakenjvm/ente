@@ -18,12 +18,15 @@ export function useMediaGridSelection(options?: {
     const stampTags = useSelectionStore((s) => s.stampTags);
     const rotateActive = useSelectionStore((s) => s.rotateActive);
     const rotateBusy = useSelectionStore((s) => s.rotateBusy);
+    const cropActive = useSelectionStore((s) => s.cropActive);
+    const cropBusy = useSelectionStore((s) => s.cropBusy);
     const toggleSelection = useSelectionStore((s) => s.toggle);
     const selectMany = useSelectionStore((s) => s.selectMany);
     const bumpRotate = useSelectionStore((s) => s.bumpRotate);
+    const addPendingCrop = useSelectionStore((s) => s.addPendingCrop);
 
-    const disabled = options?.disabled ?? rotateBusy;
-    const modeKey = `${selectionEnabled}|${stampActive}|${rotateActive}|${disabled}|${stampTags.join("\0")}`;
+    const disabled = options?.disabled ?? (rotateBusy || cropBusy);
+    const modeKey = `${selectionEnabled}|${stampActive}|${rotateActive}|${cropActive}|${disabled}|${stampTags.join("\0")}`;
 
     const stableRef = useRef<{
         modeKey: string;
@@ -38,6 +41,8 @@ export function useMediaGridSelection(options?: {
         stampTags,
         rotateActive,
         bumpRotate,
+        cropActive,
+        addPendingCrop,
         toggleSelection,
         selectMany,
         disabled,

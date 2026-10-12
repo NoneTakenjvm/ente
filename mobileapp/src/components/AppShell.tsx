@@ -72,8 +72,9 @@ export function AppShell({
     const selectionEnabled = useSelectionStore((s) => s.enabled);
     const stampActive = useSelectionStore((s) => s.stampActive);
     const rotateActive = useSelectionStore((s) => s.rotateActive);
+    const cropActive = useSelectionStore((s) => s.cropActive);
     const hideBottomNav =
-        selectionEnabled || stampActive || rotateActive;
+        selectionEnabled || stampActive || rotateActive || cropActive;
     const viewportHeight = useVisualViewportHeight();
 
     // Optimistic tab: keep pending highlight until pathname catches up.

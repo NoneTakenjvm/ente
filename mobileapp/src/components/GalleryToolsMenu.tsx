@@ -1,6 +1,7 @@
 import { useCallback, useState, type JSX } from "react";
 import {
     Check,
+    Crop,
     ListFilter,
     RotateCw,
     Stamp,
@@ -24,6 +25,7 @@ import {
     DropdownMenuSubTrigger,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { confirmDiscardPendingCrops } from "@/lib/crop-draft";
 import { confirmDiscardPendingRotations } from "@/lib/rotate-draft";
 import { cn } from "@/lib/utils";
 import { stampTagsFromNearnessFilter } from "@/lib/tag-presets";
@@ -50,16 +52,18 @@ export function GalleryToolsMenu({
     const selectionEnabled = useSelectionStore((s) => s.enabled);
     const stampActive = useSelectionStore((s) => s.stampActive);
     const rotateActive = useSelectionStore((s) => s.rotateActive);
+    const cropActive = useSelectionStore((s) => s.cropActive);
     const setEnabled = useSelectionStore((s) => s.setEnabled);
     const setStampActive = useSelectionStore((s) => s.setStampActive);
     const setStampTags = useSelectionStore((s) => s.setStampTags);
     const setStampPickMode = useSelectionStore((s) => s.setStampPickMode);
     const setStampSheetOpen = useSelectionStore((s) => s.setStampSheetOpen);
     const setRotateActive = useSelectionStore((s) => s.setRotateActive);
+    const setCropActive = useSelectionStore((s) => s.setCropActive);
 
     const [menuOpen, setMenuOpen] = useState(false);
 
-    const anyToolActive = selectionEnabled || stampActive || rotateActive;
+    const anyToolActive = selectionEnabled || stampActive || rotateActive || cropActive;
     const triggerActive = anyToolActive || Boolean(query?.hasQueryContent);
 
     /** Exit rotate after confirming discard when drafts exist. */
@@ -72,10 +76,24 @@ export function GalleryToolsMenu({
         return true;
     }, [setRotateActive]);
 
+    /** Exit crop after confirming discard when drafts exist. */
+    const exitCrop = useCallback((): boolean => {
+        const pending = useSelectionStore.getState().pendingCrops;
+        if (!confirmDiscardPendingCrops(pending)) {
+            return false;
+        }
+        setCropActive(false);
+        return true;
+    }, [setCropActive]);
+
     /** Exit whichever tool is active (wrench re-tap). */
     const exitActiveTool = useCallback((): void => {
         if (rotateActive) {
             exitRotate();
+            return;
+        }
+        if (cropActive) {
+            exitCrop();
             return;
         }
         if (stampActive) {
@@ -86,6 +104,8 @@ export function GalleryToolsMenu({
             setEnabled(false);
         }
     }, [
+        cropActive,
+        exitCrop,
         exitRotate,
         rotateActive,
         selectionEnabled,
@@ -125,6 +145,14 @@ export function GalleryToolsMenu({
         setRotateActive(true);
     };
 
+    const toggleCrop = (): void => {
+        if (cropActive) {
+            exitCrop();
+            return;
+        }
+        setCropActive(true);
+    };
+
     return (
         <>
             <div className="md:hidden">
@@ -153,7 +181,7 @@ export function GalleryToolsMenu({
                                 title={
                                     anyToolActive ?
                                         "Exit tool" :
-                                        "Tools — select, stamp, rotate, query"
+                                        "Tools — select, stamp, rotate, crop, query"
                                 }
                             >
                                 <Wrench />
@@ -242,6 +270,19 @@ export function GalleryToolsMenu({
                                     </span>
                                 ) : null}
                             </DropdownMenuItem>
+                            <DropdownMenuItem
+                                onClick={() => {
+                                    toggleCrop();
+                                }}
+                            >
+                                <Crop />
+                                Crop
+                                {cropActive ? (
+                                    <span className="ml-auto text-xs text-muted-foreground">
+                                        On
+                                    </span>
+                                ) : null}
+                            </DropdownMenuItem>
                         </DropdownMenuGroup>
                     </DropdownMenuContent>
                 </DropdownMenu>
@@ -315,6 +356,25 @@ export function GalleryToolsMenu({
                     onClick={toggleRotate}
                 >
                     <RotateCw />
+                </Button>
+                <Button
+                    type="button"
+                    variant={cropActive ? "secondary" : "outline"}
+                    size="icon-sm"
+                    aria-label={
+                        cropActive ?
+                            "Exit crop tool" :
+                            "Quick crop photos"
+                    }
+                    aria-pressed={cropActive}
+                    title={
+                        cropActive ?
+                            "Exit crop" :
+                            "Crop — tap photos, drag boxes, then Apply"
+                    }
+                    onClick={toggleCrop}
+                >
+                    <Crop />
                 </Button>
             </div>
         </>

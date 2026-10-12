@@ -52,7 +52,8 @@ import { ThumbnailCell } from "./ThumbnailCell";
 
 export interface ThumbnailGridSelection {
     selectedIds: Set<number>;
-    onToggle: (file: EnteFile) => void;
+    /** `imageAspect` is the tapped thumbnail's width / height, when it is loaded. */
+    onToggle: (file: EnteFile, imageAspect?: number) => void;
     onSelectMany?: (fileIds: number[], mode: "add" | "toggle" | "set") => void;
     /**
      * When set, marquee selection is baseline ∪ live intersection (retract
@@ -66,6 +67,11 @@ export interface ThumbnailGridSelection {
      * whole virtualized window on each toggle).
      */
     observeStoreSelection?: boolean;
+    /**
+     * Quick-crop tool: the grid shows photos uncropped (fit layout) and cells
+     * draw their draft crop box.
+     */
+    cropMode?: boolean;
 }
 
 interface ThumbnailGridProps {
@@ -117,6 +123,7 @@ const GridRow = memo(function GridRow({
                 showFileSize={showFileSize}
                 previewRotationDegrees={previewRotationById?.[file.id]}
                 observeStoreSelection={selection?.observeStoreSelection}
+                cropMode={selection?.cropMode}
             />,
         );
     }
@@ -385,6 +392,7 @@ function SizedMasonryGrid({
                                 observeStoreSelection={
                                     selection?.observeStoreSelection
                                 }
+                                cropMode={selection?.cropMode}
                             />
                         </div>
                     );
@@ -403,7 +411,9 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
     previewRotationById,
 }: ThumbnailGridProps): JSX.Element {
     const galleryColumns = useSettingsStore((s) => s.galleryColumns);
-    const galleryThumbnailMode = useSettingsStore((s) => s.galleryThumbnailMode);
+    const savedThumbnailMode = useSettingsStore((s) => s.galleryThumbnailMode);
+    // Crop needs whole photos; the saved setting is never written.
+    const thumbnailMode = selection?.cropMode ? "fit" : savedThumbnailMode;
     const listRef = useRef<FixedSizeList<RowData>>(null);
     const scrollControllerRef = useRef<MarqueeScrollController | null>(null);
     const masonryLayoutRef = useRef<MasonryLayout | null>(null);
@@ -418,13 +428,13 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
 
     const viewOrderKey = useMemo(
         () =>
-            galleryThumbnailMode === "fit" ? masonryViewOrderKey(files) : "",
-        [files, galleryThumbnailMode],
+            thumbnailMode === "fit" ? masonryViewOrderKey(files) : "",
+        [files, thumbnailMode],
     );
 
     // Block taps while order/geometry settles (ghost opens on remount / sort).
     // Stale readyToken keeps pointer-events off until two rAFs land — no sync setState.
-    const settleToken = `${viewOrderKey}|${gridWidth}|${files.length}|${galleryThumbnailMode}`;
+    const settleToken = `${viewOrderKey}|${gridWidth}|${files.length}|${thumbnailMode}`;
     const [readyToken, setReadyToken] = useState("");
     useEffect(() => {
         if (files.length === 0 || gridWidth <= 0) {
@@ -446,7 +456,7 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
                 cancelAnimationFrame(innerRaf);
             }
         };
-    }, [files.length, galleryThumbnailMode, gridWidth, settleToken]);
+    }, [files.length, thumbnailMode, gridWidth, settleToken]);
     const interactionsReady =
         readyToken === settleToken && files.length > 0 && gridWidth > 0;
 
@@ -455,7 +465,7 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
             if (rect.width < 8 && rect.height < 8) {
                 return [];
             }
-            if (galleryThumbnailMode === "fit") {
+            if (thumbnailMode === "fit") {
                 const layout = masonryLayoutRef.current;
                 return layout ?
                     masonryItemsInMarquee(layout.items, rect).map((id) => Number(id)) :
@@ -473,7 +483,7 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
             );
             return indices.map((index) => files[index]!.id);
         },
-        [files, galleryColumns, galleryThumbnailMode, gridWidth],
+        [files, galleryColumns, thumbnailMode, gridWidth],
     );
 
     const handleMarqueeRect = useCallback(
@@ -578,7 +588,7 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
                 }}
             >
                 {({ height, width }: { height: number; width: number }) =>
-                    galleryThumbnailMode === "fit" ? (
+                    thumbnailMode === "fit" ? (
                         <SizedMasonryGrid
                             files={files}
                             width={width}
