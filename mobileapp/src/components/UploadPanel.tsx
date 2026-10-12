@@ -23,6 +23,12 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { getEnteCore } from "@/core/instance";
 import {
+    beginUploadCryptoPool,
+    endUploadCryptoPool,
+    getUploadCryptoWorker,
+    type UploadCryptoWorker,
+} from "@/core/upload/upload-crypto-pool";
+import {
     beginUploadBatch,
     endUploadBatch,
 } from "@/core/upload/upload-url-pool";
@@ -244,7 +250,10 @@ export function UploadPanel({
             const errors: string[] = [];
             let nextIndex = 0;
 
-            const uploadStagedFile = async (entry: StagedFile): Promise<void> => {
+            const uploadStagedFile = async (
+                entry: StagedFile,
+                crypto: UploadCryptoWorker,
+            ): Promise<void> => {
                 if (useUploadJobStore.getState().cancelRequested) {
                     throw new Error("Upload cancelled");
                 }
@@ -255,7 +264,7 @@ export function UploadPanel({
                     }
                     await uploadVideoFile(
                         selectedCollectionId,
-                        prepared.bytes,
+                        prepared.file,
                         {
                             width: prepared.width,
                             height: prepared.height,
@@ -264,6 +273,7 @@ export function UploadPanel({
                         sanitizeUploadVideoTitle(entry.file.name),
                         entry.file.lastModified * 1000,
                         prepared.mimeType,
+                        crypto,
                     );
                     return;
                 }
@@ -281,6 +291,7 @@ export function UploadPanel({
                     },
                     sanitizeUploadImageTitle(entry.file.name),
                     entry.file.lastModified * 1000,
+                    crypto,
                 );
             };
 
@@ -294,7 +305,8 @@ export function UploadPanel({
                 setUploadJobProgress(current, filesToUpload.length);
             };
 
-            const worker = async (): Promise<void> => {
+            const worker = async (slotIndex: number): Promise<void> => {
+                const crypto = await getUploadCryptoWorker(slotIndex);
                 while (true) {
                     if (useUploadJobStore.getState().cancelRequested) {
                         return;
@@ -308,7 +320,7 @@ export function UploadPanel({
                     inFlight += 1;
                     reportProgress();
                     try {
-                        await uploadStagedFile(entry);
+                        await uploadStagedFile(entry, crypto);
                         completed += 1;
                     } catch (uploadError: unknown) {
                         const message =
@@ -342,8 +354,10 @@ export function UploadPanel({
                     maxConcurrentUploads,
                     filesToUpload.length,
                 );
+                beginUploadCryptoPool(workerCount);
                 await Promise.all(
-                    Array.from({ length: workerCount }, () => worker()),
+                    Array.from({ length: workerCount }, (_, slotIndex) =>
+                        worker(slotIndex)),
                 );
 
                 const cancelled = useUploadJobStore.getState().cancelRequested;
@@ -389,6 +403,7 @@ export function UploadPanel({
             } finally {
                 endUploadAbort();
                 endUploadBatch();
+                endUploadCryptoPool();
                 resetUploadJob();
                 uploadStartedRef.current = false;
             }

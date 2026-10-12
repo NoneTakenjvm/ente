@@ -5,10 +5,12 @@ import type {
     EncryptedBlobB64,
     EncryptedBlobBytes,
     EncryptedBoxB64,
-    EncryptedFile,
-    SodiumStateAddress,
 } from "ente-base/crypto/types";
 import { withTimeout } from "@/lib/with-timeout";
+import {
+    encryptFileForUpload,
+    type EncryptedUploadFile,
+} from "./encrypt-upload-file";
 
 /**
  * Methods used by batch uploads on a dedicated crypto worker.
@@ -28,16 +30,10 @@ export interface UploadCryptoWorker {
         jsonValue: unknown,
         key: BytesOrB64,
     ) => Promise<EncryptedBlobB64>;
-    encryptStreamBytes: (
-        data: Uint8Array,
+    encryptFileForUpload: (
+        source: Blob,
         key: BytesOrB64,
-    ) => Promise<EncryptedFile>;
-    chunkHashInit: () => Promise<SodiumStateAddress>;
-    chunkHashUpdate: (
-        state: SodiumStateAddress,
-        data: Uint8Array,
-    ) => Promise<void>;
-    chunkHashFinal: (state: SodiumStateAddress) => Promise<string>;
+    ) => Promise<EncryptedUploadFile>;
 }
 
 /** Constructor shape expected by {@link ComlinkWorker}. */
@@ -75,16 +71,13 @@ const prefersMainThreadCrypto = (): boolean => {
 /**
  * Main-thread libsodium adapter with the same shape as the Worker API.
  */
-const mainThreadCrypto = (): UploadCryptoWorker => ({
+export const mainThreadCrypto = (): UploadCryptoWorker => ({
     toB64: libsodium.toB64,
     generateBlobOrStreamKey: libsodium.generateBlobOrStreamKey,
     encryptBox: libsodium.encryptBox,
     encryptBlobBytes: libsodium.encryptBlobBytes,
     encryptMetadataJSON: libsodium.encryptMetadataJSON,
-    encryptStreamBytes: libsodium.encryptStreamBytes,
-    chunkHashInit: libsodium.chunkHashInit,
-    chunkHashUpdate: libsodium.chunkHashUpdate,
-    chunkHashFinal: libsodium.chunkHashFinal,
+    encryptFileForUpload,
 });
 
 const createPoolWorker = (): ComlinkWorker<UploadCryptoWorkerCtor> =>

@@ -14,6 +14,10 @@ export default defineConfig({
                 __dirname,
                 "node_modules/ente-base/crypto/libsodium.ts",
             ),
+            "ente-base/crypto/types": path.resolve(
+                __dirname,
+                "node_modules/ente-base/crypto/types.ts",
+            ),
             "ente-base/crypto": path.resolve(
                 __dirname,
                 "src/core/crypto-shim.ts",

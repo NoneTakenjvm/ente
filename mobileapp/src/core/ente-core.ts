@@ -394,17 +394,17 @@ export class EnteCore {
     }
 
     /**
-     * Upload a new MP4 from the device into the given collection.
+     * Upload a new video from the device into the given collection.
      */
     uploadLocalVideo(
         collection: Collection,
-        videoBytes: Uint8Array,
+        video: Blob,
         options: UploadLocalVideoOptions,
     ): Promise<EnteFile> {
         return uploadLocalVideoToRemote(
             this.http,
             collection,
-            videoBytes,
+            video,
             options,
         );
     }

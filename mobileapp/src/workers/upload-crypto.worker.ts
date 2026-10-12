@@ -1,6 +1,7 @@
 import { expose } from "comlink";
 import { logUnhandledErrorsAndRejectionsInWorker } from "ente-base/log-web";
 import * as libsodium from "ente-base/crypto/libsodium";
+import { encryptFileForUpload } from "@/core/upload/encrypt-upload-file";
 
 /**
  * Crypto surface used by batch uploads (mirrors ente-base {@link CryptoWorker}).
@@ -15,10 +16,7 @@ export class UploadCryptoWorker {
     encryptBox = libsodium.encryptBox;
     encryptBlobBytes = libsodium.encryptBlobBytes;
     encryptMetadataJSON = libsodium.encryptMetadataJSON;
-    encryptStreamBytes = libsodium.encryptStreamBytes;
-    chunkHashInit = libsodium.chunkHashInit;
-    chunkHashUpdate = libsodium.chunkHashUpdate;
-    chunkHashFinal = libsodium.chunkHashFinal;
+    encryptFileForUpload = encryptFileForUpload;
 }
 
 expose(UploadCryptoWorker);

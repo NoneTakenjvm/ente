@@ -13,11 +13,13 @@ import { prepareLocalVideo } from "@/lib/transcode/prepare-local-video";
 const {
     mockExtractVideoFrameJpeg,
     mockGenerateImageThumbnail,
+    mockPutEncryptedBlob,
     mockPutEncryptedObject,
     mockPostEnteFile,
 } = vi.hoisted(() => ({
     mockExtractVideoFrameJpeg: vi.fn(),
     mockGenerateImageThumbnail: vi.fn(),
+    mockPutEncryptedBlob: vi.fn(),
     mockPutEncryptedObject: vi.fn(),
     mockPostEnteFile: vi.fn(),
 }));
@@ -31,6 +33,7 @@ vi.mock("@/core/upload/thumbnail", () => ({
 }));
 
 vi.mock("@/core/upload/upload-url-pool", () => ({
+    putEncryptedBlob: mockPutEncryptedBlob,
     putEncryptedObject: mockPutEncryptedObject,
     markBatchUploadFileComplete: vi.fn(),
 }));
@@ -65,6 +68,7 @@ afterEach(() => {
     vi.restoreAllMocks();
     mockExtractVideoFrameJpeg.mockReset();
     mockGenerateImageThumbnail.mockReset();
+    mockPutEncryptedBlob.mockReset();
     mockPutEncryptedObject.mockReset();
     mockPostEnteFile.mockReset();
 });
@@ -85,9 +89,14 @@ describe("local video upload pipeline", () => {
         mockGenerateImageThumbnail.mockResolvedValue(thumbnail);
         stubVideoProbe(1920, 1080, 8.2);
 
-        mockPutEncryptedObject
-            .mockResolvedValueOnce({ objectKey: "file-object", url: "https://upload/file" })
-            .mockResolvedValueOnce({ objectKey: "thumb-object", url: "https://upload/thumb" });
+        mockPutEncryptedBlob.mockResolvedValueOnce({
+            objectKey: "file-object",
+            url: "https://upload/file",
+        });
+        mockPutEncryptedObject.mockResolvedValueOnce({
+            objectKey: "thumb-object",
+            url: "https://upload/thumb",
+        });
         mockPostEnteFile.mockImplementation(async (_http, request) => ({
             id: 9001,
             collectionID: request.collectionID,
@@ -110,12 +119,12 @@ describe("local video upload pipeline", () => {
             isDeleted: false,
         }));
 
-        const source = new File(sourceBytes, "holiday.mov", {
+        const source = new File([sourceBytes], "holiday.mov", {
             type: "video/quicktime",
         });
         const prepared = await prepareLocalVideo(source);
 
-        const uploaded = await uploadLocalVideo(http, collection, prepared.bytes, {
+        const uploaded = await uploadLocalVideo(http, collection, prepared.file, {
             title: "holiday.mov",
             creationTime: 1_700_000_000_000,
             width: prepared.width,
@@ -125,10 +134,11 @@ describe("local video upload pipeline", () => {
         });
 
         expect(mockExtractVideoFrameJpeg).toHaveBeenCalledWith(
-            prepared.bytes,
+            prepared.file,
             "video/quicktime",
         );
-        expect(mockPutEncryptedObject).toHaveBeenCalledTimes(2);
+        expect(mockPutEncryptedBlob).toHaveBeenCalledOnce();
+        expect(mockPutEncryptedObject).toHaveBeenCalledOnce();
         expect(mockPostEnteFile).toHaveBeenCalledOnce();
 
         expect(uploaded.metadata.fileType).toBe(FileType.video);

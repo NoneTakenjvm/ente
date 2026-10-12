@@ -6,13 +6,21 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-10-06 |
-| **Last agent / session** | Similar + kit nearness Batch A/B `0.3.180`, scan-stall fixes `0.3.181` — thumbnail cache eviction, phash pool errors |
-| **Current milestone** | Post-M8 UX / kit nearness + gallery sort |
+| **Last updated** | 2026-10-12 |
+| **Last agent / session** | Upload speed + memory `0.3.182` — fast incremental MD5, single-pass streaming encrypt, video streamed from disk, coalesced library commits |
+| **Current milestone** | Post-M8 UX / upload performance |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
-| **Next recommended action** | QA `0.3.181` from a secure origin (`http://localhost:3080`, HTTPS, or the deployed site — a plain-HTTP LAN IP has no WebGPU, so CLIP falls back to single-thread WASM): Manage → Similar (phash index rescans once), CLIP vs hash groups, keeper picks, kit nearness sort/filter; then commit. Discuss Batch C (items 14–17) with the user. |
+| **Next recommended action** | Phone QA of `0.3.182`: pick 100+ photos and a few long videos — progress should move within seconds and videos should start without a per-second-of-video wait; watch for iOS tab reloads during upload. If Android/desktop uploads ever stall mid-batch, suspect the re-enabled upload crypto workers (iOS stays main-thread). |
 
 **This session (local only — not pushed):**
+1. **MD5 (`md5.ts`)** — incremental, word-at-a-time MD5 (~4 ms/MB vs ~29 ms/MB desktop); was the main "1 s per second of video" wait before upload started.
+2. **Streaming encrypt (`encrypt-upload-file.ts`)** — one pass over 4 MB slices of the picked `File`: Blake2b hash, secretstream encrypt, ciphertext MD5; ciphertext kept as a Blob of per-chunk Blobs. Videos are no longer read whole (`prepareLocalVideo` returns the `File`; probe uses `preload="metadata"`), so peak memory is ~one chunk instead of ~4× the file.
+3. **Upload path** — image/video uploads use the slot's crypto (`getUploadCryptoWorker`, workers off iOS, main thread on iOS with a yield per chunk); file and thumbnail PUTs in parallel; PUT timeout scales with size (`putFileTimeoutMs`).
+4. **Library commits** — finished uploads within 500 ms share one `allFiles` commit + tag rebuild, and the encrypted cache write uses the normal debounce (was a full-library rebuild + persist per file).
+5. **Gallery memory** — `decryptFileCiphertext` no longer copies ciphertext element-by-element (`Uint8Array.from`).
+6. **Deferred** — upload staging grid shows full-res `<img>` previews (lazy) — heavy on iOS for big batches; could use small decoded previews.
+
+**Previous session (committed `9c6df6a747`):**
 1. **Kit nearness (A1/A6/B11/B12/B13)** — ranking ids as `Float64Array`; files with no kit evidence stay unassigned; presence job only runs while the UI needs it; scores computed once per sort; seeds come from tag posting lists.
 2. **Similar keeper (A4/A5)** — keeper choice keyed by sorted fileIds (stable across re-runs) and ranked consistently across exact/similar/prune.
 3. **Stage-1 (A2/B8)** — CLIP mode also unions tight dHash pairs (≤2); symmetric j>i top-K scan over packed, transferred `Float32Array` with raw-dot reject; result cache key fingerprints vectors (not just count).

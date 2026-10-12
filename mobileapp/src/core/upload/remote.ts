@@ -33,6 +33,16 @@ export interface PostEnteFileRequest {
 /** Bound PUTs so a stalled S3 connection cannot freeze the batch forever. */
 const PUT_FILE_TIMEOUT_MS = 120_000;
 
+/**
+ * Slowest upload rate (bytes per ms, ~1 Mbit/s) a PUT gets on top of
+ * {@link PUT_FILE_TIMEOUT_MS} before it is treated as stalled, so large videos
+ * on a phone connection are not cut off at a fixed two minutes.
+ */
+const PUT_FILE_MIN_BYTES_PER_MS = 128;
+
+const putFileTimeoutMs = (size: number): number =>
+    PUT_FILE_TIMEOUT_MS + Math.ceil(size / PUT_FILE_MIN_BYTES_PER_MS);
+
 /** Optional abort from "Cancel upload" — set for the duration of a batch. */
 let batchAbort: AbortController | undefined;
 
@@ -181,7 +191,8 @@ export interface PutFileOptions {
 }
 
 /**
- * Upload encrypted bytes to a pre-signed S3 URL, retrying transient failures.
+ * Upload encrypted bytes (or a Blob of them) to a pre-signed S3 URL, retrying
+ * transient failures.
  *
  * Uses the pre-signed URL directly (no CF upload proxy) — the proxy path was
  * hanging indefinitely on mobile Safari with no usable cancel. When museum
@@ -190,9 +201,11 @@ export interface PutFileOptions {
 export const putFile = async (
     http: HttpClient,
     uploadURL: string,
-    fileData: Uint8Array<ArrayBuffer>,
+    fileData: Uint8Array<ArrayBuffer> | Blob,
     options?: PutFileOptions,
 ): Promise<void> => {
+    const size = fileData instanceof Blob ? fileData.size : fileData.byteLength;
+    const timeoutMs = putFileTimeoutMs(size);
     const headers: Record<string, string> = {
         ...http.publicHeaders(),
         ...(options?.contentMd5 ?
@@ -203,10 +216,7 @@ export const putFile = async (
 
     await withUploadRetry(async () => {
         if (!onProgress) {
-            const timeout = abortableTimeout(
-                PUT_FILE_TIMEOUT_MS,
-                batchAbort?.signal,
-            );
+            const timeout = abortableTimeout(timeoutMs, batchAbort?.signal);
             try {
                 const res = await fetch(uploadURL, {
                     method: "PUT",
@@ -231,7 +241,7 @@ export const putFile = async (
             }
             const timer = setTimeout(() => {
                 xhr.abort();
-            }, PUT_FILE_TIMEOUT_MS);
+            }, timeoutMs);
             const onBatchAbort = (): void => {
                 xhr.abort();
             };
@@ -244,7 +254,7 @@ export const putFile = async (
                 } else {
                     onProgress(
                         event.loaded,
-                        Math.max(event.loaded, fileData.byteLength),
+                        Math.max(event.loaded, size),
                     );
                 }
             };
@@ -257,7 +267,7 @@ export const putFile = async (
                 });
                 try {
                     http.ensureOk(res);
-                    onProgress(fileData.byteLength, fileData.byteLength);
+                    onProgress(size, size);
                     resolve();
                 } catch (error: unknown) {
                     reject(error);

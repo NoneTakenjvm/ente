@@ -40,6 +40,24 @@ export const putEncryptedObject = async (
     return upload;
 };
 
+/**
+ * Mint URL + PUT a ciphertext Blob whose MD5 was computed while encrypting
+ * (see [Note: Streaming upload encryption]).
+ */
+export const putEncryptedBlob = async (
+    http: HttpClient,
+    encryptedData: Blob,
+    contentMd5: string,
+    onProgress?: (loaded: number, total: number) => void,
+): Promise<ObjectUploadURL> => {
+    const upload = await fetchUploadURLWithMetadata(http, {
+        contentLength: encryptedData.size,
+        contentMd5,
+    });
+    await putFile(http, upload.url, encryptedData, { contentMd5, onProgress });
+    return upload;
+};
+
 /** No-op retained so callers can keep batch try/finally structure. */
 export const beginUploadBatch = async (
     _http: HttpClient,

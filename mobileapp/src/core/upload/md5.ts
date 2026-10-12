@@ -1,6 +1,18 @@
 /**
- * Minimal MD5 implementation for base64 checksums on upload payloads.
+ * Incremental MD5 for the base64 `Content-MD5` of upload payloads.
+ *
+ * [Note: Upload MD5]
+ *
+ * Checksum-bound upload URLs need the MD5 of the encrypted bytes before the
+ * PUT, so this runs over every uploaded byte. It reads 32-bit words straight
+ * out of the input (no per-byte iteration, no full-size copy) and can be fed
+ * chunk by chunk while the file is being encrypted.
  */
+
+export interface Md5 {
+    update: (data: Uint8Array) => void;
+    digestBase64: () => string;
+}
 
 const shifts = new Uint8Array([
     7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5,
@@ -9,106 +21,132 @@ const shifts = new Uint8Array([
     15, 21,
 ]);
 
-const constants = ((): Uint32Array => {
-    const k = new Uint32Array(64);
+const constants = ((): Int32Array => {
+    const k = new Int32Array(64);
     for (let i = 0; i < 64; i++) {
-        k[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 2 ** 32);
+        k[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 2 ** 32) | 0;
     }
     return k;
 })();
 
-const leftRotate = (value: number, amount: number): number =>
-    (value << amount) | (value >>> (32 - amount));
+/** Index of the message word mixed into each of the 64 steps. */
+const wordIndexes = ((): Uint8Array => {
+    const g = new Uint8Array(64);
+    for (let j = 0; j < 64; j++) {
+        if (j < 16) {
+            g[j] = j;
+        } else if (j < 32) {
+            g[j] = (5 * j + 1) % 16;
+        } else if (j < 48) {
+            g[j] = (3 * j + 5) % 16;
+        } else {
+            g[j] = (7 * j) % 16;
+        }
+    }
+    return g;
+})();
 
-const toUint8ArrayLE = (word: number): Uint8Array => {
-    const bytes = new Uint8Array(4);
-    bytes[0] = word & 0xff;
-    bytes[1] = (word >>> 8) & 0xff;
-    bytes[2] = (word >>> 16) & 0xff;
-    bytes[3] = (word >>> 24) & 0xff;
-    return bytes;
+/**
+ * Start an incremental MD5. Feed bytes with `update`, then call
+ * `digestBase64` once.
+ */
+export const createMd5 = (): Md5 => {
+    const state = new Int32Array([
+        0x67452301, 0xefcdab89 | 0, 0x98badcfe | 0, 0x10325476,
+    ]);
+    const words = new Int32Array(16);
+    const pending = new Uint8Array(64);
+    const pendingView = new DataView(pending.buffer);
+    let pendingLength = 0;
+    let totalLength = 0;
+
+    const processBlock = (view: DataView, offset: number): void => {
+        for (let w = 0; w < 16; w++) {
+            words[w] = view.getInt32(offset + w * 4, true);
+        }
+        let a = state[0]!;
+        let b = state[1]!;
+        let c = state[2]!;
+        let d = state[3]!;
+        for (let j = 0; j < 64; j++) {
+            let f: number;
+            if (j < 16) {
+                f = (b & c) | (~b & d);
+            } else if (j < 32) {
+                f = (d & b) | (~d & c);
+            } else if (j < 48) {
+                f = b ^ c ^ d;
+            } else {
+                f = c ^ (b | ~d);
+            }
+            const sum = (a + f + constants[j]! + words[wordIndexes[j]!]!) | 0;
+            const shift = shifts[j]!;
+            a = d;
+            d = c;
+            c = b;
+            b = (b + ((sum << shift) | (sum >>> (32 - shift)))) | 0;
+        }
+        state[0] = (state[0]! + a) | 0;
+        state[1] = (state[1]! + b) | 0;
+        state[2] = (state[2]! + c) | 0;
+        state[3] = (state[3]! + d) | 0;
+    };
+
+    const update = (data: Uint8Array): void => {
+        totalLength += data.length;
+        let offset = 0;
+        if (pendingLength > 0) {
+            offset = Math.min(64 - pendingLength, data.length);
+            pending.set(data.subarray(0, offset), pendingLength);
+            pendingLength += offset;
+            if (pendingLength < 64) {
+                return;
+            }
+            processBlock(pendingView, 0);
+            pendingLength = 0;
+        }
+        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        for (; offset + 64 <= data.length; offset += 64) {
+            processBlock(view, offset);
+        }
+        pending.set(data.subarray(offset));
+        pendingLength = data.length - offset;
+    };
+
+    const digestBase64 = (): string => {
+        const bitLength = totalLength * 8;
+        const tail = new Uint8Array(pendingLength < 56 ? 64 : 128);
+        tail.set(pending.subarray(0, pendingLength));
+        tail[pendingLength] = 0x80;
+        const tailView = new DataView(tail.buffer);
+        tailView.setUint32(tail.length - 8, bitLength >>> 0, true);
+        tailView.setUint32(tail.length - 4, Math.floor(bitLength / 2 ** 32), true);
+        for (let offset = 0; offset < tail.length; offset += 64) {
+            processBlock(tailView, offset);
+        }
+        const digest = new DataView(new ArrayBuffer(16));
+        for (let i = 0; i < 4; i++) {
+            digest.setInt32(i * 4, state[i]!, true);
+        }
+        return bytesToBase64(new Uint8Array(digest.buffer));
+    };
+
+    return { update, digestBase64 };
+};
+
+/**
+ * Base64 MD5 of {@link data} in one call. See {@link createMd5}.
+ */
+export const computeMd5Base64 = (data: Uint8Array): string => {
+    const md5 = createMd5();
+    md5.update(data);
+    return md5.digestBase64();
 };
 
 const bytesToBase64 = (bytes: Uint8Array): string => {
-    if (typeof Buffer !== "undefined") {
-        return Buffer.from(bytes).toString("base64");
-    }
     let binary = "";
     for (const byte of bytes) {
         binary += String.fromCharCode(byte);
     }
     return btoa(binary);
-};
-
-export const computeMd5Base64 = (data: Uint8Array): string => {
-    const originalLengthBits = data.length * 8;
-    const paddedLength =
-        (((data.length + 8) >>> 6) << 4) + 16;
-    const words = new Uint32Array(paddedLength);
-
-    for (const [i, value] of data.entries()) {
-        const wordIndex = i >> 2;
-        const existing = words[wordIndex] ?? 0;
-        words[wordIndex] = existing | (value << ((i % 4) * 8));
-    }
-
-    const paddingIndex = data.length >> 2;
-    const paddingExisting = words[paddingIndex] ?? 0;
-    words[paddingIndex] = paddingExisting | (0x80 << ((data.length % 4) * 8));
-    words[paddedLength - 2] = originalLengthBits & 0xffffffff;
-    words[paddedLength - 1] = (originalLengthBits / 0x100000000) | 0;
-
-    let a = 0x67452301;
-    let b = 0xefcdab89;
-    let c = 0x98badcfe;
-    let d = 0x10325476;
-
-    for (let i = 0; i < words.length; i += 16) {
-        let A = a;
-        let B = b;
-        let C = c;
-        let D = d;
-
-        for (let j = 0; j < 64; j++) {
-            let f: number;
-            let g: number;
-
-            if (j < 16) {
-                f = (B & C) | (~B & D);
-                g = j;
-            } else if (j < 32) {
-                f = (D & B) | (~D & C);
-                g = (5 * j + 1) % 16;
-            } else if (j < 48) {
-                f = B ^ C ^ D;
-                g = (3 * j + 5) % 16;
-            } else {
-                f = C ^ (B | ~D);
-                g = (7 * j) % 16;
-            }
-
-            const temp = D;
-            D = C;
-            C = B;
-            const word = words[i + g] ?? 0;
-            const constant = constants[j] ?? 0;
-            const shift = shifts[j] ?? 0;
-            const sum = (A + f + constant + word) >>> 0;
-            B = (B + leftRotate(sum, shift)) >>> 0;
-            A = temp;
-        }
-
-        a = (a + A) >>> 0;
-        b = (b + B) >>> 0;
-        c = (c + C) >>> 0;
-        d = (d + D) >>> 0;
-    }
-
-    const digest = new Uint8Array(16);
-    digest.set(toUint8ArrayLE(a), 0);
-    digest.set(toUint8ArrayLE(b), 4);
-    digest.set(toUint8ArrayLE(c), 8);
-    digest.set(toUint8ArrayLE(d), 12);
-
-    return bytesToBase64(digest);
 };

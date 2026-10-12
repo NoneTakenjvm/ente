@@ -1,32 +1,25 @@
 import { ensureArrayBufferBacked } from "ente-base/bytes";
-import {
-    chunkHashFinal,
-    chunkHashInit,
-    chunkHashUpdate,
-} from "ente-base/crypto/libsodium";
-import {
-    encryptBlobBytes,
-    encryptBox,
-    encryptMetadataJSON,
-    encryptStreamBytes,
-    generateBlobOrStreamKey,
-    toB64,
-} from "ente-base/crypto";
+import type {
+    BytesOrB64,
+    EncryptedBlobBytes,
+} from "ente-base/crypto/types";
 import type { Collection } from "ente-media/collection";
 import { decryptRemoteFile } from "ente-media/file";
 import type { EnteFile } from "ente-media/file";
 import { FileType } from "ente-media/file-type";
 import type { FileMetadata } from "ente-media/file-metadata";
-import {
-    createMagicMetadata,
-    encryptMagicMetadata,
-} from "ente-media/magic-metadata";
+import { createMagicMetadata } from "ente-media/magic-metadata";
 import { ensureInteger } from "ente-utils/ensure";
 import type { HttpClient } from "../api/http";
+import type { EncryptedUploadFile } from "./encrypt-upload-file";
 import { generateImageThumbnail } from "./thumbnail";
-import type { UploadCryptoWorker } from "./upload-crypto-pool";
+import {
+    mainThreadCrypto,
+    type UploadCryptoWorker,
+} from "./upload-crypto-pool";
 import {
     markBatchUploadFileComplete,
+    putEncryptedBlob,
     putEncryptedObject,
 } from "./upload-url-pool";
 import {
@@ -54,29 +47,18 @@ export interface UploadJpegOptions {
     crypto?: UploadCryptoWorker;
 }
 
-const computeContentHash = async (
-    data: Uint8Array,
-    crypto?: UploadCryptoWorker,
-): Promise<string> => {
-    if (crypto) {
-        const hashState = await crypto.chunkHashInit();
-        await crypto.chunkHashUpdate(hashState, data);
-        return crypto.chunkHashFinal(hashState);
-    }
-    const hashState = await chunkHashInit();
-    await chunkHashUpdate(hashState, data);
-    return chunkHashFinal(hashState);
-};
-
-const buildMetadata = async (
-    jpegBytes: Uint8Array,
-    options: UploadJpegOptions,
-): Promise<FileMetadata> => ({
+const buildMetadata = (
+    hash: string,
+    options: Pick<
+        UploadJpegOptions,
+        "title" | "creationTime" | "modificationTime"
+    >,
+): FileMetadata => ({
     fileType: FileType.image,
     title: options.title,
     creationTime: ensureInteger(options.creationTime),
     modificationTime: ensureInteger(options.modificationTime),
-    hash: await computeContentHash(jpegBytes, options.crypto),
+    hash,
 });
 
 const buildPublicMagicData = (
@@ -102,10 +84,9 @@ const buildPublicMagicData = (
 /**
  * Encrypt, upload, and finalize a new JPEG file in the given collection.
  *
- * Hash + thumbnail decode run in parallel; encrypt steps and file/thumbnail
- * PUTs also overlap. Optional {@link UploadJpegOptions.crypto} uses a
- * dedicated worker so concurrent batch uploads do not serialize on the shared
- * crypto worker (official Photos upload manager pattern).
+ * Thumbnail decode overlaps the single hash + encrypt + MD5 pass, and the file
+ * and thumbnail PUTs run in parallel. Optional {@link UploadJpegOptions.crypto}
+ * runs the crypto on the batch slot's worker instead of the main thread.
  */
 export const uploadJpegImage = async (
     http: HttpClient,
@@ -113,91 +94,49 @@ export const uploadJpegImage = async (
     jpegBytes: Uint8Array,
     options: UploadJpegOptions,
 ): Promise<EnteFile> => {
-    const crypto = options.crypto;
-    const [metadata, thumbnail] = await Promise.all([
-        buildMetadata(jpegBytes, options),
-        generateImageThumbnail(jpegBytes),
-    ]);
-
-    const fileKey = crypto ?
-        await crypto.generateBlobOrStreamKey() :
-        await generateBlobOrStreamKey();
-
-    const publicMagicData = buildPublicMagicData(options);
-    const publicMagicMetadata = createMagicMetadata(publicMagicData);
-
-    const encryptPubMagic = async (): Promise<
-        PostEnteFileRequest["pubMagicMetadata"]
-    > => {
-        if (!publicMagicMetadata.count) {
-            return undefined;
-        }
-        if (crypto) {
-            const { encryptedData: data, decryptionHeader: header } =
-                await crypto.encryptMetadataJSON(publicMagicMetadata.data, fileKey);
-            return {
-                version: publicMagicMetadata.version,
-                count: publicMagicMetadata.count,
-                data,
-                header,
-            };
-        }
-        return encryptMagicMetadata(publicMagicMetadata, fileKey);
-    };
-
+    const crypto = options.crypto ?? mainThreadCrypto();
+    const fileKey = await crypto.generateBlobOrStreamKey();
+    const publicMagicMetadata = createMagicMetadata(
+        buildPublicMagicData(options),
+    );
     const [
-        encryptedFile,
-        encryptedThumbnail,
-        encryptedMetadata,
-        encryptedPubMagicMetadata,
+        { encryptedFile, encryptedThumbnail, encryptedMetadata },
+        encryptedPubMagicData,
         encryptedFileKey,
     ] = await Promise.all([
-        crypto ?
-            crypto.encryptStreamBytes(jpegBytes, fileKey) :
-            encryptStreamBytes(jpegBytes, fileKey),
-        crypto ?
-            crypto.encryptBlobBytes(thumbnail, fileKey) :
-            encryptBlobBytes(thumbnail, fileKey),
-        crypto ?
-            crypto.encryptMetadataJSON(metadata, fileKey) :
-            encryptMetadataJSON(metadata, fileKey),
-        encryptPubMagic(),
-        crypto ?
-            crypto.encryptBox(fileKey, collection.key) :
-            encryptBox(fileKey, collection.key),
+        encryptImageAndThumbnail(crypto, jpegBytes, fileKey, options),
+        crypto.encryptMetadataJSON(publicMagicMetadata.data, fileKey),
+        crypto.encryptBox(fileKey, collection.key),
     ]);
-
-    // Sequential mint+PUT — parallel URL-pool take raced on mobile; checksum
-    // URLs also require the encrypted payload first.
-    const fileUploadURL = await putEncryptedObject(
-        http,
-        ensureArrayBufferBacked(encryptedFile.encryptedData),
-    );
-    const thumbnailUploadURL = await putEncryptedObject(
-        http,
-        ensureArrayBufferBacked(encryptedThumbnail.encryptedData),
-    );
-
-    const thumbnailDecryptionHeader = crypto ?
-        await crypto.toB64(encryptedThumbnail.decryptionHeader) :
-        await toB64(encryptedThumbnail.decryptionHeader);
+    const { fileObjectKey, thumbnailObjectKey, thumbnailDecryptionHeader } =
+        await putImageAndThumbnail(
+            http,
+            crypto,
+            encryptedFile,
+            encryptedThumbnail,
+        );
 
     const newFileRequest: PostEnteFileRequest = {
         collectionID: collection.id,
         encryptedKey: encryptedFileKey.encryptedData,
         keyDecryptionNonce: encryptedFileKey.nonce,
         file: {
-            objectKey: fileUploadURL.objectKey,
+            objectKey: fileObjectKey,
             decryptionHeader: encryptedFile.decryptionHeader,
-            size: encryptedFile.encryptedData.length,
+            size: encryptedFile.encryptedData.size,
         },
         thumbnail: {
-            objectKey: thumbnailUploadURL.objectKey,
+            objectKey: thumbnailObjectKey,
             decryptionHeader: thumbnailDecryptionHeader,
             size: encryptedThumbnail.encryptedData.length,
         },
         metadata: encryptedMetadata,
-        pubMagicMetadata: encryptedPubMagicMetadata,
+        pubMagicMetadata: {
+            version: publicMagicMetadata.version,
+            count: publicMagicMetadata.count,
+            data: encryptedPubMagicData.encryptedData,
+            header: encryptedPubMagicData.decryptionHeader,
+        },
     };
 
     const remoteFile = await postEnteFile(http, newFileRequest);
@@ -330,43 +269,30 @@ export const updateImageBytesInPlace = async (
         throw new Error(`File ${sourceFile.id} has no decryption key`);
     }
 
-    const nowMicros = Date.now() * 1000;
-    const metadata = await buildMetadata(jpegBytes, {
-        title: options.title,
-        creationTime: sourceFile.metadata.creationTime,
-        modificationTime: nowMicros,
-        width: options.width,
-        height: options.height,
-    });
-    const thumbnail = await generateImageThumbnail(jpegBytes);
-    const fileKey = sourceFile.key;
-
-    const encryptedFile = await encryptStreamBytes(jpegBytes, fileKey);
-    const encryptedThumbnail = await encryptBlobBytes(thumbnail, fileKey);
-    const encryptedMetadata = await encryptMetadataJSON(metadata, fileKey);
-
-    const fileUploadURL = await putEncryptedObject(
-        http,
-        ensureArrayBufferBacked(encryptedFile.encryptedData),
-    );
-    const thumbnailUploadURL = await putEncryptedObject(
-        http,
-        ensureArrayBufferBacked(encryptedThumbnail.encryptedData),
-    );
-
-    const thumbnailDecryptionHeader = await toB64(
-        encryptedThumbnail.decryptionHeader,
-    );
+    const crypto = mainThreadCrypto();
+    const { metadata, encryptedFile, encryptedThumbnail, encryptedMetadata } =
+        await encryptImageAndThumbnail(crypto, jpegBytes, sourceFile.key, {
+            title: options.title,
+            creationTime: sourceFile.metadata.creationTime,
+            modificationTime: Date.now() * 1000,
+        });
+    const { fileObjectKey, thumbnailObjectKey, thumbnailDecryptionHeader } =
+        await putImageAndThumbnail(
+            http,
+            crypto,
+            encryptedFile,
+            encryptedThumbnail,
+        );
 
     const updateResult = await putEnteFileUpdate(http, {
         id: sourceFile.id,
         file: {
-            objectKey: fileUploadURL.objectKey,
+            objectKey: fileObjectKey,
             decryptionHeader: encryptedFile.decryptionHeader,
-            size: encryptedFile.encryptedData.length,
+            size: encryptedFile.encryptedData.size,
         },
         thumbnail: {
-            objectKey: thumbnailUploadURL.objectKey,
+            objectKey: thumbnailObjectKey,
             decryptionHeader: thumbnailDecryptionHeader,
             size: encryptedThumbnail.encryptedData.length,
         },
@@ -388,7 +314,7 @@ export const updateImageBytesInPlace = async (
         },
         info: {
             ...sourceFile.info,
-            fileSize: encryptedFile.encryptedData.length,
+            fileSize: encryptedFile.encryptedData.size,
             thumbSize: encryptedThumbnail.encryptedData.length,
         },
     };
@@ -447,4 +373,58 @@ export const uploadLocalImage = async (
         height: options.height,
         crypto: options.crypto,
     });
+};
+
+/** Hash + encrypt the JPEG in one pass while the thumbnail is generated. */
+const encryptImageAndThumbnail = async (
+    crypto: UploadCryptoWorker,
+    jpegBytes: Uint8Array,
+    fileKey: BytesOrB64,
+    metadataOptions: Pick<
+        UploadJpegOptions,
+        "title" | "creationTime" | "modificationTime"
+    >,
+) => {
+    const [encryptedFile, thumbnail] = await Promise.all([
+        crypto.encryptFileForUpload(
+            new Blob([ensureArrayBufferBacked(jpegBytes)], {
+                type: "image/jpeg",
+            }),
+            fileKey,
+        ),
+        generateImageThumbnail(jpegBytes),
+    ]);
+    const metadata = buildMetadata(encryptedFile.hash, metadataOptions);
+    const [encryptedThumbnail, encryptedMetadata] = await Promise.all([
+        crypto.encryptBlobBytes(thumbnail, fileKey),
+        crypto.encryptMetadataJSON(metadata, fileKey),
+    ]);
+    return { metadata, encryptedFile, encryptedThumbnail, encryptedMetadata };
+};
+
+/** PUT the encrypted file and thumbnail in parallel. */
+const putImageAndThumbnail = async (
+    http: HttpClient,
+    crypto: UploadCryptoWorker,
+    encryptedFile: EncryptedUploadFile,
+    encryptedThumbnail: EncryptedBlobBytes,
+) => {
+    const [fileUploadURL, thumbnailUploadURL, thumbnailDecryptionHeader] =
+        await Promise.all([
+            putEncryptedBlob(
+                http,
+                encryptedFile.encryptedData,
+                encryptedFile.contentMd5,
+            ),
+            putEncryptedObject(
+                http,
+                ensureArrayBufferBacked(encryptedThumbnail.encryptedData),
+            ),
+            crypto.toB64(encryptedThumbnail.decryptionHeader),
+        ]);
+    return {
+        fileObjectKey: fileUploadURL.objectKey,
+        thumbnailObjectKey: thumbnailUploadURL.objectKey,
+        thumbnailDecryptionHeader,
+    };
 };

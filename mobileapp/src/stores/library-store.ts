@@ -248,7 +248,7 @@ interface LibraryState {
     ) => Promise<EnteFile>;
     uploadVideoFile: (
         collectionId: number,
-        videoBytes: Uint8Array,
+        video: Blob,
         dimensions: { width: number; height: number },
         duration: number,
         title: string,
@@ -465,20 +465,40 @@ const initialState: Pick<
     syncError: undefined,
 };
 
-const appendUploadedFile = async (
+/** Window over which finished uploads are folded into one library commit. */
+const UPLOADED_FILES_COMMIT_DELAY_MS = 500;
+
+let pendingUploadedFiles: EnteFile[] = [];
+let uploadedFilesCommitTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * Add a freshly uploaded file to the library.
+ *
+ * Each commit copies the library, rebuilds the id and tag indexes, and
+ * re-renders the gallery, so a 100-file batch committing per file did ~100
+ * full-library rebuilds on the main thread. Uploads finishing within
+ * {@link UPLOADED_FILES_COMMIT_DELAY_MS} share one commit, and the encrypted
+ * cache write goes through the usual debounce (logout still flushes it).
+ */
+const appendUploadedFile = (
     set: (partial: Partial<LibraryState>) => void,
     get: () => LibraryState,
     uploaded: EnteFile,
-): Promise<EnteFile> => {
-    const nextFiles = [...get().allFiles, uploaded];
-    commitAllFiles(set, get, nextFiles);
-    useTagStore.getState().rebuildFromFiles(nextFiles);
-    requestThumbnail(uploaded);
-    // Don't await a full-library encrypt on the upload critical path — that
-    // serialized every concurrent worker behind one IDB write and left the UI
-    // at 0/x. Memory is updated; durable write is queued (logout still flushes).
-    markLibraryCacheFilesDirty([uploaded.id]);
-    void enqueueEncryptedFilesPersist(() => get().allFiles);
+): EnteFile => {
+    pendingUploadedFiles.push(uploaded);
+    uploadedFilesCommitTimer ??= setTimeout(() => {
+        uploadedFilesCommitTimer = undefined;
+        const uploadedFiles = pendingUploadedFiles;
+        pendingUploadedFiles = [];
+        const nextFiles = [...get().allFiles, ...uploadedFiles];
+        commitAllFiles(set, get, nextFiles);
+        useTagStore.getState().rebuildFromFiles(nextFiles);
+        uploadedFiles.forEach(requestThumbnail);
+        scheduleSaveEncryptedFiles(
+            () => get().allFiles,
+            uploadedFiles.map((file) => file.id),
+        );
+    }, UPLOADED_FILES_COMMIT_DELAY_MS);
     return uploaded;
 };
 
@@ -1840,7 +1860,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
 
     uploadVideoFile: async (
         collectionId: number,
-        videoBytes: Uint8Array,
+        video: Blob,
         dimensions: { width: number; height: number },
         duration: number,
         title: string,
@@ -1857,7 +1877,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
 
         const uploaded = await getEnteCore().uploadLocalVideo(
             collection,
-            videoBytes,
+            video,
             {
                 title,
                 creationTime,

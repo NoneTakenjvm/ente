@@ -1,7 +1,8 @@
 import { withTimeout } from "@/lib/with-timeout";
 
 export interface PreparedLocalVideo {
-    bytes: Uint8Array;
+    /** The picked file itself; upload streams it rather than reading it whole. */
+    file: File;
     width: number;
     height: number;
     duration: number;
@@ -31,7 +32,7 @@ const probeVideoFile = async (
     const url = URL.createObjectURL(file);
     try {
         const video = document.createElement("video");
-        video.preload = "auto";
+        video.preload = "metadata";
         video.muted = true;
         video.playsInline = true;
         await withTimeout(
@@ -78,11 +79,10 @@ const probeVideoFile = async (
 };
 
 /**
- * Read original video bytes and probe dimensions plus duration for upload.
+ * Probe a picked video's dimensions and duration for upload.
  */
 export const prepareLocalVideo = async (file: File): Promise<PreparedLocalVideo> => {
     const mimeType = mimeTypeForVideoFile(file);
     const meta = await probeVideoFile(file);
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    return { bytes, mimeType, ...meta };
+    return { file, mimeType, ...meta };
 };

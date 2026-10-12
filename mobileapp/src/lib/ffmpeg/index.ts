@@ -189,10 +189,9 @@ export const runFFmpeg = async (
  * RGBA canvases (4K frames are tens of MB).
  */
 const extractVideoFrameViaCanvas = async (
-    videoBytes: Uint8Array,
-    mimeType: string,
+    source: Blob,
 ): Promise<Uint8Array> => {
-    const url = URL.createObjectURL(blobFromUint8Array(videoBytes, mimeType));
+    const url = URL.createObjectURL(source);
     try {
         const video = document.createElement("video");
         video.muted = true;
@@ -265,15 +264,19 @@ const extractVideoFrameViaCanvas = async (
 };
 
 /**
- * Extract a single JPEG frame from video bytes for thumbnails.
+ * Extract a single JPEG frame from a video (bytes or a picked file) for
+ * thumbnails.
  */
 export const extractVideoFrameJpeg = async (
-    videoBytes: Uint8Array,
+    video: Uint8Array | Blob,
     mimeType: string,
 ): Promise<Uint8Array> => {
+    // A picked File stays on disk; only in-memory bytes need wrapping.
+    const videoBlob =
+        video instanceof Blob ? video : blobFromUint8Array(video, mimeType);
     // Canvas path avoids loading ffmpeg WASM just for a poster frame.
     try {
-        return await extractVideoFrameViaCanvas(videoBytes, mimeType);
+        return await extractVideoFrameViaCanvas(videoBlob);
     } catch {
         return await runFFmpeg(
             [
@@ -283,7 +286,7 @@ export const extractVideoFrameJpeg = async (
                 "-q:v", "4",
                 "OUTPUT",
             ],
-            blobFromUint8Array(videoBytes, mimeType),
+            videoBlob,
             "jpg",
         );
     }

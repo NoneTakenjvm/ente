@@ -29,18 +29,17 @@ afterEach(() => {
 });
 
 describe("prepareLocalVideo", () => {
-    it("reads original bytes and metadata without transcoding", async () => {
+    it("keeps the original file and probes metadata without transcoding", async () => {
         stubVideoProbe(1280, 720, 14.6);
 
-        const sourceBytes = new Uint8Array([9, 8, 7]);
-        const file = new File([sourceBytes], "clip.mov", {
+        const file = new File([new Uint8Array([9, 8, 7])], "clip.mov", {
             type: "video/quicktime",
         });
 
         const prepared = await prepareLocalVideo(file);
 
         expect(prepared).toEqual({
-            bytes: sourceBytes,
+            file,
             mimeType: "video/quicktime",
             width: 1280,
             height: 720,

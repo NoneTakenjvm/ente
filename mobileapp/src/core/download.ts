@@ -1,3 +1,4 @@
+import { ensureArrayBufferBacked } from "ente-base/bytes";
 import {
     decryptBlobBytes,
     decryptStreamBytes,
@@ -245,7 +246,7 @@ export const decryptFileCiphertext = async (
 ): Promise<Uint8Array> =>
     decryptStreamBytes(
         {
-            encryptedData: Uint8Array.from(ciphertext.encryptedData),
+            encryptedData: ensureArrayBufferBacked(ciphertext.encryptedData),
             decryptionHeader: ciphertext.decryptionHeader,
         },
         fileKey,
