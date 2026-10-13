@@ -1,6 +1,5 @@
 import type { EnteFile } from "ente-media/file";
 import {
-    CompressionSkippedError,
     DEFAULT_JPEG_QUALITY,
     DEFAULT_VIDEO_CRF,
     encodeCompressedStillFromBytes,
@@ -14,8 +13,8 @@ import {
 
 export type CompressEncoder = "webcodecs" | "ffmpeg" | "photohoard";
 
-export type CompressAudioOutcome = "aac" | "ffmpeg-remux" | "none";
-// ffmpeg-remux = original audio copied (preferred) or AAC-reencoded onto HW video
+/** `kept` = source audio copied or re-encoded into the output. */
+export type CompressAudioOutcome = "kept" | "none";
 
 export interface CompressMediaResult {
     bytes: Uint8Array;
@@ -100,67 +99,11 @@ const compressVideoWithFfmpeg = async (
 };
 
 /**
- * Remux WebCodecs video with audio from the original file.
- *
- * Prefer {@code -c:a copy} (original audio, no re-encode). Fall back to AAC
- * only when the container/codec cannot be copied into MP4.
- */
-const remuxWebCodecsAudio = async (
-    videoOnlyBytes: Uint8Array,
-    originalBytes: Uint8Array,
-    originalMime: string,
-    onProgress?: FFmpegProgressCallback,
-): Promise<Uint8Array> => {
-    try {
-        return await runFFmpeg(
-            [
-                "-i", "INPUT0",
-                "-i", "INPUT1",
-                "-map", "0:v:0",
-                "-map", "1:a:0?",
-                "-c:v", "copy",
-                "-c:a", "copy",
-                "-shortest",
-                "-movflags", "+faststart",
-                "OUTPUT",
-            ],
-            [
-                blobFromBytes(videoOnlyBytes, "video/mp4"),
-                blobFromBytes(originalBytes, originalMime),
-            ],
-            "mp4",
-            onProgress,
-        );
-    } catch {
-        return runFFmpeg(
-            [
-                "-i", "INPUT0",
-                "-i", "INPUT1",
-                "-map", "0:v:0",
-                "-map", "1:a:0?",
-                "-c:v", "copy",
-                "-c:a", "aac",
-                "-shortest",
-                "-movflags", "+faststart",
-                "OUTPUT",
-            ],
-            [
-                blobFromBytes(videoOnlyBytes, "video/mp4"),
-                blobFromBytes(originalBytes, originalMime),
-            ],
-            "mp4",
-            onProgress,
-        );
-    }
-};
-
-/**
  * Compress library media bytes for a derived upload copy.
  *
- * Videos try hardware {@link VideoEncoder} H.264 first. When the source has
- * audio that WebCodecs cannot encode, ffmpeg remuxes audio onto the hardware
- * video. If remux also fails, the file is skipped (never replaced with a silent
- * MP4). Full ffmpeg libx264 is only used when VideoEncoder cannot encode video.
+ * Videos try hardware {@link VideoEncoder} H.264 first (audio copied or
+ * re-encoded alongside). When WebCodecs cannot convert every audio/video track,
+ * ffmpeg libx264 re-encodes the whole file instead — never a silent MP4.
  */
 export const compressMediaBytes = async (
     file: EnteFile,
@@ -178,49 +121,21 @@ export const compressMediaBytes = async (
         try {
             const encoded = await encodeH264WebCodecs({
                 bytes,
-                mimeType,
                 videoCrf,
                 maxLongEdge,
                 onProgress,
             });
-            let outputBytes = encoded.bytes;
-            let audio: CompressAudioOutcome =
-                encoded.audio === "aac" ?
-                    "aac" :
-                    encoded.audio === "none" ?
-                        "none" :
-                        "aac";
-
-            if (encoded.audio === "needs-remux") {
-                try {
-                    outputBytes = await remuxWebCodecsAudio(
-                        encoded.bytes,
-                        bytes,
-                        mimeType,
-                        onProgress,
-                    );
-                    audio = "ffmpeg-remux";
-                } catch {
-                    throw new CompressionSkippedError(
-                        "Could not keep audio — skipped",
-                    );
-                }
-            }
-
             return {
-                bytes: outputBytes,
+                bytes: encoded.bytes,
                 width: encoded.width,
                 height: encoded.height,
                 duration: encoded.duration,
                 mimeType: "video/mp4",
                 extension: "mp4",
                 encoder: "webcodecs",
-                audio,
+                audio: encoded.hasAudio ? "kept" : "none",
             };
-        } catch (error: unknown) {
-            if (error instanceof CompressionSkippedError) {
-                throw error;
-            }
+        } catch {
             const output = await compressVideoWithFfmpeg(
                 bytes,
                 mimeType,
@@ -237,7 +152,7 @@ export const compressMediaBytes = async (
                 mimeType: "video/mp4",
                 extension: "mp4",
                 encoder: "ffmpeg",
-                audio: "aac",
+                audio: "kept",
             };
         }
     }

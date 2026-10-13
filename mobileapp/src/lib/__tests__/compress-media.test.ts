@@ -69,36 +69,14 @@ describe("compressMediaBytes video", () => {
         expect(result.encoder).toBe("ffmpeg");
     });
 
-    it("skips when WebCodecs needs audio remux and remux fails", async () => {
+    it("uses the WebCodecs output with audio and skips ffmpeg", async () => {
         vi.mocked(encodeH264WebCodecs).mockResolvedValueOnce({
             bytes: new Uint8Array([1, 2, 3]),
             width: 640,
             height: 360,
             duration: 2,
-            audio: "needs-remux",
+            hasAudio: true,
         });
-        vi.mocked(runFFmpeg).mockRejectedValue(new Error("no audio stream"));
-
-        await expect(
-            compressMediaBytes(videoFile(), new Uint8Array([9, 8, 7]), {
-                videoCrf: 28,
-            }),
-        ).rejects.toMatchObject({
-            name: "CompressionSkippedError",
-            message: expect.stringContaining("audio"),
-        });
-        expect(runFFmpeg).toHaveBeenCalled();
-    });
-
-    it("keeps webcodecs encoder after successful audio remux", async () => {
-        vi.mocked(encodeH264WebCodecs).mockResolvedValueOnce({
-            bytes: new Uint8Array([1, 2, 3]),
-            width: 640,
-            height: 360,
-            duration: 2,
-            audio: "needs-remux",
-        });
-        vi.mocked(runFFmpeg).mockResolvedValueOnce(new Uint8Array([4, 5, 6]));
 
         const result = await compressMediaBytes(
             videoFile(),
@@ -106,8 +84,9 @@ describe("compressMediaBytes video", () => {
             { videoCrf: 28 },
         );
 
+        expect(runFFmpeg).not.toHaveBeenCalled();
         expect(result.encoder).toBe("webcodecs");
-        expect(result.audio).toBe("ffmpeg-remux");
-        expect(result.bytes).toEqual(new Uint8Array([4, 5, 6]));
+        expect(result.audio).toBe("kept");
+        expect(result.bytes).toEqual(new Uint8Array([1, 2, 3]));
     });
 });

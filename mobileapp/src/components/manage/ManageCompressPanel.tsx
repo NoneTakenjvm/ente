@@ -338,8 +338,17 @@ export function ManageCompressPanel({
                     encoder: update.encoder,
                 });
             },
-            compressFile: (fileId, options) =>
-                compressAndUploadMedia(fileId, options),
+            downloadFile: async (file, onProgress) => {
+                const { loadMediaBytesForEdit } = await import(
+                    "@/lib/load-media-bytes"
+                );
+                return loadMediaBytesForEdit(file, (progress) => {
+                    const total = progress.total > 0 ? progress.total : progress.loaded;
+                    onProgress(total > 0 ? progress.loaded / total : undefined);
+                });
+            },
+            compressFile: (fileId, bytes, options) =>
+                compressAndUploadMedia(fileId, bytes, options),
         })
             .then((result) => {
                 if (jobStopped.current) {

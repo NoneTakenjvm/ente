@@ -1,0 +1,11 @@
+{
+    "version": "0.0.1",
+    "configurations": [
+        {
+            "name": "mobileapp-pwa",
+            "runtimeExecutable": "npm",
+            "runtimeArgs": ["--prefix", "mobileapp", "run", "preview"],
+            "port": 3080
+        }
+    ]
+}

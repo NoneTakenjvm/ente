@@ -196,19 +196,19 @@ interface LibraryState {
     ) => Promise<EnteFile>;
     compressAndUploadMedia: (
         fileId: number,
+        bytes: Uint8Array,
         options?: {
             quality?: number;
             videoCrf?: number;
             minSizeBytes?: number;
             maxLongEdge?: number;
             onStage?: (
-                stage: "download" | "compress" | "upload",
+                stage: "compress" | "upload",
                 ratio?: number,
                 encoder?: CompressMediaResult["encoder"],
             ) => void;
         },
-        precomputed?: CompressMediaResult,
-    ) => Promise<EnteFile>;
+    ) => Promise<{ finalize: Promise<EnteFile> }>;
     compressAndReplaceMediaOptimistic: (
         fileId: number,
         result: CompressMediaResult,
@@ -1318,74 +1318,52 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
 
     compressAndUploadMedia: async (
         fileId: number,
+        bytes: Uint8Array,
         options?: {
             quality?: number;
             videoCrf?: number;
             minSizeBytes?: number;
             maxLongEdge?: number;
             onStage?: (
-                stage: "download" | "compress" | "upload",
+                stage: "compress" | "upload",
                 ratio?: number,
                 encoder?: CompressMediaResult["encoder"],
             ) => void;
         },
-        precomputed?: CompressMediaResult,
-    ): Promise<EnteFile> => {
+    ): Promise<{ finalize: Promise<EnteFile> }> => {
         const { allFiles } = get();
         const file = allFiles.find((entry) => entry.id === fileId);
         if (!file) {
             throw new Error(`File ${fileId} not found`);
         }
 
-        let result = precomputed;
-        let originalByteLength: number;
-        if (result) {
-            originalByteLength =
-                file.info?.fileSize && file.info.fileSize > 0 ?
-                    file.info.fileSize :
-                    result.bytes.length;
-        } else {
-            const { loadMediaBytesForEdit } = await import(
-                "@/lib/load-media-bytes"
-            );
-            const { compressMediaBytes } = await import(
-                "@/lib/transcode/compress-media"
-            );
-            options?.onStage?.("download", 0);
-            const bytes = await loadMediaBytesForEdit(file, (progress) => {
-                const total = progress.total > 0 ? progress.total : progress.loaded;
-                options?.onStage?.(
-                    "download",
-                    total > 0 ? progress.loaded / total : undefined,
-                );
-            });
-            originalByteLength = bytes.length;
-            options?.onStage?.("download", 1);
-            options?.onStage?.("compress", 0);
-            result = await compressMediaBytes(file, bytes, {
-                quality: options?.quality,
-                videoCrf: options?.videoCrf,
-                minSizeBytes: options?.minSizeBytes,
-                maxLongEdge: options?.maxLongEdge,
-                onProgress: (ratio) => {
-                    options?.onStage?.("compress", ratio);
-                },
-            });
-            options?.onStage?.("compress", 1, result.encoder);
-        }
-        if (!isWorthReplacing(originalByteLength, result.bytes.length)) {
+        const { compressMediaBytes } = await import(
+            "@/lib/transcode/compress-media"
+        );
+        options?.onStage?.("compress", 0);
+        const result = await compressMediaBytes(file, bytes, {
+            quality: options?.quality,
+            videoCrf: options?.videoCrf,
+            minSizeBytes: options?.minSizeBytes,
+            maxLongEdge: options?.maxLongEdge,
+            onProgress: (ratio) => {
+                options?.onStage?.("compress", ratio);
+            },
+        });
+        options?.onStage?.("compress", 1, result.encoder);
+        if (!isWorthReplacing(bytes.length, result.bytes.length)) {
             throw new CompressionSkippedError();
         }
         options?.onStage?.("upload", 0, result.encoder);
         const { finalize } = get().compressAndReplaceMediaOptimistic(
             fileId,
             result,
-            originalByteLength,
+            bytes.length,
             (ratio) => {
-                options?.onStage?.("upload", ratio, result?.encoder);
+                options?.onStage?.("upload", ratio, result.encoder);
             },
         );
-        return finalize;
+        return { finalize };
     },
 
     compressAndReplaceMediaOptimistic: (
