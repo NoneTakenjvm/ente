@@ -18,24 +18,16 @@ import {
     loadDerivedReplaceOutboxBytes,
     type DerivedReplaceOutboxEntry,
 } from "@/lib/derived-replace-outbox";
-import {
-    hydrateFavoriteOutbox,
-    type FavoriteOutboxEntry,
-} from "@/lib/favorite-outbox";
+import type { FavoriteOutboxEntry } from "@/lib/favorite-outbox";
 import {
     addFavoriteMembershipIds,
-    hydrateFavoriteMembership,
     removeFavoriteMembershipIds,
 } from "@/lib/favorite-membership";
-import { hydrateTagOutbox } from "@/lib/tag-outbox";
 import {
     startTagOutboxRunner,
     type FavoriteMutationsResult,
 } from "@/lib/tag-outbox-runner";
-import {
-    hydrateVisibilityOutbox,
-    type VisibilityOutboxEntry,
-} from "@/lib/visibility-outbox";
+import type { VisibilityOutboxEntry } from "@/lib/visibility-outbox";
 import { probeVideoDurationSec } from "@/lib/video-edit";
 
 const favoriteEntryKey: (entry: FavoriteOutboxEntry) => string = (
@@ -115,17 +107,12 @@ export const useLibraryBootstrap: (
         let cancelled: boolean = false;
 
         const bootstrap: () => Promise<void> = async (): Promise<void> => {
+            // bootstrapFromCache hydrates the tag/favourite/visibility outboxes.
             await bootstrapFromCache();
-            await Promise.all([
-                hydrateTagOutbox(),
-                hydrateFavoriteOutbox(),
-                hydrateFavoriteMembership(),
-                hydrateVisibilityOutbox(),
-                hydrateDerivedReplaceOutbox(),
-            ]);
+            await hydrateDerivedReplaceOutbox();
             startTagOutboxRunner({
-                getFiles: (): EnteFile[] =>
-                    useLibraryStore.getState().allFiles,
+                getFileById: (fileId: number): EnteFile | undefined =>
+                    useLibraryStore.getState().getFileById(fileId),
                 getCollections: (): Collection[] =>
                     useLibraryStore.getState().collections,
                 patchFile: (file: EnteFile): Promise<void> =>

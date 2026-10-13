@@ -1037,7 +1037,8 @@ export const patchFilteredFilesForTagTouch = (
     fileIdsByTag: Map<string, Set<number>>,
     options?: TagFilterOptions,
 ): EnteFile[] | null => {
-    const file = libraryFiles.find((entry) => entry.id === fileId);
+    const libraryIndex = libraryFiles.findIndex((entry) => entry.id === fileId);
+    const file = libraryFiles[libraryIndex];
     if (!file) {
         return previousFiltered.filter((entry) => entry.id !== fileId);
     }
@@ -1052,19 +1053,12 @@ export const patchFilteredFilesForTagTouch = (
             return next;
         }
         // Insert at library order position among currently visible files.
-        const libraryOrder = new Map(
-            libraryFiles.map((entry, index) => [entry.id, index]),
-        );
-        const libraryIndex = libraryOrder.get(fileId);
-        if (libraryIndex === undefined) {
-            return null;
-        }
-        let insertAt = previousFiltered.length;
-        for (let i = 0; i < previousFiltered.length; i += 1) {
-            const peerIndex = libraryOrder.get(previousFiltered[i]!.id);
-            if (peerIndex !== undefined && peerIndex > libraryIndex) {
-                insertAt = i;
-                break;
+        // previousFiltered is a subsequence of libraryFiles (same order), so
+        // count the visible files that precede it in one walk, no id map.
+        let insertAt = 0;
+        for (let i = 0; i < libraryIndex; i += 1) {
+            if (libraryFiles[i]!.id === previousFiltered[insertAt]?.id) {
+                insertAt += 1;
             }
         }
         const next = previousFiltered.slice();

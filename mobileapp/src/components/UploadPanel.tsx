@@ -563,6 +563,7 @@ export function UploadPanel({
                 previewUrl: entry.previewUrl,
                 label: entry.file.name,
                 kind: entry.kind,
+                file: entry.kind === "image" ? entry.file : undefined,
             })),
         [stagedFiles],
     );

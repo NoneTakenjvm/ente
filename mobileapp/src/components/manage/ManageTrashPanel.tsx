@@ -221,9 +221,10 @@ export function ManageTrashPanel(): JSX.Element {
         );
     }
 
-    const soonestDays = Math.min(
-        ...items.map((item) => daysUntilDelete(item.deleteBy)),
-    );
+    let soonestDays = Number.POSITIVE_INFINITY;
+    for (const item of items) {
+        soonestDays = Math.min(soonestDays, daysUntilDelete(item.deleteBy));
+    }
 
     return (
         <div className="flex min-h-0 flex-1 flex-col gap-3">

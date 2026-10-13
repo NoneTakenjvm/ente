@@ -116,15 +116,17 @@ const fetchEncryptedBytes = async (
     maxAttempts = 1,
     onProgress?: BytesProgressCallback,
     knownTotal?: number,
+    signal?: AbortSignal,
 ): Promise<Uint8Array> => {
     let attempt = 0;
     while (attempt < maxAttempts) {
         attempt += 1;
-        const res = await fetch(url, { headers: http.authHeaders() });
+        const res = await fetch(url, { headers: http.authHeaders(), signal });
         if (res.status === 429 && attempt < maxAttempts) {
             http.logRateLimitHeaders(res, url);
             await new Promise((resolve) =>
                 setTimeout(resolve, retryAfterMs(res) * attempt));
+            signal?.throwIfAborted();
             continue;
         }
         http.ensureOk(res);
@@ -205,6 +207,7 @@ export const fetchEncryptedFile = async (
     session: CoreSession,
     file: EnteFile,
     onProgress?: BytesProgressCallback,
+    signal?: AbortSignal,
 ): Promise<ServerCiphertext> => {
     if (!file.file?.decryptionHeader) {
         throw new Error(`File ${file.id} has no file metadata`);
@@ -221,6 +224,7 @@ export const fetchEncryptedFile = async (
                 1,
                 onProgress,
                 knownTotal,
+                signal,
             ) :
             await fetchEncryptedBytes(
                 http,
@@ -229,6 +233,7 @@ export const fetchEncryptedFile = async (
                 1,
                 onProgress,
                 knownTotal,
+                signal,
             );
 
     return {
@@ -258,18 +263,23 @@ export const decryptFileCiphertext = async (
  * When {@link onProgress} is provided, it reports encrypted-byte download
  * progress (not decrypt/convert). Prefer Content-Length; fall back to
  * {@link EnteFile.info.fileSize} when the header is missing.
+ *
+ * Aborting {@link signal} cancels the download and rejects with an
+ * `AbortError`.
  */
 export const getDecryptedFile = async (
     http: HttpClient,
     session: CoreSession,
     file: EnteFile,
     onProgress?: BytesProgressCallback,
+    signal?: AbortSignal,
 ): Promise<Uint8Array> => {
     const ciphertext = await fetchEncryptedFile(
         http,
         session,
         file,
         onProgress,
+        signal,
     );
     return decryptFileCiphertext(ciphertext, file.key);
 };

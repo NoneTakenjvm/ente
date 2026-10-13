@@ -58,6 +58,7 @@ import {
 } from "@/lib/edit-history";
 import {
     ensureFavoriteOutboxHydrated,
+    getFavoriteOutboxEntries,
     hydrateFavoriteOutbox,
     reconcileFavoriteOutboxWithLibrary,
     removeFavoriteOutboxForFileIds,
@@ -76,6 +77,7 @@ import {
     remapVisibilityOutboxFileId,
     applyOutboxVisibilityToFiles,
     ensureVisibilityOutboxHydrated,
+    getVisibilityOutboxEntries,
     reconcileVisibilityOutboxWithFiles,
     isFileArchivedLocally,
 } from "@/lib/visibility-outbox";
@@ -403,15 +405,16 @@ const applyOptimisticBatchTags = (
     if (fileIds.size === 0) {
         return;
     }
-    const { allFiles } = get();
+    const { allFiles, fileIndexById } = get();
     const tagUpdates: Array<{
         fileId: number;
         tags: string[];
         previousTags: string[];
     }> = [];
     const patches = new Map<number, EnteFile>();
-    for (const file of allFiles) {
-        if (!fileIds.has(file.id)) {
+    for (const fileId of fileIds) {
+        const file = get().getFileById(fileId);
+        if (!file) {
             continue;
         }
         const tags = tagsFor(file);
@@ -425,11 +428,11 @@ const applyOptimisticBatchTags = (
     if (!tagUpdates.length) {
         return;
     }
-    const optimisticFiles = patchFilesInLibrary(allFiles, patches);
+    const optimisticFiles = patchFilesInLibrary(allFiles, patches, fileIndexById);
     if (!optimisticFiles) {
         return;
     }
-    commitAllFiles(set, get, optimisticFiles);
+    commitAllFiles(set, get, optimisticFiles, { rebuildIndex: false });
     useTagStore.getState().applyFilesTags(tagUpdates);
     scheduleSaveEncryptedFiles(() => get().allFiles, fileIds);
 };
@@ -492,7 +495,10 @@ const appendUploadedFile = (
         pendingUploadedFiles = [];
         const nextFiles = [...get().allFiles, ...uploadedFiles];
         commitAllFiles(set, get, nextFiles);
-        useTagStore.getState().rebuildFromFiles(nextFiles);
+        useTagStore.getState().applyLibraryFilesChange({
+            removedFileIds: [],
+            addedFiles: uploadedFiles,
+        });
         uploadedFiles.forEach(requestThumbnail);
         scheduleSaveEncryptedFiles(
             () => get().allFiles,
@@ -539,7 +545,10 @@ const replaceSourceWithCompressed = async (
             [...withoutSource, uploaded];
     commitAllFiles(set, get, nextFiles);
     await saveEncryptedFiles(nextFiles, getSessionCacheKey());
-    useTagStore.getState().rebuildFromFiles(nextFiles);
+    useTagStore.getState().applyLibraryFilesChange({
+        removedFileIds: [sourceId],
+        addedFiles: [uploaded],
+    });
     useFavoritesStore.getState().removeTrashedFileIds([sourceId]);
     await invalidateThumbnailCache(sourceId);
     const {
@@ -684,27 +693,28 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
 
         set({ syncStatus: "loadingFromCache", syncError: undefined });
 
+        // Independent IDB reads + decrypts; outboxes and trash are hydrated
+        // even for an empty cache so the bootstrap hook need not re-read them.
         const [collections, files, tagIndex] = await Promise.all([
             loadEncryptedCollections(cacheKey),
             loadEncryptedFiles(cacheKey),
             loadEncryptedTagIndex(cacheKey),
+            import("@/stores/view-sessions-store").then(
+                ({ useViewSessionsStore }) =>
+                    useViewSessionsStore.getState().hydrateFromCache(),
+            ),
+            hydrateTagOutbox(),
+            hydrateFavoriteOutbox(),
+            hydrateFavoriteMembership(),
+            ensureVisibilityOutboxHydrated(),
+            useTrashStore.getState().hydrateFromCache(),
         ]);
-
-        await import("@/stores/view-sessions-store").then(
-            ({ useViewSessionsStore }) =>
-                useViewSessionsStore.getState().hydrateFromCache(),
-        );
 
         if (!files?.length && !collections?.length) {
             set({ syncStatus: "idle" });
             return false;
         }
 
-        await hydrateTagOutbox();
-        await hydrateFavoriteOutbox();
-        await hydrateFavoriteMembership();
-        await ensureVisibilityOutboxHydrated();
-        await useTrashStore.getState().hydrateFromCache();
         const filesWithOutbox = excludeLocallyTrashedFiles(
             applyOutboxVisibilityToFiles(applyOutboxTagsToFiles(files ?? [])),
         );
@@ -835,49 +845,72 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                     },
                 });
 
-                allFiles = filesPull.files;
                 await ensureTagOutboxHydrated();
                 await ensureFavoriteOutboxHydrated();
                 await ensureFavoriteMembershipHydrated();
                 await ensureVisibilityOutboxHydrated();
-                await reconcileTagOutboxWithFiles(allFiles);
-                await reconcileFavoriteOutboxWithLibrary(
-                    getEnteCore().getUserID(),
-                    collections,
-                    allFiles,
-                );
-                await reconcileVisibilityOutboxWithFiles(allFiles);
-                // Read live state after the awaits above so uploads and acked
-                // tag writes that landed during the pull are kept.
-                const liveFiles = get().allFiles;
-                allFiles = applyOutboxTagsToFiles(allFiles);
-                allFiles = mergeAheadOrganizerTags(allFiles, liveFiles);
-                allFiles = withFilesAddedDuringPull(
-                    allFiles,
-                    filesBeforePull,
-                    liveFiles,
-                );
-                allFiles = applyOutboxVisibilityToFiles(allFiles);
-                allFiles = excludeLocallyTrashedFiles(allFiles);
-                useTagStore.getState().rebuildFromFiles(allFiles);
-                rebuildFavoritesFromLibrary(
-                    getEnteCore().getUserID(),
-                    collections,
-                    allFiles,
-                );
-                // Re-read trash immediately before commit so a delete that
-                // finished during rebuild cannot be resurrected by this pull.
-                allFiles = excludeLocallyTrashedFiles(allFiles);
 
-                set({
-                    collections,
-                    allFiles,
-                    fileIndexById: buildFileIndexById(allFiles),
-                    filesRevision: get().filesRevision + 1,
-                    syncStatus: "success",
-                    syncProgress: { current: 0, total: 0 },
-                });
-                await saveEncryptedFiles(allFiles, getSessionCacheKey());
+                // [Note: No-op sync skips the library recompute]
+                //
+                // With no pulled collection/file/favourite changes and empty
+                // outboxes, everything below (outbox overlays, tag and
+                // favourite rebuilds, the commit and the full save) is a pure
+                // function of the live state, which already reflects it.
+                const libraryUnchanged =
+                    !collectionsPull.didUpdate &&
+                    !organizerBootstrap.created &&
+                    !filesPull.didUpdate &&
+                    !filesPull.favoritesMembershipTouched &&
+                    getTagOutboxEntries().length === 0 &&
+                    getFavoriteOutboxEntries().length === 0 &&
+                    getVisibilityOutboxEntries().length === 0;
+                if (libraryUnchanged) {
+                    allFiles = get().allFiles;
+                    set({
+                        syncStatus: "success",
+                        syncProgress: { current: 0, total: 0 },
+                    });
+                } else {
+                    allFiles = filesPull.files;
+                    await reconcileTagOutboxWithFiles(allFiles);
+                    await reconcileFavoriteOutboxWithLibrary(
+                        getEnteCore().getUserID(),
+                        collections,
+                        allFiles,
+                    );
+                    await reconcileVisibilityOutboxWithFiles(allFiles);
+                    // Read live state after the awaits above so uploads and acked
+                    // tag writes that landed during the pull are kept.
+                    const liveFiles = get().allFiles;
+                    allFiles = applyOutboxTagsToFiles(allFiles);
+                    allFiles = mergeAheadOrganizerTags(allFiles, liveFiles);
+                    allFiles = withFilesAddedDuringPull(
+                        allFiles,
+                        filesBeforePull,
+                        liveFiles,
+                    );
+                    allFiles = applyOutboxVisibilityToFiles(allFiles);
+                    allFiles = excludeLocallyTrashedFiles(allFiles);
+                    useTagStore.getState().rebuildFromFiles(allFiles);
+                    rebuildFavoritesFromLibrary(
+                        getEnteCore().getUserID(),
+                        collections,
+                        allFiles,
+                    );
+                    // Re-read trash immediately before commit so a delete that
+                    // finished during rebuild cannot be resurrected by this pull.
+                    allFiles = excludeLocallyTrashedFiles(allFiles);
+
+                    set({
+                        collections,
+                        allFiles,
+                        fileIndexById: buildFileIndexById(allFiles),
+                        filesRevision: get().filesRevision + 1,
+                        syncStatus: "success",
+                        syncProgress: { current: 0, total: 0 },
+                    });
+                    await saveEncryptedFiles(allFiles, getSessionCacheKey());
+                }
 
                 void import("@/stores/trash-store").then(({ useTrashStore }) => {
                     void useTrashStore.getState().syncTrash(collections);
@@ -894,11 +927,17 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                             const { useEmbeddingIndexStore } = await import(
                                 "@/stores/embedding-index-store"
                             );
-                            // Hydrate first: setEntries marks the store hydrated,
-                            // so merging into an unhydrated store would pin it
-                            // to just the pulled vectors for the session.
+                            // [Note: Post-sync CLIP merge needs a hydrated index]
+                            //
+                            // The pull already appended its vectors to the IDB
+                            // chunks, so an unhydrated store picks them up when a
+                            // consumer calls hydrate(). Merging into it here would
+                            // pin it to only the pulled vectors (setEntries marks
+                            // it hydrated), and hydrating here would decrypt the
+                            // whole index after every sync. The upload backfill
+                            // reads the in-memory vectors, so it waits too.
                             if (!useEmbeddingIndexStore.getState().isHydrated) {
-                                await useEmbeddingIndexStore.getState().hydrate();
+                                return;
                             }
                             if (applied.size > 0) {
                                 const next = new Map(
@@ -976,10 +1015,11 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             );
         }
 
-        const { allFiles } = get();
-        const { nextFiles, notifyNeeded, persistNeeded } = planLibraryFilePatches(
+        const { allFiles, fileIndexById } = get();
+        const { slotPatches, notifyNeeded, persistNeeded } = planLibraryFilePatches(
             allFiles,
             resolvedById,
+            fileIndexById,
         );
 
         if (!persistNeeded) {
@@ -987,12 +1027,16 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         }
 
         if (notifyNeeded) {
-            commitAllFiles(set, get, nextFiles);
+            const nextFiles = allFiles.slice();
+            for (const [index, file] of slotPatches) {
+                nextFiles[index] = file;
+            }
+            commitAllFiles(set, get, nextFiles, { rebuildIndex: false });
         } else {
             // [Note: quiet version patch] Mutate slots in place so React does
             // not re-render the gallery for metadata-version-only updates.
-            for (let index = 0; index < allFiles.length; index += 1) {
-                allFiles[index] = nextFiles[index]!;
+            for (const [index, file] of slotPatches) {
+                allFiles[index] = file;
             }
         }
         scheduleSaveEncryptedFiles(
@@ -1196,7 +1240,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         if (!allFiles) {
             return;
         }
-        commitAllFiles(set, get, allFiles);
+        commitAllFiles(set, get, allFiles, { rebuildIndex: false });
         scheduleSaveEncryptedFiles(() => get().allFiles, [file.id]);
 
         void upsertVisibilityOutboxEntry(file.id, visibility)
@@ -1271,7 +1315,10 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             );
             commitAllFiles(set, get, nextFiles);
             await saveEncryptedFiles(nextFiles, getSessionCacheKey());
-            useTagStore.getState().rebuildFromFiles(nextFiles);
+            useTagStore.getState().applyLibraryFilesChange({
+                removedFileIds: trashedIdSet,
+                addedFiles: [],
+            });
             useFavoritesStore.getState().removeTrashedFileIds(trashedIds);
             await get().syncRemote();
         }
@@ -1531,7 +1578,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             fileIndexById,
         );
         if (nextFiles) {
-            commitAllFiles(set, get, nextFiles);
+            commitAllFiles(set, get, nextFiles, { rebuildIndex: false });
             scheduleSaveEncryptedFiles(() => get().allFiles, [updated.id]);
         }
         useTagStore.getState().applyFileTags(
@@ -1896,7 +1943,10 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         );
         commitAllFiles(set, get, nextFiles);
         await saveEncryptedFiles(nextFiles, getSessionCacheKey());
-        useTagStore.getState().rebuildFromFiles(nextFiles);
+        useTagStore.getState().applyLibraryFilesChange({
+            removedFileIds: trashedIds,
+            addedFiles: [],
+        });
         useFavoritesStore.getState().removeTrashedFileIds([...trashedIds]);
         await removeFavoriteOutboxForFileIds([...trashedIds]);
         await removeFavoriteMembershipForFileIds([...trashedIds]);
@@ -1919,7 +1969,10 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         const nextFiles = [...byId.values()];
         commitAllFiles(set, get, nextFiles);
         await saveEncryptedFiles(nextFiles, getSessionCacheKey());
-        useTagStore.getState().rebuildFromFiles(nextFiles);
+        useTagStore.getState().applyLibraryFilesChange({
+            removedFileIds: [],
+            addedFiles: files,
+        });
         rebuildFavoritesFromLibrary(
             getEnteCore().getUserID(),
             get().collections,
@@ -2019,21 +2072,34 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         fileIds: number[],
         archived: boolean,
     ): Promise<void> => {
-        const idSet = new Set(fileIds);
-        if (!idSet.size) {
+        const visibility = archived ?
+            ItemVisibility.archived :
+            ItemVisibility.visible;
+        const { allFiles: library, fileIndexById, getFileById } = get();
+        const patches = new Map<number, EnteFile>();
+        for (const fileId of new Set(fileIds)) {
+            const file = getFileById(fileId);
+            if (file && isFileArchivedLocally(file) !== archived) {
+                patches.set(fileId, applyOptimisticVisibility(file, visibility));
+            }
+        }
+        if (!patches.size) {
             return;
         }
-        const files = get().allFiles.filter(
-            (file) =>
-                idSet.has(file.id) &&
-                isFileArchivedLocally(file) !== archived,
-        );
-        if (!files.length) {
+        const allFiles = patchFilesInLibrary(library, patches, fileIndexById);
+        if (!allFiles) {
             return;
         }
-        await Promise.all(
-            files.map((file) => get().setFileArchived(file, archived)),
-        );
+        commitAllFiles(set, get, allFiles, { rebuildIndex: false });
+        scheduleSaveEncryptedFiles(() => get().allFiles, [...patches.keys()]);
+
+        const outboxWrites = [...patches.keys()].map((fileId) =>
+            upsertVisibilityOutboxEntry(fileId, visibility));
+        void Promise.all(outboxWrites)
+            .then(() => drainTagOutbox())
+            .catch(() => {
+                // Outbox persist failed; optimistic local state remains.
+            });
     },
 
     reset: (): void => {

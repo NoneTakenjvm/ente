@@ -20,7 +20,6 @@ interface ThumbnailEntry {
     status: ThumbnailStatus;
     url?: string;
     byteSize?: number;
-    lastAccess?: number;
 }
 
 interface PendingReady {
@@ -30,10 +29,10 @@ interface PendingReady {
 
 /**
  * Soft cap on decrypted thumbnail blob URLs retained in RAM this session.
- * Raised from 64MB so long gallery scrolls keep recently-seen thumbs warm
- * without going fully unbounded.
+ * Keeps recently-seen thumbs warm during long scrolls while staying small
+ * enough for iOS, which counts blob URLs against the tab's process memory.
  */
-const SESSION_BUDGET_BYTES = 160 * 1024 * 1024;
+const SESSION_BUDGET_BYTES = 96 * 1024 * 1024;
 
 /** Only thrash the session cache when the heap is near the limit. */
 const THUMB_HEAP_PRESSURE_RATIO = 0.85;
@@ -73,7 +72,9 @@ const appliesPerFrameNow = (): number =>
 const runNext = (): void => {
     const limit = maxConcurrentNow();
     while (inFlight < limit && highQueue.length > 0) {
-        const task = highQueue.shift();
+        // Newest first: after a fling the oldest entries are for cells that
+        // have already scrolled past.
+        const task = highQueue.pop();
         if (task) {
             inFlight++;
             task();
@@ -113,10 +114,12 @@ const notify = (fileId: number): void => {
 const hasSubscribers = (fileId: number): boolean =>
     (listeners.get(fileId)?.size ?? 0) > 0;
 
+/** Move a ready entry to the end of the map (most recently used). */
 const touchLastAccess = (fileId: number): void => {
     const entry = cache.get(fileId);
     if (entry?.status === "ready") {
-        entry.lastAccess = Date.now();
+        cache.delete(fileId);
+        cache.set(fileId, entry);
     }
 };
 
@@ -138,6 +141,11 @@ const discardCacheEntry = (fileId: number, entry: ThumbnailEntry): void => {
     cache.delete(fileId);
 };
 
+const isEvictable = (fileId: number, entry: ThumbnailEntry): boolean =>
+    entry.status === "ready" &&
+    entry.url !== undefined &&
+    !hasSubscribers(fileId);
+
 /**
  * Drop oldest ready thumbs that nothing is currently subscribed to.
  * Visible (subscribed) cells are never evicted — virtualization bounds that set.
@@ -152,27 +160,20 @@ const evictSessionUntilFit = (incomingBytes: number): void => {
         }
         return;
     }
-    // Called for every decoded thumb; skip the full-cache sort while scrolling
-    // under budget.
+    // Called for every decoded thumb; skip the scan while scrolling under
+    // budget.
     if (sessionReadyBytes + incomingBytes <= SESSION_BUDGET_BYTES) {
         return;
     }
 
-    const ranked = [...cache.entries()]
-        .filter(
-            ([fileId, entry]) =>
-                entry.status === "ready" &&
-                entry.url !== undefined &&
-                !hasSubscribers(fileId),
-        )
-        .sort(
-            (a, b) => (a[1].lastAccess ?? 0) - (b[1].lastAccess ?? 0),
-        );
-
+    // The map is in LRU order (oldest first), so no sorting is needed.
     let used = sessionReadyBytes;
-    for (const [fileId, entry] of ranked) {
+    for (const [fileId, entry] of cache) {
         if (used + incomingBytes <= SESSION_BUDGET_BYTES) {
             break;
+        }
+        if (!isEvictable(fileId, entry)) {
+            continue;
         }
         used -= entry.byteSize ?? 0;
         discardCacheEntry(fileId, entry);
@@ -181,20 +182,22 @@ const evictSessionUntilFit = (incomingBytes: number): void => {
 
 /** Evict ~10% of unsubscribed ready thumbs (oldest first). */
 const emergencyEvict = (): void => {
-    const ranked = [...cache.entries()]
-        .filter(
-            ([fileId, entry]) =>
-                entry.status === "ready" &&
-                entry.url !== undefined &&
-                !hasSubscribers(fileId),
-        )
-        .sort(
-            (a, b) => (a[1].lastAccess ?? 0) - (b[1].lastAccess ?? 0),
-        );
-    const dropCount = Math.max(1, Math.ceil(ranked.length * 0.1));
-    for (let i = 0; i < dropCount && i < ranked.length; i++) {
-        const [fileId, entry] = ranked[i]!;
+    let evictableCount = 0;
+    for (const [fileId, entry] of cache) {
+        if (isEvictable(fileId, entry)) {
+            evictableCount++;
+        }
+    }
+    let remainingDrops = Math.max(1, Math.ceil(evictableCount * 0.1));
+    for (const [fileId, entry] of cache) {
+        if (remainingDrops === 0) {
+            break;
+        }
+        if (!isEvictable(fileId, entry)) {
+            continue;
+        }
         discardCacheEntry(fileId, entry);
+        remainingDrops--;
     }
 };
 
@@ -239,12 +242,9 @@ const applyReadyNow = (fileId: number, bytes: Uint8Array): void => {
     const blob = blobFromUint8Array(bytes, "image/jpeg");
     const url = URL.createObjectURL(blob);
     sessionReadyBytes += byteSize;
-    cache.set(fileId, {
-        status: "ready",
-        url,
-        byteSize,
-        lastAccess: Date.now(),
-    });
+    // Delete first so the entry moves to the end of the map (LRU order).
+    cache.delete(fileId);
+    cache.set(fileId, { status: "ready", url, byteSize });
     if (hasSubscribers(fileId)) {
         notify(fileId);
     }
@@ -367,9 +367,11 @@ const loadThumbnail = (file: EnteFile): void => {
                 const core = getEnteCore();
                 const ciphertext =
                     await core.fetchEncryptedThumbnail(file);
-                await putThumbnailCiphertext(file.id, ciphertext);
+                // Persisting is fire-and-forget (the put swallows its own
+                // errors) so it never delays first paint.
                 if (!hasSubscribers(file.id)) {
-                    // Ciphertext is on disk; skip decode until remounted.
+                    // Cache the ciphertext; skip decode until remounted.
+                    void putThumbnailCiphertext(file.id, ciphertext);
                     resetToIdle(file.id);
                     return;
                 }
@@ -378,6 +380,7 @@ const loadThumbnail = (file: EnteFile): void => {
                     file.key,
                 );
                 scheduleSetReady(file.id, bytes);
+                void putThumbnailCiphertext(file.id, ciphertext);
             } catch {
                 cache.set(file.id, { status: "error" });
                 notify(file.id);
@@ -425,8 +428,10 @@ export const loadDecryptedThumbnailBytes = async (
     }
     const core = getEnteCore();
     const ciphertext = await core.fetchEncryptedThumbnail(file);
-    await putThumbnailCiphertext(file.id, ciphertext);
-    return decryptThumbnailCiphertext(ciphertext, file.key);
+    const bytes = await decryptThumbnailCiphertext(ciphertext, file.key);
+    // Persist off the critical path; the put swallows its own errors.
+    void putThumbnailCiphertext(file.id, ciphertext);
+    return bytes;
 };
 
 /**

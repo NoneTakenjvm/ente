@@ -70,7 +70,8 @@ describe("favourite outbox drain batching", () => {
         });
 
         startTagOutboxRunner({
-            getFiles: () => files,
+            getFileById: (fileId: number) =>
+                files.find((file) => file.id === fileId),
             getCollections: () => [],
             patchFile: async () => undefined,
             applyFavoriteMutations,
@@ -111,7 +112,8 @@ describe("favourite outbox drain batching", () => {
         const applyFavoriteMutation = vi.fn(async () => undefined);
 
         startTagOutboxRunner({
-            getFiles: () => [stubFile(1), stubFile(2)],
+            getFileById: (fileId: number) =>
+                [stubFile(1), stubFile(2)].find((file) => file.id === fileId),
             getCollections: () => [],
             patchFile: async () => undefined,
             applyFavoriteMutations,

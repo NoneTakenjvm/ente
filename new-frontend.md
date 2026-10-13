@@ -6,13 +6,23 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-10-12 |
-| **Last agent / session** | Upload speed + memory `0.3.182` — fast incremental MD5, single-pass streaming encrypt, video streamed from disk, coalesced library commits |
+| **Last updated** | 2026-10-13 |
+| **Last agent / session** | Mobile perf/memory pass (`0.3.188`): thumbnail cache, viewer, idle workers, `_app` split, tag index, sync, Manage/upload |
 | **Current milestone** | Post-M8 UX / upload performance |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
-| **Next recommended action** | Phone QA of `0.3.182`: pick 100+ photos and a few long videos — progress should move within seconds and videos should start without a per-second-of-video wait; watch for iOS tab reloads during upload. If Android/desktop uploads ever stall mid-batch, suspect the re-enabled upload crypto workers (iOS stays main-thread). |
+| **Next recommended action** | Phone QA of `0.3.188`: scroll a big library fast (thumbnails should keep up, no reloads), swipe through a run of videos in the viewer, open/close the app with nothing changed remotely (sync should be instant), upload 100+ photos (staging grid shows small previews), trash/restore/upload and check tag counts stay right, archive a large selection. |
 
-**This session (local only — not pushed):**
+**This session (local only — not pushed, `0.3.188`):**
+1. **Thumbnail cache** — session budget 96 MB; Map insertion order is the LRU (no sort on evict); newest requests decode first (LIFO); decrypt and show before the IDB write; LRU touches written in one transaction.
+2. **Viewer** — downloads abort when a slide leaves the window (fetch `signal` through `core`); only ±1 videos preload; video elements release `src` on unmount; progress re-renders only for the active slide; no extra byte copies when building Blobs.
+3. **Workers** — compress/crop share one worker; compress, relative sort and kit nearness workers terminate when idle (`worker-idle-timer.ts`; CLIP stays resident by choice); WebCodecs H.264 loaded on demand.
+4. **Bundle** — SRP login and image/video upload modules are dynamic imports (out of `_app`); one `zod` copy; `.wasm`/`.mjs` dropped from the precache (runtime-cached on first use, so offline needs one online use within 24 h).
+5. **Tag index / library** — upload, replace, prune, trash and restore update the tag index incrementally (copy-on-write buckets, debounced persist) instead of rebuilding; slot-only commits skip the rebuild; `patchFilesInLibrary` uses `fileIndexById`; `batchSetArchived` is one commit; bootstrap hydrates in one `Promise.all`.
+6. **Sync** — a no-op sync (no pulled changes, empty outboxes) skips the library recompute and full save; `pullFiles` groups files by collection once; post-sync CLIP merge no longer force-hydrates the embedding index (merges only when already hydrated — the pull is in IDB either way).
+7. **Pages** — albums compute counts/covers once and only in list mode; Manage dedup shows 50 groups at a time ("Show more"); Similar-only counts skip in Exact mode; tag rows memoized; upload staging grid decodes ≤320 px previews two at a time.
+8. **Deferred** — crypto decrypt on a worker (crypto is main-thread via `crypto-shim`; worker path needs iOS testing); thumbnail IDB schema (raw bytes + separate LRU metadata store); rAF gestures via refs; editor overlays double-decrypt; masonry scroll quantize; `public/icons/icon-512.png` is 1536×1024 (1.35 MB in precache, declared 512×512) — needs a properly sized asset.
+
+**Previous session (committed `32db8e4492`):**
 1. **MD5 (`md5.ts`)** — incremental, word-at-a-time MD5 (~4 ms/MB vs ~29 ms/MB desktop); was the main "1 s per second of video" wait before upload started.
 2. **Streaming encrypt (`encrypt-upload-file.ts`)** — one pass over 4 MB slices of the picked `File`: Blake2b hash, secretstream encrypt, ciphertext MD5; ciphertext kept as a Blob of per-chunk Blobs. Videos are no longer read whole (`prepareLocalVideo` returns the `File`; probe uses `preload="metadata"`), so peak memory is ~one chunk instead of ~4× the file.
 3. **Upload path** — image/video uploads use the slot's crypto (`getUploadCryptoWorker`, workers off iOS, main thread on iOS with a yield per chunk); file and thumbnail PUTs in parallel; PUT timeout scales with size (`putFileTimeoutMs`).

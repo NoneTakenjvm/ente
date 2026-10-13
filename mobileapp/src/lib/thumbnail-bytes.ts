@@ -25,8 +25,10 @@ export const getDecryptedThumbnailBytes = async (
 
         const core = getEnteCore();
         const ciphertext = await core.fetchEncryptedThumbnail(file);
-        await putThumbnailCiphertext(file.id, ciphertext);
-        return decryptThumbnailCiphertext(ciphertext, file.key);
+        const bytes = await decryptThumbnailCiphertext(ciphertext, file.key);
+        // Persist off the critical path; the put swallows its own errors.
+        void putThumbnailCiphertext(file.id, ciphertext);
+        return bytes;
     } catch {
         return undefined;
     }

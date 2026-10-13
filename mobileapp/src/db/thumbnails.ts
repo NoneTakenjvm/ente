@@ -55,20 +55,24 @@ const estimateLegacyByteSize = (record: ThumbnailRecord): number => {
 const recordLastAccess = (record: ThumbnailRecord): number =>
     typeof record.lastAccess === "number" ? record.lastAccess : 0;
 
-const thumbnailTouches = new LruTouchCoalescer(async (fileId, lastAccess) => {
+const thumbnailTouches = new LruTouchCoalescer(async (batch) => {
     if (!hasOrganizerDB()) {
         return;
     }
     const db = await getOrganizerDB();
-    const record = await db.get("thumbnails", fileId);
-    if (!record) {
-        return;
+    const tx = db.transaction("thumbnails", "readwrite");
+    for (const [fileId, lastAccess] of batch) {
+        const record = await tx.store.get(fileId);
+        if (!record) {
+            continue;
+        }
+        await tx.store.put({
+            ...record,
+            byteSize: estimateLegacyByteSize(record),
+            lastAccess,
+        });
     }
-    await db.put("thumbnails", {
-        ...record,
-        byteSize: estimateLegacyByteSize(record),
-        lastAccess,
-    });
+    await tx.done;
 });
 
 /**

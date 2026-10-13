@@ -178,6 +178,7 @@ export const clearVideoDiskCache = (fileId: number): void => {
 export const loadCachedVideoBytes = async (
     file: EnteFile,
     onProgress?: BytesProgressCallback,
+    signal?: AbortSignal,
 ): Promise<Uint8Array> => {
     const core = getEnteCore();
     const cached = await getFileCiphertext(file.id);
@@ -192,6 +193,7 @@ export const loadCachedVideoBytes = async (
     const ciphertext: ServerCiphertext = await core.fetchEncryptedFile(
         file,
         onProgress,
+        signal,
     );
     void putFileCiphertext(file.id, ciphertext);
     return core.decryptFileCiphertext(ciphertext, file.key);

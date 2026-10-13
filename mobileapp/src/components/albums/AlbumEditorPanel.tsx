@@ -26,7 +26,6 @@ import { dedupeFilesById } from "@/lib/sync/merge-files";
 import { sortFilesByUpload } from "@/lib/sort-files";
 import {
     countFavoritesInCandidates,
-    countFilesMatchingTagFilter,
     countManuallyCroppedInCandidates,
     countNotFavoritesInCandidates,
     countNotManuallyCroppedInCandidates,
@@ -117,24 +116,8 @@ export function AlbumEditorPanel({
         [matchFiles, previewAlbum],
     );
 
-    const matchCount = useMemo(
-        () =>
-            countFilesMatchingTagFilter(
-                libraryFileIds,
-                filter,
-                fileIdsByTag,
-                libraryFiles,
-                { favoriteFileIds, includeInEffectsPresenceByName },
-            ),
-        [
-            favoriteFileIds,
-            fileIdsByTag,
-            filter,
-            includeInEffectsPresenceByName,
-            libraryFileIds,
-            libraryFiles,
-        ],
-    );
+    // Same candidates and filter as matchFiles, so no second match pass.
+    const matchCount = matchFiles.length;
 
     const taggedCount = useMemo(
         () =>

@@ -39,6 +39,8 @@ export interface PullFilesOptions {
 export interface PullFilesResult {
     files: EnteFile[];
     didUpdate: boolean;
+    /** True when favourite membership was re-committed (even with no changes). */
+    favoritesMembershipTouched: boolean;
 }
 
 /**
@@ -54,6 +56,21 @@ const commitPendingSyncCursors = async (
     for (const [collectionId, sinceTime] of pendingCursors) {
         await saveCollectionSyncTime(collectionId, sinceTime);
     }
+};
+
+const groupFilesByCollectionId = (
+    libraryById: ReadonlyMap<number, EnteFile>,
+): Map<number, Map<number, EnteFile>> => {
+    const groups = new Map<number, Map<number, EnteFile>>();
+    for (const file of libraryById.values()) {
+        const group = groups.get(file.collectionID);
+        if (group) {
+            group.set(file.id, file);
+        } else {
+            groups.set(file.collectionID, new Map([[file.id, file]]));
+        }
+    }
+    return groups;
 };
 
 /**
@@ -82,6 +99,12 @@ export const pullFiles = async (
 
     const targets = collections;
     const total = targets.length;
+    /**
+     * Library grouped by collection, built once on the first collection that
+     * needs a diff (one pass instead of a full scan per collection). Each
+     * collection is pulled once, so its Map is owned by that pull.
+     */
+    let filesByCollectionId: Map<number, Map<number, EnteFile>> | undefined;
 
     for (let i = 0; i < targets.length; i += collectionSyncConcurrency) {
         const batch = targets.slice(i, i + collectionSyncConcurrency);
@@ -108,11 +131,10 @@ export const pullFiles = async (
                     return;
                 }
 
-                const collectionFilesById = new Map(
-                    [...libraryById.values()]
-                        .filter((file) => file.collectionID === collection.id)
-                        .map((file) => [file.id, file]),
-                );
+                filesByCollectionId ??= groupFilesByCollectionId(libraryById);
+                const collectionFilesById =
+                    filesByCollectionId.get(collection.id) ??
+                    new Map<number, EnteFile>();
 
                 while (true) {
                     const { changes, hasMore } =
@@ -207,5 +229,6 @@ export const pullFiles = async (
     return {
         files,
         didUpdate,
+        favoritesMembershipTouched,
     };
 };

@@ -34,7 +34,6 @@ import { resolveAlbumCoverFile } from "@/lib/album-cover";
 import { queryAlbumFilter } from "@/lib/query-albums";
 import { dedupeFilesById } from "@/lib/sync/merge-files";
 import {
-    countFilesMatchingTagFilter,
     filterFilesByTags,
     isTagFilterActive,
 } from "@/lib/tags";
@@ -114,11 +113,6 @@ export default function AlbumsPage(): JSX.Element {
         return sortLibraryFiles(deduped);
     }, [allFiles, sortLibraryFiles]);
 
-    const libraryFileIds = useMemo(
-        (): Set<number> => new Set(libraryFiles.map((file) => file.id)),
-        [libraryFiles],
-    );
-
     const albumFiles = useMemo(() => {
         if (!activeAlbum) {
             return [];
@@ -161,50 +155,35 @@ export default function AlbumsPage(): JSX.Element {
         clearNearnessOnUnmount: mode === "view",
     });
 
-    const albumMatchCounts = useMemo(() => {
-        const counts = new Map<string, number>();
-        for (const album of albums) {
-            const filter = queryAlbumFilter(album);
-            counts.set(
-                album.id,
-                countFilesMatchingTagFilter(
-                    libraryFileIds,
-                    filter,
-                    fileIdsByTag,
-                    libraryFiles,
-                    { favoriteFileIds, includeInEffectsPresenceByName },
-                ),
-            );
+    /** Count and cover per album from one match pass; list mode only. */
+    const albumCardById = useMemo(() => {
+        const cards = new Map<
+            string,
+            { matchCount: number; coverFile: EnteFile | undefined }
+        >();
+        if (mode !== "list") {
+            return cards;
         }
-        return counts;
-    }, [
-        albums,
-        favoriteFileIds,
-        fileIdsByTag,
-        includeInEffectsPresenceByName,
-        libraryFileIds,
-        libraryFiles,
-    ]);
-
-    const albumCoverById = useMemo(() => {
-        const covers = new Map<string, EnteFile | undefined>();
         for (const album of albums) {
-            const filter = queryAlbumFilter(album);
             const matches = filterFilesByTags(
                 libraryFiles,
-                filter,
+                queryAlbumFilter(album),
                 fileIdsByTag,
                 { favoriteFileIds, includeInEffectsPresenceByName },
             );
-            covers.set(album.id, resolveAlbumCoverFile(album, matches));
+            cards.set(album.id, {
+                matchCount: matches.length,
+                coverFile: resolveAlbumCoverFile(album, matches),
+            });
         }
-        return covers;
+        return cards;
     }, [
         albums,
         favoriteFileIds,
         fileIdsByTag,
         includeInEffectsPresenceByName,
         libraryFiles,
+        mode,
     ]);
 
     const activeAlbumCoverId = useMemo(() => {
@@ -497,14 +476,14 @@ export default function AlbumsPage(): JSX.Element {
                 ) : (
                     <div ref={listRef} className="flex flex-col gap-3 px-4 py-4">
                         {albums.map((album) => {
-                            const albumMatchCount = albumMatchCounts.get(album.id) ?? 0;
+                            const albumCard = albumCardById.get(album.id);
                             return (
                                 <AlbumListCard
                                     key={album.id}
                                     albumId={album.id}
                                     name={album.name}
-                                    matchCount={albumMatchCount}
-                                    coverFile={albumCoverById.get(album.id)}
+                                    matchCount={albumCard?.matchCount ?? 0}
+                                    coverFile={albumCard?.coverFile}
                                     reorderMode={listSubMode === "reorder"}
                                     isDragging={draggingAlbumId === album.id}
                                     isDragOver={

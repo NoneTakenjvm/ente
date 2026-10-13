@@ -1,5 +1,4 @@
 import { sortFilesByUpload } from "@/lib/sort-files";
-import { loginSRP } from "./auth/srp";
 import {
     addToFavoritesCollection,
     removeFromFavoritesCollection,
@@ -48,18 +47,8 @@ import {
     moveToTrash,
     restoreToCollection,
 } from "./api/trash";
-import {
-    uploadCompressedImage as uploadCompressedImageToRemote,
-    uploadCroppedImage as uploadCroppedImageToRemote,
-    uploadLocalImage as uploadLocalImageToRemote,
-    uploadRotatedImage as uploadRotatedImageToRemote,
-    updateRotatedImageInPlace as updateRotatedImageInPlaceToRemote,
-    type UploadLocalImageOptions,
-} from "./upload/upload-image";
-import {
-    uploadLocalVideo as uploadLocalVideoToRemote,
-    type UploadLocalVideoOptions,
-} from "./upload/upload-video";
+import type { UploadLocalImageOptions } from "./upload/upload-image";
+import type { UploadLocalVideoOptions } from "./upload/upload-video";
 import type { CompressMediaResult } from "@/lib/transcode/compress-media";
 import type { CroppedVideoResult } from "@/lib/video-edit";
 import {
@@ -116,6 +105,8 @@ export class EnteCore {
     }
 
     async login(credentials: LoginCredentials): Promise<Session> {
+        // Lazy so SRP (and its node crypto polyfills) stay out of the app shell.
+        const { loginSRP } = await import("./auth/srp");
         const userID = await loginSRP(this.http, this.session, credentials);
         return { userID };
     }
@@ -204,8 +195,15 @@ export class EnteCore {
     fetchEncryptedFile(
         file: EnteFile,
         onProgress?: BytesProgressCallback,
+        signal?: AbortSignal,
     ): Promise<ServerCiphertext> {
-        return fetchEncryptedFile(this.http, this.session, file, onProgress);
+        return fetchEncryptedFile(
+            this.http,
+            this.session,
+            file,
+            onProgress,
+            signal,
+        );
     }
 
     decryptFileCiphertext(
@@ -234,8 +232,15 @@ export class EnteCore {
     getDecryptedFile(
         file: EnteFile,
         onProgress?: BytesProgressCallback,
+        signal?: AbortSignal,
     ): Promise<Uint8Array> {
-        return getDecryptedFile(this.http, this.session, file, onProgress);
+        return getDecryptedFile(
+            this.http,
+            this.session,
+            file,
+            onProgress,
+            signal,
+        );
     }
 
     getPublicMetadata(file: EnteFile): FilePublicMagicMetadataData {
@@ -336,7 +341,7 @@ export class EnteCore {
     /**
      * Upload a compressed JPEG replacement for an existing file into its collection.
      */
-    uploadCompressedImage(
+    async uploadCompressedImage(
         sourceFile: EnteFile,
         compressedBytes: Uint8Array,
         collection: Collection,
@@ -344,6 +349,8 @@ export class EnteCore {
         title: string,
         organizerTags: string[],
     ): Promise<EnteFile> {
+        const { uploadCompressedImage: uploadCompressedImageToRemote } =
+            await import("./upload/upload-image");
         return uploadCompressedImageToRemote(
             this.http,
             sourceFile,
@@ -358,7 +365,7 @@ export class EnteCore {
     /**
      * Upload a cropped JPEG copy of an existing file into its collection.
      */
-    uploadCroppedImage(
+    async uploadCroppedImage(
         sourceFile: EnteFile,
         croppedBytes: Uint8Array,
         collection: Collection,
@@ -366,6 +373,8 @@ export class EnteCore {
         title: string,
         organizerTags: string[],
     ): Promise<EnteFile> {
+        const { uploadCroppedImage: uploadCroppedImageToRemote } =
+            await import("./upload/upload-image");
         return uploadCroppedImageToRemote(
             this.http,
             sourceFile,
@@ -380,11 +389,13 @@ export class EnteCore {
     /**
      * Upload a new JPEG from the device into the given collection.
      */
-    uploadLocalImage(
+    async uploadLocalImage(
         collection: Collection,
         jpegBytes: Uint8Array,
         options: UploadLocalImageOptions,
     ): Promise<EnteFile> {
+        const { uploadLocalImage: uploadLocalImageToRemote } =
+            await import("./upload/upload-image");
         return uploadLocalImageToRemote(
             this.http,
             collection,
@@ -396,11 +407,13 @@ export class EnteCore {
     /**
      * Upload a new video from the device into the given collection.
      */
-    uploadLocalVideo(
+    async uploadLocalVideo(
         collection: Collection,
         video: Blob,
         options: UploadLocalVideoOptions,
     ): Promise<EnteFile> {
+        const { uploadLocalVideo: uploadLocalVideoToRemote } =
+            await import("./upload/upload-video");
         return uploadLocalVideoToRemote(
             this.http,
             collection,
@@ -430,7 +443,7 @@ export class EnteCore {
         );
     }
 
-    uploadRotatedImage(
+    async uploadRotatedImage(
         sourceFile: EnteFile,
         jpegBytes: Uint8Array,
         collection: Collection,
@@ -438,6 +451,8 @@ export class EnteCore {
         title: string,
         organizerTags?: string[],
     ): Promise<EnteFile> {
+        const { uploadRotatedImage: uploadRotatedImageToRemote } =
+            await import("./upload/upload-image");
         return uploadRotatedImageToRemote(
             this.http,
             sourceFile,
@@ -452,13 +467,15 @@ export class EnteCore {
     /**
      * Replace image bytes on the same file id (no trash / no new id).
      */
-    updateRotatedImageInPlace(
+    async updateRotatedImageInPlace(
         sourceFile: EnteFile,
         jpegBytes: Uint8Array,
         dimensions: { width: number; height: number },
         title: string,
         organizerTags: string[],
     ): Promise<EnteFile> {
+        const { updateRotatedImageInPlace: updateRotatedImageInPlaceToRemote } =
+            await import("./upload/upload-image");
         return updateRotatedImageInPlaceToRemote(
             this.http,
             sourceFile,

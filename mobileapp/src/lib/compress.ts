@@ -10,6 +10,7 @@ import type {
     CompressWorkerResponse,
 } from "@/workers/compress-worker-types";
 import { arrayBufferFromUint8Array } from "@/lib/bytes-blob";
+import { createWorkerIdleTimer } from "@/lib/worker-idle-timer";
 
 export const COMPRESSED_TAG = "compressed";
 
@@ -378,8 +379,15 @@ const encodeJpegMainThread = async (
         image.src = imageUrl;
     });
 
+/** Release the compress worker's WASM encoders after this long with no requests. */
+const COMPRESS_WORKER_IDLE_TERMINATE_MS = 30_000;
+
 let worker: Worker | undefined;
 let requestCounter = 0;
+const workerIdleTimer = createWorkerIdleTimer(
+    COMPRESS_WORKER_IDLE_TERMINATE_MS,
+    () => terminateCompressWorker(),
+);
 
 const getCompressWorker = (): Worker | undefined => {
     if (typeof Worker === "undefined") {
@@ -393,7 +401,11 @@ const getCompressWorker = (): Worker | undefined => {
     return worker;
 };
 
+/**
+ * Terminate the compress worker now, dropping any in-flight request.
+ */
 export const terminateCompressWorker = (): void => {
+    workerIdleTimer.clear();
     worker?.terminate();
     worker = undefined;
 };
@@ -401,8 +413,14 @@ export const terminateCompressWorker = (): void => {
 const copiedBuffer = (bytes: Uint8Array): ArrayBuffer =>
     arrayBufferFromUint8Array(bytes);
 
-const postCompressRequest = (
-    request: CompressWorkerRequest,
+/**
+ * Post one request to the shared compress worker and resolve with its reply.
+ *
+ * The request id is assigned here, so compress and crop callers share one
+ * counter and their replies cannot be mistaken for each other.
+ */
+export const postCompressRequest = (
+    request: Omit<CompressWorkerRequest, "id">,
     transfer: Transferable[],
 ): Promise<CompressWorkerResponse> =>
     new Promise((resolve, reject) => {
@@ -412,6 +430,8 @@ const postCompressRequest = (
             return;
         }
 
+        const id = ++requestCounter;
+        workerIdleTimer.begin();
         const timeoutMs = 45_000;
         const timer = setTimeout(() => {
             cleanup();
@@ -422,10 +442,11 @@ const postCompressRequest = (
             clearTimeout(timer);
             compressWorker.removeEventListener("message", onMessage);
             compressWorker.removeEventListener("error", onError);
+            workerIdleTimer.end();
         };
 
         const onMessage = (event: MessageEvent<CompressWorkerResponse>): void => {
-            if (event.data.id !== request.id) {
+            if (event.data.id !== id) {
                 return;
             }
             cleanup();
@@ -439,7 +460,7 @@ const postCompressRequest = (
 
         compressWorker.addEventListener("message", onMessage);
         compressWorker.addEventListener("error", onError);
-        compressWorker.postMessage(request, transfer);
+        compressWorker.postMessage({ ...request, id }, transfer);
     });
 
 const encodeJpegInWorker = async (
@@ -449,7 +470,6 @@ const encodeJpegInWorker = async (
     const buffer = copiedBuffer(bytes);
     const response = await postCompressRequest(
         {
-            id: ++requestCounter,
             bytes: new Uint8Array(buffer),
             quality,
             preferSmaller: true,
@@ -485,7 +505,6 @@ const encodeStillInWorker = async (
     const buffer = copiedBuffer(bytes);
     const response = await postCompressRequest(
         {
-            id: ++requestCounter,
             bytes: new Uint8Array(buffer),
             quality: DEFAULT_JPEG_QUALITY,
             output: "auto",

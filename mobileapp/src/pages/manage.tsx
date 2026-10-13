@@ -93,6 +93,9 @@ import { useQualityIndexStore } from "@/stores/quality-index-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { usePhashJobStore, useUIStore } from "@/stores/ui-store";
 
+/** Duplicate groups rendered per page; each card keeps its thumbnails mounted. */
+const dedupGroupPageSize = 50;
+
 const formatBytes = (bytes: number): string => {
     if (bytes < 1024 * 1024) {
         return `${Math.round(bytes / 1024)} KB`;
@@ -183,6 +186,7 @@ export default function ManagePage(): JSX.Element {
     >(undefined);
     /** >0 means the user asked to find similar groups; 0 = idle until they tap Find. */
     const [similarFindGeneration, setSimilarFindGeneration] = useState<number>(0);
+    const [shownGroupCount, setShownGroupCount] = useState<number>(dedupGroupPageSize);
     const initialLoadDone = useLibraryBootstrap({
         afterSync: async (): Promise<void> => {
             await hydratePhash();
@@ -493,6 +497,11 @@ export default function ManagePage(): JSX.Element {
         );
     }, [dedupMode, exactGroups, similarGroups, favoriteFileIds, qualityById]);
 
+    // A new scan or threshold starts from the first page again.
+    useEffect(() => {
+        setShownGroupCount(dedupGroupPageSize);
+    }, [dedupMode, exactGroups, similarGroups]);
+
     const selectedGroups = useMemo(
         () => selections.filter((group) => group.isSelected),
         [selections],
@@ -508,13 +517,17 @@ export default function ManagePage(): JSX.Element {
         return sumPrunableStats(exactGroups, selectedFlags);
     }, [exactGroups, selections]);
 
+    // Only the Similar section shows these counts; skip the scans otherwise.
     const phashCandidateCount = useMemo(
-        () => imageFilesForPhash(allFiles, userId).length,
-        [allFiles, userId],
+        () =>
+            dedupMode === "similar" ?
+                imageFilesForPhash(allFiles, userId).length :
+                0,
+        [dedupMode, allFiles, userId],
     );
     const phashIndexedCount = phashEntries.size;
     const clipCoverageOnIndexed = useMemo(() => {
-        if (phashEntries.size === 0) {
+        if (dedupMode !== "similar" || phashEntries.size === 0) {
             return 0;
         }
         let n = 0;
@@ -524,7 +537,7 @@ export default function ManagePage(): JSX.Element {
             }
         }
         return n;
-    }, [phashEntries, embeddingEntries]);
+    }, [dedupMode, phashEntries, embeddingEntries]);
 
     const updateGroupChoice = useCallback(
         (target: DedupGroupSelection, choice: DedupGroupChoice): void => {
@@ -917,7 +930,7 @@ export default function ManagePage(): JSX.Element {
 
                     {!showFullPageLoader && selections.length > 0 ? (
                         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-3 pb-24">
-                            {selections.map((group) => (
+                            {selections.slice(0, shownGroupCount).map((group) => (
                                 <DedupGroupCard
                                     key={group.id}
                                     items={group.items.map((item) => item.file)}
@@ -946,6 +959,20 @@ export default function ManagePage(): JSX.Element {
                                     }
                                 />
                             ))}
+                            {selections.length > shownGroupCount ? (
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="w-full"
+                                    onClick={() =>
+                                        setShownGroupCount(
+                                            (count) => count + dedupGroupPageSize,
+                                        )
+                                    }
+                                >
+                                    Show more
+                                </Button>
+                            ) : null}
                         </div>
                     ) : null}
 

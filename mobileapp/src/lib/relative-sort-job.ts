@@ -1,5 +1,6 @@
 import { KIT_EMBEDDING_DIMS } from "@/lib/kit-embedding";
 import type { RelativePackedMode } from "@/lib/relative-sort-packed";
+import { createWorkerIdleTimer } from "@/lib/worker-idle-timer";
 
 interface RelativeSortWorkerRequest {
     requestId: number;
@@ -21,8 +22,18 @@ interface RelativeSortWorkerResponse {
     error?: string;
 }
 
+/** Release the sort worker after this long with no requests. */
+const RELATIVE_SORT_IDLE_TERMINATE_MS = 30_000;
+
 let worker: Worker | undefined;
 let requestCounter = 0;
+const workerIdleTimer = createWorkerIdleTimer(
+    RELATIVE_SORT_IDLE_TERMINATE_MS,
+    () => {
+        worker?.terminate();
+        worker = undefined;
+    },
+);
 
 const createWorker = (): Worker =>
     new Worker(
@@ -50,6 +61,7 @@ export const sortRelativeIdsInWorker = (
         if (!worker) {
             worker = createWorker();
         }
+        workerIdleTimer.begin();
         const requestId = ++requestCounter;
         const idBuffer = Float64Array.from(ids);
         const handleMessage = (
@@ -72,6 +84,7 @@ export const sortRelativeIdsInWorker = (
         const cleanup = (): void => {
             worker?.removeEventListener("message", handleMessage);
             worker?.removeEventListener("error", handleError);
+            workerIdleTimer.end();
         };
         worker.addEventListener("message", handleMessage);
         worker.addEventListener("error", handleError);

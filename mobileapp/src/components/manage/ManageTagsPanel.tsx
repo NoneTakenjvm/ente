@@ -1,4 +1,5 @@
 import {
+    memo,
     useCallback,
     useMemo,
     useRef,
@@ -92,7 +93,6 @@ export function ManageTagsPanel(): JSX.Element {
     );
     const ensureTagType = useTagStore((s) => s.ensureTagType);
     const registerTag = useTagStore((s) => s.registerTag);
-    const allFiles = useLibraryStore((s) => s.allFiles);
     const renameTag = useLibraryStore((s) => s.renameTag);
     const deleteTag = useLibraryStore((s) => s.deleteTag);
     const mergeTags = useLibraryStore((s) => s.mergeTags);
@@ -106,7 +106,6 @@ export function ManageTagsPanel(): JSX.Element {
     const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.hydrate);
 
     const [renameTarget, setRenameTarget] = useState<string | undefined>();
-    const [renameValue, setRenameValue] = useState<string>("");
     const [mergeSources, setMergeSources] = useState<string[]>([]);
     const [mergeTarget, setMergeTarget] = useState<string>("");
     const [tuningPresetId, setTuningPresetId] = useState<string | undefined>();
@@ -171,28 +170,28 @@ export function ManageTagsPanel(): JSX.Element {
         [],
     );
 
-    const handleRenameStart = (tag: string): void => {
+    // Handlers below are stable so memoized tag rows skip re-rendering.
+    const handleRenameStart = useCallback((tag: string): void => {
         setRenameTarget(tag);
-        setRenameValue(tag);
         setError(undefined);
-    };
+    }, []);
 
-    const handleRenameSubmit = (event: FormEvent): void => {
-        event.preventDefault();
-        if (!renameTarget) {
-            return;
-        }
-        const newName = normalizeTagName(renameValue);
-        if (!newName || newName === renameTarget) {
+    const handleRenameCancel = useCallback((): void => {
+        setRenameTarget(undefined);
+    }, []);
+
+    const handleRenameSubmit = useCallback((tag: string, value: string): void => {
+        const newName = normalizeTagName(value);
+        if (!newName || newName === tag) {
             setRenameTarget(undefined);
             return;
         }
-        void runWithProgress(`Renaming "${renameTarget}"`, () => renameTag(renameTarget, newName, (completed, total) => {
+        void runWithProgress(`Renaming "${tag}"`, () => renameTag(tag, newName, (completed, total) => {
             setProgress(`Renaming… ${completed} / ${total}`);
         })).then(() => {
             setRenameTarget(undefined);
         });
-    };
+    }, [renameTag, runWithProgress]);
 
     const handleConfirmDelete = (): void => {
         if (!deleteTarget) {
@@ -234,115 +233,6 @@ export function ManageTagsPanel(): JSX.Element {
         }
         setNewTagName("");
         setNewTagType("");
-    };
-
-    const renderTagRow = (tag: string): JSX.Element => {
-        const count = fileIdsByTag.get(tag)?.size ?? 0;
-        return (
-            <div
-                key={tag}
-                className="flex flex-col gap-2 rounded-lg border border-border/60 p-3 sm:flex-row sm:items-center sm:justify-between"
-            >
-                {renameTarget === tag ? (
-                    <form
-                        className="flex flex-1 flex-col gap-2 sm:flex-row"
-                        onSubmit={handleRenameSubmit}
-                    >
-                        <Input
-                            value={renameValue}
-                            onChange={(event) =>
-                                setRenameValue(event.target.value)
-                            }
-                            autoFocus
-                        />
-                        <div className="flex gap-2">
-                            <Button type="submit" size="sm">
-                                Save
-                            </Button>
-                            <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setRenameTarget(undefined)}
-                            >
-                                Cancel
-                            </Button>
-                        </div>
-                    </form>
-                ) : (
-                    <>
-                        <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center">
-                            <div className="flex min-w-0 items-center gap-2">
-                                <span className="truncate font-medium">
-                                    {tag}
-                                </span>
-                                <Badge variant="secondary">{count}</Badge>
-                            </div>
-                            <select
-                                className="h-8 min-w-0 rounded-md border border-input bg-background px-2 text-sm"
-                                value={typeForTag(tag, tagTypeByName)}
-                                onChange={(event) => {
-                                    setTagType(tag, event.target.value);
-                                }}
-                            >
-                                {tagTypes.map((type) => (
-                                    <option key={type} value={type}>
-                                        {type}
-                                    </option>
-                                ))}
-                            </select>
-                            <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                                <Switch
-                                    checked={isTagIncludedInKitNearness(
-                                        tag,
-                                        includeInKitNearnessByName,
-                                    )}
-                                    onCheckedChange={(checked) => {
-                                        setIncludeInKitNearness(tag, checked);
-                                    }}
-                                    aria-label={`Include ${tag} in kit nearness`}
-                                />
-                                Kit nearness
-                            </label>
-                            <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                                <Switch
-                                    checked={isTagIncludedInEffectsPresence(
-                                        tag,
-                                        includeInEffectsPresenceByName,
-                                    )}
-                                    onCheckedChange={(checked) => {
-                                        setIncludeInEffectsPresence(
-                                            tag,
-                                            checked,
-                                        );
-                                    }}
-                                    aria-label={`Include ${tag} in effects presence`}
-                                />
-                                Effects presence
-                            </label>
-                        </div>
-                        <div className="flex gap-2">
-                            <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleRenameStart(tag)}
-                            >
-                                Rename
-                            </Button>
-                            <Button
-                                type="button"
-                                variant="destructive"
-                                size="sm"
-                                onClick={() => setDeleteTarget(tag)}
-                            >
-                                Delete
-                            </Button>
-                        </div>
-                    </>
-                )}
-            </div>
-        );
     };
 
     const handleMergeSubmit = (event: FormEvent): void => {
@@ -437,7 +327,7 @@ export function ManageTagsPanel(): JSX.Element {
             });
             try {
                 const result = await runKitNearnessTune({
-                    libraryFiles: allFiles,
+                    libraryFiles: useLibraryStore.getState().allFiles,
                     kitTags: preset.tags,
                     kitId: preset.id,
                     embeddings,
@@ -487,7 +377,7 @@ export function ManageTagsPanel(): JSX.Element {
     const handleOpenSuggestions = (): void => {
         setError(undefined);
         setKitSuggestions(
-            suggestTagKits(allFiles, {
+            suggestTagKits(useLibraryStore.getState().allFiles, {
                 existingPresets: presets,
                 includeInKitNearnessByName,
             }),
@@ -508,10 +398,24 @@ export function ManageTagsPanel(): JSX.Element {
             ));
     };
 
-    const presetTagChoices = useMemo(
-        (): string[] =>
-            userTags.filter((tag) => !presetTags.includes(tag)),
-        [userTags, presetTags],
+    const presetTagChoices = useMemo((): string[] => {
+        const chosen = new Set(presetTags);
+        return userTags.filter((tag) => !chosen.has(tag));
+    }, [userTags, presetTags]);
+
+    /** Tags each preset can still add, built once per store change instead of per preset render. */
+    const addableTagsByPresetId = useMemo(
+        (): Map<string, string[]> =>
+            new Map(
+                presets.map((preset) => {
+                    const owned = new Set(preset.tags);
+                    return [
+                        preset.id,
+                        userTags.filter((tag) => !owned.has(tag)),
+                    ] as const;
+                }),
+            ),
+        [presets, userTags],
     );
 
     return (
@@ -609,7 +513,31 @@ export function ManageTagsPanel(): JSX.Element {
                                 <h3 className="text-sm font-medium text-muted-foreground capitalize">
                                     {group.type}
                                 </h3>
-                                {group.tags.map((tag) => renderTagRow(tag))}
+                                {group.tags.map((tag) => (
+                                    <ManageTagRow
+                                        key={tag}
+                                        tag={tag}
+                                        fileCount={fileIdsByTag.get(tag)?.size ?? 0}
+                                        typeName={typeForTag(tag, tagTypeByName)}
+                                        tagTypes={tagTypes}
+                                        includedInKitNearness={isTagIncludedInKitNearness(
+                                            tag,
+                                            includeInKitNearnessByName,
+                                        )}
+                                        includedInEffectsPresence={isTagIncludedInEffectsPresence(
+                                            tag,
+                                            includeInEffectsPresenceByName,
+                                        )}
+                                        isRenaming={renameTarget === tag}
+                                        onRenameStart={handleRenameStart}
+                                        onRenameSubmit={handleRenameSubmit}
+                                        onRenameCancel={handleRenameCancel}
+                                        onDelete={setDeleteTarget}
+                                        onTypeChange={setTagType}
+                                        onKitNearnessChange={setIncludeInKitNearness}
+                                        onEffectsPresenceChange={setIncludeInEffectsPresence}
+                                    />
+                                ))}
                             </div>
                         ))
                     )}
@@ -719,9 +647,8 @@ export function ManageTagsPanel(): JSX.Element {
                     ) : (
                         <ul className="flex flex-col gap-2">
                             {presets.map((preset) => {
-                                const addable = userTags.filter(
-                                    (tag) => !preset.tags.includes(tag),
-                                );
+                                const addable =
+                                    addableTagsByPresetId.get(preset.id) ?? [];
                                 return (
                                     <li
                                         key={preset.id}
@@ -1089,3 +1016,143 @@ export function ManageTagsPanel(): JSX.Element {
         </div>
     );
 }
+
+interface ManageTagRowProps {
+    tag: string;
+    fileCount: number;
+    typeName: string;
+    tagTypes: string[];
+    includedInKitNearness: boolean;
+    includedInEffectsPresence: boolean;
+    isRenaming: boolean;
+    onRenameStart: (tag: string) => void;
+    onRenameSubmit: (tag: string, name: string) => void;
+    onRenameCancel: () => void;
+    onDelete: (tag: string) => void;
+    onTypeChange: (tag: string, typeName: string) => void;
+    onKitNearnessChange: (tag: string, include: boolean) => void;
+    onEffectsPresenceChange: (tag: string, include: boolean) => void;
+}
+
+/**
+ * One tag in the "Your tags" list. Holds its own rename draft so typing only
+ * re-renders this row, and is memoized so panel edits elsewhere skip it.
+ */
+const ManageTagRow = memo(function ManageTagRow({
+    tag,
+    fileCount,
+    typeName,
+    tagTypes,
+    includedInKitNearness,
+    includedInEffectsPresence,
+    isRenaming,
+    onRenameStart,
+    onRenameSubmit,
+    onRenameCancel,
+    onDelete,
+    onTypeChange,
+    onKitNearnessChange,
+    onEffectsPresenceChange,
+}: ManageTagRowProps): JSX.Element {
+    const [renameValue, setRenameValue] = useState<string>(tag);
+
+    return (
+        <div className="flex flex-col gap-2 rounded-lg border border-border/60 p-3 sm:flex-row sm:items-center sm:justify-between">
+            {isRenaming ? (
+                <form
+                    className="flex flex-1 flex-col gap-2 sm:flex-row"
+                    onSubmit={(event) => {
+                        event.preventDefault();
+                        onRenameSubmit(tag, renameValue);
+                    }}
+                >
+                    <Input
+                        value={renameValue}
+                        onChange={(event) =>
+                            setRenameValue(event.target.value)
+                        }
+                        autoFocus
+                    />
+                    <div className="flex gap-2">
+                        <Button type="submit" size="sm">
+                            Save
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => onRenameCancel()}
+                        >
+                            Cancel
+                        </Button>
+                    </div>
+                </form>
+            ) : (
+                <>
+                    <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center">
+                        <div className="flex min-w-0 items-center gap-2">
+                            <span className="truncate font-medium">
+                                {tag}
+                            </span>
+                            <Badge variant="secondary">{fileCount}</Badge>
+                        </div>
+                        <select
+                            className="h-8 min-w-0 rounded-md border border-input bg-background px-2 text-sm"
+                            value={typeName}
+                            onChange={(event) => {
+                                onTypeChange(tag, event.target.value);
+                            }}
+                        >
+                            {tagTypes.map((type) => (
+                                <option key={type} value={type}>
+                                    {type}
+                                </option>
+                            ))}
+                        </select>
+                        <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                            <Switch
+                                checked={includedInKitNearness}
+                                onCheckedChange={(checked) => {
+                                    onKitNearnessChange(tag, checked);
+                                }}
+                                aria-label={`Include ${tag} in kit nearness`}
+                            />
+                            Kit nearness
+                        </label>
+                        <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                            <Switch
+                                checked={includedInEffectsPresence}
+                                onCheckedChange={(checked) => {
+                                    onEffectsPresenceChange(tag, checked);
+                                }}
+                                aria-label={`Include ${tag} in effects presence`}
+                            />
+                            Effects presence
+                        </label>
+                    </div>
+                    <div className="flex gap-2">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                                setRenameValue(tag);
+                                onRenameStart(tag);
+                            }}
+                        >
+                            Rename
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => onDelete(tag)}
+                        >
+                            Delete
+                        </Button>
+                    </div>
+                </>
+            )}
+        </div>
+    );
+});

@@ -9,6 +9,9 @@ import {
     Quality,
 } from "mediabunny";
 import { MIN_VIDEO_CRF, MAX_VIDEO_CRF } from "@/lib/compress";
+import { evenOutputSize } from "@/lib/transcode/even-output-size";
+
+export { evenOutputSize };
 
 export interface WebCodecsH264Options {
     bytes: Uint8Array;
@@ -31,29 +34,6 @@ const BITRATE_FPS = 30;
 const KEYFRAME_INTERVAL_SECONDS = 2;
 
 let realtimeEncoderInstalled = false;
-
-/**
- * Even width/height for libx264-compatible output, optionally capped on the long edge.
- */
-export const evenOutputSize = (
-    width: number,
-    height: number,
-    maxLongEdge?: number,
-): { width: number; height: number } => {
-    let nextWidth = Math.max(0, width);
-    let nextHeight = Math.max(0, height);
-    if (maxLongEdge && maxLongEdge > 0 && Math.max(nextWidth, nextHeight) > maxLongEdge) {
-        const scale = maxLongEdge / Math.max(nextWidth, nextHeight);
-        nextWidth = Math.round(nextWidth * scale);
-        nextHeight = Math.round(nextHeight * scale);
-    }
-    nextWidth -= nextWidth % 2;
-    nextHeight -= nextHeight % 2;
-    return {
-        width: Math.max(2, nextWidth),
-        height: Math.max(2, nextHeight),
-    };
-};
 
 /**
  * Approximate H.264 bitrate for a CRF-like quality slider (18 = larger, 32 = smaller).

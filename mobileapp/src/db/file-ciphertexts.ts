@@ -32,22 +32,24 @@ const isWrappedRecord = (
     typeof record.fileDecryptionHeader === "string" &&
     record.fileDecryptionHeader.length > 0;
 
-const fileCiphertextTouches = new LruTouchCoalescer(
-    async (fileId, lastAccess) => {
-        if (!hasOrganizerDB()) {
-            return;
-        }
-        const db = await getOrganizerDB();
-        const record = await db.get("fileCiphertexts", fileId);
+const fileCiphertextTouches = new LruTouchCoalescer(async (batch) => {
+    if (!hasOrganizerDB()) {
+        return;
+    }
+    const db = await getOrganizerDB();
+    const tx = db.transaction("fileCiphertexts", "readwrite");
+    for (const [fileId, lastAccess] of batch) {
+        const record = await tx.store.get(fileId);
         if (!record || !isWrappedRecord(record)) {
-            return;
+            continue;
         }
-        await db.put("fileCiphertexts", {
+        await tx.store.put({
             ...record,
             lastAccess,
         });
-    },
-);
+    }
+    await tx.done;
+});
 
 /**
  * Cursor-scan LRU scalars only — never materializing every ciphertext buffer.

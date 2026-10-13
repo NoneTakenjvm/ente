@@ -20,6 +20,7 @@ import {
 import { isEnteVideoFile } from "@/lib/media-kind";
 import { packRelativeEmbeddings } from "@/lib/relative-sort";
 import { isTagIncludedInKitNearness } from "@/lib/tag-types";
+import { createWorkerIdleTimer } from "@/lib/worker-idle-timer";
 import type { EnteFile } from "ente-media/file";
 
 export type KitMarginsRankingInput = {
@@ -64,8 +65,18 @@ export const KIT_MARGIN_MIN_EXAMPLES = 8;
 
 const TRAINING_SAMPLE_SEED = 0x5a2f;
 
+/**
+ * Release the worker and its cached whitening / tag models after this long
+ * with no requests; longer than the sort worker so normal browsing keeps them.
+ */
+const KIT_WORKER_IDLE_TERMINATE_MS = 120_000;
+
 let worker: Worker | undefined;
 let requestCounter = 0;
+const workerIdleTimer = createWorkerIdleTimer(
+    KIT_WORKER_IDLE_TERMINATE_MS,
+    () => terminateKitMarginsWorker(),
+);
 
 /** Presence pass currently in the worker, and the newest caller's ticket. */
 let presenceInFlight: Promise<unknown> | undefined;
@@ -284,9 +295,11 @@ const postToWorker = <Response extends { requestId: number }>(
                 ),
             );
         }
+        workerIdleTimer.begin();
         const detach = (): void => {
             worker?.removeEventListener("message", handleMessage);
             worker?.removeEventListener("error", handleError);
+            workerIdleTimer.end();
         };
         const handleMessage = (event: MessageEvent<Response>): void => {
             if (event.data.requestId !== request.requestId) {
@@ -301,11 +314,17 @@ const postToWorker = <Response extends { requestId: number }>(
         };
         worker.addEventListener("message", handleMessage);
         worker.addEventListener("error", handleError);
-        worker.postMessage(request, transfer);
+        try {
+            worker.postMessage(request, transfer);
+        } catch (error: unknown) {
+            detach();
+            reject(error);
+        }
     });
 
-/** Drop the worker and its cached whitening / tag models (logout). */
+/** Drop the worker and its cached whitening / tag models (logout or idle). */
 export const terminateKitMarginsWorker = (): void => {
+    workerIdleTimer.clear();
     worker?.terminate();
     worker = undefined;
 };

@@ -209,21 +209,18 @@ export function ManageSettingsPanel(): JSX.Element {
         void hydrateQuality();
     }, [qualityHydrated, hydrateQuality]);
 
-    // Drop any stale video poster vectors once the library is known.
+    // Drop any stale video poster vectors once the library is known. Keyed on
+    // the library, not every embeddings write, so each CLIP batch skips the scan.
     useEffect(() => {
         if (!embeddingHydrated || allFiles.length === 0) {
             return;
         }
-        const pruned = stripVideoEmbeddings(embeddingEntries, allFiles);
-        if (pruned !== embeddingEntries) {
+        const entries = useEmbeddingIndexStore.getState().entries;
+        const pruned = stripVideoEmbeddings(entries, allFiles);
+        if (pruned !== entries) {
             setEmbeddingEntries(pruned);
         }
-    }, [
-        allFiles,
-        embeddingEntries,
-        embeddingHydrated,
-        setEmbeddingEntries,
-    ]);
+    }, [allFiles, embeddingHydrated, setEmbeddingEntries]);
 
     const handleStartClipJob = (): void => {
         if (clipJobStatus === "running") {

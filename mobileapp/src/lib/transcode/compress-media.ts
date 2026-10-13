@@ -6,10 +6,7 @@ import {
 } from "@/lib/compress";
 import { runFFmpeg, type FFmpegProgressCallback } from "@/lib/ffmpeg";
 import { mediaKindForFile, mimeTypeForFile } from "@/lib/media-kind";
-import {
-    encodeH264WebCodecs,
-    evenOutputSize,
-} from "@/lib/transcode/webcodecs-h264";
+import { evenOutputSize } from "@/lib/transcode/even-output-size";
 
 export type CompressEncoder = "webcodecs" | "ffmpeg" | "photohoard";
 
@@ -119,6 +116,10 @@ export const compressMediaBytes = async (
 
     if (kind === "video") {
         try {
+            // Lazy so mediabunny stays out of the initial chunk (/manage).
+            const { encodeH264WebCodecs } = await import(
+                "@/lib/transcode/webcodecs-h264"
+            );
             const encoded = await encodeH264WebCodecs({
                 bytes,
                 videoCrf,

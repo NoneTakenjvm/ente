@@ -62,7 +62,8 @@ export interface FavoriteMutationsResult {
 }
 
 export interface TagOutboxRunnerContext {
-    getFiles: () => EnteFile[];
+    /** O(1) library lookup (the store's id index), not a scan of all files. */
+    getFileById: (fileId: number) => EnteFile | undefined;
     getCollections: () => Collection[];
     patchFile: (file: EnteFile) => Promise<void>;
     /** Preferred: one library update + one scheduled encrypt for many verifies. */
@@ -155,15 +156,14 @@ const drainTagEntries = async (
         return { verifiedIds: [], pendingIds: [], writeFailures: 0 };
     }
 
-    const { getFiles, getCollections, patchFile, patchFiles } = context;
-    const filesById = new Map(getFiles().map((file) => [file.id, file]));
+    const { getFileById, getCollections, patchFile, patchFiles } = context;
     const collections = getCollections();
     const http = getEnteCore().getHttpClient();
 
     const items: TagWriteItem[] = [];
     const skippedIds: number[] = [];
     for (const entry of entries) {
-        const file = filesById.get(entry.fileId);
+        const file = getFileById(entry.fileId);
         if (!file) {
             skippedIds.push(entry.fileId);
             continue;

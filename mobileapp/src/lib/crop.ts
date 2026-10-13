@@ -8,14 +8,11 @@ import {
     DEFAULT_JPEG_QUALITY,
     MAX_JPEG_QUALITY,
     MIN_JPEG_QUALITY,
+    postCompressRequest,
     type EncodeJpegResult,
 } from "@/lib/compress";
 import { arrayBufferFromUint8Array } from "@/lib/bytes-blob";
-import type {
-    CompressWorkerRequest,
-    CompressWorkerResponse,
-    CropRect,
-} from "@/workers/compress-worker-types";
+import type { CropRect } from "@/workers/compress-worker-types";
 import type { RotationDegrees } from "@/lib/rotate";
 
 export type { CropRect };
@@ -298,65 +295,33 @@ const encodeCroppedJpegMainThread = async (
         image.src = imageUrl;
     });
 
-let worker: Worker | undefined;
-let requestCounter = 0;
-
-const getCompressWorker = (): Worker | undefined => {
-    if (typeof Worker === "undefined") {
-        return undefined;
-    }
-    if (!worker) {
-        worker = new Worker(
-            new URL("../workers/compress.worker.ts", import.meta.url),
-        );
-    }
-    return worker;
-};
-
-const encodeCroppedJpegInWorker = (
+const encodeCroppedJpegInWorker = async (
     bytes: Uint8Array,
     cropRect: CropRect,
     quality: number,
-): Promise<EncodeJpegResult> =>
-    new Promise((resolve, reject) => {
-        const compressWorker = getCompressWorker();
-        if (!compressWorker) {
-            reject(new Error("Worker unavailable"));
-            return;
-        }
-
-        const id = ++requestCounter;
-        const onMessage = (event: MessageEvent<CompressWorkerResponse>): void => {
-            if (event.data.id !== id) {
-                return;
-            }
-            compressWorker.removeEventListener("message", onMessage);
-            if (event.data.error) {
-                reject(new Error(event.data.error));
-                return;
-            }
-            if (!event.data.bytes || !event.data.width || !event.data.height) {
-                reject(new Error("Encode returned incomplete result"));
-                return;
-            }
-            resolve({
-                bytes: event.data.bytes,
-                width: event.data.width,
-                height: event.data.height,
-            });
-        };
-
-        compressWorker.addEventListener("message", onMessage);
-        const buffer = arrayBufferFromUint8Array(bytes);
-        const request: CompressWorkerRequest = {
-            id,
+): Promise<EncodeJpegResult> => {
+    const buffer = arrayBufferFromUint8Array(bytes);
+    const response = await postCompressRequest(
+        {
             bytes: new Uint8Array(buffer),
             quality,
             cropRect,
             output: "jpeg",
-        };
-        compressWorker.postMessage(request, [buffer]);
-    });
+        },
+        [buffer],
+    );
+    if (response.error) {
+        throw new Error(response.error);
+    }
+    if (!response.bytes || !response.width || !response.height) {
+        throw new Error("Encode returned incomplete result");
+    }
+    return {
+        bytes: response.bytes,
+        width: response.width,
+        height: response.height,
+    };
+};
 
 /**
  * Crop image bytes to the given rectangle and encode as JPEG.

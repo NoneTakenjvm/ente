@@ -9,9 +9,9 @@
 /** Flush after this many distinct pending file ids. */
 const FLUSH_EVERY = 32;
 
+/** Persist one flushed batch of `fileId -> lastAccess` (single transaction). */
 export type LruTouchWriter = (
-    fileId: number,
-    lastAccess: number,
+    batch: ReadonlyMap<number, number>,
 ) => Promise<void>;
 
 /**
@@ -61,11 +61,11 @@ export class LruTouchCoalescer {
         this.flushChain = this.flushChain
             .catch(() => undefined)
             .then(async () => {
-                for (const [fileId, lastAccess] of batch) {
-                    try {
-                        await this.write(fileId, lastAccess);
-                    } catch {
-                        // Re-queue so a later flush can retry.
+                try {
+                    await this.write(batch);
+                } catch {
+                    // Re-queue so a later flush can retry.
+                    for (const [fileId, lastAccess] of batch) {
                         if (!this.pending.has(fileId)) {
                             this.pending.set(fileId, lastAccess);
                         }

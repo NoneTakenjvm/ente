@@ -26,6 +26,7 @@ import {
     masonryItemsInMarquee,
     visibleMasonryItems,
 } from "@/lib/masonry-layout";
+import { stagingPreviewUrl } from "@/lib/staging-preview";
 import {
     computeThumbnailGridLayout,
     rowCountForFiles,
@@ -43,6 +44,8 @@ export interface LocalUploadItem {
     previewUrl: string;
     label: string;
     kind?: "image" | "video";
+    /** Original image; when set, the cell shows a downscaled copy instead of {@link previewUrl}. */
+    file?: Blob;
 }
 
 export interface LocalUploadGridSelection {
@@ -80,6 +83,55 @@ interface LocalUploadCellProps {
     disabled: boolean;
 }
 
+/**
+ * Image `src` for a cell. Items with a {@link LocalUploadItem.file} get a
+ * downscaled decode so the grid never holds full-size originals; the
+ * original preview is used only if that decode fails.
+ */
+const useCellImageSrc = (
+    item: LocalUploadItem,
+    width: number,
+): string | undefined => {
+    const { file } = item;
+    const [downscaledUrl, setDownscaledUrl] = useState<string | undefined>();
+    const [decodeFailed, setDecodeFailed] = useState(false);
+
+    useEffect(() => {
+        if (!file) {
+            return;
+        }
+        const controller = new AbortController();
+        let objectUrl: string | undefined;
+        stagingPreviewUrl(file, width, controller.signal)
+            .then((url) => {
+                if (controller.signal.aborted) {
+                    URL.revokeObjectURL(url);
+                    return;
+                }
+                objectUrl = url;
+                setDownscaledUrl(url);
+            })
+            .catch(() => {
+                if (!controller.signal.aborted) {
+                    setDecodeFailed(true);
+                }
+            });
+        return () => {
+            controller.abort();
+            if (objectUrl) {
+                URL.revokeObjectURL(objectUrl);
+            }
+            setDownscaledUrl(undefined);
+            setDecodeFailed(false);
+        };
+    }, [file, width]);
+
+    if (!file) {
+        return item.previewUrl;
+    }
+    return downscaledUrl ?? (decodeFailed ? item.previewUrl : undefined);
+};
+
 const LocalUploadCell = memo(function LocalUploadCell({
     item,
     width,
@@ -91,6 +143,7 @@ const LocalUploadCell = memo(function LocalUploadCell({
 }: LocalUploadCellProps): JSX.Element {
     const imageFitClass =
         objectFit === "contain" ? "object-contain" : "object-cover";
+    const imageSrc = useCellImageSrc(item, width);
 
     return (
         <div
@@ -133,7 +186,7 @@ const LocalUploadCell = memo(function LocalUploadCell({
                             "pointer-events-none size-full",
                             imageFitClass,
                         )}
-                        src={item.previewUrl}
+                        src={imageSrc}
                         alt=""
                         loading="lazy"
                         decoding="async"

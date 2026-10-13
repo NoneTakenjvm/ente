@@ -14,6 +14,7 @@ import {
 import {
     buildTagIndex,
     emptyTagFilter,
+    extractUserTags,
     isSystemTag,
     isTagFilterActive,
     isTagFilterClause,
@@ -133,6 +134,15 @@ interface TagState {
             previousTags?: string[];
         }>,
     ) => void;
+    /**
+     * Update the index when files leave or (re)enter the library (upload,
+     * replace, prune, trash, restore) without rescanning every file. Persists
+     * on the debounce, like {@link applyFilesTags}.
+     */
+    applyLibraryFilesChange: (change: {
+        removedFileIds: Iterable<number>;
+        addedFiles: readonly EnteFile[];
+    }) => void;
     applyTagRename: (oldName: string, newName: string) => void;
     applyTagDelete: (tagName: string) => void;
     applyTagMerge: (sourceNames: string[], targetName: string) => void;
@@ -270,13 +280,39 @@ const cancelScheduledTagIndexSave = (): void => {
 };
 
 /**
+ * Return a bucket for `tag` that is safe to mutate in place.
+ *
+ * [Note: Tag bucket copy-on-write] The working `fileIdsByTag` Map is a fresh
+ * copy per store action, but its Sets are shared with the previous state that
+ * React subscribers may still hold. Clone each touched bucket once per action
+ * (tracked in `ownedTags`) and mutate that clone for every later file.
+ */
+const ownedBucket = (
+    fileIdsByTag: Map<string, Set<number>>,
+    ownedTags: Set<string>,
+    tag: string,
+): Set<number> => {
+    const bucket = fileIdsByTag.get(tag);
+    if (bucket && ownedTags.has(tag)) {
+        return bucket;
+    }
+    const owned = new Set(bucket);
+    fileIdsByTag.set(tag, owned);
+    ownedTags.add(tag);
+    return owned;
+};
+
+/**
  * Move one file between tag buckets without scanning every tag in the library.
  * System tags are ignored — they must not affect tagged/untagged presence.
  *
+ * @param ownedTags buckets already cloned in this action (see
+ * {@link ownedBucket})
  * @returns true when a tag key was added or removed from the index
  */
 const applyIncrementalFileTags = (
     fileIdsByTag: Map<string, Set<number>>,
+    ownedTags: Set<string>,
     fileId: number,
     previousTags: readonly string[],
     newTags: readonly string[],
@@ -299,9 +335,7 @@ const applyIncrementalFileTags = (
             fileIdsByTag.delete(tag);
             tagKeysChanged = true;
         } else {
-            const updated = new Set(bucket);
-            updated.delete(fileId);
-            fileIdsByTag.set(tag, updated);
+            ownedBucket(fileIdsByTag, ownedTags, tag).delete(fileId);
         }
     }
 
@@ -309,13 +343,10 @@ const applyIncrementalFileTags = (
         if (previous.has(tag)) {
             continue;
         }
-        const bucket = fileIdsByTag.get(tag);
-        const updated = new Set(bucket);
-        updated.add(fileId);
-        fileIdsByTag.set(tag, updated);
-        if (!bucket) {
+        if (!fileIdsByTag.has(tag)) {
             tagKeysChanged = true;
         }
+        ownedBucket(fileIdsByTag, ownedTags, tag).add(fileId);
     }
 
     return tagKeysChanged;
@@ -394,31 +425,36 @@ const dropRegisteredTagsWithFiles = (
 
 /**
  * Drop many file ids from every tag bucket in one pass over the index.
+ *
+ * Only buckets that contain one of `fileIds` are cloned (once each); emptied
+ * buckets are deleted.
+ *
+ * @returns true when a tag key was removed from the index
  */
 const removeFilesFromIndex = (
     fileIdsByTag: Map<string, Set<number>>,
+    ownedTags: Set<string>,
     fileIds: Set<number>,
-): void => {
+): boolean => {
+    let tagKeysChanged = false;
     if (fileIds.size === 0) {
-        return;
+        return tagKeysChanged;
     }
     for (const [tag, ids] of fileIdsByTag) {
-        let touched = false;
-        const next = new Set(ids);
+        let next: Set<number> | undefined;
         for (const fileId of fileIds) {
-            if (next.delete(fileId)) {
-                touched = true;
+            if (!ids.has(fileId)) {
+                continue;
             }
+            next ??= ownedBucket(fileIdsByTag, ownedTags, tag);
+            next.delete(fileId);
         }
-        if (!touched) {
-            continue;
-        }
-        if (next.size === 0) {
+        if (next?.size === 0) {
             fileIdsByTag.delete(tag);
-        } else {
-            fileIdsByTag.set(tag, next);
+            tagKeysChanged = true;
         }
     }
+    return tagKeysChanged;
 };
 
 const mergeTypeForTarget = (
@@ -1059,6 +1095,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             return;
         }
         const fileIdsByTag = new Map(get().fileIdsByTag);
+        const ownedTags = new Set<string>();
         const touchedTagNames: string[] = [];
         let tagKeysChanged = false;
 
@@ -1073,6 +1110,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
                 );
                 if (applyIncrementalFileTags(
                     fileIdsByTag,
+                    ownedTags,
                     fileId,
                     previousTags!,
                     tags,
@@ -1088,16 +1126,13 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
                     ...tags.filter((tag) => !isSystemTag(tag)),
                 );
             }
-            removeFilesFromIndex(fileIdsByTag, touchedFileIds);
+            removeFilesFromIndex(fileIdsByTag, ownedTags, touchedFileIds);
             for (const { fileId, tags } of updates) {
                 for (const tag of tags) {
                     if (isSystemTag(tag)) {
                         continue;
                     }
-                    const existing = fileIdsByTag.get(tag);
-                    const ids = new Set(existing);
-                    ids.add(fileId);
-                    fileIdsByTag.set(tag, ids);
+                    ownedBucket(fileIdsByTag, ownedTags, tag).add(fileId);
                 }
             }
             tagKeysChanged = true;
@@ -1124,6 +1159,61 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             registeredTagNames,
             tagIndexRevision: get().tagIndexRevision + 1,
             lastTagTouchFileIds: updates.map((update) => update.fileId),
+        });
+        schedulePersistCurrentIndex(tagList, fileIdsByTag);
+    },
+
+    applyLibraryFilesChange: ({
+        removedFileIds,
+        addedFiles,
+    }: {
+        removedFileIds: Iterable<number>;
+        addedFiles: readonly EnteFile[];
+    }): void => {
+        const fileIdsByTag = new Map(get().fileIdsByTag);
+        const ownedTags = new Set<string>();
+        // Added ids are dropped first so a replaced file loses its old tags.
+        const removed = new Set(removedFileIds);
+        for (const file of addedFiles) {
+            removed.add(file.id);
+        }
+        let tagKeysChanged = removeFilesFromIndex(
+            fileIdsByTag,
+            ownedTags,
+            removed,
+        );
+        const touchedTagNames: string[] = [];
+        for (const file of addedFiles) {
+            for (const tag of extractUserTags(file)) {
+                if (!fileIdsByTag.has(tag)) {
+                    tagKeysChanged = true;
+                }
+                ownedBucket(fileIdsByTag, ownedTags, tag).add(file.id);
+                touchedTagNames.push(tag);
+            }
+        }
+        if (ownedTags.size === 0) {
+            // No bucket held or gained any of these files.
+            return;
+        }
+
+        const tagList = tagKeysChanged ?
+            [...fileIdsByTag.keys()].sort() :
+            get().tags;
+        const registeredTagNames = dropRegisteredTagsWithFiles(
+            get().registeredTagNames,
+            fileIdsByTag,
+            touchedTagNames,
+        );
+        if (registeredTagNames.length !== get().registeredTagNames.length) {
+            persistRegisteredTags(registeredTagNames);
+        }
+        set({
+            tags: tagList,
+            fileIdsByTag,
+            registeredTagNames,
+            tagIndexRevision: get().tagIndexRevision + 1,
+            lastTagTouchFileIds: undefined,
         });
         schedulePersistCurrentIndex(tagList, fileIdsByTag);
     },

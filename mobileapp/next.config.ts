@@ -28,6 +28,9 @@ const withSerwist: (config: NextConfig) => NextConfig = withSerwistInit({
     swDest: "public/sw.js",
     disable: process.env.NODE_ENV === "development",
     manifestTransforms: [normalizePrecacheManifest],
+    // Wasm codecs and the ONNX bundle load on first use; the runtime
+    // NetworkFirst catch-all in defaultCache caches them then.
+    exclude: [/\.(?:wasm|mjs)$/],
 });
 
 const nextConfig: NextConfig = {
@@ -51,6 +54,9 @@ const nextConfig: NextConfig = {
                 ...config.resolve?.alias,
                 sharp: false,
                 "onnxruntime-node": false,
+                // web/packages resolves zod from web/node_modules; use the same
+                // copy as mobileapp (both 4.4.3) so there is one zod instance.
+                zod: path.join(__dirname, "node_modules/zod"),
             },
         };
         return config;

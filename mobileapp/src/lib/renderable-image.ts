@@ -6,6 +6,7 @@ import { heicToJPEG } from "ente-media/heic-convert";
 import { decodeLivePhoto } from "ente-media/live-photo";
 import type { EnteFile } from "ente-media/file";
 import { detectImageFormatFromBytes } from "@/lib/compress";
+import { blobFromUint8Array } from "@/lib/bytes-blob";
 
 /**
  * Tiny HEIC used only to probe native browser decode support.
@@ -66,11 +67,6 @@ const mimeTypeForImageName = (fileName: string, bytes: Uint8Array): string => {
     return "image/jpeg";
 };
 
-const bytesToArrayBufferBlob = (
-    bytes: Uint8Array,
-    mimeType: string,
-): Blob => new Blob([Uint8Array.from(bytes)], { type: mimeType });
-
 /**
  * Build a {@link Blob} the browser can show in an {@link HTMLImageElement}.
  *
@@ -87,7 +83,7 @@ export const toRenderableImageBlob = async (
     if (file.metadata.fileType === FileType.livePhoto) {
         const livePhoto = await decodeLivePhoto(
             imageName,
-            bytesToArrayBufferBlob(encryptedFileBytes, "application/zip"),
+            blobFromUint8Array(encryptedFileBytes, "application/zip"),
         );
         imageBytes = livePhoto.imageData;
         imageName = livePhoto.imageFileName;
@@ -99,14 +95,14 @@ export const toRenderableImageBlob = async (
         detectImageFormatFromBytes(imageBytes) === "heic";
 
     if (isHeic) {
-        const heicBlob = bytesToArrayBufferBlob(imageBytes, "image/heic");
+        const heicBlob = blobFromUint8Array(imageBytes, "image/heic");
         if (await isHEICSupported()) {
             return heicBlob;
         }
         return heicToJPEG(heicBlob);
     }
 
-    return bytesToArrayBufferBlob(
+    return blobFromUint8Array(
         imageBytes,
         mimeTypeForImageName(imageName, imageBytes),
     );

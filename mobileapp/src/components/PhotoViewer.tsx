@@ -6,9 +6,11 @@ import {
     useState,
     useSyncExternalStore,
     memo,
+    type ComponentProps,
     type JSX,
     type PointerEvent as ReactPointerEvent,
     type ReactNode,
+    type RefObject,
     type TouchEvent as ReactTouchEvent,
 } from "react";
 import {
@@ -61,6 +63,7 @@ import {
     mediaKindForFile,
     mimeTypeForFile,
 } from "@/lib/media-kind";
+import { blobFromUint8Array } from "@/lib/bytes-blob";
 import { toRenderableImageBlob } from "@/lib/renderable-image";
 import { cn } from "@/lib/utils";
 import { filePixelSize } from "@/lib/file-aspect-ratio";
@@ -148,6 +151,8 @@ interface SlideLoader {
     fileId: number;
     cancelled: boolean;
     timeoutId: number;
+    /** Cancels the download; absent for loads that cannot be aborted. */
+    abortController?: AbortController;
 }
 
 interface SlideMedia {
@@ -238,6 +243,8 @@ const MEDIA_LOAD_TIMEOUT_MS = 60_000;
  */
 const PRELOAD_AHEAD = 3;
 const PRELOAD_BEHIND = 1;
+/** Videos are large, so only the immediate neighbours are preloaded. */
+const VIDEO_PRELOAD_DISTANCE = 1;
 /** Cap parallel full-file fetches so one hung download cannot saturate the browser. */
 const MAX_CONCURRENT_MEDIA_LOADS = 2;
 const TAP_MAX_MOVEMENT_PX = 10;
@@ -248,28 +255,62 @@ const DISMISS_THRESHOLD_RATIO = 0.15;
 
 /**
  * Indices to keep loaded around {@link current}, current first then ahead then behind.
+ * Video slides are only kept within {@link VIDEO_PRELOAD_DISTANCE} of the current slide.
  */
 const preloadSlideIndices = (
     current: number,
-    length: number,
+    files: EnteFile[],
 ): number[] => {
     const ordered: number[] = [];
     const seen = new Set<number>();
-    const push = (index: number): void => {
-        if (index < 0 || index >= length || seen.has(index)) {
+    const push = (index: number, distance: number): void => {
+        if (index < 0 || index >= files.length || seen.has(index)) {
+            return;
+        }
+        if (
+            distance > VIDEO_PRELOAD_DISTANCE &&
+            files[index].metadata.fileType === FileType.video
+        ) {
             return;
         }
         seen.add(index);
         ordered.push(index);
     };
-    push(current);
+    push(current, 0);
     for (let distance = 1; distance <= PRELOAD_AHEAD; distance++) {
-        push(current + distance);
+        push(current + distance, distance);
     }
     for (let distance = 1; distance <= PRELOAD_BEHIND; distance++) {
-        push(current - distance);
+        push(current - distance, distance);
     }
     return ordered;
+};
+
+/**
+ * Cancel a slide load. Abortable loads keep counting toward the concurrency
+ * cap in {@link unsettledLoaders} until their promise settles; others stop
+ * counting immediately since their network work cannot be stopped.
+ */
+const cancelLoader = (
+    loader: SlideLoader,
+    unsettledLoaders: Set<SlideLoader>,
+): void => {
+    loader.cancelled = true;
+    window.clearTimeout(loader.timeoutId);
+    if (loader.abortController) {
+        loader.abortController.abort();
+    } else {
+        unsettledLoaders.delete(loader);
+    }
+};
+
+/**
+ * Detach a video's source so Safari frees its decoder buffers.
+ */
+const releaseVideoElement = (video: HTMLVideoElement): void => {
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
 };
 
 /**
@@ -309,6 +350,41 @@ function VideoSlidePoster({
             ) : null}
         </div>
     );
+}
+
+/**
+ * Slide `<video>` that releases its decoder buffers when it unmounts.
+ *
+ * @param activeVideoRef set only on the visible slide; tracks its element.
+ */
+function SlideVideo({
+    activeVideoRef,
+    ...videoProps
+}: ComponentProps<"video"> & {
+    activeVideoRef?: RefObject<HTMLVideoElement | null>;
+}): JSX.Element {
+    const elementRef = useRef<HTMLVideoElement | null>(null);
+    const setElement = useCallback(
+        (video: HTMLVideoElement | null): void => {
+            elementRef.current = video;
+            if (activeVideoRef) {
+                activeVideoRef.current = video;
+            }
+        },
+        [activeVideoRef],
+    );
+
+    useEffect((): (() => void) => {
+        const video = elementRef.current;
+        return (): void => {
+            // Still connected means a dev-mode effect replay, not a real unmount.
+            if (video && !video.isConnected) {
+                releaseVideoElement(video);
+            }
+        };
+    }, []);
+
+    return <video ref={setElement} {...videoProps} />;
 }
 
 /**
@@ -410,6 +486,8 @@ export const PhotoViewer = memo(function PhotoViewer({
     const mediaByteSizesRef = useRef<Map<number, number>>(new Map());
     const loadingIdsRef = useRef<Set<number>>(new Set());
     const mediaLoadersRef = useRef<Map<number, SlideLoader>>(new Map());
+    /** Loads whose promise has not settled, including aborted ones; bounds concurrency. */
+    const unsettledLoadersRef = useRef<Set<SlideLoader>>(new Set());
     /** Slides whose load failed; not retried until the user asks or they leave the window. */
     const failedIdsRef = useRef<Set<number>>(new Set());
     /** Slides already reloaded once after a media element error. */
@@ -703,11 +781,9 @@ export const PhotoViewer = memo(function PhotoViewer({
     useEffect(() => {
         const loadingIds = loadingIdsRef.current;
         const loadersByFileId = mediaLoadersRef.current;
+        const unsettledLoaders = unsettledLoadersRef.current;
         const failedIds = failedIdsRef.current;
-        const keepIndices = preloadSlideIndices(
-            currentIndex,
-            sessionFiles.length,
-        );
+        const keepIndices = preloadSlideIndices(currentIndex, sessionFiles);
         const keepIds = new Set<number>();
         const keepFiles: EnteFile[] = [];
 
@@ -718,6 +794,7 @@ export const PhotoViewer = memo(function PhotoViewer({
         }
 
         const releaseLoader = (loader: SlideLoader): void => {
+            unsettledLoaders.delete(loader);
             // Only the active loader for this file may clear the slot — a
             // cancelled predecessor must not wipe a newer in-flight load.
             if (loadersByFileId.get(loader.fileId) !== loader) {
@@ -744,8 +821,7 @@ export const PhotoViewer = memo(function PhotoViewer({
             if (keepIds.has(fileId)) {
                 continue;
             }
-            loader.cancelled = true;
-            window.clearTimeout(loader.timeoutId);
+            cancelLoader(loader, unsettledLoaders);
             loadersByFileId.delete(fileId);
             loadingIds.delete(fileId);
             clearLoadingState(fileId);
@@ -766,10 +842,12 @@ export const PhotoViewer = memo(function PhotoViewer({
 
             loadingIds.add(slideFile.id);
             setSlideMedia(slideFile.id, { status: "loading" });
+            const isVideo = slideFile.metadata.fileType === FileType.video;
             const loader: SlideLoader = {
                 fileId: slideFile.id,
                 cancelled: false,
                 timeoutId: 0,
+                abortController: new AbortController(),
             };
             // Re-armed on every progress tick so a slow but moving download
             // (large video on mobile data) is not abandoned; a stalled one is.
@@ -779,7 +857,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                     if (loader.cancelled) {
                         return;
                     }
-                    loader.cancelled = true;
+                    cancelLoader(loader, unsettledLoaders);
                     releaseLoader(loader);
                     failedIds.add(slideFile.id);
                     setSlideMedia(slideFile.id, { status: "error" });
@@ -788,8 +866,8 @@ export const PhotoViewer = memo(function PhotoViewer({
             };
             armStallTimeout();
             loadersByFileId.set(slideFile.id, loader);
+            unsettledLoaders.add(loader);
 
-            const isVideo = slideFile.metadata.fileType === FileType.video;
             const reportDownloadProgress = ({
                 loaded,
                 total,
@@ -801,6 +879,14 @@ export const PhotoViewer = memo(function PhotoViewer({
                     return;
                 }
                 armStallTimeout();
+                // Background preloads stay quiet; only the visible slide
+                // re-renders the viewer on download progress.
+                if (
+                    sessionFilesRef.current[currentIndexRef.current]?.id !==
+                    slideFile.id
+                ) {
+                    return;
+                }
                 setSlideMedia(slideFile.id, {
                     status: "loading",
                     progress:
@@ -813,10 +899,15 @@ export const PhotoViewer = memo(function PhotoViewer({
             };
             const loadBytes =
                 isVideo ?
-                    loadCachedVideoBytes(slideFile, reportDownloadProgress) :
+                    loadCachedVideoBytes(
+                        slideFile,
+                        reportDownloadProgress,
+                        loader.abortController?.signal,
+                    ) :
                     getEnteCore().getDecryptedFile(
                         slideFile,
                         reportDownloadProgress,
+                        loader.abortController?.signal,
                     );
 
             void loadBytes
@@ -835,9 +926,10 @@ export const PhotoViewer = memo(function PhotoViewer({
                     });
                     const blob =
                         isVideo ?
-                            new Blob([Uint8Array.from(bytes)], {
-                                type: mimeTypeForFile(slideFile),
-                            }) :
+                            blobFromUint8Array(
+                                bytes,
+                                mimeTypeForFile(slideFile),
+                            ) :
                             await toRenderableImageBlob(slideFile, bytes);
                     if (loader.cancelled) {
                         releaseLoader(loader);
@@ -865,7 +957,7 @@ export const PhotoViewer = memo(function PhotoViewer({
         };
 
         pumpLoadsRef.current = (): void => {
-            let inFlight = loadersByFileId.size;
+            let inFlight = unsettledLoaders.size;
             for (const slideFile of keepFiles) {
                 if (inFlight >= MAX_CONCURRENT_MEDIA_LOADS) {
                     break;
@@ -906,13 +998,15 @@ export const PhotoViewer = memo(function PhotoViewer({
                     timeoutId: 0,
                 };
                 loadersByFileId.set(slideFile.id, overrideLoader);
+                unsettledLoaders.add(overrideLoader);
                 void (async (): Promise<void> => {
                     try {
                         const blob =
                             slideFile.metadata.fileType === FileType.video ?
-                                new Blob([Uint8Array.from(mediaOverride)], {
-                                    type: mimeTypeForFile(slideFile),
-                                }) :
+                                blobFromUint8Array(
+                                    mediaOverride,
+                                    mimeTypeForFile(slideFile),
+                                ) :
                                 await toRenderableImageBlob(
                                     slideFile,
                                     mediaOverride,
@@ -1007,14 +1101,14 @@ export const PhotoViewer = memo(function PhotoViewer({
         const urls = mediaUrlsRef.current;
         const sizes = mediaByteSizesRef.current;
         const loaders = mediaLoadersRef.current;
+        const unsettledLoaders = unsettledLoadersRef.current;
         const loadingIds = loadingIdsRef.current;
         const pumpLoads = pumpLoadsRef;
         return (): void => {
             // Cancelled loads settle after unmount; they must not start new ones.
             pumpLoads.current = (): void => undefined;
             for (const loader of loaders.values()) {
-                loader.cancelled = true;
-                window.clearTimeout(loader.timeoutId);
+                cancelLoader(loader, unsettledLoaders);
             }
             loaders.clear();
             loadingIds.clear();
@@ -1183,8 +1277,7 @@ export const PhotoViewer = memo(function PhotoViewer({
         }
         const activeLoader = mediaLoadersRef.current.get(file.id);
         if (activeLoader) {
-            activeLoader.cancelled = true;
-            window.clearTimeout(activeLoader.timeoutId);
+            cancelLoader(activeLoader, unsettledLoadersRef.current);
             mediaLoadersRef.current.delete(file.id);
         }
         const url = mediaUrlsRef.current.get(file.id);
@@ -1208,8 +1301,7 @@ export const PhotoViewer = memo(function PhotoViewer({
         (fileId: number): void => {
             const activeLoader = mediaLoadersRef.current.get(fileId);
             if (activeLoader) {
-                activeLoader.cancelled = true;
-                window.clearTimeout(activeLoader.timeoutId);
+                cancelLoader(activeLoader, unsettledLoadersRef.current);
                 mediaLoadersRef.current.delete(fileId);
             }
             const url = mediaUrlsRef.current.get(fileId);
@@ -1968,7 +2060,7 @@ export const PhotoViewer = memo(function PhotoViewer({
 
         return (
             <div
-                key={offset}
+                key={slideIndex}
                 className="relative h-full shrink-0"
                 style={
                     viewportWidth > 0 ?
@@ -2048,8 +2140,8 @@ export const PhotoViewer = memo(function PhotoViewer({
                         }
                     >
                         <VideoSlidePoster file={slideFile!} />
-                        <video
-                            ref={isActive ? activeVideoRef : undefined}
+                        <SlideVideo
+                            activeVideoRef={isActive ? activeVideoRef : undefined}
                             className="pointer-events-none absolute inset-0 size-full object-contain select-none [-webkit-touch-callout:none]"
                             src={slideMedia.url}
                             loop={videoLoop}
@@ -2122,6 +2214,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                             className="block size-full object-contain select-none [-webkit-touch-callout:none]"
                             src={slideMedia.url}
                             alt=""
+                            decoding="async"
                             draggable={false}
                             onError={() => {
                                 if (slideFile) {
