@@ -18,9 +18,6 @@ export const VIEW_SESSION_QUALIFY_MS = 1000;
 /** Max sessions kept in organizer config / merged lists. */
 export const VIEW_SESSIONS_CLOUD_CAP = 50;
 
-/** Bound magic-metadata size — keep the newest views per session. */
-export const VIEW_SESSION_CLOUD_MAX_VIEWS = 100;
-
 /** Cap deleted-session tombstones retained in organizer config. */
 export const VIEW_SESSION_TOMBSTONE_CAP = 100;
 
@@ -331,26 +328,6 @@ export const preferViewSession = (
 };
 
 /**
- * Drop oldest views when over the cloud cap and recompute aggregates.
- * Preserves a consecutive-view {@link ViewSession.endTime} bump that is not
- * reflected in the last view's closedAt.
- */
-export const trimSessionViewsForCloud = (
-    session: ViewSession,
-    maxViews: number = VIEW_SESSION_CLOUD_MAX_VIEWS,
-): ViewSession => {
-    if (session.views.length <= maxViews) {
-        return session;
-    }
-    const views = session.views.slice(session.views.length - maxViews);
-    const next = recomputeSessionAggregates({ ...session, views });
-    return {
-        ...next,
-        endTime: Math.max(session.endTime, next.endTime),
-    };
-};
-
-/**
  * Newest-first list capped to {@link VIEW_SESSIONS_CLOUD_CAP}.
  */
 export const capViewSessions = (
@@ -410,10 +387,7 @@ export const mergeCloudViewSessions = (
     }
 
     return {
-        sessions: capViewSessions(
-            [...sessionMap.values()].map((session) =>
-                trimSessionViewsForCloud(session)),
-        ),
+        sessions: capViewSessions([...sessionMap.values()]),
         tombstones: capViewSessionTombstones(
             [...tombstoneMap.entries()].map(([id, deletedAt]) => ({
                 id,

@@ -534,9 +534,10 @@ export const PhotoViewer = memo(function PhotoViewer({
     const displayTags = stagedTags ?? tags;
     const activeSlideMedia = file ? mediaByFileId.get(file.id) : undefined;
 
-    // Record qualifying full-screen views for Recents (skip read-only replay).
+    // Record qualifying full-screen views for Recents (including replays of a
+    // past session, which count toward the current session).
     useEffect((): (() => void) | void => {
-        if (readOnly || cropMode || !file) {
+        if (cropMode || !file) {
             return;
         }
         if (activeSlideMedia?.status !== "ready") {
@@ -558,7 +559,7 @@ export const PhotoViewer = memo(function PhotoViewer({
             window.clearTimeout(timer);
             useViewSessionsStore.getState().endView(fileId);
         };
-    }, [activeSlideMedia?.status, cropMode, file, readOnly]);
+    }, [activeSlideMedia?.status, cropMode, file]);
 
     useEffect((): void => {
         if (file?.metadata.fileType === FileType.video) {

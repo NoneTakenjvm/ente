@@ -894,19 +894,22 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                             const { useEmbeddingIndexStore } = await import(
                                 "@/stores/embedding-index-store"
                             );
-                            const store = useEmbeddingIndexStore.getState();
+                            // Hydrate first: setEntries marks the store hydrated,
+                            // so merging into an unhydrated store would pin it
+                            // to just the pulled vectors for the session.
+                            if (!useEmbeddingIndexStore.getState().isHydrated) {
+                                await useEmbeddingIndexStore.getState().hydrate();
+                            }
                             if (applied.size > 0) {
-                                const next = new Map(store.entries);
+                                const next = new Map(
+                                    useEmbeddingIndexStore.getState().entries,
+                                );
                                 for (const [id, vector] of applied) {
                                     next.set(id, vector);
                                 }
-                                store.setEntries(next);
+                                useEmbeddingIndexStore.getState().setEntries(next);
                             }
-                            let local = store.entries;
-                            if (local.size === 0) {
-                                await store.hydrate();
-                                local = useEmbeddingIndexStore.getState().entries;
-                            }
+                            const local = useEmbeddingIndexStore.getState().entries;
                             if (local.size > 0) {
                                 void backfillOrganizerClipUploads(
                                     allFiles,
