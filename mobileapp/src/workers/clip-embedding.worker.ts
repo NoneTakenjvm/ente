@@ -11,7 +11,11 @@
  * Batched ORT forwards are attempted; a failed batch permanently falls back
  * to one image at a time so the scan still completes.
  */
-import { l2NormalizeEmbedding } from "@/lib/embedding-vector";
+import {
+    KIT_EMBEDDING_DIMS,
+    KIT_EMBEDDING_MODEL_ID,
+    l2NormalizeEmbedding,
+} from "@/lib/embedding-vector";
 import type {
     ClipEmbeddingBatchMode,
     ClipEmbeddingDevice,
@@ -23,8 +27,6 @@ import type {
 } from "@/workers/clip-embedding-worker-types";
 import { errorMessage } from "@/lib/format";
 
-const MODEL_ID = "Xenova/mobileclip_s2";
-const EMBEDDING_DIMS = 512;
 /** Xenova config pins `vision_model` to fp32; quantized S2 is unreliable. */
 const SESSION_DTYPE: ClipEmbeddingDtype = "fp32";
 
@@ -143,11 +145,11 @@ const loadVisionSession = async (
         "@huggingface/transformers"
     );
     const nextProcessor = (await AutoProcessor.from_pretrained(
-        MODEL_ID,
+        KIT_EMBEDDING_MODEL_ID,
         {},
     )) as unknown as ImageProcessor;
     const nextModel = (await CLIPVisionModelWithProjection.from_pretrained(
-        MODEL_ID,
+        KIT_EMBEDDING_MODEL_ID,
         { device, dtype },
     )) as unknown as VisionModel;
     processor = nextProcessor;
@@ -166,7 +168,7 @@ const getSession = async (): Promise<void> => {
     // (including WASM) with the same numeric abort. Initialize WASM fp32 first.
     await loadVisionSession("wasm", SESSION_DTYPE);
     console.warn(
-        `[clip-embedding.worker] ${MODEL_ID} ready device=wasm dtype=${SESSION_DTYPE}`,
+        `[clip-embedding.worker] ${KIT_EMBEDDING_MODEL_ID} ready device=wasm dtype=${SESSION_DTYPE}`,
     );
 
     if (!(await canUseWebGpu())) {
@@ -178,7 +180,7 @@ const getSession = async (): Promise<void> => {
         await loadVisionSession("webgpu", SESSION_DTYPE);
         webGpuSkipReason = undefined;
         console.warn(
-            `[clip-embedding.worker] ${MODEL_ID} ready device=webgpu dtype=${SESSION_DTYPE}`,
+            `[clip-embedding.worker] ${KIT_EMBEDDING_MODEL_ID} ready device=webgpu dtype=${SESSION_DTYPE}`,
         );
     } catch (error) {
         webGpuSkipReason = formatUnknownError(error);
@@ -189,22 +191,15 @@ const getSession = async (): Promise<void> => {
         await resetSession();
         await loadVisionSession("wasm", SESSION_DTYPE);
         console.warn(
-            `[clip-embedding.worker] ${MODEL_ID} restored device=wasm dtype=${SESSION_DTYPE}`,
+            `[clip-embedding.worker] ${KIT_EMBEDDING_MODEL_ID} restored device=wasm dtype=${SESSION_DTYPE}`,
         );
     }
-};
-
-const normalizeToNumbers = (
-    data: Float32Array | number[],
-): number[] | undefined => {
-    const normalized = l2NormalizeEmbedding(data);
-    return normalized && Array.from(normalized);
 };
 
 const vectorsFromImageEmbeds = (
     embeds: EmbedTensor | undefined,
     batchSize: number,
-): Array<number[] | undefined> => {
+): Array<Float32Array | undefined> => {
     if (!embeds?.data) {
         return Array.from({ length: batchSize }, () => undefined);
     }
@@ -213,13 +208,13 @@ const vectorsFromImageEmbeds = (
             embeds.data :
             Float32Array.from(embeds.data);
     const dims = embeds.dims ?? [];
-    const out: Array<number[] | undefined> = [];
-    if (dims.length === 2 && dims[1] === EMBEDDING_DIMS) {
+    const out: Array<Float32Array | undefined> = [];
+    if (dims.length === 2 && dims[1] === KIT_EMBEDDING_DIMS) {
         const rows = Math.min(batchSize, dims[0]!);
         for (let i = 0; i < rows; i++) {
             out.push(
-                normalizeToNumbers(
-                    flat.subarray(i * EMBEDDING_DIMS, (i + 1) * EMBEDDING_DIMS),
+                l2NormalizeEmbedding(
+                    flat.subarray(i * KIT_EMBEDDING_DIMS, (i + 1) * KIT_EMBEDDING_DIMS),
                 ),
             );
         }
@@ -228,23 +223,23 @@ const vectorsFromImageEmbeds = (
         }
         return out;
     }
-    if (flat.length === batchSize * EMBEDDING_DIMS) {
+    if (flat.length === batchSize * KIT_EMBEDDING_DIMS) {
         for (let i = 0; i < batchSize; i++) {
             out.push(
-                normalizeToNumbers(
-                    flat.subarray(i * EMBEDDING_DIMS, (i + 1) * EMBEDDING_DIMS),
+                l2NormalizeEmbedding(
+                    flat.subarray(i * KIT_EMBEDDING_DIMS, (i + 1) * KIT_EMBEDDING_DIMS),
                 ),
             );
         }
         return out;
     }
-    if (flat.length === EMBEDDING_DIMS && batchSize === 1) {
-        return [normalizeToNumbers(flat)];
+    if (flat.length === KIT_EMBEDDING_DIMS && batchSize === 1) {
+        return [l2NormalizeEmbedding(flat)];
     }
     return Array.from({ length: batchSize }, () => undefined);
 };
 
-const embedOneVision = async (image: unknown): Promise<number[] | undefined> => {
+const embedOneVision = async (image: unknown): Promise<Float32Array | undefined> => {
     const inputs = await processor!(image);
     const output = await visionModel!(inputs);
     return vectorsFromImageEmbeds(output.image_embeds, 1)[0];
@@ -252,8 +247,8 @@ const embedOneVision = async (image: unknown): Promise<number[] | undefined> => 
 
 const embedSequential = async (
     images: unknown[],
-): Promise<Array<number[] | undefined>> => {
-    const out: Array<number[] | undefined> = [];
+): Promise<Array<Float32Array | undefined>> => {
+    const out: Array<Float32Array | undefined> = [];
     for (const image of images) {
         try {
             out.push(await embedOneVision(image));
@@ -267,7 +262,7 @@ const embedSequential = async (
 const embedImages = async (
     images: unknown[],
 ): Promise<{
-    vectors: Array<number[] | undefined>;
+    vectors: Array<Float32Array | undefined>;
     batchMode: ClipEmbeddingBatchMode;
 }> => {
     await getSession();
@@ -335,7 +330,7 @@ const runSerialised = <T>(task: () => Promise<T>): Promise<T> =>
 const embedBatchBytes = async (
     items: Array<{ fileId: number; bytes: Uint8Array }>,
 ): Promise<{
-    results: Array<{ fileId: number; vector?: number[] }>;
+    results: Array<{ fileId: number; vector?: Float32Array }>;
     batchMode: ClipEmbeddingBatchMode;
 }> => {
     if (items.length === 0) {
@@ -362,7 +357,6 @@ const handleInit = async (id: number): Promise<void> => {
             id,
             device: activeDevice ?? "wasm",
             dtype: activeDtype,
-            modelId: MODEL_ID,
             webGpuSkipReason,
         };
         self.postMessage(done);
@@ -374,7 +368,6 @@ const handleInit = async (id: number): Promise<void> => {
             kind: "init-done",
             id,
             device: "wasm",
-            modelId: MODEL_ID,
             webGpuSkipReason,
             error: formatUnknownError(error),
         };
@@ -402,7 +395,9 @@ const handleEmbedBatch = (message: ClipEmbeddingEmbedBatchMessage): void => {
             done.error =
                 errorMessage(error, "embed-batch failed");
         }
-        self.postMessage(done);
+        const vectorBuffers = done.results.flatMap((result) =>
+            result.vector ? [result.vector.buffer as ArrayBuffer] : []);
+        self.postMessage(done, vectorBuffers);
     })();
 };
 

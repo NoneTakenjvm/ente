@@ -70,7 +70,7 @@ export default function AlbumsPage(): JSX.Element {
     const albumViewFilter = useTagStore((s) => s.albumViewFilter);
     const clearAlbumViewFilter = useTagStore((s) => s.clearAlbumViewFilter);
     const includeInEffectsPresenceByName = useTagStore(
-        (s) => s.includeInEffectsPresenceByName,
+        (s) => s.typeConfig.includeInEffectsPresenceByName,
     );
     const initialLoadDone = useLibraryBootstrap();
     const gallerySortBy = useSettingsStore((s) => s.gallerySortBy);

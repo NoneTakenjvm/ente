@@ -29,7 +29,7 @@ interface ManageArchivedPanelProps {
 export function ManageArchivedPanel({
     files,
 }: ManageArchivedPanelProps): JSX.Element {
-    const setFileArchived = useLibraryStore((s) => s.setFileArchived);
+    const batchSetArchived = useLibraryStore((s) => s.batchSetArchived);
     const [pickedIds, setPickedIds] = useState<Set<number>>(new Set());
     const [busy, setBusy] = useState<boolean>(false);
     const [error, setError] = useState<string | undefined>();
@@ -79,8 +79,9 @@ export function ManageArchivedPanel({
         }
         setBusy(true);
         setError(undefined);
-        void Promise.all(
-            targets.map((file) => setFileArchived(file, false)),
+        void batchSetArchived(
+            targets.map((file) => file.id),
+            false,
         )
             .then(() => {
                 setPickedIds(new Set());

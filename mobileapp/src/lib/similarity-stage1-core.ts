@@ -37,15 +37,10 @@ export const MAX_GROUP_SIZE = 5;
 const MUTUAL_RANK_K = 8;
 const TIGHT_MATCH_DISTANCE = 2;
 
-export {
-    CLIP_SCORE_COLLECT_MAX,
-    CLIP_SCORE_SLIDER_MAX,
-    CLIP_SCORE_SLIDER_MIN,
-    clampClipScoreThreshold,
-} from "@/lib/similarity-clip";
-
 /** Soft throttle for provisional cluster snapshots during compare (ms). */
 const CLUSTER_PROGRESS_INTERVAL_MS = 300;
+/** Throttle for dHash-path progress messages, so the worker posts a few per second. */
+const PROGRESS_INTERVAL_MS = 100;
 
 export type Stage1Item = {
     fileId: number;
@@ -630,6 +625,7 @@ export const runStage1Clustering = async (
     // Yield often enough for a live progress bar without drowning the main thread.
     const yieldEvery = Math.max(1, Math.min(48, Math.floor(total / 150) || 1));
     let lastClusterAt = 0;
+    let lastProgressAt = 0;
     let clustersDirty = false;
 
     for (let i = 0; i < numericItems.length; i++) {
@@ -668,18 +664,25 @@ export const runStage1Clustering = async (
             mergedTight ||
             completed === total;
 
-        onProgress({
-            phase: "comparing",
-            completed,
-            total,
-            clusters: dueForClusters ?
-                clustersFromUnionFind(
-                    provisionalUf,
-                    numericItems,
-                    provisionalDistances,
-                ) :
-                undefined,
-        });
+        if (
+            dueForClusters ||
+            completed === total ||
+            now - lastProgressAt >= PROGRESS_INTERVAL_MS
+        ) {
+            lastProgressAt = now;
+            onProgress({
+                phase: "comparing",
+                completed,
+                total,
+                clusters: dueForClusters ?
+                    clustersFromUnionFind(
+                        provisionalUf,
+                        numericItems,
+                        provisionalDistances,
+                    ) :
+                    undefined,
+            });
+        }
         if (dueForClusters) {
             lastClusterAt = now;
             clustersDirty = false;

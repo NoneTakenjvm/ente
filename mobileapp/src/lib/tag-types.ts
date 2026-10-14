@@ -34,14 +34,17 @@ export const normalizeTagTypeName = (name: string): string | undefined => {
     return trimmed;
 };
 
-export const configFromPersisted = (
-    config: PersistedTagTypeConfig | undefined,
-): {
+/** In-memory form of {@link PersistedTagTypeConfig}, with `Map`s for lookups. */
+export interface TagTypeConfig {
     types: string[];
     tagTypeByName: Map<string, string>;
     includeInKitNearnessByName: Map<string, boolean>;
     includeInEffectsPresenceByName: Map<string, boolean>;
-} => {
+}
+
+export const configFromPersisted = (
+    config: PersistedTagTypeConfig | undefined,
+): TagTypeConfig => {
     const base = config ?? emptyTagTypeConfig();
     const types = base.types.includes(DEFAULT_TAG_TYPE) ?
         base.types :

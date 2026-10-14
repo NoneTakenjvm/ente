@@ -1,3 +1,8 @@
+/** CLIP model id; changing it invalidates the persisted embedding index. */
+export const KIT_EMBEDDING_MODEL_ID = "Xenova/mobileclip_s2";
+
+export const KIT_EMBEDDING_DIMS = 512;
+
 /** L2-normalize into a packed Float32Array; undefined when empty / non-finite. */
 export const l2NormalizeEmbedding = (
     data: ArrayLike<number>,

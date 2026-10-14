@@ -67,10 +67,10 @@ export function TagFilterBar({
     const deferredFavoriteFileIds = useDeferredValue(favoriteFileIds);
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
     const includeInEffectsPresenceByName = useTagStore(
-        (s) => s.includeInEffectsPresenceByName,
+        (s) => s.typeConfig.includeInEffectsPresenceByName,
     );
     const includeInKitNearnessByName = useTagStore(
-        (s) => s.includeInKitNearnessByName,
+        (s) => s.typeConfig.includeInKitNearnessByName,
     );
     const knownTags = useTagStore((s) => s.tags);
     const {
@@ -133,9 +133,9 @@ export function TagFilterBar({
 
     const embeddingCount = useEmbeddingIndexStore((s) => s.entries.size);
     const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
-    const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.hydrate);
+    const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.ensureHydrated);
     const qualityHydrated = useQualityIndexStore((s) => s.isHydrated);
-    const hydrateQuality = useQualityIndexStore((s) => s.hydrate);
+    const hydrateQuality = useQualityIndexStore((s) => s.ensureHydrated);
 
     useEffect(() => {
         if (imageQualitySort === "none" || qualityHydrated) {

@@ -104,9 +104,11 @@ export const libraryOutboxContext: OutboxRunnerContext = {
         if (!collection?.key) {
             return;
         }
+        // Write on a clone: the core assigns the accepted metadata onto the
+        // file it is given, which must not be the library's own object.
         library.patchFiles([
             await getEnteCore().updateFileVisibility(
-                file,
+                { ...file },
                 collection.key,
                 entry.visibility,
             ),

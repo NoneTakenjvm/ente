@@ -11,6 +11,7 @@ import {
     DEFAULT_TAG_TYPE,
     normalizeTagTypeName,
     type PersistedTagTypeConfig,
+    type TagTypeConfig,
 } from "@/lib/tag-types";
 import {
     buildTagIndex,
@@ -21,31 +22,30 @@ import {
 import {
     emptyTagFilter,
     isTagFilterActive,
-    isTagFilterGroup,
     isReservedTag,
-    newTagFilterNodeId,
     type TagFilterGroup,
     type TagFilterJoin,
     type TagFilterMode,
-    type TagFilterNode,
     type TagFilterSelection,
     type TagScope,
-    type CroppedScope,
-    type RotatedScope,
-    type FavoritesScope,
-    type MediaScope,
 } from "@/lib/tag-filter";
 import { normalizeTagName } from "@/lib/tag-writes";
 import {
+    removeTagFilterNode,
     removeTagFromTree,
     renameTagInTree,
     setClauseInGroupOnFilter,
     setClauseModeOnFilter,
     setKitInGroupOnFilter,
     setKitModeOnFilter,
+    setTagFilterGroupOp,
     setTagFilterModeOnFilter,
     setTagFilterScope,
+    setTagFilterScopes,
+    ungroupTagFilterNode,
+    wrapTagFilterNodesInGroup,
     type KitFilterInput,
+    type TagFilterScopePatch,
 } from "@/lib/tag-filter-mutations";
 
 import type { EnteFile } from "ente-media/file";
@@ -57,10 +57,7 @@ interface TagState {
     tags: string[];
     fileIdsByTag: Map<string, Set<number>>;
     registeredTagNames: string[];
-    tagTypes: string[];
-    tagTypeByName: Map<string, string>;
-    includeInKitNearnessByName: Map<string, boolean>;
-    includeInEffectsPresenceByName: Map<string, boolean>;
+    typeConfig: TagTypeConfig;
     tagFilter: TagFilterSelection;
     /** Session overlay filter when refining an open album view. */
     albumViewFilter: TagFilterSelection;
@@ -75,13 +72,8 @@ interface TagState {
     hydrateRegisteredTags: (names: string[] | undefined) => void;
     rebuildFromFiles: (files: EnteFile[]) => void;
     setTagScope: (scope: TagScope, target?: TagFilterTarget) => void;
-    setFavoritesScope: (
-        favoritesScope: FavoritesScope,
-        target?: TagFilterTarget,
-    ) => void;
-    setMediaScope: (mediaScope: MediaScope, target?: TagFilterTarget) => void;
-    setCroppedScope: (croppedScope: CroppedScope, target?: TagFilterTarget) => void;
-    setRotatedScope: (rotatedScope: RotatedScope, target?: TagFilterTarget) => void;
+    /** Set the favourites, media, crop or rotate scopes in one step. */
+    patchFilter: (patch: TagFilterScopePatch, target?: TagFilterTarget) => void;
     setTagFilterMode: (
         tag: string,
         mode: TagFilterMode | null,
@@ -152,17 +144,12 @@ interface TagState {
     reset: () => void;
 }
 
-const initialTypeState = configFromPersisted(undefined);
-
 const initialTagState: Pick<
     TagState,
     "tags" |
     "fileIdsByTag" |
     "registeredTagNames" |
-    "tagTypes" |
-    "tagTypeByName" |
-    "includeInKitNearnessByName" |
-    "includeInEffectsPresenceByName" |
+    "typeConfig" |
     "tagFilter" |
     "albumViewFilter" |
     "lastTagTouchFileIds"
@@ -170,11 +157,7 @@ const initialTagState: Pick<
     tags: [],
     fileIdsByTag: new Map(),
     registeredTagNames: [],
-    tagTypes: initialTypeState.types,
-    tagTypeByName: initialTypeState.tagTypeByName,
-    includeInKitNearnessByName: initialTypeState.includeInKitNearnessByName,
-    includeInEffectsPresenceByName:
-        initialTypeState.includeInEffectsPresenceByName,
+    typeConfig: configFromPersisted(undefined),
     tagFilter: emptyTagFilter(),
     albumViewFilter: emptyTagFilter(),
     lastTagTouchFileIds: undefined,
@@ -343,18 +326,19 @@ const scrubSystemTagsFromIndex = (
     return changed;
 };
 
-const persistTagTypesConfig = (
-    tagTypes: string[],
-    tagTypeByName: Map<string, string>,
-    includeInKitNearnessByName: Map<string, boolean>,
-    includeInEffectsPresenceByName: Map<string, boolean>,
+/** Publish a new type config and queue its cloud write. */
+const commitTypeConfig = (
+    set: (partial: Partial<TagState>) => void,
+    typeConfig: TagTypeConfig,
+    alsoSet: Partial<TagState> = {},
 ): void => {
+    set({ ...alsoSet, typeConfig });
     enqueueOrganizerConfigPatch({
         tagTypes: configToPersisted(
-            tagTypes,
-            tagTypeByName,
-            includeInKitNearnessByName,
-            includeInEffectsPresenceByName,
+            typeConfig.types,
+            typeConfig.tagTypeByName,
+            typeConfig.includeInKitNearnessByName,
+            typeConfig.includeInEffectsPresenceByName,
         ),
     });
 };
@@ -483,139 +467,151 @@ const mergeTypeForTarget = (
     return undefined;
 };
 
-const removeNodeFromTree = (
-    root: TagFilterGroup,
-    nodeId: string,
-): TagFilterGroup => ({
-    ...root,
-    children: root.children.flatMap((child): TagFilterNode[] => {
-        if (child.id === nodeId) {
-            return [];
-        }
-        if (!isTagFilterGroup(child)) {
-            return [child];
-        }
-        const next = removeNodeFromTree(child, nodeId);
-        return next.children.length > 0 ? [next] : [];
-    }),
-});
-
-const updateGroupOp = (
-    root: TagFilterGroup,
-    groupId: string,
-    op: TagFilterJoin,
-): TagFilterGroup => {
-    if (root.id === groupId) {
-        return { ...root, op };
-    }
-    return {
-        ...root,
-        children: root.children.map((child) => {
-            if (!isTagFilterGroup(child)) {
-                return child;
-            }
-            return updateGroupOp(child, groupId, op);
-        }),
-    };
-};
-
-const findParentGroup = (
-    root: TagFilterGroup,
-    nodeId: string,
-): TagFilterGroup | undefined => {
-    for (const child of root.children) {
-        if (child.id === nodeId) {
-            return root;
-        }
-        if (isTagFilterGroup(child)) {
-            const found = findParentGroup(child, nodeId);
-            if (found) {
-                return found;
-            }
-        }
-    }
-    return undefined;
-};
-
-const ungroupNode = (
-    root: TagFilterGroup,
-    groupId: string,
-): TagFilterGroup => {
-    if (root.id === groupId) {
-        return root;
-    }
-
-    const childIndex = root.children.findIndex(
-        (child) => isTagFilterGroup(child) && child.id === groupId,
+/**
+ * Copy `typeConfig` with `sourceNames` removed and, when `targetName` is set,
+ * their settings merged onto it: the target's type else the first source's,
+ * kit nearness ORed across all involved tags, and effects presence included
+ * if any involved tag is included.
+ *
+ * [Note: Effects-presence inheritance] Only exclusions (`false`) are stored. A
+ * brand-new target does not count as an included tag, so merging or renaming
+ * only excluded tags onto a new name keeps it excluded.
+ */
+const mergeTypeConfig = (
+    typeConfig: TagTypeConfig,
+    sourceNames: string[],
+    targetName: string | undefined,
+    targetExisted: boolean,
+): TagTypeConfig => {
+    const tagTypeByName = new Map(typeConfig.tagTypeByName);
+    const includeInKitNearnessByName = new Map(
+        typeConfig.includeInKitNearnessByName,
     );
-    if (childIndex >= 0) {
-        const group = root.children[childIndex] as TagFilterGroup;
-        const nextChildren = [
-            ...root.children.slice(0, childIndex),
-            ...group.children,
-            ...root.children.slice(childIndex + 1),
-        ];
-        return { ...root, children: nextChildren };
+    const includeInEffectsPresenceByName = new Map(
+        typeConfig.includeInEffectsPresenceByName,
+    );
+    let mergedType: string | undefined;
+    let mergedKit = false;
+    let mergedEffects = false;
+    if (targetName !== undefined) {
+        mergedType = mergeTypeForTarget(targetName, sourceNames, tagTypeByName);
+        mergedKit = [targetName, ...sourceNames].some(
+            (name) => includeInKitNearnessByName.get(name) === true,
+        );
+        const effectsNames = new Set(sourceNames);
+        if (targetExisted || includeInEffectsPresenceByName.has(targetName)) {
+            effectsNames.add(targetName);
+        }
+        mergedEffects = [...effectsNames].some(
+            (name) => includeInEffectsPresenceByName.get(name) !== false,
+        );
     }
-
+    for (const source of sourceNames) {
+        tagTypeByName.delete(source);
+        includeInKitNearnessByName.delete(source);
+        includeInEffectsPresenceByName.delete(source);
+    }
+    if (targetName !== undefined) {
+        if (mergedType && !tagTypeByName.has(targetName)) {
+            tagTypeByName.set(targetName, mergedType);
+        }
+        if (mergedKit) {
+            includeInKitNearnessByName.set(targetName, true);
+        } else {
+            includeInKitNearnessByName.delete(targetName);
+        }
+        if (mergedEffects) {
+            includeInEffectsPresenceByName.delete(targetName);
+        } else {
+            includeInEffectsPresenceByName.set(targetName, false);
+        }
+    }
     return {
-        ...root,
-        children: root.children.map((child) => {
-            if (!isTagFilterGroup(child)) {
-                return child;
-            }
-            return ungroupNode(child, groupId);
-        }),
+        ...typeConfig,
+        tagTypeByName,
+        includeInKitNearnessByName,
+        includeInEffectsPresenceByName,
     };
 };
 
-const wrapSiblingsInGroup = (
-    root: TagFilterGroup,
-    nodeIds: string[],
-    op: TagFilterJoin,
-    parentId: string,
-): TagFilterGroup => {
-    if (root.id === parentId) {
-        const idSet = new Set(nodeIds);
-        const selected: TagFilterNode[] = [];
-        for (const child of root.children) {
-            if (idSet.has(child.id)) {
-                selected.push(child);
-            }
+/**
+ * The one path behind rename, delete and merge: move `sourceNames` into
+ * `targetName` (rename is a merge of one source; delete has no target), then
+ * fix the type config, registered names and both filters, and persist.
+ *
+ * @param rewriteTree how one source name leaves a filter tree (rename it, or
+ * remove its clauses)
+ */
+const applyTagRewrite = (
+    set: (partial: Partial<TagState>) => void,
+    get: () => TagState,
+    sourceNames: string[],
+    targetName: string | undefined,
+    rewriteTree: (root: TagFilterGroup, source: string) => TagFilterGroup,
+): void => {
+    const state = get();
+    const fileIdsByTag = new Map(state.fileIdsByTag);
+    const targetExisted =
+        targetName !== undefined &&
+        (fileIdsByTag.has(targetName) || state.tags.includes(targetName));
+    const mergedIds = new Set(
+        targetName === undefined ? [] : fileIdsByTag.get(targetName),
+    );
+    for (const source of sourceNames) {
+        for (const id of fileIdsByTag.get(source) ?? []) {
+            mergedIds.add(id);
         }
-        if (selected.length < 2) {
-            return root;
-        }
-        const newGroup: TagFilterGroup = {
-            kind: "group",
-            id: newTagFilterNodeId(),
-            op,
-            children: selected,
-        };
-        const nextChildren: TagFilterNode[] = [];
-        let grouped = false;
-        for (const child of root.children) {
-            if (!grouped && idSet.has(child.id)) {
-                nextChildren.push(newGroup);
-                grouped = true;
-                continue;
-            }
-            if (!idSet.has(child.id)) {
-                nextChildren.push(child);
-            }
-        }
-        return { ...root, children: nextChildren };
+        fileIdsByTag.delete(source);
+    }
+    if (targetName !== undefined && mergedIds.size > 0) {
+        fileIdsByTag.set(targetName, mergedIds);
     }
 
-    return {
-        ...root,
-        children: root.children.map((child) => {
-            if (!isTagFilterGroup(child)) {
-                return child;
-            }
-            return wrapSiblingsInGroup(child, nodeIds, op, parentId);
-        }),
-    };
+    let registeredTagNames = state.registeredTagNames.filter(
+        (tag) => !sourceNames.includes(tag),
+    );
+    if (targetName !== undefined) {
+        if (mergedIds.size > 0) {
+            registeredTagNames = dropRegisteredTagsWithFiles(
+                registeredTagNames,
+                fileIdsByTag,
+                [targetName],
+            );
+        } else if (!registeredTagNames.includes(targetName)) {
+            registeredTagNames = [...registeredTagNames, targetName].sort();
+        }
+    }
+    if (
+        registeredTagNames.length !== state.registeredTagNames.length ||
+        registeredTagNames.some(
+            (tag, index) => tag !== state.registeredTagNames[index],
+        )
+    ) {
+        persistRegisteredTags(registeredTagNames);
+    }
+
+    const rewriteFilter = (filter: TagFilterSelection): TagFilterSelection =>
+        isTagFilterActive(filter) ?
+            { ...filter, root: sourceNames.reduce(rewriteTree, filter.root) } :
+            filter;
+    const index = mergeRegisteredTagsIntoIndex(
+        [...fileIdsByTag.keys()].sort(),
+        fileIdsByTag,
+        registeredTagNames,
+    );
+    commitTypeConfig(
+        set,
+        mergeTypeConfig(state.typeConfig, sourceNames, targetName, targetExisted),
+        {
+            tags: index.tags,
+            fileIdsByTag: index.fileIdsByTag,
+            registeredTagNames,
+            tagFilter: rewriteFilter(state.tagFilter),
+            albumViewFilter: rewriteFilter(state.albumViewFilter),
+            lastTagTouchFileIds: undefined,
+        },
+    );
+    persistCurrentIndexNow(index.tags, index.fileIdsByTag);
 };
 
 const createTagStore: StateCreator<TagState> = (set, get) => ({
@@ -638,17 +634,8 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
     },
 
     hydrateTagTypes: (config: PersistedTagTypeConfig | undefined): void => {
-        const {
-            types,
-            tagTypeByName,
-            includeInKitNearnessByName,
-            includeInEffectsPresenceByName,
-        } = configFromPersisted(config);
         set({
-            tagTypes: types,
-            tagTypeByName,
-            includeInKitNearnessByName,
-            includeInEffectsPresenceByName,
+            typeConfig: configFromPersisted(config),
             lastTagTouchFileIds: undefined,
         });
     },
@@ -698,48 +685,16 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             setTagFilterScope(
                 tagFilter,
                 scope,
-                get().includeInEffectsPresenceByName,
+                get().typeConfig.includeInEffectsPresenceByName,
             ));
     },
 
-    setFavoritesScope: (
-        favoritesScope: FavoritesScope,
+    patchFilter: (
+        patch: TagFilterScopePatch,
         target: TagFilterTarget = "gallery",
     ): void => {
-        updateTagFilter(set, get, target, (tagFilter) => ({
-            ...tagFilter,
-            favoritesScope,
-        }));
-    },
-
-    setMediaScope: (
-        mediaScope: MediaScope,
-        target: TagFilterTarget = "gallery",
-    ): void => {
-        updateTagFilter(set, get, target, (tagFilter) => ({
-            ...tagFilter,
-            mediaScope,
-        }));
-    },
-
-    setCroppedScope: (
-        croppedScope: CroppedScope,
-        target: TagFilterTarget = "gallery",
-    ): void => {
-        updateTagFilter(set, get, target, (tagFilter) => ({
-            ...tagFilter,
-            croppedScope,
-        }));
-    },
-
-    setRotatedScope: (
-        rotatedScope: RotatedScope,
-        target: TagFilterTarget = "gallery",
-    ): void => {
-        updateTagFilter(set, get, target, (tagFilter) => ({
-            ...tagFilter,
-            rotatedScope,
-        }));
+        updateTagFilter(set, get, target, (tagFilter) =>
+            setTagFilterScopes(tagFilter, patch));
     },
 
     setTagFilterMode: (
@@ -752,7 +707,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
                 tagFilter,
                 tag,
                 mode,
-                get().includeInEffectsPresenceByName,
+                get().typeConfig.includeInEffectsPresenceByName,
             ));
     },
 
@@ -766,7 +721,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
                 tagFilter,
                 clauseId,
                 mode,
-                get().includeInEffectsPresenceByName,
+                get().typeConfig.includeInEffectsPresenceByName,
             ));
     },
 
@@ -782,7 +737,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
                 groupId,
                 tag,
                 mode,
-                get().includeInEffectsPresenceByName,
+                get().typeConfig.includeInEffectsPresenceByName,
             ));
     },
 
@@ -796,7 +751,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
                 tagFilter,
                 kit,
                 mode,
-                get().includeInEffectsPresenceByName,
+                get().typeConfig.includeInEffectsPresenceByName,
             ));
     },
 
@@ -812,7 +767,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
                 groupId,
                 kit,
                 mode,
-                get().includeInEffectsPresenceByName,
+                get().typeConfig.includeInEffectsPresenceByName,
             ));
     },
 
@@ -821,10 +776,8 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         op: TagFilterJoin,
         target: TagFilterTarget = "gallery",
     ): void => {
-        updateTagFilter(set, get, target, (tagFilter) => ({
-            ...tagFilter,
-            root: updateGroupOp(tagFilter.root, groupId, op),
-        }));
+        updateTagFilter(set, get, target, (tagFilter) =>
+            setTagFilterGroupOp(tagFilter, groupId, op));
     },
 
     wrapInGroup: (
@@ -832,52 +785,18 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         op: TagFilterJoin,
         target: TagFilterTarget = "gallery",
     ): void => {
-        if (nodeIds.length < 2) {
-            return;
-        }
-        const tagFilter = filterForTarget(get(), target);
-        const parent = findParentGroup(tagFilter.root, nodeIds[0]);
-        if (!parent) {
-            return;
-        }
-        const allSameParent = nodeIds.every((id) => {
-            const nodeParent = findParentGroup(tagFilter.root, id);
-            return nodeParent?.id === parent.id;
-        });
-        if (!allSameParent) {
-            return;
-        }
-        set(
-            patchFilterForTarget(target, {
-                ...tagFilter,
-                root: wrapSiblingsInGroup(
-                    tagFilter.root,
-                    nodeIds,
-                    op,
-                    parent.id,
-                ),
-            }),
-        );
+        updateTagFilter(set, get, target, (tagFilter) =>
+            wrapTagFilterNodesInGroup(tagFilter, nodeIds, op));
     },
 
     ungroup: (groupId: string, target: TagFilterTarget = "gallery"): void => {
-        if (filterForTarget(get(), target).root.id === groupId) {
-            return;
-        }
-        updateTagFilter(set, get, target, (tagFilter) => ({
-            ...tagFilter,
-            root: ungroupNode(tagFilter.root, groupId),
-        }));
+        updateTagFilter(set, get, target, (tagFilter) =>
+            ungroupTagFilterNode(tagFilter, groupId));
     },
 
     removeNode: (nodeId: string, target: TagFilterTarget = "gallery"): void => {
-        if (filterForTarget(get(), target).root.id === nodeId) {
-            return;
-        }
-        updateTagFilter(set, get, target, (tagFilter) => ({
-            ...tagFilter,
-            root: removeNodeFromTree(tagFilter.root, nodeId),
-        }));
+        updateTagFilter(set, get, target, (tagFilter) =>
+            removeTagFilterNode(tagFilter, nodeId));
     },
 
     clearFilters: (target: TagFilterTarget = "gallery"): void => {
@@ -893,18 +812,14 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         if (!normalized || isReservedTag(normalized)) {
             return;
         }
-        const { tagTypes } = get();
-        if (tagTypes.includes(normalized)) {
+        const { typeConfig } = get();
+        if (typeConfig.types.includes(normalized)) {
             return;
         }
-        const nextTypes = [...tagTypes, normalized];
-        set({ tagTypes: nextTypes });
-        persistTagTypesConfig(
-            nextTypes,
-            get().tagTypeByName,
-            get().includeInKitNearnessByName,
-            get().includeInEffectsPresenceByName,
-        );
+        commitTypeConfig(set, {
+            ...typeConfig,
+            types: [...typeConfig.types, normalized],
+        });
     },
 
     setTagType: (tagName: string, typeName: string): void => {
@@ -914,15 +829,10 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             return;
         }
         get().ensureTagType(normalizedType);
-        const tagTypeByName = new Map(get().tagTypeByName);
+        const { typeConfig } = get();
+        const tagTypeByName = new Map(typeConfig.tagTypeByName);
         tagTypeByName.set(normalizedTag, normalizedType);
-        set({ tagTypeByName });
-        persistTagTypesConfig(
-            get().tagTypes,
-            tagTypeByName,
-            get().includeInKitNearnessByName,
-            get().includeInEffectsPresenceByName,
-        );
+        commitTypeConfig(set, { ...typeConfig, tagTypeByName });
     },
 
     setIncludeInKitNearness: (tagName: string, include: boolean): void => {
@@ -930,21 +840,16 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         if (!normalizedTag || isReservedTag(normalizedTag)) {
             return;
         }
+        const { typeConfig } = get();
         const includeInKitNearnessByName = new Map(
-            get().includeInKitNearnessByName,
+            typeConfig.includeInKitNearnessByName,
         );
         if (include) {
             includeInKitNearnessByName.set(normalizedTag, true);
         } else {
             includeInKitNearnessByName.delete(normalizedTag);
         }
-        set({ includeInKitNearnessByName });
-        persistTagTypesConfig(
-            get().tagTypes,
-            get().tagTypeByName,
-            includeInKitNearnessByName,
-            get().includeInEffectsPresenceByName,
-        );
+        commitTypeConfig(set, { ...typeConfig, includeInKitNearnessByName });
     },
 
     setIncludeInEffectsPresence: (tagName: string, include: boolean): void => {
@@ -952,8 +857,9 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         if (!normalizedTag || isReservedTag(normalizedTag)) {
             return;
         }
+        const { typeConfig } = get();
         const includeInEffectsPresenceByName = new Map(
-            get().includeInEffectsPresenceByName,
+            typeConfig.includeInEffectsPresenceByName,
         );
         if (include) {
             includeInEffectsPresenceByName.delete(normalizedTag);
@@ -962,15 +868,10 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         }
         // Full gallery refilter — presence changes can move many files in/out
         // of tagged/untagged, not just the last touched file.
-        set({
-            includeInEffectsPresenceByName,
-            lastTagTouchFileIds: undefined,
-        });
-        persistTagTypesConfig(
-            get().tagTypes,
-            get().tagTypeByName,
-            get().includeInKitNearnessByName,
-            includeInEffectsPresenceByName,
+        commitTypeConfig(
+            set,
+            { ...typeConfig, includeInEffectsPresenceByName },
+            { lastTagTouchFileIds: undefined },
         );
     },
 
@@ -1114,260 +1015,26 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
     },
 
     applyTagRename: (oldName: string, newName: string): void => {
-        const fileIdsByTag = new Map(get().fileIdsByTag);
-        const oldIds = fileIdsByTag.get(oldName);
-        if (!oldIds) {
+        if (!get().fileIdsByTag.has(oldName)) {
             return;
         }
-        const newExisted =
-            fileIdsByTag.has(newName) || get().tags.includes(newName);
-        fileIdsByTag.delete(oldName);
-        const existing = fileIdsByTag.get(newName) ?? new Set<number>();
-        fileIdsByTag.set(newName, new Set([...existing, ...oldIds]));
-        const tagList = [...fileIdsByTag.keys()].sort();
-        const { tagFilter, albumViewFilter } = get();
-        const tagTypeByName = new Map(get().tagTypeByName);
-        const oldType = tagTypeByName.get(oldName);
-        if (oldType) {
-            tagTypeByName.delete(oldName);
-            if (!tagTypeByName.has(newName)) {
-                tagTypeByName.set(newName, oldType);
-            }
-        }
-        const includeInKitNearnessByName = new Map(
-            get().includeInKitNearnessByName,
-        );
-        const oldInclude = includeInKitNearnessByName.get(oldName);
-        includeInKitNearnessByName.delete(oldName);
-        if (oldInclude && !includeInKitNearnessByName.has(newName)) {
-            includeInKitNearnessByName.set(newName, true);
-        }
-        const includeInEffectsPresenceByName = new Map(
-            get().includeInEffectsPresenceByName,
-        );
-        const oldEffectsExcluded =
-            includeInEffectsPresenceByName.get(oldName) === false;
-        includeInEffectsPresenceByName.delete(oldName);
-        // Transfer exclusion only onto a brand-new name. Renaming onto an
-        // existing included tag must not turn its presence off.
-        if (oldEffectsExcluded && !newExisted) {
-            includeInEffectsPresenceByName.set(newName, false);
-        }
-        const registeredTagNames = get().registeredTagNames
-            .map((tag) => (tag === oldName ? newName : tag))
-            .filter((tag, index, list) => list.indexOf(tag) === index)
-            .sort();
-        if (registeredTagNames.length !== get().registeredTagNames.length ||
-            registeredTagNames.some(
-                (tag, index) => tag !== get().registeredTagNames[index],
-            )) {
-            persistRegisteredTags(registeredTagNames);
-        }
-        set({
-            tags: tagList,
-            fileIdsByTag,
-            tagTypeByName,
-            includeInKitNearnessByName,
-            includeInEffectsPresenceByName,
-            registeredTagNames,
-            tagFilter: isTagFilterActive(tagFilter) ?
-                {
-                    ...tagFilter,
-                    root: renameTagInTree(tagFilter.root, oldName, newName),
-                } :
-                tagFilter,
-            albumViewFilter: isTagFilterActive(albumViewFilter) ?
-                {
-                    ...albumViewFilter,
-                    root: renameTagInTree(albumViewFilter.root, oldName, newName),
-                } :
-                albumViewFilter,
-            lastTagTouchFileIds: undefined,
-        });
-        persistCurrentIndexNow(tagList, fileIdsByTag);
-        persistTagTypesConfig(
-            get().tagTypes,
-            tagTypeByName,
-            includeInKitNearnessByName,
-            includeInEffectsPresenceByName,
-        );
+        applyTagRewrite(set, get, [oldName], newName, (root, source) =>
+            renameTagInTree(root, source, newName));
     },
 
     applyTagDelete: (tagName: string): void => {
-        const fileIdsByTag = new Map(get().fileIdsByTag);
-        fileIdsByTag.delete(tagName);
-        const tagList = [...fileIdsByTag.keys()].sort();
-        const registeredTagNames = get().registeredTagNames.filter(
-            (tag) => tag !== tagName,
-        );
-        if (registeredTagNames.length !== get().registeredTagNames.length) {
-            persistRegisteredTags(registeredTagNames);
-        }
-        const { tagFilter, albumViewFilter } = get();
-        const tagTypeByName = new Map(get().tagTypeByName);
-        tagTypeByName.delete(tagName);
-        const includeInKitNearnessByName = new Map(
-            get().includeInKitNearnessByName,
-        );
-        includeInKitNearnessByName.delete(tagName);
-        const includeInEffectsPresenceByName = new Map(
-            get().includeInEffectsPresenceByName,
-        );
-        includeInEffectsPresenceByName.delete(tagName);
-        set({
-            tags: tagList,
-            fileIdsByTag,
-            registeredTagNames,
-            tagFilter: {
-                ...tagFilter,
-                root: removeTagFromTree(tagFilter.root, tagName),
-            },
-            albumViewFilter: {
-                ...albumViewFilter,
-                root: removeTagFromTree(albumViewFilter.root, tagName),
-            },
-            tagTypeByName,
-            includeInKitNearnessByName,
-            includeInEffectsPresenceByName,
-            lastTagTouchFileIds: undefined,
-        });
-        persistCurrentIndexNow(tagList, fileIdsByTag);
-        persistTagTypesConfig(
-            get().tagTypes,
-            tagTypeByName,
-            includeInKitNearnessByName,
-            includeInEffectsPresenceByName,
-        );
+        applyTagRewrite(set, get, [tagName], undefined, removeTagFromTree);
     },
 
     applyTagMerge: (sourceNames: string[], targetName: string): void => {
-        const fileIdsByTag = new Map(get().fileIdsByTag);
-        const targetExisted =
-            fileIdsByTag.has(targetName) || get().tags.includes(targetName);
-        const merged = new Set(fileIdsByTag.get(targetName) ?? []);
-        for (const source of sourceNames) {
-            const ids = fileIdsByTag.get(source);
-            if (ids) {
-                for (const id of ids) {
-                    merged.add(id);
-                }
-                fileIdsByTag.delete(source);
-            }
-        }
-        if (merged.size > 0) {
-            fileIdsByTag.set(targetName, merged);
-        }
-        const tagList = [...fileIdsByTag.keys()].sort();
-        let { tagFilter, albumViewFilter } = get();
-        const tagTypeByName = new Map(get().tagTypeByName);
-        const includeInKitNearnessByName = new Map(
-            get().includeInKitNearnessByName,
-        );
-        const includeInEffectsPresenceByName = new Map(
-            get().includeInEffectsPresenceByName,
-        );
-        const mergedType = mergeTypeForTarget(
-            targetName,
-            sourceNames,
-            tagTypeByName,
-        );
-        let mergedInclude = includeInKitNearnessByName.get(targetName) === true;
-        // OR inclusion across involved tags. Do not seed a brand-new target as
-        // included (default-true) or merging only excluded tags would flip on.
-        const effectsNames = new Set(sourceNames);
-        if (
-            targetExisted ||
-            includeInEffectsPresenceByName.has(targetName)
-        ) {
-            effectsNames.add(targetName);
-        }
-        let mergedEffects = false;
-        for (const name of effectsNames) {
-            if (includeInEffectsPresenceByName.get(name) !== false) {
-                mergedEffects = true;
-            }
-        }
-        for (const source of sourceNames) {
-            tagFilter = {
-                ...tagFilter,
-                root: removeTagFromTree(tagFilter.root, source),
-            };
-            albumViewFilter = {
-                ...albumViewFilter,
-                root: removeTagFromTree(albumViewFilter.root, source),
-            };
-            tagTypeByName.delete(source);
-            if (includeInKitNearnessByName.get(source)) {
-                mergedInclude = true;
-            }
-            includeInKitNearnessByName.delete(source);
-            includeInEffectsPresenceByName.delete(source);
-        }
-        if (mergedType && !tagTypeByName.has(targetName)) {
-            tagTypeByName.set(targetName, mergedType);
-        }
-        if (mergedInclude) {
-            includeInKitNearnessByName.set(targetName, true);
-        } else {
-            includeInKitNearnessByName.delete(targetName);
-        }
-        if (mergedEffects) {
-            includeInEffectsPresenceByName.delete(targetName);
-        } else {
-            includeInEffectsPresenceByName.set(targetName, false);
-        }
-        let registeredTagNames = get().registeredTagNames.filter(
-            (tag) => !sourceNames.includes(tag),
-        );
-        if (merged.size === 0 && !registeredTagNames.includes(targetName)) {
-            registeredTagNames = [...registeredTagNames, targetName].sort();
-        }
-        if (merged.size > 0) {
-            registeredTagNames = dropRegisteredTagsWithFiles(
-                registeredTagNames,
-                fileIdsByTag,
-                [targetName],
-            );
-        }
-        if (registeredTagNames.length !== get().registeredTagNames.length ||
-            registeredTagNames.some(
-                (tag, index) => tag !== get().registeredTagNames[index],
-            )) {
-            persistRegisteredTags(registeredTagNames);
-        }
-        const mergedIndex = mergeRegisteredTagsIntoIndex(
-            tagList,
-            fileIdsByTag,
-            registeredTagNames,
-        );
-        set({
-            tags: mergedIndex.tags,
-            fileIdsByTag: mergedIndex.fileIdsByTag,
-            registeredTagNames,
-            tagFilter,
-            albumViewFilter,
-            tagTypeByName,
-            includeInKitNearnessByName,
-            includeInEffectsPresenceByName,
-            lastTagTouchFileIds: undefined,
-        });
-        persistCurrentIndexNow(mergedIndex.tags, mergedIndex.fileIdsByTag);
-        persistTagTypesConfig(
-            get().tagTypes,
-            tagTypeByName,
-            includeInKitNearnessByName,
-            includeInEffectsPresenceByName,
-        );
+        applyTagRewrite(set, get, sourceNames, targetName, removeTagFromTree);
     },
 
     reset: (): void => {
         tagIndexSaver.cancel();
         set({
             ...initialTagState,
-            tagTypes: [DEFAULT_TAG_TYPE],
-            tagTypeByName: new Map(),
-            includeInKitNearnessByName: new Map(),
-            includeInEffectsPresenceByName: new Map(),
+            typeConfig: configFromPersisted(undefined),
             registeredTagNames: [],
         });
     },

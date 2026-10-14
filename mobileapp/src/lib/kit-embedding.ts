@@ -19,7 +19,11 @@ import { registerReset } from "@/lib/session-lifecycle";
  * {@link imageFilesForPhash}; any stale video vectors in {@link existing} are
  * dropped at job start.
  */
-import { l2NormalizeEmbedding } from "@/lib/embedding-vector";
+import {
+    KIT_EMBEDDING_DIMS,
+    KIT_EMBEDDING_MODEL_ID,
+} from "@/lib/embedding-vector";
+import { createWorkerClient } from "@/lib/worker-client";
 import { getSessionCacheKey } from "@/lib/cache-key";
 import {
     CLIP_EMBEDDING_BATCH_SIZE_AUTO,
@@ -55,10 +59,7 @@ import type {
     ClipEmbeddingOutbound,
 } from "@/workers/clip-embedding-worker-types";
 
-/** CLIP model id; changing it invalidates the persisted embedding index. */
-export const KIT_EMBEDDING_MODEL_ID = "Xenova/mobileclip_s2";
-
-export const KIT_EMBEDDING_DIMS = 512;
+export { KIT_EMBEDDING_DIMS, KIT_EMBEDDING_MODEL_ID };
 
 /**
  * In-RAM CLIP vector. Packed floats use ~4 bytes/dim instead of JS number[]
@@ -104,26 +105,17 @@ let batchFallbackReason: string | undefined;
 /** Why WebGPU was skipped / failed (for Settings toast + console). */
 let webGpuSkipReason: string | undefined;
 
-let clipWorker: Worker | undefined;
-let requestCounter = 0;
 let initPromise: Promise<void> | undefined;
-let messageRouterAttached = false;
 
-type PendingEmbedBatch = {
-    resolve: (
-        results: Array<{ fileId: number; vector?: number[] }>,
-    ) => void;
-    reject: (error: Error) => void;
-};
-
-type PendingInit = {
-    id: number;
-    resolve: () => void;
-    reject: (error: Error) => void;
-};
-
-const pendingBatches = new Map<number, PendingEmbedBatch>();
-let pendingInit: PendingInit | undefined;
+const clipWorker = createWorkerClient<
+    ClipEmbeddingInbound,
+    ClipEmbeddingOutbound
+>({
+    createWorker: () =>
+        new Worker(
+            new URL("../workers/clip-embedding.worker.ts", import.meta.url),
+        ),
+});
 
 const isCoarsePointerMobile = (): boolean => {
     if (typeof window === "undefined" || !window.matchMedia) {
@@ -167,30 +159,24 @@ export const getKitEmbeddingBatchFallbackReason = (): string | undefined =>
 export const getKitEmbeddingWebGpuSkipReason = (): string | undefined =>
     webGpuSkipReason;
 
-const attachMessageRouter = (worker: Worker): void => {
-    if (messageRouterAttached) {
-        return;
-    }
-    messageRouterAttached = true;
-    // A crash (e.g. out of memory while loading the model) posts no reply;
-    // reject everything pending so callers do not wait forever.
-    worker.onerror = (event: ErrorEvent): void => {
-        console.warn("[kit-embedding] worker failed:", event.message);
-        terminateKitEmbeddingWorker();
-    };
-    worker.onmessage = (event: MessageEvent<ClipEmbeddingOutbound>): void => {
-        const data = event.data;
-        if (data.kind === "init-done") {
-            const init = pendingInit;
-            if (init?.id !== data.id) {
-                return;
-            }
-            pendingInit = undefined;
-            const done = data as ClipEmbeddingInitDoneMessage;
+/** Forget what the worker reported, e.g. after it died or was terminated. */
+const resetWorkerState = (): void => {
+    initPromise = undefined;
+    activeDevice = undefined;
+    activeDtype = undefined;
+    activeBatchMode = undefined;
+    batchFallbackReason = undefined;
+    webGpuSkipReason = undefined;
+};
+
+/** Load the model (WASM, then WebGPU upgrade) if it is not already resident. */
+const ensureKitEmbeddingWorkerReady = (): Promise<void> => {
+    initPromise ??= clipWorker
+        .request({ kind: "init" })
+        .then((reply) => {
+            const done = reply as ClipEmbeddingInitDoneMessage;
             if (done.error) {
-                initPromise = undefined;
-                init.reject(new Error(done.error));
-                return;
+                throw new Error(done.error);
             }
             activeDevice = done.device;
             activeDtype = done.dtype;
@@ -204,76 +190,38 @@ const attachMessageRouter = (worker: Worker): void => {
             console.warn(
                 `[kit-embedding] ${KIT_EMBEDDING_MODEL_ID} device=${done.device} dtype=${done.dtype ?? "?"}`,
             );
-            init.resolve();
-            return;
-        }
-        if (data.kind === "embed-batch-done") {
-            const pending = pendingBatches.get(data.id);
-            if (!pending) {
-                return;
-            }
-            pendingBatches.delete(data.id);
-            const done = data as ClipEmbeddingEmbedBatchDoneMessage;
-            if (done.error) {
-                pending.reject(new Error(done.error));
-                return;
-            }
-            if (done.batchMode) {
-                activeBatchMode = done.batchMode;
-            }
-            if (done.batchFallbackReason) {
-                batchFallbackReason = done.batchFallbackReason;
-            }
-            pending.resolve(done.results);
-        }
-    };
-};
-
-const getClipWorker = (): Worker => {
-    if (!clipWorker) {
-        clipWorker = new Worker(
-            new URL("../workers/clip-embedding.worker.ts", import.meta.url),
-        );
-        messageRouterAttached = false;
-        attachMessageRouter(clipWorker);
-    }
-    return clipWorker;
-};
-
-/** Load the model (WASM, then WebGPU upgrade) if it is not already resident. */
-const ensureKitEmbeddingWorkerReady = async (): Promise<void> => {
-    if (!initPromise) {
-        initPromise = new Promise<void>((resolve, reject) => {
-            const worker = getClipWorker();
-            const id = ++requestCounter;
-            pendingInit = { id, resolve, reject };
-            const message: ClipEmbeddingInbound = { kind: "init", id };
-            worker.postMessage(message);
+        })
+        .catch((error: unknown) => {
+            resetWorkerState();
+            throw error;
         });
-    }
-    await initPromise;
+    return initPromise;
 };
 
-const embedBatchInWorker = (
+type EmbedBatchResults = ClipEmbeddingEmbedBatchDoneMessage["results"];
+
+const embedBatchInWorker = async (
     items: Array<{ fileId: number; bytes: Uint8Array }>,
-): Promise<Array<{ fileId: number; vector?: number[] }>> =>
-    new Promise((resolve, reject) => {
-        const worker = getClipWorker();
-        const id = ++requestCounter;
-        const transferables: ArrayBuffer[] = [];
-        const payload = items.map((item) => {
-            const transfer = item.bytes.slice();
-            transferables.push(transfer.buffer);
-            return { fileId: item.fileId, bytes: transfer };
-        });
-        pendingBatches.set(id, { resolve, reject });
-        const message: ClipEmbeddingInbound = {
-            kind: "embed-batch",
-            id,
-            items: payload,
-        };
-        worker.postMessage(message, transferables);
-    });
+): Promise<EmbedBatchResults> => {
+    const payload = items.map((item) => ({
+        fileId: item.fileId,
+        bytes: item.bytes.slice(),
+    }));
+    const done = (await clipWorker.request(
+        { kind: "embed-batch", items: payload },
+        payload.map((item) => item.bytes.buffer),
+    )) as ClipEmbeddingEmbedBatchDoneMessage;
+    if (done.error) {
+        throw new Error(done.error);
+    }
+    if (done.batchMode) {
+        activeBatchMode = done.batchMode;
+    }
+    if (done.batchFallbackReason) {
+        batchFallbackReason = done.batchFallbackReason;
+    }
+    return done.results;
+};
 
 const emptyMeta = (): PersistedEmbeddingMeta => ({
     version: 2,
@@ -284,7 +232,7 @@ const emptyMeta = (): PersistedEmbeddingMeta => ({
 
 /**
  * Load the chunked embedding index (v2). Legacy v1 monolith is ignored.
- * Vectors are packed as {@link Float32Array} in RAM.
+ * Vectors are stored L2-normalized and packed as {@link Float32Array}.
  */
 export const hydrateEmbeddingIndex = async (): Promise<EmbeddingMap> => {
     const cacheKey = getSessionCacheKey();
@@ -292,18 +240,7 @@ export const hydrateEmbeddingIndex = async (): Promise<EmbeddingMap> => {
     if (meta?.modelId !== KIT_EMBEDDING_MODEL_ID) {
         return new Map();
     }
-    const map = await loadAllEmbeddingChunks(meta, cacheKey);
-    const normalized: EmbeddingMap = new Map();
-    for (const [id, vector] of map) {
-        if (vector.length !== KIT_EMBEDDING_DIMS) {
-            continue;
-        }
-        const next = l2NormalizeEmbedding(vector);
-        if (next) {
-            normalized.set(id, next);
-        }
-    }
-    return normalized;
+    return loadAllEmbeddingChunks(meta, cacheKey);
 };
 
 /**
@@ -488,7 +425,7 @@ export const runKitEmbeddingJob = async (
         batchSize,
         batchMode: activeBatchMode,
     });
-    const maxReadyQueue = Math.max(batchSize * 3, 12);
+    const chunkSize = Math.max(batchSize * 3, 12);
 
     let candidates = imageFilesForPhash([...options.files], options.userId);
     if (options.onlyFileIds) {
@@ -537,174 +474,104 @@ export const runKitEmbeddingJob = async (
         });
     };
 
-    const ready: ReadyThumb[] = [];
-    let prefetchDone = false;
-    /** Set once the consumer exits (done, aborted, or a batch failed). */
-    let stopped = false;
-    const consumerWaiters: Array<() => void> = [];
-    const prefetchWaiters: Array<() => void> = [];
-
-    const wakeAllWaiters = (): void => {
-        while (consumerWaiters.length > 0) {
-            consumerWaiters.shift()?.();
-        }
-        while (prefetchWaiters.length > 0) {
-            prefetchWaiters.shift()?.();
-        }
-    };
-
-    const waitForConsumerSpace = async (): Promise<void> => {
-        while (ready.length >= maxReadyQueue) {
-            if (stopped || options.signal?.aborted) {
-                return;
-            }
-            await new Promise<void>((resolve) => {
-                prefetchWaiters.push(resolve);
-            });
-        }
-    };
-
-    const waitForReadyItem = async (): Promise<void> => {
-        if (ready.length > 0 || prefetchDone || options.signal?.aborted) {
-            return;
-        }
-        await new Promise<void>((resolve) => {
-            consumerWaiters.push(resolve);
-        });
-    };
-
-    const pushReady = (item: ReadyThumb): void => {
-        ready.push(item);
-        consumerWaiters.shift()?.();
-    };
-
-    const markSkipped = (): void => {
-        completed += 1;
-        noteProgress();
-    };
-
-    const prefetchOne = async (file: EnteFile): Promise<void> => {
-        if (options.signal?.aborted) {
-            return;
-        }
-        await waitWhileGalleryScrolling(options.signal);
-        if (options.signal?.aborted) {
-            return;
-        }
-        if (await waitIfPaused(options.shouldPause, options.signal)) {
-            return;
-        }
-        await waitForConsumerSpace();
-        if (stopped || options.signal?.aborted) {
-            return;
-        }
-        const bytes = await getDecryptedThumbnailBytes(file);
-        if (!bytes) {
-            markSkipped();
-            return;
-        }
-        pushReady({ file, bytes });
-    };
-
-    const prefetchPromise = runWithConcurrency(
-        todo,
-        thumbnailPrefetchConcurrency,
-        prefetchOne,
-    ).then(() => {
-        prefetchDone = true;
-        wakeAllWaiters();
-    });
-
-    const onAbort = (): void => {
-        wakeAllWaiters();
-    };
-    options.signal?.addEventListener("abort", onAbort);
-
-    const collectBatch = async (): Promise<ReadyThumb[]> => {
-        const batch: ReadyThumb[] = [];
-        while (batch.length < batchSize) {
-            if (options.signal?.aborted) {
-                break;
-            }
-            if (await waitIfPaused(options.shouldPause, options.signal)) {
-                break;
-            }
-            await waitForReadyItem();
-            const item = ready.shift();
-            prefetchWaiters.shift()?.();
-            if (!item) {
-                if (prefetchDone || options.signal?.aborted) {
-                    break;
+    /** Fetch one chunk of thumbnails; files without bytes count as skipped. */
+    const prefetchChunk = async (files: EnteFile[]): Promise<ReadyThumb[]> => {
+        const thumbs: ReadyThumb[] = [];
+        await runWithConcurrency(
+            files,
+            thumbnailPrefetchConcurrency,
+            async (file) => {
+                if (options.signal?.aborted) {
+                    return;
                 }
-                continue;
-            }
-            batch.push(item);
-        }
-        return batch;
+                await waitWhileGalleryScrolling(options.signal);
+                if (options.signal?.aborted) {
+                    return;
+                }
+                if (await waitIfPaused(options.shouldPause, options.signal)) {
+                    return;
+                }
+                const bytes = await getDecryptedThumbnailBytes(file);
+                if (bytes) {
+                    thumbs.push({ file, bytes });
+                } else {
+                    completed += 1;
+                    noteProgress();
+                }
+            },
+        );
+        return thumbs;
     };
 
-    const applyBatchResults = (
-        results: Array<{ fileId: number; vector?: number[] }>,
-    ): void => {
+    const applyBatchResults = (results: EmbedBatchResults): void => {
         for (const result of results) {
-            const packed = result.vector ?
-                packEmbeddingVector(result.vector) :
-                undefined;
-            if (packed) {
-                entries.set(result.fileId, packed);
-                writeQueue.enqueue(result.fileId, packed);
+            if (result.vector) {
+                entries.set(result.fileId, result.vector);
+                writeQueue.enqueue(result.fileId, result.vector);
             }
             completed += 1;
         }
         noteProgress();
     };
 
+    /**
+     * Keep up to two ORT batches in flight so the worker can decode batch
+     * N+1 while the GPU runs N. Awaiting each batch before posting the next
+     * was the "jumps of 8 then pause" boundary.
+     */
+    const maxInFlightBatches = 2;
+    const inFlight: Array<Promise<EmbedBatchResults>> = [];
+    const applyOldestBatch = async (): Promise<void> => {
+        const finished = await inFlight.shift();
+        if (finished) {
+            applyBatchResults(finished);
+        }
+    };
+
+    const chunks: EnteFile[][] = [];
+    for (let start = 0; start < todo.length; start += chunkSize) {
+        chunks.push(todo.slice(start, start + chunkSize));
+    }
+    // The next chunk is fetched while the current one is embedded.
+    let nextThumbs: Promise<ReadyThumb[]> | undefined = prefetchChunk(
+        chunks[0]!,
+    );
+
     try {
         noteProgress(true);
-        /**
-         * Keep up to two ORT batches in flight so the worker can decode batch
-         * N+1 while the GPU runs N. Awaiting each batch before posting the next
-         * was the “jumps of 8 then pause” boundary.
-         */
-        const maxInFlightBatches = 2;
-        const inFlight: Array<
-            Promise<Array<{ fileId: number; vector?: number[] }>>
-        > = [];
-
-        while (!options.signal?.aborted) {
-            const batch = await collectBatch();
-            if (batch.length === 0) {
+        for (let index = 0; index < chunks.length; index += 1) {
+            if (options.signal?.aborted) {
                 break;
             }
-            inFlight.push(
-                embedBatchInWorker(
-                    batch.map((item) => ({
-                        fileId: item.file.id,
-                        bytes: item.bytes,
-                    })),
-                ),
-            );
-            if (inFlight.length >= maxInFlightBatches) {
-                const finished = await inFlight.shift();
-                if (finished) {
-                    applyBatchResults(finished);
+            const thumbs = (await nextThumbs)!;
+            nextThumbs =
+                index + 1 < chunks.length ?
+                    prefetchChunk(chunks[index + 1]!) :
+                    undefined;
+            for (let start = 0; start < thumbs.length; start += batchSize) {
+                if (await waitIfPaused(options.shouldPause, options.signal)) {
+                    break;
+                }
+                inFlight.push(
+                    embedBatchInWorker(
+                        thumbs.slice(start, start + batchSize).map((item) => ({
+                            fileId: item.file.id,
+                            bytes: item.bytes,
+                        })),
+                    ),
+                );
+                if (inFlight.length >= maxInFlightBatches) {
+                    await applyOldestBatch();
                 }
             }
         }
         while (inFlight.length > 0) {
-            const finished = await inFlight.shift();
-            if (finished) {
-                applyBatchResults(finished);
-            }
+            await applyOldestBatch();
         }
     } finally {
-        options.signal?.removeEventListener("abort", onAbort);
-        // A failed batch leaves the ready queue full; without this the
-        // prefetchers wait for consumer space forever and the job never ends.
-        stopped = true;
-        ready.length = 0;
-        wakeAllWaiters();
-        await prefetchPromise.catch(() => undefined);
+        // Settle fetches and batches left over by an abort or a failed batch.
+        await nextThumbs?.catch(() => undefined);
+        await Promise.allSettled(inFlight);
         noteProgress(true);
         await writeQueue.drain();
         options.onBatchPersisted?.(entries);
@@ -715,23 +582,8 @@ export const runKitEmbeddingJob = async (
 
 /** Tear down the CLIP worker (e.g. on logout). Safe to call when unused. */
 export const terminateKitEmbeddingWorker = (): void => {
-    for (const pending of pendingBatches.values()) {
-        pending.reject(new Error("CLIP worker terminated"));
-    }
-    pendingBatches.clear();
-    if (pendingInit) {
-        pendingInit.reject(new Error("CLIP worker terminated"));
-        pendingInit = undefined;
-    }
-    clipWorker?.terminate();
-    clipWorker = undefined;
-    messageRouterAttached = false;
-    initPromise = undefined;
-    activeDevice = undefined;
-    activeDtype = undefined;
-    activeBatchMode = undefined;
-    batchFallbackReason = undefined;
-    webGpuSkipReason = undefined;
+    clipWorker.terminate(new Error("CLIP worker terminated"));
+    resetWorkerState();
 };
 
 registerReset(terminateKitEmbeddingWorker);

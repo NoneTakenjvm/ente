@@ -40,7 +40,7 @@ export type TagLogOddsModel = {
 /** Rank the shown files for one kit by production score plus learned margins. */
 export type KitMarginsWorkerRequest = {
     kind: "rank";
-    requestId: number;
+    id: number;
     dim: number;
     /**
      * Training population: ids, row-major vectors and production scores.
@@ -60,7 +60,7 @@ export type KitMarginsWorkerRequest = {
 /** Estimate, for the shown embedded stills, which kit tags each carries. */
 export type KitPresenceWorkerRequest = {
     kind: "presence";
-    requestId: number;
+    id: number;
     dim: number;
     trainingIds: Float64Array;
     trainingVectors: Float32Array;
@@ -73,13 +73,13 @@ export type KitPresenceWorkerRequest = {
 export type KitWorkerRequest = KitMarginsWorkerRequest | KitPresenceWorkerRequest;
 
 export type KitMarginsWorkerResponse = {
-    requestId: number;
+    id: number;
     orderIds?: Float64Array;
     error?: string;
 };
 
 export type KitPresenceWorkerResponse = {
-    requestId: number;
+    id: number;
     /** Row-major `candidates × tags`: probability that the candidate carries the tag. */
     tagProbabilities?: Float32Array;
     error?: string;
@@ -251,7 +251,7 @@ export const trainTagLogOddsModel = (
  * members, in which case the caller keeps the production order.
  */
 export const rankByKitMargins = (
-    request: Omit<KitMarginsWorkerRequest, "kind" | "requestId" | "trainingIds">,
+    request: Omit<KitMarginsWorkerRequest, "kind" | "id" | "trainingIds">,
     whitening: KitWhitening,
     tagModels: readonly TagLogOddsModel[],
     hardWeight: number = KIT_MARGIN_HARD_WEIGHT,

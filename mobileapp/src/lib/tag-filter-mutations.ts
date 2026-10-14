@@ -278,13 +278,18 @@ export const setTagFilterScope = (
             filter.root,
 });
 
+/** Favourites, media, crop and rotate scopes; excludes the tag scope. */
+export type TagFilterScopePatch = Partial<
+    Omit<TagFilterSelection, "tagScope" | "root">
+>;
+
 /**
  * Set the favourites, media, crop or rotate scopes in one step. Use
  * {@link setTagFilterScope} for the tag scope, which also prunes clauses.
  */
 export const setTagFilterScopes = (
     filter: TagFilterSelection,
-    patch: Partial<Omit<TagFilterSelection, "tagScope" | "root">>,
+    patch: TagFilterScopePatch,
 ): TagFilterSelection => ({ ...filter, ...patch });
 
 export const setTagFilterModeOnFilter = (

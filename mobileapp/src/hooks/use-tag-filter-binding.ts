@@ -56,13 +56,13 @@ export function useTagFilterBinding(
         return {
             setTagScope: (scope) => store().setTagScope(scope, target),
             setFavoritesScope: (favoritesScope) =>
-                store().setFavoritesScope(favoritesScope, target),
+                store().patchFilter({ favoritesScope }, target),
             setMediaScope: (mediaScope) =>
-                store().setMediaScope(mediaScope, target),
+                store().patchFilter({ mediaScope }, target),
             setCroppedScope: (croppedScope) =>
-                store().setCroppedScope(croppedScope, target),
+                store().patchFilter({ croppedScope }, target),
             setRotatedScope: (rotatedScope) =>
-                store().setRotatedScope(rotatedScope, target),
+                store().patchFilter({ rotatedScope }, target),
             setTagFilterMode: (tag, mode) =>
                 store().setTagFilterMode(tag, mode, target),
             setClauseMode: (clauseId, mode) =>

@@ -21,7 +21,7 @@ import {
 import { isEnteVideoFile } from "@/lib/media-kind";
 import { packEmbeddings } from "@/lib/relative-sort";
 import { isTagIncludedInKitNearness } from "@/lib/tag-types";
-import { createWorkerIdleTimer } from "@/lib/worker-idle-timer";
+import { createWorkerClient } from "@/lib/worker-client";
 import type { EnteFile } from "ente-media/file";
 
 export type KitMarginsRankingInput = {
@@ -39,7 +39,7 @@ export type KitMarginsRankingInput = {
 };
 
 export type KitMarginsRanking = {
-    request: Omit<KitMarginsWorkerRequest, "requestId">;
+    request: Omit<KitMarginsWorkerRequest, "id">;
     /** Unembedded stills (by id) then videos (gallery order), appended after the ranked ids. */
     trailingIds: number[];
 };
@@ -72,12 +72,19 @@ const TRAINING_SAMPLE_SEED = 0x5a2f;
  */
 const KIT_WORKER_IDLE_TERMINATE_MS = 120_000;
 
-let worker: Worker | undefined;
-let requestCounter = 0;
-const workerIdleTimer = createWorkerIdleTimer(
-    KIT_WORKER_IDLE_TERMINATE_MS,
-    () => terminateKitMarginsWorker(),
-);
+const kitWorker = createWorkerClient<
+    KitWorkerRequest,
+    KitMarginsWorkerResponse | KitPresenceWorkerResponse
+>({
+    createWorker: () =>
+        new Worker(
+            new URL(
+                "../workers/kit-nearness-margins.worker.ts",
+                import.meta.url,
+            ),
+        ),
+    idleMs: KIT_WORKER_IDLE_TERMINATE_MS,
+});
 
 /** Presence pass currently in the worker, and the newest caller's ticket. */
 let presenceInFlight: Promise<unknown> | undefined;
@@ -154,11 +161,8 @@ export const buildKitMarginsRanking = (
 export const rankByKitMarginsInWorker = async (
     ranking: KitMarginsRanking,
 ): Promise<number[]> => {
-    const request: KitMarginsWorkerRequest = {
-        ...ranking.request,
-        requestId: ++requestCounter,
-    };
-    const response = await postToWorker<KitMarginsWorkerResponse>(request, [
+    const request = ranking.request;
+    const response = (await kitWorker.request(request, [
         request.trainingIds.buffer,
         request.trainingVectors.buffer,
         request.trainingProductionScores.buffer,
@@ -166,7 +170,7 @@ export const rankByKitMarginsInWorker = async (
         request.candidateVectors.buffer,
         request.candidateProductionScores.buffer,
         ...request.tags.map((tag) => tag.labels.buffer),
-    ]);
+    ])) as KitMarginsWorkerResponse;
     if (response.error || !response.orderIds) {
         throw new Error(response.error ?? "Kit nearness margins failed");
     }
@@ -220,9 +224,8 @@ export const estimateKitPresenceInWorker = async (
         };
     }
 
-    const request: KitPresenceWorkerRequest = {
+    const request: Omit<KitPresenceWorkerRequest, "id"> = {
         kind: "presence",
-        requestId: ++requestCounter,
         dim: KIT_EMBEDDING_DIMS,
         trainingIds: Float64Array.from(trainingIds),
         trainingVectors: packEmbeddings(trainingIds, input.embeddings),
@@ -230,7 +233,7 @@ export const estimateKitPresenceInWorker = async (
         candidateIds: Float64Array.from(candidateIds),
         candidateVectors: packEmbeddings(candidateIds, input.embeddings),
     };
-    const pending = postToWorker<KitPresenceWorkerResponse>(request, [
+    const pending = kitWorker.request(request, [
         request.trainingIds.buffer,
         request.trainingVectors.buffer,
         request.candidateIds.buffer,
@@ -240,7 +243,7 @@ export const estimateKitPresenceInWorker = async (
     presenceInFlight = pending;
     let response: KitPresenceWorkerResponse;
     try {
-        response = await pending;
+        response = (await pending) as KitPresenceWorkerResponse;
     } finally {
         presenceInFlight = undefined;
     }
@@ -275,56 +278,9 @@ export const countKitPresenceInWorker = async (
     );
 };
 
-/** Post one request to the shared worker and resolve with its reply. */
-const postToWorker = <Response extends { requestId: number }>(
-    request: KitWorkerRequest,
-    transfer: Transferable[],
-): Promise<Response> =>
-    new Promise((resolve, reject) => {
-        if (typeof Worker === "undefined") {
-            reject(new Error("Workers are not available"));
-            return;
-        }
-        if (!worker) {
-            worker = new Worker(
-                new URL(
-                    "../workers/kit-nearness-margins.worker.ts",
-                    import.meta.url,
-                ),
-            );
-        }
-        workerIdleTimer.begin();
-        const detach = (): void => {
-            worker?.removeEventListener("message", handleMessage);
-            worker?.removeEventListener("error", handleError);
-            workerIdleTimer.end();
-        };
-        const handleMessage = (event: MessageEvent<Response>): void => {
-            if (event.data.requestId !== request.requestId) {
-                return;
-            }
-            detach();
-            resolve(event.data);
-        };
-        const handleError = (): void => {
-            detach();
-            reject(new Error("Kit nearness worker failed"));
-        };
-        worker.addEventListener("message", handleMessage);
-        worker.addEventListener("error", handleError);
-        try {
-            worker.postMessage(request, transfer);
-        } catch (error: unknown) {
-            detach();
-            reject(error);
-        }
-    });
-
 /** Drop the worker and its cached whitening / tag models (logout or idle). */
 export const terminateKitMarginsWorker = (): void => {
-    workerIdleTimer.clear();
-    worker?.terminate();
-    worker = undefined;
+    kitWorker.terminate();
 };
 
 /**

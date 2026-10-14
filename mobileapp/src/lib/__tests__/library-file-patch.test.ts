@@ -3,8 +3,6 @@ import type { EnteFile } from "ente-media/file";
 import { ItemVisibility } from "ente-media/file-metadata";
 import {
     planLibraryFilePatches,
-    patchFileInLibrary,
-    patchFileInPlace,
     patchFilesInLibrary,
 } from "@/lib/library-file-patch";
 import { buildFileIndexById } from "@/lib/library-file-index";
@@ -35,49 +33,26 @@ const stubFile = (
     } as EnteFile;
 };
 
-describe("patchFileInPlace", () => {
-    it("mutates one slot without copying the array", () => {
+describe("patchFilesInLibrary", () => {
+    it("copies the array and leaves the input untouched", () => {
         const a = stubFile(1, ["x"]);
         const b = stubFile(2, ["y"]);
         const files = [a, b];
         const patched = stubFile(1, ["z"]);
-        expect(patchFileInPlace(files, 1, patched)).toBe(true);
-        expect(files[0]).toBe(patched);
-        expect(files[1]).toBe(b);
-        expect(files).toHaveLength(2);
-    });
-
-    it("uses an optional id index for O(1) lookup", () => {
-        const a = stubFile(1, ["x"]);
-        const b = stubFile(2, ["y"]);
-        const files = [a, b];
-        const patched = stubFile(2, ["yy"]);
-        expect(
-            patchFileInPlace(files, 2, patched, new Map([[1, 0], [2, 1]])),
-        ).toBe(true);
-        expect(files[1]).toBe(patched);
-    });
-});
-
-describe("patchFileInLibrary", () => {
-    it("replaces one slot and keeps other identities", () => {
-        const a = stubFile(1, ["x"]);
-        const b = stubFile(2, ["y"]);
-        const patched = stubFile(1, ["z"]);
-        const next = patchFileInLibrary([a, b], 1, patched);
-        expect(next).not.toBeNull();
+        const next = patchFilesInLibrary(files, new Map([[1, patched]]));
+        expect(next).not.toBe(files);
         expect(next![0]).toBe(patched);
         expect(next![1]).toBe(b);
+        expect(files[0]).toBe(a);
     });
 
-    it("returns null when id is missing", () => {
+    it("returns null when the patch is the file already in the slot", () => {
+        const a = stubFile(1, ["x"]);
         expect(
-            patchFileInLibrary([stubFile(1, [])], 9, stubFile(9, [])),
+            patchFilesInLibrary([a], new Map([[1, a]]), new Map([[1, 0]])),
         ).toBeNull();
     });
-});
 
-describe("patchFilesInLibrary", () => {
     it("applies a sparse map in one copy", () => {
         const a = stubFile(1, ["x"]);
         const b = stubFile(2, ["y"]);
@@ -114,7 +89,7 @@ describe("patchFilesInLibrary", () => {
 });
 
 describe("planLibraryFilePatches", () => {
-    it("skips notify when only pubMagic version advances and tags match", () => {
+    it("plans a patch when only the pubMagic version advances", () => {
         const local = stubFile(1, ["a", "b"], 1);
         const remote = stubFile(1, ["a", "b"], 2);
         const plan = planLibraryFilePatches(
@@ -122,9 +97,7 @@ describe("planLibraryFilePatches", () => {
             new Map([[1, remote]]),
             new Map([[1, 0]]),
         );
-        expect(plan.notifyNeeded).toBe(false);
-        expect(plan.persistNeeded).toBe(true);
-        expect(plan.slotPatches.get(0)).toBe(remote);
+        expect(plan.get(1)).toBe(remote);
     });
 
     it("is a true no-op when version and tags already match", () => {
@@ -135,12 +108,10 @@ describe("planLibraryFilePatches", () => {
             new Map([[1, remote]]),
             new Map([[1, 0]]),
         );
-        expect(plan.notifyNeeded).toBe(false);
-        expect(plan.persistNeeded).toBe(false);
-        expect(plan.slotPatches.size).toBe(0);
+        expect(plan.size).toBe(0);
     });
 
-    it("notifies when tags change", () => {
+    it("plans a patch when tags change", () => {
         const local = stubFile(1, ["a"], 1);
         const remote = stubFile(1, ["b"], 2);
         const plan = planLibraryFilePatches(
@@ -148,12 +119,10 @@ describe("planLibraryFilePatches", () => {
             new Map([[1, remote]]),
             new Map([[1, 0]]),
         );
-        expect(plan.notifyNeeded).toBe(true);
-        expect(plan.persistNeeded).toBe(true);
-        expect(plan.slotPatches.get(0)).toBe(remote);
+        expect(plan.get(1)).toBe(remote);
     });
 
-    it("notifies when archive visibility changes even if tags match", () => {
+    it("plans a patch when archive visibility changes even if tags match", () => {
         const local = stubFile(1, ["a"], 1);
         const remote = stubFile(1, ["a"], 2, true);
         const plan = planLibraryFilePatches(
@@ -161,11 +130,10 @@ describe("planLibraryFilePatches", () => {
             new Map([[1, remote]]),
             new Map([[1, 0]]),
         );
-        expect(plan.notifyNeeded).toBe(true);
-        expect(plan.persistNeeded).toBe(true);
+        expect(plan.get(1)).toBe(remote);
     });
 
-    it("batches many version-only patches without notify", () => {
+    it("batches many version-only patches", () => {
         const locals = [stubFile(1, ["x"], 1), stubFile(2, ["y"], 1)];
         const remotes = new Map([
             [1, stubFile(1, ["x"], 2)],
@@ -176,12 +144,7 @@ describe("planLibraryFilePatches", () => {
             remotes,
             buildFileIndexById(locals),
         );
-        expect(plan.notifyNeeded).toBe(false);
-        expect(plan.persistNeeded).toBe(true);
-        expect([...plan.slotPatches]).toEqual([
-            [0, remotes.get(1)],
-            [1, remotes.get(2)],
-        ]);
+        expect([...plan]).toEqual([...remotes]);
     });
 
     it("ignores patches for files not in the library", () => {
@@ -191,7 +154,6 @@ describe("planLibraryFilePatches", () => {
             new Map([[9, stubFile(9, ["b"], 2)]]),
             new Map([[1, 0]]),
         );
-        expect(plan.persistNeeded).toBe(false);
-        expect(plan.slotPatches.size).toBe(0);
+        expect(plan.size).toBe(0);
     });
 });

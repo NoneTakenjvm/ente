@@ -593,8 +593,8 @@ export const PhotoViewer = memo(function PhotoViewer({
     const storeFile = useLibraryStore((s) =>
         viewerFileId === undefined ? undefined : s.getFileById(viewerFileId));
     const displayFile = storeFile ?? file;
-    const setFileFavorite = useLibraryStore((s) => s.setFileFavorite);
-    const setFileArchived = useLibraryStore((s) => s.setFileArchived);
+    const batchSetFavorite = useLibraryStore((s) => s.batchSetFavorite);
+    const batchSetArchived = useLibraryStore((s) => s.batchSetArchived);
     const revertLastEdit = useLibraryStore((s) => s.revertLastEdit);
     const moveFilesToTrash = useLibraryStore((s) => s.moveFilesToTrash);
     const isFavorite = useFavoritesStore((s) =>
@@ -1760,7 +1760,7 @@ export const PhotoViewer = memo(function PhotoViewer({
         clearPointers();
         setFavoriteBusy(true);
         setFavoriteError(undefined);
-        void setFileFavorite(file, !isFavorite)
+        void batchSetFavorite([file.id], !isFavorite)
             .catch((error: unknown) => {
                 setFavoriteError(
                     errorMessage(error, "Could not update favourite"),
@@ -1777,7 +1777,7 @@ export const PhotoViewer = memo(function PhotoViewer({
         }
         clearPointers();
         setArchiveBusy(true);
-        void setFileArchived(file, !isArchived)
+        void batchSetArchived([file.id], !isArchived)
             .catch((error: unknown) => {
                 toast.error(errorMessage(error, "Could not update archive"));
             })

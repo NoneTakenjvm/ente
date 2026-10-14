@@ -122,7 +122,7 @@ export function useMediaDisplayPipeline({
     const fitSortFilter = tagFilterForFitSort ?? tagFilter;
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
     const includeInEffectsPresenceByName = useTagStore(
-        (s) => s.includeInEffectsPresenceByName,
+        (s) => s.typeConfig.includeInEffectsPresenceByName,
     );
     const lastTagTouchFileIds = useTagStore((s) => s.lastTagTouchFileIds);
 
@@ -146,10 +146,10 @@ export function useMediaDisplayPipeline({
 
     const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
     const embeddingCount = useEmbeddingIndexStore((s) => s.entries.size);
-    const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.hydrate);
+    const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.ensureHydrated);
     const qualityEntries = useQualityIndexStore((s) => s.entries);
     const qualityHydrated = useQualityIndexStore((s) => s.isHydrated);
-    const hydrateQuality = useQualityIndexStore((s) => s.hydrate);
+    const hydrateQuality = useQualityIndexStore((s) => s.ensureHydrated);
 
     const nearnessActive =
         nearnessFilter !== undefined && isTagFilterActive(nearnessFilter);
@@ -236,7 +236,7 @@ export function useMediaDisplayPipeline({
                     favoriteFileIds:
                         useFavoritesStore.getState().favoriteFileIds,
                     includeInEffectsPresenceByName:
-                        tagState.includeInEffectsPresenceByName,
+                        tagState.typeConfig.includeInEffectsPresenceByName,
                 },
             );
             const seeds = imageFilesForPhash(seedMatches, userId)
@@ -319,7 +319,7 @@ export function useMediaDisplayPipeline({
             {
                 favoriteFileIds,
                 includeInEffectsPresenceByName:
-                    useTagStore.getState().includeInEffectsPresenceByName,
+                    useTagStore.getState().typeConfig.includeInEffectsPresenceByName,
             },
         );
     }, [baseFiles, favoriteFileIds, tagFilter]);
@@ -338,7 +338,7 @@ export function useMediaDisplayPipeline({
         const options = {
             favoriteFileIds: favoriteIds,
             includeInEffectsPresenceByName:
-                tagState.includeInEffectsPresenceByName,
+                tagState.typeConfig.includeInEffectsPresenceByName,
         };
         const seedIds = filterFilesByTags(
             seedFiles,
@@ -425,7 +425,7 @@ export function useMediaDisplayPipeline({
                 candidateFiles: filtered,
                 embeddings,
                 fileIdsByTag: tagState.fileIdsByTag,
-                includeInKitNearnessByName: tagState.includeInKitNearnessByName,
+                includeInKitNearnessByName: tagState.typeConfig.includeInKitNearnessByName,
                 // Shown files reuse the sort's scores; only sampled library
                 // rows outside the view are scored here.
                 productionScore: (fileId) =>

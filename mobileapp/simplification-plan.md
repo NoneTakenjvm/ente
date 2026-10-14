@@ -1,6 +1,6 @@
 # mobileapp simplification plan
 
-**Status:** Phases 0–1 committed (`f41698ef32`, APP_VERSION 0.3.195). Phase 2 committed (0.3.196–0.3.197). Phase 3 next. Written 2026-10-14 against `ntphotos` @ `81946e8e48` (APP_VERSION 0.3.194).
+**Status:** Phases 0–1 committed (`f41698ef32`, APP_VERSION 0.3.195). Phase 2 committed (0.3.196–0.3.197). Phase 3 wave 1 committed (0.3.198); wave 2 (§3.9/§5.6, §5.3 → §3.2 → §3.1, §5.4) next. Written 2026-10-14 against `ntphotos` @ `81946e8e48` (APP_VERSION 0.3.194).
 
 **Purpose:** make `mobileapp/` smaller and easier to change safely, without changing what the app does. The work covers:
 - removing duplicated mechanisms
@@ -213,14 +213,15 @@ Each phase leaves the app shippable. Phases 0–1 are mostly independent PRs tha
 - [x] Remaining §4 findings: sequential→parallel IDB work, favourite derive, pull-files batching, and view-sessions aggregates.
 
 ### Phase 3: Stores and jobs (medium risk)
-- [ ] §3.4 Copy-on-write file patches; drop `filesRevision`; then remove the §2 gallery-remap and `baseFilesKey` workarounds.
-- [ ] §3.3 library-store cleanup (dead actions, single-file twins, one remove-files path).
-- [ ] §3.5 tag-store `typeConfig`, one rewrite path, filter-tree helpers moved to lib (with §2.1a).
-- [ ] §3.8 Index-store factory.
+- [x] §3.4 Copy-on-write file patches; drop `filesRevision`; then remove the §2 gallery-remap and `baseFilesKey` workarounds. (`baseFilesKey` kept: it signals "same base ids" to the single-file tag-touch fast path, not an in-place workaround.)
+- [x] §3.3 library-store cleanup (dead actions, single-file twins, one remove-files path).
+- [x] §3.5 tag-store `typeConfig`, one rewrite path, filter-tree helpers moved to lib (with §2.1a).
+- [x] §3.8 Index-store factory.
 - [ ] §3.9 + §5.6 `ordering` / `toolMode` unions and `sortFilesByScore`.
-- [ ] §5.2 `createWorkerClient`, one worker at a time, starting with relative-sort.
+- [x] §5.2 `createWorkerClient`, one worker at a time, starting with relative-sort.
 - [ ] §5.3 then §3.1: `job-utils.ts`, then `useJob` / `<JobControls>`; delete `usePhashJobStore` and `useCompressJobStore`.
-- [ ] §5.5 Collapse the remaining stage-1 twins. §5.4 Merge the phash and quality scans. §5.8 CLIP transport.
+- [x] §5.5 Collapse the remaining stage-1 twins. §5.8 CLIP transport.
+- [ ] §5.4 Merge the phash and quality scans.
 
 ### Phase 4: UI structure (medium risk; phone QA each PR)
 - [ ] §3.2 (= §2.5) manage.tsx becomes a router; add `ManageDuplicatesPanel` and `ManageSimilarPanel`; §3.10 shared panel pieces.

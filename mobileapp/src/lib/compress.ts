@@ -14,7 +14,7 @@ import {
     blobFromUint8Array,
 } from "@/lib/bytes-blob";
 import { formatFileSize } from "@/lib/format";
-import { createWorkerIdleTimer } from "@/lib/worker-idle-timer";
+import { createWorkerClient } from "@/lib/worker-client";
 
 export const COMPRESSED_TAG = "compressed";
 
@@ -310,97 +310,22 @@ const encodeJpegMainThread = async (
 /** Release the compress worker's WASM encoders after this long with no requests. */
 const COMPRESS_WORKER_IDLE_TERMINATE_MS = 30_000;
 
-let worker: Worker | undefined;
-let requestCounter = 0;
-const workerIdleTimer = createWorkerIdleTimer(
-    COMPRESS_WORKER_IDLE_TERMINATE_MS,
-    () => discardCompressWorker(new Error("Compress worker terminated")),
-);
-
-const getCompressWorker = (): Worker | undefined => {
-    if (typeof Worker === "undefined") {
-        return undefined;
-    }
-    if (!worker) {
-        worker = new Worker(
-            new URL("../workers/compress.worker.ts", import.meta.url),
-        );
-    }
-    return worker;
-};
-
-/** Rejects each request sent to the current worker that has not settled yet. */
-const pendingFailures = new Set<(error: Error) => void>();
-
 /**
- * Terminate the worker and reject every in-flight request with {@link reason}.
- * The next request lazily creates a fresh worker.
+ * A stuck encode would block later requests on the worker, so a timeout drops
+ * the whole worker and every pending request fails with it.
  */
-const discardCompressWorker = (reason: Error): void => {
-    workerIdleTimer.clear();
-    worker?.terminate();
-    worker = undefined;
-    for (const fail of pendingFailures) {
-        fail(reason);
-    }
-};
+const COMPRESS_WORKER_TIMEOUT_MS = 45_000;
 
-/**
- * Post one request to the shared compress worker and resolve with its reply.
- *
- * The request id is assigned here, so compress and crop callers share one
- * counter and their replies cannot be mistaken for each other.
- */
-const postCompressRequest = (
-    request: Omit<CompressWorkerRequest, "id">,
-    transfer: Transferable[],
-): Promise<CompressWorkerResponse> =>
-    new Promise((resolve, reject) => {
-        const compressWorker = getCompressWorker();
-        if (!compressWorker) {
-            reject(new Error("Worker unavailable"));
-            return;
-        }
-
-        const id = ++requestCounter;
-        workerIdleTimer.begin();
-        const timeoutMs = 45_000;
-        // A stuck encode would block later requests on this worker, so the
-        // whole worker is dropped and every pending request fails with it.
-        const timer = setTimeout(() => {
-            discardCompressWorker(new CompressWorkerTimeoutError());
-        }, timeoutMs);
-
-        const cleanup = (): void => {
-            clearTimeout(timer);
-            compressWorker.removeEventListener("message", onMessage);
-            compressWorker.removeEventListener("error", onError);
-            pendingFailures.delete(fail);
-            workerIdleTimer.end();
-        };
-
-        const fail = (error: Error): void => {
-            cleanup();
-            reject(error);
-        };
-
-        const onMessage = (event: MessageEvent<CompressWorkerResponse>): void => {
-            if (event.data.id !== id) {
-                return;
-            }
-            cleanup();
-            resolve(event.data);
-        };
-
-        const onError = (): void => {
-            fail(new Error("Image encode worker failed"));
-        };
-
-        pendingFailures.add(fail);
-        compressWorker.addEventListener("message", onMessage);
-        compressWorker.addEventListener("error", onError);
-        compressWorker.postMessage({ ...request, id }, transfer);
-    });
+const compressWorker = createWorkerClient<
+    CompressWorkerRequest,
+    CompressWorkerResponse
+>({
+    createWorker: () =>
+        new Worker(new URL("../workers/compress.worker.ts", import.meta.url)),
+    idleMs: COMPRESS_WORKER_IDLE_TERMINATE_MS,
+    timeoutMs: COMPRESS_WORKER_TIMEOUT_MS,
+    timeoutError: () => new CompressWorkerTimeoutError(),
+});
 
 /**
  * Encode JPEG bytes in the compress worker. {@link options} carries the quality
@@ -414,7 +339,7 @@ export const encodeJpegInWorker = async (
     >,
 ): Promise<EncodeJpegResult> => {
     const buffer = arrayBufferFromUint8Array(bytes);
-    const response = await postCompressRequest(
+    const response = await compressWorker.request(
         {
             bytes: new Uint8Array(buffer),
             ...options,
@@ -448,7 +373,7 @@ const encodeStillInWorker = async (
     minSizeBytes: number,
 ): Promise<EncodeStillImageResult> => {
     const buffer = arrayBufferFromUint8Array(bytes);
-    const response = await postCompressRequest(
+    const response = await compressWorker.request(
         {
             bytes: new Uint8Array(buffer),
             quality: DEFAULT_JPEG_QUALITY,

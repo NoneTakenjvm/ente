@@ -105,8 +105,8 @@ export function TagPickerSheet({
     onTogglePinTag,
 }: TagPickerSheetProps): JSX.Element {
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
-    const tagTypes = useTagStore((s) => s.tagTypes);
-    const tagTypeByName = useTagStore((s) => s.tagTypeByName);
+    const tagTypes = useTagStore((s) => s.typeConfig.types);
+    const tagTypeByName = useTagStore((s) => s.typeConfig.tagTypeByName);
     const ensureTagType = useTagStore((s) => s.ensureTagType);
     const setTagType = useTagStore((s) => s.setTagType);
 

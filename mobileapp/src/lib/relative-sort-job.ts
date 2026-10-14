@@ -1,110 +1,45 @@
 import { KIT_EMBEDDING_DIMS } from "@/lib/kit-embedding";
 import type { RelativePackedMode } from "@/lib/relative-sort-packed";
-import { createWorkerIdleTimer } from "@/lib/worker-idle-timer";
-
-interface RelativeSortWorkerRequest {
-    requestId: number;
-    mode: RelativePackedMode;
-    seed: number;
-    startFileId?: number;
-    /**
-     * File ids as Float64 — Ente ids exceed Int32 range; Int32 truncation made
-     * the worker return ids that never matched the gallery (identity order).
-     */
-    ids: Float64Array;
-    packed: Float32Array;
-    dim: number;
-}
-
-interface RelativeSortWorkerResponse {
-    requestId: number;
-    orderIds?: Float64Array;
-    error?: string;
-}
+import { createWorkerClient } from "@/lib/worker-client";
+import type {
+    RelativeSortWorkerRequest,
+    RelativeSortWorkerResponse,
+} from "@/workers/relative-sort-worker-types";
 
 /** Release the sort worker after this long with no requests. */
 const RELATIVE_SORT_IDLE_TERMINATE_MS = 30_000;
 
-let worker: Worker | undefined;
-let requestCounter = 0;
-const workerIdleTimer = createWorkerIdleTimer(
-    RELATIVE_SORT_IDLE_TERMINATE_MS,
-    () => {
-        worker?.terminate();
-        worker = undefined;
-    },
-);
-
-const createWorker = (): Worker =>
-    new Worker(
-        new URL("../workers/relative-sort.worker.ts", import.meta.url),
-    );
+const sortWorker = createWorkerClient<
+    RelativeSortWorkerRequest,
+    RelativeSortWorkerResponse
+>({
+    createWorker: () =>
+        new Worker(
+            new URL("../workers/relative-sort.worker.ts", import.meta.url),
+        ),
+    idleMs: RELATIVE_SORT_IDLE_TERMINATE_MS,
+});
 
 /**
  * Greedy CLIP snake in a worker so the gallery thread can keep painting.
  *
  * Transfers {@link packed}; the caller must not reuse that buffer.
  */
-export const sortRelativeIdsInWorker = (
+export const sortRelativeIdsInWorker = async (
     ids: readonly number[],
     packed: Float32Array,
     mode: RelativePackedMode,
     seed: number,
     startFileId?: number,
     dim: number = KIT_EMBEDDING_DIMS,
-): Promise<number[]> =>
-    new Promise((resolve, reject) => {
-        if (typeof Worker === "undefined") {
-            reject(new Error("Workers are not available"));
-            return;
-        }
-        if (!worker) {
-            worker = createWorker();
-        }
-        workerIdleTimer.begin();
-        const requestId = ++requestCounter;
-        const idBuffer = Float64Array.from(ids);
-        const handleMessage = (
-            event: MessageEvent<RelativeSortWorkerResponse>,
-        ): void => {
-            if (event.data.requestId !== requestId) {
-                return;
-            }
-            cleanup();
-            if (event.data.error || !event.data.orderIds) {
-                reject(new Error(event.data.error ?? "Relative sort failed"));
-                return;
-            }
-            resolve([...event.data.orderIds]);
-        };
-        const handleError = (event: ErrorEvent): void => {
-            cleanup();
-            reject(new Error(event.message || "Relative sort worker failed"));
-        };
-        const cleanup = (): void => {
-            worker?.removeEventListener("message", handleMessage);
-            worker?.removeEventListener("error", handleError);
-            workerIdleTimer.end();
-        };
-        worker.addEventListener("message", handleMessage);
-        worker.addEventListener("error", handleError);
-        const request: RelativeSortWorkerRequest = {
-            requestId,
-            mode,
-            seed,
-            startFileId,
-            ids: idBuffer,
-            packed,
-            dim,
-        };
-        try {
-            worker.postMessage(request, [idBuffer.buffer, packed.buffer]);
-        } catch (error: unknown) {
-            cleanup();
-            reject(
-                error instanceof Error ?
-                    error :
-                    new Error("Relative sort post failed"),
-            );
-        }
-    });
+): Promise<number[]> => {
+    const idBuffer = Float64Array.from(ids);
+    const response = await sortWorker.request(
+        { mode, seed, startFileId, ids: idBuffer, packed, dim },
+        [idBuffer.buffer, packed.buffer],
+    );
+    if (response.error || !response.orderIds) {
+        throw new Error(response.error ?? "Relative sort failed");
+    }
+    return [...response.orderIds];
+};

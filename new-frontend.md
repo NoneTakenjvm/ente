@@ -7,12 +7,19 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-10-14 |
-| **Last agent / session** | Simplification plan Phase 2 complete (`mobileapp/simplification-plan.md`): generic outbox + session lifecycle, one HTTP retry path, shared LRU blob store (dbVersion 10), tag-filter `SCOPES`, outbox runner + `queueTagMutation`, §4 findings (`0.3.196`–`0.3.197`) |
+| **Last agent / session** | Simplification plan Phase 3 wave 1 (`mobileapp/simplification-plan.md`): copy-on-write library patches + library-store cleanup, tag-store `typeConfig`, index-store factory, `createWorkerClient`, CLIP transport (`0.3.198`) |
 | **Current milestone** | Post-M8 UX / upload performance |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
-| **Next recommended action** | Phone QA of `0.3.197` (QA lists for `0.3.197`, `0.3.196` and `0.3.195` below). Then Phase 3 of the simplification plan (stores and jobs). Rotate the test-account password. |
+| **Next recommended action** | Phone QA of `0.3.198` (QA lists for `0.3.195`–`0.3.198` below). Then Phase 3 wave 2 (ordering unions, job utils → manage router → `useJob`, merged phash/quality scan). Rotate the test-account password. |
 
-**This session (committed locally, not pushed, `0.3.197`): simplification plan Phase 2 part 2**
+**This session (committed locally, not pushed, `0.3.198`): simplification plan Phase 3 wave 1**
+1. **Library store** — file patches are copy-on-write (`commitFilePatches`); `filesRevision`, `patchFileInPlace` and the gallery remap are gone. Single-file favourite/archive go through `batchSetFavorite` / `batchSetArchived`. Trash, duplicate prune and compress-replace share `removeFilesFromLibrary` (prune now clears the same outbox state as trash). Bootstrap and sync share `applyOrganizerConfig`, so cold start also hydrates tag types, registered tags and query albums from the cached config. The visibility drain writes on a clone of the file.
+2. **Tag store** — one `typeConfig` field and one rewrite path for rename/delete/merge; filter-tree helpers delegate to lib. Renaming an included tag onto an excluded one now leaves it included (same OR rule as merge).
+3. **Index stores** — embedding, phash and quality stores are `createIndexStore` instances with `ensureHydrated`.
+4. **Workers** — `createWorkerClient` (lazy pool, round-robin, idle/timeout, crash rejects all pending) for relative-sort, border-scan (recycles every 80), quality, compress, kit-margins and phash. CLIP worker returns normalized `Float32Array`s (persisted format unchanged) with chunked prefetch. Stage-1 dHash progress throttled to 100 ms.
+5. **QA** — archive/unarchive and favourite from the viewer and in bulk; unarchive several in Manage → Archived; tag edits in viewer and bulk, then wait for the flush (grid should stay smooth); compress, crop, rotate and video edit a favourited file (stays favourited); trash and prune duplicates; cold reload (tag types, registered tags, albums match cloud); Manage → Settings CLIP scan start/pause/abort/resume and logout mid-scan; similar/phash scan, quality scan, auto-crop border scan of >80 thumbs and cancel; compression; relative sort and kit-nearness counts; tag filter include/exclude and rename a tag used in an active filter.
+
+**Previous session (committed locally, `0.3.197`): simplification plan Phase 2 part 2**
 1. **Outbox runner** — `lib/tag-outbox-runner.ts` → `lib/outbox-runner.ts` (`startOutboxRunner`); the store-wired context moved out of `use-library-bootstrap` into `lib/library-outbox-context.ts` (by-id lookups, one trash-id set per chunk). Favourite and visibility drains run in parallel; derived-replace stays after them because it remaps their file ids.
 2. **Tag rewrites** — `lib/tag-batch.ts` deleted; `queueTagMutation(files, mutator, { wait })` in tag-outbox; library-store rename/delete/merge share one `rewriteTags` path (query-album rewrite order unchanged). Tag and visibility overlays share `overlayFiles` (private metadata spread unchanged).
 3. **§4 findings** — favourite derive builds the hash map once; `authFetch` has one 401 path; one shard write transaction and parallel shard decrypt; pull-files batches phash invalidation, loads trash ids once per pull and saves cursors in parallel; view sessions keep only `views` in memory (cloud payload still writes the aggregates); one `normalizeTagNameList`; site wipe steps in parallel.

@@ -46,7 +46,7 @@ export const useTagFilterDraft = (
 ): TagFilterDraft => {
     const [filter, setFilter] = useState<TagFilterSelection>(initial);
     const includeInEffectsPresenceByName = useTagStore(
-        (s) => s.includeInEffectsPresenceByName,
+        (s) => s.typeConfig.includeInEffectsPresenceByName,
     );
 
     const setTagScope = useCallback(

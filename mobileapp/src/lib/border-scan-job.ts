@@ -1,3 +1,4 @@
+import { createWorkerClient } from "@/lib/worker-client";
 import type {
     BorderScanWorkerRequest,
     BorderScanWorkerResponse,
@@ -6,72 +7,39 @@ import type {
 /** Recreate the worker this often so mobile Chrome can reclaim decode heap. */
 const RECYCLE_EVERY = 80;
 
-let worker: Worker | undefined;
-let processedSinceRecycle = 0;
-let requestCounter = 0;
-
-const createWorker = (): Worker =>
-    new Worker(new URL("../workers/border-scan.worker.ts", import.meta.url));
-
-const getWorker = (): Worker => {
-    if (!worker) {
-        worker = createWorker();
-        processedSinceRecycle = 0;
-    }
-    return worker;
-};
+const borderWorker = createWorkerClient<
+    BorderScanWorkerRequest,
+    BorderScanWorkerResponse
+>({
+    createWorker: () =>
+        new Worker(new URL("../workers/border-scan.worker.ts", import.meta.url)),
+    recycleAfter: RECYCLE_EVERY,
+});
 
 /**
  * Tear down the border-scan worker (call on panel unmount / cancel).
  */
 export const terminateBorderScanWorker = (): void => {
-    worker?.terminate();
-    worker = undefined;
-    processedSinceRecycle = 0;
-};
-
-const maybeRecycleWorker = (): void => {
-    processedSinceRecycle += 1;
-    if (processedSinceRecycle < RECYCLE_EVERY) {
-        return;
-    }
-    terminateBorderScanWorker();
+    borderWorker.terminate();
 };
 
 /**
  * Decode a thumbnail in a short-lived worker and return whether it looks
  * letterboxed. Transfers {@link bytes} (caller must not reuse the buffer).
  */
-export const thumbHasBorderInWorker = (
+export const thumbHasBorderInWorker = async (
     fileId: number,
     bytes: Uint8Array,
-): Promise<boolean> =>
-    new Promise((resolve, reject) => {
-        const borderWorker = getWorker();
-        const requestId = ++requestCounter;
-        const handleMessage = (
-            event: MessageEvent<BorderScanWorkerResponse>,
-        ): void => {
-            if (event.data.id !== requestId) {
-                return;
-            }
-            borderWorker.removeEventListener("message", handleMessage);
-            maybeRecycleWorker();
-            if (event.data.error) {
-                reject(new Error(event.data.error));
-                return;
-            }
-            resolve(Boolean(event.data.hasBorder));
-        };
-        borderWorker.addEventListener("message", handleMessage);
-        const transferable = bytes.byteOffset === 0 &&
-                bytes.byteLength === bytes.buffer.byteLength ?
-            bytes :
-            bytes.slice();
-        const request: BorderScanWorkerRequest = {
-            id: requestId,
-            fileId,
-            bytes: transferable,
-        };
-        borderWorker.postMessage(request, [transferable.buffer]);
-    });
+): Promise<boolean> => {
+    const transferable = bytes.byteOffset === 0 &&
+            bytes.byteLength === bytes.buffer.byteLength ?
+        bytes :
+        bytes.slice();
+    const response = await borderWorker.request({ fileId, bytes: transferable }, [
+        transferable.buffer as ArrayBuffer,
+    ]);
+    if (response.error) {
+        throw new Error(response.error);
+    }
+    return Boolean(response.hasBorder);
+};

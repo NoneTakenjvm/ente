@@ -2,7 +2,7 @@
 
 export type ClipEmbeddingDevice = "webgpu" | "wasm";
 
-export type ClipEmbeddingDtype = "fp16" | "fp32" | "q8";
+export type ClipEmbeddingDtype = "fp32";
 
 /** How the last ORT forward was issued. */
 export type ClipEmbeddingBatchMode = "batched" | "sequential";
@@ -32,8 +32,6 @@ export type ClipEmbeddingInitDoneMessage = {
     device: ClipEmbeddingDevice;
     /** Weight dtype actually loaded. */
     dtype?: ClipEmbeddingDtype;
-    /** Hugging Face model id. */
-    modelId?: string;
     /** Set when WebGPU was skipped or failed before WASM fallback. */
     webGpuSkipReason?: string;
     /** Model failed to load on every backend. */
@@ -44,7 +42,7 @@ export type ClipEmbeddingEmbedBatchDoneMessage = {
     kind: "embed-batch-done";
     id: number;
     /** Parallel to request items — undefined vector means that image failed. */
-    results: Array<{ fileId: number; vector?: number[] }>;
+    results: Array<{ fileId: number; vector?: Float32Array }>;
     batchMode?: ClipEmbeddingBatchMode;
     /** Set the first time a true batch forward failed and we serialised. */
     batchFallbackReason?: string;

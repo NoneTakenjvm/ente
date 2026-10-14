@@ -8,6 +8,7 @@ import {
 } from "@/lib/thumbnail-bytes";
 import { imageFilesForPhash } from "@/lib/similarity-job";
 import { waitWhileGalleryScrolling } from "@/lib/gallery-scroll-activity";
+import { createWorkerClient } from "@/lib/worker-client";
 import type {
     ImageQualityWorkerRequest,
     ImageQualityWorkerResponse,
@@ -38,94 +39,34 @@ const qualityWorkerCount = (): number => {
     return Math.min(8, Math.max(2, navigator.hardwareConcurrency ?? 4));
 };
 
-type PendingScore = {
-    worker: Worker;
-    resolve: (score: number) => void;
-    reject: (error: Error) => void;
-};
+const qualityWorkers = createWorkerClient<
+    ImageQualityWorkerRequest,
+    ImageQualityWorkerResponse
+>({
+    createWorker: () =>
+        new Worker(
+            new URL("../workers/image-quality.worker.ts", import.meta.url),
+        ),
+    poolSize: qualityWorkerCount(),
+});
 
-let workers: Worker[] | undefined;
-let workerRoundRobin = 0;
-let requestCounter = 0;
-/** Score requests awaiting a worker reply, keyed by request id. */
-const pendingScores = new Map<number, PendingScore>();
-
-const handleWorkerMessage = (
-    event: MessageEvent<ImageQualityWorkerResponse>,
-): void => {
-    const data = event.data;
-    const pending = pendingScores.get(data.id);
-    if (!pending) {
-        return;
-    }
-    pendingScores.delete(data.id);
-    if (data.error !== undefined || data.score === undefined) {
-        pending.reject(new Error(data.error ?? "Quality score failed"));
-        return;
-    }
-    pending.resolve(data.score);
-};
-
-/** Reject every score request waiting on `worker` so no caller hangs. */
-const rejectPendingScores = (worker: Worker, error: Error): void => {
-    for (const [requestId, pending] of pendingScores) {
-        if (pending.worker === worker) {
-            pendingScores.delete(requestId);
-            pending.reject(error);
-        }
-    }
-};
-
-const createQualityWorker = (): Worker => {
-    const worker = new Worker(
-        new URL("../workers/image-quality.worker.ts", import.meta.url),
-    );
-    worker.addEventListener("message", handleWorkerMessage);
-    worker.addEventListener("error", (event) => {
-        rejectPendingScores(worker, new Error(event.message || "Quality worker failed"));
-    });
-    worker.addEventListener("messageerror", () => {
-        rejectPendingScores(worker, new Error("Quality worker reply unreadable"));
-    });
-    return worker;
-};
-
-const getQualityWorkers = (): Worker[] => {
-    if (!workers) {
-        workers = Array.from({ length: qualityWorkerCount() }, createQualityWorker);
-    }
-    return workers;
-};
-
-const nextWorker = (): Worker => {
-    const pool = getQualityWorkers();
-    const worker = pool[workerRoundRobin % pool.length]!;
-    workerRoundRobin += 1;
-    return worker;
-};
-
-const scoreBytesInWorker = (
+const scoreBytesInWorker = async (
     fileId: number,
     bytes: Uint8Array,
     originalWidth: number,
     originalHeight: number,
     fileBytes: number,
-): Promise<number> =>
-    new Promise((resolve, reject) => {
-        const worker = nextWorker();
-        const requestId = ++requestCounter;
-        const request: ImageQualityWorkerRequest = {
-            id: requestId,
-            fileId,
-            bytes: bytes.slice(),
-            originalWidth,
-            originalHeight,
-            fileBytes,
-        };
-        worker.postMessage(request, [request.bytes.buffer]);
-        // Registered after postMessage: a reply cannot arrive synchronously.
-        pendingScores.set(requestId, { worker, resolve, reject });
-    });
+): Promise<number> => {
+    const copy = bytes.slice();
+    const response = await qualityWorkers.request(
+        { fileId, bytes: copy, originalWidth, originalHeight, fileBytes },
+        [copy.buffer],
+    );
+    if (response.error !== undefined || response.score === undefined) {
+        throw new Error(response.error ?? "Quality score failed");
+    }
+    return response.score;
+};
 
 /**
  * Load the encrypted quality index, or an empty map when missing/stale.

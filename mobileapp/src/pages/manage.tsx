@@ -72,8 +72,10 @@ import {
     CLIP_SCORE_COLLECT_MAX,
     CLIP_SCORE_SLIDER_MAX,
     CLIP_SCORE_SLIDER_MIN,
-    EDGE_COLLECT_THRESHOLD,
     clampClipScoreThreshold,
+} from "@/lib/similarity-clip";
+import {
+    EDGE_COLLECT_THRESHOLD,
     clusterFromFileEdges,
     type Stage1Cluster,
 } from "@/lib/similarity-stage1-core";
@@ -113,14 +115,14 @@ export default function ManagePage(): JSX.Element {
 
     const phashEntries = usePhashIndexStore((s) => s.entries);
     const phashHydrated = usePhashIndexStore((s) => s.isHydrated);
-    const hydratePhash = usePhashIndexStore((s) => s.hydrate);
+    const hydratePhash = usePhashIndexStore((s) => s.ensureHydrated);
     const setPhashEntries = usePhashIndexStore((s) => s.setEntries);
 
     const embeddingEntries = useEmbeddingIndexStore((s) => s.entries);
     const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
-    const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.hydrate);
+    const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.ensureHydrated);
 
-    const hydrateQuality = useQualityIndexStore((s) => s.hydrate);
+    const hydrateQuality = useQualityIndexStore((s) => s.ensureHydrated);
     const qualityById = useQualityIndexStore((s) => s.entries);
     const favoriteFileIds = useFavoritesStore((s) => s.favoriteFileIds);
 

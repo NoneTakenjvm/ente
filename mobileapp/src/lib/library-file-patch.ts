@@ -3,62 +3,9 @@ import { extractTags } from "@/lib/tags";
 import { tagsEqual } from "@/lib/tag-writes";
 import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 
-export interface LibraryFilePatchPlan {
-    /** Library slot index → replacement file, for every patch to write. */
-    slotPatches: Map<number, EnteFile>;
-    /** True when any patch changes tags or archive visibility (notify UI). */
-    notifyNeeded: boolean;
-    /** True when local library bytes should be re-encrypted to disk. */
-    persistNeeded: boolean;
-}
-
 /**
- * Replace one library slot in place (no array copy).
- *
- * @param fileIndexById optional O(1) id→index map
- * @returns whether a slot was updated
- */
-export const patchFileInPlace = (
-    allFiles: EnteFile[],
-    fileId: number,
-    patched: EnteFile,
-    fileIndexById?: ReadonlyMap<number, number>,
-): boolean => {
-    const index = fileIndexById?.get(fileId) ??
-        allFiles.findIndex((file) => file.id === fileId);
-    if (index === undefined || index < 0 || allFiles[index] === patched) {
-        return false;
-    }
-    allFiles[index] = patched;
-    return true;
-};
-
-/**
- * Replace one library slot without mapping every file.
- *
- * @returns a shallow-copied array, or `null` when the id is missing
- */
-export const patchFileInLibrary = (
-    allFiles: EnteFile[],
-    fileId: number,
-    patched: EnteFile,
-    fileIndexById?: ReadonlyMap<number, number>,
-): EnteFile[] | null => {
-    const index = fileIndexById?.get(fileId) ??
-        allFiles.findIndex((file) => file.id === fileId);
-    if (index === undefined || index < 0) {
-        return null;
-    }
-    if (allFiles[index] === patched) {
-        return null;
-    }
-    const next = allFiles.slice();
-    next[index] = patched;
-    return next;
-};
-
-/**
- * Replace several library slots in one shallow copy.
+ * Replace library slots in one shallow copy. The input array is never mutated,
+ * so `allFiles` identity changes on every patch and memo consumers refresh.
  *
  * With `fileIndexById` only the patched slots are visited; without it
  * `allFiles` is walked once. Unpatched entries keep the same object identity.
@@ -101,22 +48,20 @@ export const patchFilesInLibrary = (
 };
 
 /**
- * Plan merging resolved remote file patches into the local library snapshot.
+ * Pick which resolved remote file patches differ from the local library
+ * snapshot in tags, archive state or pubMagicMetadata version.
  *
- * Only the patched slots are visited. Version-only updates (same tags +
- * archive state) still land in `slotPatches` but leave `notifyNeeded` false so
- * callers can mutate in place without triggering a gallery refilter.
+ * Only the patched slots are visited.
  *
  * @param fileIndexById id→index map matching `allFiles`
+ * @returns file id → replacement file, for the patches worth writing
  */
 export const planLibraryFilePatches = (
     allFiles: EnteFile[],
     resolvedById: ReadonlyMap<number, EnteFile>,
     fileIndexById: ReadonlyMap<number, number>,
-): LibraryFilePatchPlan => {
-    let notifyNeeded = false;
-    let persistNeeded = false;
-    const slotPatches = new Map<number, EnteFile>();
+): Map<number, EnteFile> => {
+    const patches = new Map<number, EnteFile>();
     for (const [fileId, patch] of resolvedById) {
         const index = slotIndexOf(allFiles, fileId, fileIndexById);
         if (index < 0) {
@@ -125,23 +70,15 @@ export const planLibraryFilePatches = (
         const file = allFiles[index]!;
         if (
             tagsEqual(extractTags(file), extractTags(patch)) &&
-            isFileArchivedLocally(file) === isFileArchivedLocally(patch)
+            isFileArchivedLocally(file) === isFileArchivedLocally(patch) &&
+            (file.pubMagicMetadata?.version ?? 0) ===
+                (patch.pubMagicMetadata?.version ?? 0)
         ) {
-            if (
-                (file.pubMagicMetadata?.version ?? 0) ===
-                    (patch.pubMagicMetadata?.version ?? 0)
-            ) {
-                continue;
-            }
-            persistNeeded = true;
-            slotPatches.set(index, patch);
             continue;
         }
-        notifyNeeded = true;
-        persistNeeded = true;
-        slotPatches.set(index, patch);
+        patches.set(fileId, patch);
     }
-    return { slotPatches, notifyNeeded, persistNeeded };
+    return patches;
 };
 
 /**

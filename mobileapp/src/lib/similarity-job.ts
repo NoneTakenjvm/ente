@@ -30,6 +30,7 @@ import type {
     Stage1Message,
 } from "@/workers/phash-worker-types";
 import { registerReset } from "@/lib/session-lifecycle";
+import { createWorkerClient } from "@/lib/worker-client";
 
 export interface PhashJobOptions {
     /** Every file the index should cover; entries for other ids are dropped. */
@@ -47,90 +48,38 @@ const phashWorkerCount = (): number => {
     return Math.min(8, Math.max(2, navigator.hardwareConcurrency ?? 4));
 };
 
-let workers: Worker[] | undefined;
-let nextWorkerIndex = 0;
-let requestCounter = 0;
-/**
- * Reply handlers for requests posted to the shared pool, keyed by request id.
- * Each worker has one `onmessage` that dispatches here; an `Error` means the
- * pool was terminated before the worker replied.
- */
-const pendingReplies = new Map<
-    number,
-    (reply: PhashWorkerOutbound | Error) => void
->();
+/** Shared hash / crop-check pool. */
+const phashWorkers = createWorkerClient<
+    PhashWorkerRequest | CropCheckBatchMessage,
+    PhashWorkerResponse | CropCheckBatchResult
+>({
+    createWorker: () =>
+        new Worker(new URL("../workers/phash.worker.ts", import.meta.url)),
+    poolSize: phashWorkerCount(),
+});
 
-const getPhashWorkers = (): Worker[] => {
-    if (!workers) {
-        workers = Array.from({ length: phashWorkerCount() }, () => {
-            const worker = new Worker(
-                new URL("../workers/phash.worker.ts", import.meta.url),
-            );
-            worker.onmessage = (
-                event: MessageEvent<PhashWorkerOutbound>,
-            ): void => {
-                const reply = pendingReplies.get(event.data.id);
-                if (reply) {
-                    pendingReplies.delete(event.data.id);
-                    reply(event.data);
-                }
-            };
-            // A worker that fails to load or crashes never replies; reject
-            // everything pending so the job's in-flight cap cannot stall.
-            worker.onerror = (): void => {
-                terminatePhashWorker();
-            };
-            return worker;
-        });
-    }
-    return workers;
-};
-
-/** Pick the next worker round-robin from the shared pool. */
-const nextWorker = (): Worker => {
-    const pool = getPhashWorkers();
-    const worker = pool[nextWorkerIndex % pool.length]!;
-    nextWorkerIndex += 1;
-    return worker;
-};
-
-const hashBytesInWorker = (
+const hashBytesInWorker = async (
     fileId: number,
     bytes: Uint8Array,
-): Promise<PhashEntry> =>
-    new Promise((resolve, reject) => {
-        const worker = nextWorker();
-        const requestId = ++requestCounter;
-        pendingReplies.set(requestId, (reply) => {
-            if (reply instanceof Error) {
-                reject(reply);
-                return;
-            }
-            const response = reply as PhashWorkerResponse;
-            if (
-                response.error ||
-                !response.hashes ||
-                !response.color ||
-                !response.grid
-            ) {
-                reject(new Error(response.error ?? "Hash failed"));
-                return;
-            }
-            resolve({
-                hashes: response.hashes,
-                color: response.color,
-                grid: response.grid,
-            });
-        });
-        const request: PhashWorkerRequest = {
-            kind: "hash",
-            id: requestId,
-            fileId,
-            bytes,
-        };
-        // Thumbnail bytes are a fresh decrypt per call, so hand the buffer over.
-        worker.postMessage(request, [bytes.buffer as ArrayBuffer]);
-    });
+): Promise<PhashEntry> => {
+    // Thumbnail bytes are a fresh decrypt per call, so hand the buffer over.
+    const response = (await phashWorkers.request({ kind: "hash", fileId, bytes }, [
+        bytes.buffer as ArrayBuffer,
+    ])) as PhashWorkerResponse;
+    if (
+        response.error ||
+        !response.hashes ||
+        !response.color ||
+        !response.grid
+    ) {
+        throw new Error(response.error ?? "Hash failed");
+    }
+    return {
+        hashes: response.hashes,
+        color: response.color,
+        grid: response.grid,
+    };
+};
 
 export type CropBatchEntry = { color: string; grid: string };
 
@@ -147,49 +96,31 @@ export const checkCropMatchBatchInWorkers = (
         return Promise.resolve([]);
     }
 
-    const pool = getPhashWorkers();
-    const chunkCount = Math.min(pool.length, pairs.length);
+    const chunkCount = Math.min(phashWorkerCount(), pairs.length);
     const matches = new Array<boolean>(pairs.length).fill(false);
 
-    const runChunk = (
-        worker: Worker,
+    const runChunk = async (
         chunkPairs: Array<[string, string]>,
         absoluteIndexes: number[],
-    ): Promise<void> =>
-        new Promise((resolve, reject) => {
-            const usedKeys = new Set<string>();
-            for (const [a, b] of chunkPairs) {
-                usedKeys.add(a);
-                usedKeys.add(b);
-            }
-            const chunkEntries: Record<string, CropBatchEntry> = {};
-            for (const key of usedKeys) {
+    ): Promise<void> => {
+        const chunkEntries: Record<string, CropBatchEntry> = {};
+        for (const [a, b] of chunkPairs) {
+            for (const key of [a, b]) {
                 const entry = entries[key];
                 if (entry) {
                     chunkEntries[key] = entry;
                 }
             }
-
-            const requestId = ++requestCounter;
-            pendingReplies.set(requestId, (reply) => {
-                if (reply instanceof Error) {
-                    reject(reply);
-                    return;
-                }
-                const verdicts = (reply as CropCheckBatchResult).matches;
-                for (let i = 0; i < absoluteIndexes.length; i++) {
-                    matches[absoluteIndexes[i]!] = verdicts[i] ?? false;
-                }
-                resolve();
-            });
-            const message: CropCheckBatchMessage = {
-                kind: "crop-check-batch",
-                id: requestId,
-                entries: chunkEntries,
-                pairs: chunkPairs,
-            };
-            worker.postMessage(message);
-        });
+        }
+        const reply = (await phashWorkers.request({
+            kind: "crop-check-batch",
+            entries: chunkEntries,
+            pairs: chunkPairs,
+        })) as CropCheckBatchResult;
+        for (let i = 0; i < absoluteIndexes.length; i++) {
+            matches[absoluteIndexes[i]!] = reply.matches[i] ?? false;
+        }
+    };
 
     const chunkPairs: Array<Array<[string, string]>> = Array.from(
         { length: chunkCount },
@@ -210,11 +141,7 @@ export const checkCropMatchBatchInWorkers = (
             if (pairsForChunk.length === 0) {
                 return Promise.resolve();
             }
-            return runChunk(
-                pool[chunk]!,
-                pairsForChunk,
-                chunkIndexes[chunk]!,
-            );
+            return runChunk(pairsForChunk, chunkIndexes[chunk]!);
         }),
     ).then(() => matches);
 };
@@ -437,16 +364,7 @@ export const runPhashJob = async (
  * reject so their callers (and the job's in-flight cap) settle.
  */
 export const terminatePhashWorker = (): void => {
-    workers?.forEach((worker) => {
-        worker.terminate();
-    });
-    workers = undefined;
-    nextWorkerIndex = 0;
-    const replies = [...pendingReplies.values()];
-    pendingReplies.clear();
-    for (const reply of replies) {
-        reply(new Error("Phash workers terminated"));
-    }
+    phashWorkers.terminate(new Error("Phash workers terminated"));
 };
 
 export interface Stage1WorkerOptions {
@@ -484,7 +402,8 @@ export const runStage1InWorker = (
             return;
         }
 
-        const requestId = ++requestCounter;
+        // One dedicated worker per call, so a fixed id is unambiguous.
+        const requestId = 1;
         const worker = new Worker(
             new URL("../workers/phash.worker.ts", import.meta.url),
         );

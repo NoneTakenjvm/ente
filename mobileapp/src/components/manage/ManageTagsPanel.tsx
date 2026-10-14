@@ -69,13 +69,13 @@ import { errorMessage, plural } from "@/lib/format";
 export function ManageTagsPanel(): JSX.Element {
     const tags = useTagStore((s) => s.tags);
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
-    const tagTypes = useTagStore((s) => s.tagTypes);
-    const tagTypeByName = useTagStore((s) => s.tagTypeByName);
+    const tagTypes = useTagStore((s) => s.typeConfig.types);
+    const tagTypeByName = useTagStore((s) => s.typeConfig.tagTypeByName);
     const includeInKitNearnessByName = useTagStore(
-        (s) => s.includeInKitNearnessByName,
+        (s) => s.typeConfig.includeInKitNearnessByName,
     );
     const includeInEffectsPresenceByName = useTagStore(
-        (s) => s.includeInEffectsPresenceByName,
+        (s) => s.typeConfig.includeInEffectsPresenceByName,
     );
     const setTagType = useTagStore((s) => s.setTagType);
     const setIncludeInKitNearness = useTagStore(
@@ -95,8 +95,7 @@ export function ManageTagsPanel(): JSX.Element {
     const updatePreset = useTagSpeedStore((s) => s.updatePreset);
     const deletePreset = useTagSpeedStore((s) => s.deletePreset);
 
-    const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
-    const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.hydrate);
+    const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.ensureHydrated);
 
     const [renameTarget, setRenameTarget] = useState<string | undefined>();
     const [mergeSources, setMergeSources] = useState<string[]>([]);
@@ -321,9 +320,7 @@ export function ManageTagsPanel(): JSX.Element {
                 total: 1,
             });
             try {
-                if (!embeddingHydrated) {
-                    await hydrateEmbeddings();
-                }
+                await hydrateEmbeddings();
                 const embeddings = useEmbeddingIndexStore.getState().entries;
                 if (embeddings.size < 20) {
                     toast.message(

@@ -73,7 +73,7 @@ self.onmessage = (event: MessageEvent<KitWorkerRequest>): void => {
         if (request.kind === "presence") {
             const tagProbabilities = tagPresenceProbabilities(request, models);
             const response: KitPresenceWorkerResponse = {
-                requestId: request.requestId,
+                id: request.id,
                 tagProbabilities,
             };
             self.postMessage(response, [tagProbabilities.buffer]);
@@ -84,13 +84,13 @@ self.onmessage = (event: MessageEvent<KitWorkerRequest>): void => {
             throw new Error("Kit has no complete or partial members");
         }
         const response: KitMarginsWorkerResponse = {
-            requestId: request.requestId,
+            id: request.id,
             orderIds,
         };
         self.postMessage(response, [orderIds.buffer]);
     } catch (error: unknown) {
         const response: KitMarginsWorkerResponse = {
-            requestId: request.requestId,
+            id: request.id,
             error:
                 errorMessage(error, "Kit nearness margins failed"),
         };

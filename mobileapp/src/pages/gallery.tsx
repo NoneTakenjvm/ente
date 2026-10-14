@@ -1,7 +1,6 @@
 import {
     useCallback,
     useEffect,
-    useMemo,
     useRef,
     useState,
     type JSX,
@@ -159,7 +158,6 @@ export default function GalleryPage(): JSX.Element {
  */
 function GalleryMediaBody(): JSX.Element {
     const allFiles = useLibraryStore((s) => s.allFiles);
-    const filesRevision = useLibraryStore((s) => s.filesRevision);
     const tagFilter = useTagStore((s) => s.tagFilter);
     const favoritesScopeActive = tagFilter.favoritesScope !== "all";
     const favoriteFileIds = useFavoritesStore((s) =>
@@ -176,53 +174,29 @@ function GalleryMediaBody(): JSX.Element {
         [gallerySortBy],
     );
 
-    const libraryFilesCacheRef = useRef<EnteFile[]>([]);
-    const librarySourceRef = useRef<EnteFile[] | undefined>(undefined);
-    const librarySortFnRef = useRef(sortLibraryFiles);
-    const libraryFiles = useMemo(() => {
-        void filesRevision;
-        const prev = libraryFilesCacheRef.current;
-        const sourceUnchanged = allFiles === librarySourceRef.current;
-        const sortUnchanged = sortLibraryFiles === librarySortFnRef.current;
-        librarySortFnRef.current = sortLibraryFiles;
-
-        if (sourceUnchanged && sortUnchanged && prev.length > 0) {
-            const remapped: EnteFile[] = [];
-            const library = useLibraryStore.getState();
-            let changed = false;
-            for (const file of prev) {
-                const updated = library.getFileById(file.id) ?? file;
-                if (isFileArchivedLocally(updated)) {
-                    changed = true;
-                    continue;
-                }
-                if (updated !== file) {
-                    changed = true;
-                }
-                remapped.push(updated);
-            }
-            if (!changed) {
-                return prev;
-            }
-            libraryFilesCacheRef.current = remapped;
-            return remapped;
-        }
-
-        librarySourceRef.current = allFiles;
-        const deduped = dedupeFilesById(allFiles).filter(
-            (file) => !isFileArchivedLocally(file),
-        );
-        if (sortUnchanged) {
-            const remapped = remapSortedFilesIfSameIds(prev, deduped);
-            if (remapped) {
-                libraryFilesCacheRef.current = remapped;
-                return remapped;
-            }
-        }
-        const sorted = sortLibraryFiles(deduped);
-        libraryFilesCacheRef.current = sorted;
-        return sorted;
-    }, [allFiles, filesRevision, sortLibraryFiles]);
+    // Re-sort only when membership or sort mode changes; a patch that keeps
+    // the same ids (tag touch, version ack) reuses the previous order.
+    const [librarySort, setLibrarySort] = useState(() => ({
+        source: allFiles,
+        sort: sortLibraryFiles,
+        files: sortLibraryFiles(visibleLibraryFiles(allFiles)),
+    }));
+    let libraryFiles = librarySort.files;
+    if (
+        librarySort.source !== allFiles ||
+        librarySort.sort !== sortLibraryFiles
+    ) {
+        const visible = visibleLibraryFiles(allFiles);
+        libraryFiles =
+            (librarySort.sort === sortLibraryFiles ?
+                remapSortedFilesIfSameIds(librarySort.files, visible) :
+                undefined) ?? sortLibraryFiles(visible);
+        setLibrarySort({
+            source: allFiles,
+            sort: sortLibraryFiles,
+            files: libraryFiles,
+        });
+    }
 
     const { filteredFiles, displayFiles, matchCount } = useMediaDisplayPipeline({
         libraryFiles,
@@ -232,11 +206,10 @@ function GalleryMediaBody(): JSX.Element {
         clearNearnessOnUnmount: true,
     });
 
-    const [viewerFileId, setViewerFileId] = useState<number | undefined>();
-    const viewerFilesRef = useRef(displayFiles);
-    if (viewerFileId === undefined) {
-        viewerFilesRef.current = displayFiles;
-    }
+    // The viewer keeps the list it was opened with.
+    const [viewer, setViewer] = useState<
+        { fileId: number; files: EnteFile[] } | undefined
+    >();
 
     const selectionEnabled = useSelectionStore((s) => s.enabled);
     const pruneToVisible = useSelectionStore((s) => s.pruneToVisible);
@@ -296,11 +269,11 @@ function GalleryMediaBody(): JSX.Element {
         if (enabled || stamping || rotating || cropping) {
             return;
         }
-        setViewerFileId(file.id);
-    }, []);
+        setViewer({ fileId: file.id, files: displayFiles });
+    }, [displayFiles]);
 
     const handleCloseViewer = useCallback((): void => {
-        setViewerFileId(undefined);
+        setViewer(undefined);
     }, []);
 
     const showFullPageLoader: boolean =
@@ -341,13 +314,16 @@ function GalleryMediaBody(): JSX.Element {
             <RotateToolFooter />
             <CropToolFooter />
 
-            {viewerFileId !== undefined ? (
+            {viewer ? (
                 <PhotoViewer
-                    files={viewerFilesRef.current}
-                    initialFileId={viewerFileId}
+                    files={viewer.files}
+                    initialFileId={viewer.fileId}
                     onClose={handleCloseViewer}
                 />
             ) : null}
         </>
     );
 }
+
+const visibleLibraryFiles = (files: EnteFile[]): EnteFile[] =>
+    dedupeFilesById(files).filter((file) => !isFileArchivedLocally(file));

@@ -143,8 +143,8 @@ export function TagClausePicker({
     const [open, setOpen] = useState(false);
     const tags = useTagStore((s) => s.tags);
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
-    const tagTypes = useTagStore((s) => s.tagTypes);
-    const tagTypeByName = useTagStore((s) => s.tagTypeByName);
+    const tagTypes = useTagStore((s) => s.typeConfig.types);
+    const tagTypeByName = useTagStore((s) => s.typeConfig.tagTypeByName);
     const presets = useTagSpeedStore((s) => s.presets);
     const allFiles = useLibraryStore((s) => s.allFiles);
 

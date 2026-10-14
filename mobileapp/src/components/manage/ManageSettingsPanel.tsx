@@ -100,11 +100,11 @@ export function ManageSettingsPanel(): JSX.Element {
     const userId = useSessionStore((s) => s.userID) ?? 0;
     const embeddingEntries = useEmbeddingIndexStore((s) => s.entries);
     const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
-    const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.hydrate);
+    const hydrateEmbeddings = useEmbeddingIndexStore((s) => s.ensureHydrated);
     const setEmbeddingEntries = useEmbeddingIndexStore((s) => s.setEntries);
     const qualityEntries = useQualityIndexStore((s) => s.entries);
     const qualityHydrated = useQualityIndexStore((s) => s.isHydrated);
-    const hydrateQuality = useQualityIndexStore((s) => s.hydrate);
+    const hydrateQuality = useQualityIndexStore((s) => s.ensureHydrated);
     const setQualityEntries = useQualityIndexStore((s) => s.setEntries);
 
     const clipCandidateCount = useMemo(

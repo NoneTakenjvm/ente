@@ -101,7 +101,7 @@ export function ManageCompressPanel({
     const favoriteFileIds = useFavoritesStore((s) => s.favoriteFileIds);
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
     const includeInEffectsPresenceByName = useTagStore(
-        (s) => s.includeInEffectsPresenceByName,
+        (s) => s.typeConfig.includeInEffectsPresenceByName,
     );
 
     const { filter, actions, setFilter } = useTagFilterDraft();

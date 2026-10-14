@@ -169,7 +169,7 @@ describe("rankByKitMargins", () => {
 
     const requestFor = (
         candidates: { id: number; row: number[]; productionScore?: number }[],
-    ): Omit<KitMarginsWorkerRequest, "kind" | "requestId" | "trainingIds"> => ({
+    ): Omit<KitMarginsWorkerRequest, "kind" | "id" | "trainingIds"> => ({
         dim: DIM,
         trainingVectors: training.vectors,
         trainingProductionScores: Float32Array.from(

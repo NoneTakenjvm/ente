@@ -49,7 +49,7 @@ export function AlbumEditorPanel({
     const favoriteFileIds = useFavoritesStore((s) => s.favoriteFileIds);
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
     const includeInEffectsPresenceByName = useTagStore(
-        (s) => s.includeInEffectsPresenceByName,
+        (s) => s.typeConfig.includeInEffectsPresenceByName,
     );
 
     const initialFilter = album ? queryAlbumFilter(album) : emptyTagFilter();
