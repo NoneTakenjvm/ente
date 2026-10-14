@@ -165,6 +165,29 @@ describe("derived replace outbox", () => {
         ]);
     });
 
+    it("keeps payload bytes when the in-memory outbox is cleared", async () => {
+        const {
+            hydrateDerivedReplaceOutbox,
+            upsertDerivedReplaceOutboxEntry,
+            clearDerivedReplaceOutbox,
+            getDerivedReplaceOutboxEntries,
+            loadDerivedReplaceOutboxBytes,
+        } = await import("@/lib/derived-replace-outbox");
+
+        await hydrateDerivedReplaceOutbox();
+        await upsertDerivedReplaceOutboxEntry(
+            4,
+            new Uint8Array([5, 6]),
+            10,
+            10,
+            "crop",
+        );
+        clearDerivedReplaceOutbox();
+
+        expect(getDerivedReplaceOutboxEntries()).toHaveLength(0);
+        expect([...(await loadDerivedReplaceOutboxBytes(4))!]).toEqual([5, 6]);
+    });
+
     it("keeps a newer entry when an older save removes late", async () => {
         const {
             hydrateDerivedReplaceOutbox,

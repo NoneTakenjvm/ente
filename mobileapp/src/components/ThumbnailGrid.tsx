@@ -256,7 +256,7 @@ interface SizedMasonryGridProps {
     scrollControllerRef: RefObject<MarqueeScrollController | null>;
     /** Receives the placed layout so marquee hit-tests reuse it. */
     layoutRef: RefObject<MasonryLayout | null>;
-    /** Generation that changes when id order changes; layout is reused otherwise. */
+    /** Generation that changes when id order or pixel size changes; layout is reused otherwise. */
     viewOrderKey: string;
 }
 

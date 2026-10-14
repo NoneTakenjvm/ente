@@ -146,6 +146,7 @@ const encodeMediaBytes = async (
                 videoCrf,
                 maxLongEdge,
                 onProgress,
+                signal,
             });
             return {
                 bytes: encoded.bytes,

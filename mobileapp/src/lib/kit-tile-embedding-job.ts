@@ -62,7 +62,7 @@ export const kitTileEmbeddingCoverage = async (
     input: KitTileEmbeddingJobInput,
 ): Promise<KitTileEmbeddingCoverage> =>
     coverageOf(
-        await listTileEmbeddingFileIds(),
+        await listTileEmbeddingFileIds(KIT_EMBEDDING_MODEL_ID, KIT_TILE_LAYOUT_ID),
         eligibleFiles(input),
         input.priorityFileIds,
     );
@@ -75,7 +75,8 @@ export const runKitTileEmbeddingJob = async (
     options: RunKitTileEmbeddingJobOptions,
 ): Promise<void> => {
     const { priorityFileIds, signal } = options;
-    const done = await listTileEmbeddingFileIds();
+    // Stored tiles from another model or layout count as missing and are overwritten.
+    const done = await listTileEmbeddingFileIds(KIT_EMBEDDING_MODEL_ID, KIT_TILE_LAYOUT_ID);
     const eligible = eligibleFiles(options);
     const progress: KitTileEmbeddingProgress = {
         phase: "model",

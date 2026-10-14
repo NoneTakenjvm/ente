@@ -35,6 +35,14 @@ export class CompressionSkippedError extends Error {
     }
 }
 
+/** A worker encode exceeded its time limit; the worker was discarded. */
+export class CompressWorkerTimeoutError extends Error {
+    constructor(message = "Image encode timed out") {
+        super(message);
+        this.name = "CompressWorkerTimeoutError";
+    }
+}
+
 /** Compact byte label for overlays and selection chrome (e.g. `1.2 MB`). */
 export const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) {
@@ -401,13 +409,27 @@ const getCompressWorker = (): Worker | undefined => {
     return worker;
 };
 
+/** Rejects each request sent to the current worker that has not settled yet. */
+const pendingFailures = new Set<(error: Error) => void>();
+
 /**
- * Terminate the compress worker now, dropping any in-flight request.
+ * Terminate the worker and reject every in-flight request with {@link reason}.
+ * The next request lazily creates a fresh worker.
  */
-export const terminateCompressWorker = (): void => {
+const discardCompressWorker = (reason: Error): void => {
     workerIdleTimer.clear();
     worker?.terminate();
     worker = undefined;
+    for (const fail of pendingFailures) {
+        fail(reason);
+    }
+};
+
+/**
+ * Terminate the compress worker now, rejecting any in-flight request.
+ */
+export const terminateCompressWorker = (): void => {
+    discardCompressWorker(new Error("Compress worker terminated"));
 };
 
 const copiedBuffer = (bytes: Uint8Array): ArrayBuffer =>
@@ -433,16 +455,23 @@ export const postCompressRequest = (
         const id = ++requestCounter;
         workerIdleTimer.begin();
         const timeoutMs = 45_000;
+        // A stuck encode would block later requests on this worker, so the
+        // whole worker is dropped and every pending request fails with it.
         const timer = setTimeout(() => {
-            cleanup();
-            reject(new Error("Image encode timed out"));
+            discardCompressWorker(new CompressWorkerTimeoutError());
         }, timeoutMs);
 
         const cleanup = (): void => {
             clearTimeout(timer);
             compressWorker.removeEventListener("message", onMessage);
             compressWorker.removeEventListener("error", onError);
+            pendingFailures.delete(fail);
             workerIdleTimer.end();
+        };
+
+        const fail = (error: Error): void => {
+            cleanup();
+            reject(error);
         };
 
         const onMessage = (event: MessageEvent<CompressWorkerResponse>): void => {
@@ -454,10 +483,10 @@ export const postCompressRequest = (
         };
 
         const onError = (): void => {
-            cleanup();
-            reject(new Error("Image encode worker failed"));
+            fail(new Error("Image encode worker failed"));
         };
 
+        pendingFailures.add(fail);
         compressWorker.addEventListener("message", onMessage);
         compressWorker.addEventListener("error", onError);
         compressWorker.postMessage({ ...request, id }, transfer);

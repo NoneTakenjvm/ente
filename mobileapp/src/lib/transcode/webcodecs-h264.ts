@@ -18,6 +18,8 @@ export interface WebCodecsH264Options {
     videoCrf: number;
     maxLongEdge?: number;
     onProgress?: (ratio: number) => void;
+    /** Aborting cancels the in-flight encode and rejects with the signal's reason. */
+    signal?: AbortSignal;
 }
 
 export interface WebCodecsH264Result {
@@ -118,7 +120,23 @@ export const encodeH264WebCodecs = async (
         }
 
         conversion.onProgress = options.onProgress;
-        await conversion.execute();
+        const { signal } = options;
+        signal?.throwIfAborted();
+        // mediabunny checks for cancellation while it pumps samples, so an abort
+        // stops the encode mid-stream instead of waiting for the next stage.
+        const cancelOnAbort = (): void => {
+            void conversion.cancel();
+        };
+        signal?.addEventListener("abort", cancelOnAbort, { once: true });
+        try {
+            await conversion.execute();
+        } catch (error) {
+            // A cancel surfaces as ConversionCanceledError; rethrow the abort reason.
+            signal?.throwIfAborted();
+            throw error;
+        } finally {
+            signal?.removeEventListener("abort", cancelOnAbort);
+        }
         if (!target.buffer) {
             throw new Error("MP4 mux produced no output");
         }

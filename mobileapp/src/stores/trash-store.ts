@@ -196,32 +196,23 @@ const createTrashStore: StateCreator<TrashState> = (set, get) => ({
     },
 
     emptyTrash: async (): Promise<void> => {
-        // Remote only deletes entries with updatedAt <= lastUpdatedAt. Prefer
-        // the newest timestamp we know about (cursor or local items).
-        const fromItems = get().items.reduce(
-            (max, item) => Math.max(max, item.updatedAt),
-            0,
-        );
-        const persisted = (await getTrashLastUpdatedAt()) ?? 0;
-        let lastUpdatedAt = Math.max(
+        // Remote only deletes entries with updatedAt <= lastUpdatedAt. Sync
+        // first and use only the server-derived cursor: seeded items carry
+        // client-clock timestamps that could cover entries from other devices
+        // we have not pulled yet.
+        const collections = (
+            await import("@/stores/library-store")
+        ).useLibraryStore.getState().collections;
+        await get().syncTrash(collections);
+        const lastUpdatedAt = Math.max(
             get().lastUpdatedAt,
-            fromItems,
-            persisted,
+            (await getTrashLastUpdatedAt()) ?? 0,
         );
-        if (get().items.length > 0 && lastUpdatedAt <= 0) {
-            // Seeded-only trash with no sync yet — pull first so the cursor
-            // covers remote entries before emptying.
-            const collections = (
-                await import("@/stores/library-store")
-            ).useLibraryStore.getState().collections;
-            await get().syncTrash(collections);
-            lastUpdatedAt = Math.max(
-                get().lastUpdatedAt,
-                get().items.reduce(
-                    (max, item) => Math.max(max, item.updatedAt),
-                    0,
-                ),
-            );
+        if (lastUpdatedAt <= 0) {
+            if (!get().items.length) {
+                return;
+            }
+            throw new Error("Trash is not synced yet; try again");
         }
         const fileIds = get().items.map((item) => item.file.id);
         await getEnteCore().emptyTrash(lastUpdatedAt);

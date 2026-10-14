@@ -109,14 +109,27 @@ export function VideoEditorOverlay({
     const videoRef = useRef<HTMLVideoElement>(null);
     const workingUrlRef = useRef<string | undefined>(undefined);
     const workspaceRef = useRef<HTMLDivElement>(null);
+    /** Latest file for the load effect, which reruns only when the file id changes. */
+    const fileRef = useRef<EnteFile>(file);
+    const mountedRef = useRef<boolean>(false);
     const mimeType = mimeTypeForFile(file);
+    useEffect((): void => {
+        fileRef.current = file;
+    });
+
+    useEffect((): (() => void) => {
+        mountedRef.current = true;
+        return (): void => {
+            mountedRef.current = false;
+        };
+    }, []);
 
     useEffect(() => {
         let cancelled = false;
 
         const loadBytes = async (): Promise<void> => {
             try {
-                const bytes = await loadMediaBytesForEdit(file);
+                const bytes = await loadMediaBytesForEdit(fileRef.current);
                 if (cancelled) {
                     return;
                 }
@@ -144,7 +157,7 @@ export function VideoEditorOverlay({
                 workingUrlRef.current = undefined;
             }
         };
-    }, [file, mimeType]);
+    }, [file.id, mimeType]);
 
     useEffect(() => {
         const element = workspaceRef.current;
@@ -174,6 +187,9 @@ export function VideoEditorOverlay({
         dimensions: { width: number; height: number },
         duration: number,
     ): void => {
+        if (!mountedRef.current) {
+            return;
+        }
         const url = URL.createObjectURL(
             blobFromUint8Array(bytes, "video/mp4"),
         );
@@ -290,6 +306,9 @@ export function VideoEditorOverlay({
                 },
             )
                 .then((rotated) => {
+                    if (!mountedRef.current) {
+                        return;
+                    }
                     replaceWorkingVideo(
                         rotated.bytes,
                         { width: rotated.width, height: rotated.height },

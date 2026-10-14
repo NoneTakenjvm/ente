@@ -4,7 +4,6 @@ import {
     type PersistedDerivedReplaceOutboxEntry,
 } from "@/db/kv";
 import {
-    clearDerivedReplacePayloads,
     deleteDerivedReplacePayload,
     getDerivedReplacePayload,
     putDerivedReplacePayload,
@@ -199,11 +198,17 @@ export const flushDerivedReplaceOutboxPersist = (): Promise<void> => {
     return persist();
 };
 
+/**
+ * Drop the in-memory outbox on lock/logout.
+ *
+ * [Note: derived replace payloads survive lock] Only memory is cleared. The
+ * encrypted payload rows and persisted metadata stay on disk so a queued edit
+ * is retried after unlock. Panic deletes the whole organizer DB instead.
+ */
 export const clearDerivedReplaceOutbox = (): void => {
     outboxByFileId.clear();
     hydrated = false;
     persistChain = Promise.resolve();
-    void clearDerivedReplacePayloads();
 };
 
 if (typeof window !== "undefined") {

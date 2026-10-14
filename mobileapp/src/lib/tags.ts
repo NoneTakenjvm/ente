@@ -702,7 +702,7 @@ export const evaluateTagFilterNode = (
     }
 
     if (node.children.length === 0) {
-        return candidateIds;
+        return new Set<number>();
     }
 
     if (node.op === "only") {

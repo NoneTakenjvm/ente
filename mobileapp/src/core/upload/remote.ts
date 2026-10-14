@@ -147,7 +147,7 @@ const isRetryableError = (error: unknown): boolean => {
 
 /**
  * Retry {@link request} on transient failures (5xx, 429, network errors) with
- * bounded exponential backoff.
+ * bounded exponential backoff (about 30s in total).
  *
  * Retrying is safe even when the first attempt partially succeeded: a repeated
  * `PUT` to a pre-signed URL overwrites the same object, and `POST /files`
@@ -156,7 +156,7 @@ const isRetryableError = (error: unknown): boolean => {
  */
 export const withUploadRetry = async <T>(
     request: () => Promise<T>,
-    maxAttempts = 4,
+    maxAttempts = 7,
 ): Promise<T> => {
     let lastError: unknown;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -167,7 +167,8 @@ export const withUploadRetry = async <T>(
             if (!isRetryableError(error) || attempt >= maxAttempts) {
                 throw error;
             }
-            const delayMs = Math.min(8_000, 500 * 2 ** (attempt - 1));
+            // Waits 1s, 2s, 4s, then 8s for the rest: about 31s in total.
+            const delayMs = Math.min(8_000, 1_000 * 2 ** (attempt - 1));
             await new Promise((resolve) => setTimeout(resolve, delayMs));
         }
     }

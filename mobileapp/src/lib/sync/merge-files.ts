@@ -4,18 +4,42 @@ import type { CollectionFileChange } from "@/core/api/files";
 
 /**
  * Apply collection file diff changes to a deduped library map.
+ *
+ * [Note: tombstones vs multi-collection files] The library keeps one row per
+ * file id, owned by the last collection that wrote it. A tombstone only
+ * removes the row when no other collection in {@link filesByCollectionId}
+ * still holds the file; otherwise the row is re-pointed at that copy. Only
+ * membership seen in the library snapshot or earlier in this pull is known.
+ *
+ * @param filesByCollectionId per-collection file maps, including
+ * {@link collectionFilesById} itself.
  */
 export const mergeFileChangesIntoLibrary = (
     libraryById: Map<number, EnteFile>,
     collectionId: number,
     collectionFilesById: Map<number, EnteFile>,
     changes: CollectionFileChange[],
+    filesByCollectionId: ReadonlyMap<number, ReadonlyMap<number, EnteFile>>,
 ): Map<number, EnteFile> => {
     for (const change of changes) {
         if (change.isDeleted) {
             collectionFilesById.delete(change.id);
             const existing = libraryById.get(change.id);
-            if (existing?.collectionID === collectionId) {
+            if (existing?.collectionID !== collectionId) {
+                continue;
+            }
+            let survivor: EnteFile | undefined;
+            for (const [otherId, otherFiles] of filesByCollectionId) {
+                if (otherId !== collectionId) {
+                    survivor = otherFiles.get(change.id);
+                    if (survivor) {
+                        break;
+                    }
+                }
+            }
+            if (survivor) {
+                libraryById.set(change.id, survivor);
+            } else {
                 libraryById.delete(change.id);
             }
             continue;

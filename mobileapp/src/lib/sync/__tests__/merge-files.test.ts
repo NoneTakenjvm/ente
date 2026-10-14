@@ -35,10 +35,39 @@ describe("merge-files", () => {
             },
         ];
 
-        mergeFileChangesIntoLibrary(library, 10, collectionFiles, changes);
+        mergeFileChangesIntoLibrary(
+            library,
+            10,
+            collectionFiles,
+            changes,
+            new Map([[10, collectionFiles]]),
+        );
 
         expect(library.has(1)).toBe(false);
         expect(library.get(2)?.id).toBe(2);
+    });
+
+    it("mergeFileChangesIntoLibrary keeps a file still present in another collection", () => {
+        const library = new Map([[1, file(1, 10)]]);
+        const collectionFiles = new Map([[1, file(1, 10)]]);
+        const otherFiles = new Map([[1, file(1, 20)]]);
+        const changes: CollectionFileChange[] = [
+            { id: 1, updationTime: 2, isDeleted: true },
+        ];
+
+        mergeFileChangesIntoLibrary(
+            library,
+            10,
+            collectionFiles,
+            changes,
+            new Map([
+                [10, collectionFiles],
+                [20, otherFiles],
+            ]),
+        );
+
+        expect(collectionFiles.has(1)).toBe(false);
+        expect(library.get(1)?.collectionID).toBe(20);
     });
 
     it("mergeFavoritesCollectionIntoLibrary keeps album collectionID and does not delete on unfavourite", () => {

@@ -272,6 +272,10 @@ export const useLibraryBootstrap: (
                     const bytes: Uint8Array | undefined =
                         await loadDerivedReplaceOutboxBytes(entry.fileId);
                     if (!bytes) {
+                        console.warn(
+                            "Derived replace payload missing; dropping outbox entry",
+                            entry.fileId,
+                        );
                         await removeDerivedReplaceOutboxEntries([
                             entry.fileId,
                         ]);

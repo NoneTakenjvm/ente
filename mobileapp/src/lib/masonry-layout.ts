@@ -1,5 +1,5 @@
 import type { GalleryColumnCount } from "@/lib/app-settings";
-import { fileAspectRatio } from "@/lib/file-aspect-ratio";
+import { fileAspectRatio, filePixelSize } from "@/lib/file-aspect-ratio";
 import { thumbnailGap } from "@/lib/thumbnail-grid-layout";
 import type { EnteFile } from "ente-media/file";
 
@@ -25,13 +25,17 @@ export interface MasonryLayout {
 }
 
 /**
- * Order fingerprint for masonry layout reuse — O(n) integer hash, no giant
- * comma-joined id string allocation on every `files` reference change.
+ * Order and geometry fingerprint for masonry layout reuse — O(n) integer hash,
+ * no giant comma-joined id string allocation on every `files` reference change.
+ * Pixel width/height are included because an in-place edit can change a tile's height.
  */
 export const masonryViewOrderKey = (files: readonly EnteFile[]): string => {
     let hash = files.length | 0;
     for (const file of files) {
+        const size = filePixelSize(file);
         hash = (Math.imul(hash, 31) + file.id) | 0;
+        hash = (Math.imul(hash, 31) + (size?.width ?? 0)) | 0;
+        hash = (Math.imul(hash, 31) + (size?.height ?? 0)) | 0;
     }
     return `${files.length}:${hash}`;
 };

@@ -32,6 +32,7 @@ import { planLibraryFilePatches, patchFileInLibrary, patchFileInPlace, patchFile
 import { buildFileIndexById } from "@/lib/library-file-index";
 import { applyTagMutator, fileWithOrganizerTags, mergeTagNames, removeTagNames, replaceTagName, tagsForFile, type TagMutator } from "@/lib/tag-writes";
 import { extractTags } from "@/lib/tags";
+import { removeTagFromTree, renameTagInTree } from "@/lib/tag-filter-mutations";
 import {
     applyOutboxTagsToFiles,
     enqueueTagOutboxEntries,
@@ -103,6 +104,7 @@ import {
     primeVideoThumbnailFromBytes,
     requestThumbnail,
 } from "@/lib/thumbnail-cache";
+import { removePhashEntry } from "@/lib/similarity-job";
 import {
     useFavoritesStore,
 } from "./favorites-store";
@@ -1163,6 +1165,8 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         applyOptimisticBatchTags(set, get, fileIds, (file) =>
             tagsForFile(file, mutator));
         rewritePresetTags([oldName], mutator);
+        useAlbumStore.getState().rewriteAlbumTags([oldName], (root) =>
+            renameTagInTree(root, oldName, newName));
 
         return renameTagOnFiles(
             getEnteCore().getHttpClient(),
@@ -1189,6 +1193,8 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         applyOptimisticBatchTags(set, get, fileIds, (file) =>
             tagsForFile(file, mutator));
         rewritePresetTags([tagName], mutator);
+        useAlbumStore.getState().rewriteAlbumTags([tagName], (root) =>
+            removeTagFromTree(root, tagName));
 
         return deleteTagOnFiles(
             getEnteCore().getHttpClient(),
@@ -1223,6 +1229,11 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         applyOptimisticBatchTags(set, get, affectedIds, (file) =>
             tagsForFile(file, mutator));
         rewritePresetTags(sourceNames, mutator);
+        useAlbumStore.getState().rewriteAlbumTags(sourceNames, (root) =>
+            sourceNames.reduce(
+                (next, source) => renameTagInTree(next, source, targetName),
+                root,
+            ));
 
         return mergeTagsOnFiles(
             getEnteCore().getHttpClient(),
@@ -1629,6 +1640,14 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             previousTags,
         );
         await invalidateThumbnailCache(updated.id);
+        await removePhashEntry(updated.id);
+        const { usePhashIndexStore } = await import("@/stores/phash-index-store");
+        const { entries, setEntries } = usePhashIndexStore.getState();
+        if (entries.has(updated.id)) {
+            const next = new Map(entries);
+            next.delete(updated.id);
+            setEntries(next);
+        }
         primeThumbnailFromBytes(updated.id, rotated.bytes);
         return updated;
     },

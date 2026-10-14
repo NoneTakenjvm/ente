@@ -144,14 +144,16 @@ const removeNodeFromTree = (
     nodeId: string,
 ): TagFilterGroup => ({
     ...root,
-    children: root.children
-        .filter((child) => child.id !== nodeId)
-        .map((child) => {
-            if (!isTagFilterGroup(child)) {
-                return child;
-            }
-            return removeNodeFromTree(child, nodeId);
-        }),
+    children: root.children.flatMap((child): TagFilterNode[] => {
+        if (child.id === nodeId) {
+            return [];
+        }
+        if (!isTagFilterGroup(child)) {
+            return [child];
+        }
+        const next = removeNodeFromTree(child, nodeId);
+        return next.children.length > 0 ? [next] : [];
+    }),
 });
 
 const updateGroupOp = (
@@ -439,14 +441,73 @@ const updateGroupInTree = (
     }
     return {
         ...root,
-        children: root.children.map((child) => {
+        children: root.children.flatMap((child): TagFilterNode[] => {
             if (!isTagFilterGroup(child)) {
-                return child;
+                return [child];
             }
-            return updateGroupInTree(child, groupId, updater);
+            const next = updateGroupInTree(child, groupId, updater);
+            return next.children.length > 0 ? [next] : [];
         }),
     };
 };
+
+/** Rename a tag in every clause and kit under the filter root. */
+export const renameTagInTree = (
+    root: TagFilterGroup,
+    oldName: string,
+    newName: string,
+): TagFilterGroup => ({
+    ...root,
+    children: root.children.map((child) => {
+        if (isTagFilterClause(child)) {
+            return child.tag === oldName ?
+                { ...child, tag: newName } :
+                child;
+        }
+        if (isTagFilterKit(child)) {
+            if (!child.tags.includes(oldName)) {
+                return child;
+            }
+            return {
+                ...child,
+                tags: child.tags.map((tag) =>
+                    tag === oldName ? newName : tag),
+            };
+        }
+        return renameTagInTree(child, oldName, newName);
+    }),
+});
+
+/**
+ * Remove a tag from every clause and kit under the filter root. Kits left with
+ * no tags and groups left with no children are dropped.
+ */
+export const removeTagFromTree = (
+    root: TagFilterGroup,
+    tagName: string,
+): TagFilterGroup => ({
+    ...root,
+    children: root.children.flatMap((child): TagFilterNode[] => {
+        if (isTagFilterClause(child) && child.tag === tagName) {
+            return [];
+        }
+        if (isTagFilterKit(child)) {
+            const nextTags = child.tags.filter((tag) => tag !== tagName);
+            if (nextTags.length === 0) {
+                return [];
+            }
+            if (nextTags.length === child.tags.length) {
+                return [child];
+            }
+            return [{ ...child, tags: nextTags }];
+        }
+        if (!isTagFilterGroup(child)) {
+            return [child];
+        }
+        const next = removeTagFromTree(child, tagName);
+        return next.children.length > 0 ? [next] : [];
+    }),
+});
 
 /** Set include/exclude mode on one clause or kit by node id. */
 export const setClauseModeOnFilter = (

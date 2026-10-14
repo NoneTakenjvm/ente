@@ -250,6 +250,8 @@ const MAX_CONCURRENT_MEDIA_LOADS = 2;
 const TAP_MAX_MOVEMENT_PX = 10;
 const DOUBLE_TAP_MS = 300;
 const DOUBLE_TAP_MAX_DISTANCE_PX = 24;
+/** Window in which a synthesized dblclick after a touch double-tap is ignored. */
+const TOUCH_DOUBLE_TAP_DEDUPE_MS = 500;
 const DISMISS_THRESHOLD_MIN_PX = 80;
 const DISMISS_THRESHOLD_RATIO = 0.15;
 
@@ -479,6 +481,9 @@ export const PhotoViewer = memo(function PhotoViewer({
     const lastTouchTapRef = useRef<
         { time: number; x: number; y: number } | undefined
     >(undefined);
+    const lastTouchDoubleTapAtRef = useRef<number>(0);
+    /** Pending slide change after a swipe animation; cleared on re-entry and unmount. */
+    const carouselTransitionTimerRef = useRef<number | undefined>(undefined);
     const zoomPointerStartRef = useRef<
         { x: number; y: number } | undefined
     >(undefined);
@@ -498,6 +503,8 @@ export const PhotoViewer = memo(function PhotoViewer({
         sessionFiles[resolveViewerStartIndex(sessionFiles, initialIndex, initialFileId)]
             ?.id ?? initialFileId ?? 0,
     );
+    /** Last `initialIndex` prop applied, so local edits to `sessionFiles` do not move the viewer. */
+    const appliedInitialIndexRef = useRef<number | undefined>(initialIndex);
     const currentIndexRef = useRef<number>(currentIndex);
     const sessionFilesRef = useRef<EnteFile[]>(sessionFiles);
     const tagBaselineRef = useRef<string[]>([]);
@@ -664,11 +671,11 @@ export const PhotoViewer = memo(function PhotoViewer({
 
     useEffect(() => {
         if (initialIndex !== undefined) {
-            if (
-                initialIndex >= 0 &&
-                initialIndex < sessionFiles.length &&
-                initialIndex !== currentIndexRef.current
-            ) {
+            if (initialIndex === appliedInitialIndexRef.current) {
+                return;
+            }
+            appliedInitialIndexRef.current = initialIndex;
+            if (initialIndex >= 0 && initialIndex < sessionFiles.length) {
                 setCurrentIndex(initialIndex);
                 const nextFile = sessionFiles[initialIndex];
                 if (nextFile) {
@@ -1107,6 +1114,7 @@ export const PhotoViewer = memo(function PhotoViewer({
         return (): void => {
             // Cancelled loads settle after unmount; they must not start new ones.
             pumpLoads.current = (): void => undefined;
+            window.clearTimeout(carouselTransitionTimerRef.current);
             for (const loader of loaders.values()) {
                 cancelLoader(loader, unsettledLoaders);
             }
@@ -1134,6 +1142,7 @@ export const PhotoViewer = memo(function PhotoViewer({
 
     const goToIndex = useCallback(
         (index: number, animate = false): void => {
+            window.clearTimeout(carouselTransitionTimerRef.current);
             if (index < 0 || index >= sessionFiles.length || index === currentIndex) {
                 setCarouselDragPx(0);
                 setCarouselAnimating(false);
@@ -1143,8 +1152,10 @@ export const PhotoViewer = memo(function PhotoViewer({
                 const goingNext = index > currentIndex;
                 setCarouselAnimating(true);
                 setCarouselDragPx(goingNext ? -viewportWidth : viewportWidth);
-                window.setTimeout(() => {
-                    setCurrentIndex(index);
+                carouselTransitionTimerRef.current = window.setTimeout(() => {
+                    // Files can shrink while the slide animates (delete / trash).
+                    const lastIndex = sessionFilesRef.current.length - 1;
+                    setCurrentIndex(Math.max(0, Math.min(index, lastIndex)));
                     setCarouselDragPx(0);
                     setCarouselAnimating(false);
                     resetZoom();
@@ -1476,6 +1487,17 @@ export const PhotoViewer = memo(function PhotoViewer({
         finishCarouselDrag(start?.mode);
     };
 
+    /** A cancelled touch is not a tap: only drop the pointer and drag state. */
+    const handleCarouselPointerCancel = (
+        event: ReactPointerEvent<HTMLDivElement>,
+    ): void => {
+        if (carouselPointerIdRef.current !== event.pointerId) {
+            return;
+        }
+        releasePointer(event.pointerId);
+        cancelCarouselDrag();
+    };
+
     const handleZoomPointerDown = (
         event: ReactPointerEvent<HTMLDivElement>,
     ): void => {
@@ -1561,6 +1583,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                 DOUBLE_TAP_MAX_DISTANCE_PX
         ) {
             lastTouchTapRef.current = undefined;
+            lastTouchDoubleTapAtRef.current = now;
             handleMediaDoubleTap(touch.clientX, touch.clientY);
             return;
         }
@@ -1904,18 +1927,22 @@ export const PhotoViewer = memo(function PhotoViewer({
         void (async (): Promise<void> => {
             try {
                 const previousUrl = mediaUrlsRef.current.get(sourceId);
-                if (previousUrl) {
-                    URL.revokeObjectURL(previousUrl);
-                }
                 const blob =
                     sourceFile.metadata.fileType === FileType.video ?
                         new Blob([Uint8Array.from(result.bytes)], {
                             type: mimeTypeForFile(sourceFile),
                         }) :
                         await toRenderableImageBlob(sourceFile, result.bytes);
+                if (!viewerActiveRef.current) {
+                    return;
+                }
                 const url = URL.createObjectURL(blob);
                 mediaUrlsRef.current.set(sourceId, url);
+                mediaByteSizesRef.current.set(sourceId, result.bytes.byteLength);
                 setSlideMedia(sourceId, { status: "ready", url });
+                if (previousUrl) {
+                    URL.revokeObjectURL(previousUrl);
+                }
                 setSessionFiles((current) => current.map((entry) => (
                     entry.id === sourceId ? result.optimisticFile : entry
                 )));
@@ -2457,8 +2484,15 @@ export const PhotoViewer = memo(function PhotoViewer({
                     onPointerDown={handleCarouselPointerDown}
                     onPointerMove={handleCarouselPointerMove}
                     onPointerUp={handleCarouselPointerUp}
-                    onPointerCancel={handleCarouselPointerUp}
+                    onPointerCancel={handleCarouselPointerCancel}
                     onDoubleClick={(event) => {
+                        // Touch browsers also synthesize dblclick after a double-tap we already handled.
+                        if (
+                            Date.now() - lastTouchDoubleTapAtRef.current <
+                            TOUCH_DOUBLE_TAP_DEDUPE_MS
+                        ) {
+                            return;
+                        }
                         resetChromeTimer();
                         handleMediaDoubleTap(event.clientX, event.clientY);
                     }}

@@ -61,7 +61,11 @@ const buildMetadata = (
         UploadJpegOptions,
         "title" | "creationTime" | "modificationTime" | "latitude" | "longitude"
     >,
+    baseMetadata?: FileMetadata,
 ): FileMetadata => ({
+    // Keep keys we do not set (localID, deviceFolder, version, ...) so the
+    // official app still sees the file's full private metadata.
+    ...baseMetadata,
     fileType: FileType.image,
     title: options.title,
     creationTime: ensureInteger(options.creationTime),
@@ -270,8 +274,8 @@ export interface UpdateImageInPlaceOptions {
 /**
  * Replace an owned file's bytes and thumbnail in place (same file id + key).
  *
- * Updates immutable encrypted metadata (hash / title / modificationTime, keeping
- * the capture location), then
+ * Updates encrypted metadata (hash / title / modificationTime, keeping the
+ * capture location and every other existing key), then
  * merges dimensions + organizer tags into existing public magic metadata so
  * captions and other fields are preserved.
  */
@@ -287,13 +291,19 @@ export const updateImageBytesInPlace = async (
 
     const crypto = mainThreadCrypto();
     const { metadata, encryptedFile, encryptedThumbnail, encryptedMetadata } =
-        await encryptImageAndThumbnail(crypto, jpegBytes, sourceFile.key, {
-            title: options.title,
-            creationTime: sourceFile.metadata.creationTime,
-            modificationTime: Date.now() * 1000,
-            latitude: sourceFile.metadata.latitude,
-            longitude: sourceFile.metadata.longitude,
-        });
+        await encryptImageAndThumbnail(
+            crypto,
+            jpegBytes,
+            sourceFile.key,
+            {
+                title: options.title,
+                creationTime: sourceFile.metadata.creationTime,
+                modificationTime: Date.now() * 1000,
+                latitude: sourceFile.metadata.latitude,
+                longitude: sourceFile.metadata.longitude,
+            },
+            sourceFile.metadata,
+        );
     const { fileObjectKey, thumbnailObjectKey, thumbnailDecryptionHeader } =
         await putImageAndThumbnail(
             http,
@@ -405,6 +415,7 @@ const encryptImageAndThumbnail = async (
         UploadJpegOptions,
         "title" | "creationTime" | "modificationTime" | "latitude" | "longitude"
     >,
+    baseMetadata?: FileMetadata,
 ) => {
     const [encryptedFile, thumbnail] = await Promise.all([
         crypto.encryptFileForUpload(
@@ -415,7 +426,11 @@ const encryptImageAndThumbnail = async (
         ),
         generateImageThumbnail(jpegBytes),
     ]);
-    const metadata = buildMetadata(encryptedFile.hash, metadataOptions);
+    const metadata = buildMetadata(
+        encryptedFile.hash,
+        metadataOptions,
+        baseMetadata,
+    );
     const [encryptedThumbnail, encryptedMetadata] = await Promise.all([
         crypto.encryptBlobBytes(thumbnail, fileKey),
         crypto.encryptMetadataJSON(metadata, fileKey),

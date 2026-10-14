@@ -10,11 +10,25 @@ import { getSessionCacheKey } from "@/lib/cache-key";
 import type { KitTileEmbeddings } from "@/lib/kit-embedding";
 import { getOrganizerDB, type TileEmbeddingRecord } from "./index";
 
-/** Ids of every photo with stored tiles, regardless of model or layout. */
-export const listTileEmbeddingFileIds = async (): Promise<Set<number>> => {
+/**
+ * Ids of photos whose stored tiles match `modelId` / `layout`. Walks the store
+ * with a cursor so only one encrypted record is held at a time.
+ */
+export const listTileEmbeddingFileIds = async (
+    modelId: string,
+    layout: string,
+): Promise<Set<number>> => {
     const db = await getOrganizerDB();
-    // Keys are the numeric `fileId` key path; idb types them as IDBValidKey.
-    return new Set((await db.getAllKeys("tileEmbeddings")).map(Number));
+    const fileIds = new Set<number>();
+    let cursor = await db.transaction("tileEmbeddings").store.openCursor();
+    while (cursor) {
+        const record = cursor.value;
+        if (record.modelId === modelId && record.layout === layout) {
+            fileIds.add(record.fileId);
+        }
+        cursor = await cursor.continue();
+    }
+    return fileIds;
 };
 
 export const putTileEmbeddings = async (

@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
     findKitModeInGroup,
     kitIsIncluded,
+    removeTagFilterNode,
+    removeTagFromTree,
+    renameTagInTree,
     setClauseInGroupOnFilter,
     setClauseModeOnFilter,
     setKitModeOnFilter,
@@ -217,5 +220,53 @@ describe("tag-filter-mutations", () => {
         filter = setTagFilterScope(filter, "untagged");
         expect(filter.tagScope).toBe("untagged");
         expect(filter.root.children).toHaveLength(0);
+    });
+
+    it("setClauseInGroupOnFilter drops a nested group emptied by removing its last clause", () => {
+        const inner = andRoot(includeClause("a"));
+        let filter = {
+            ...emptyTagFilter(),
+            root: andRoot(inner, includeClause("b")),
+        };
+        filter = setClauseInGroupOnFilter(filter, inner.id, "a", null);
+        expect(filter.root.children.map((child) => child.kind)).toEqual([
+            "clause",
+        ]);
+    });
+
+    it("removeTagFilterNode drops a nested group left empty", () => {
+        const inner = andRoot(includeClause("a"));
+        const clause = inner.children[0];
+        const filter = {
+            ...emptyTagFilter(),
+            root: andRoot(inner, includeClause("b")),
+        };
+        const next = removeTagFilterNode(filter, clause.id);
+        expect(next.root.children.map((child) => child.kind)).toEqual([
+            "clause",
+        ]);
+    });
+
+    it("removeTagFromTree drops groups and kits left empty", () => {
+        const inner = andRoot(includeClause("a"));
+        const root = andRoot(inner, includeClause("b"));
+        const next = removeTagFromTree(root, "a");
+        expect(next.children).toEqual([root.children[1]]);
+    });
+
+    it("renameTagInTree renames clauses and kit tags at any depth", () => {
+        const kit = {
+            kind: "kit" as const,
+            id: newTagFilterNodeId(),
+            presetId: "k1",
+            name: "Beach",
+            tags: ["a", "c"],
+            mode: "include" as const,
+        };
+        const root = andRoot(andRoot(includeClause("a")), kit);
+        const next = renameTagInTree(root, "a", "z");
+        const nested = next.children[0] as TagFilterGroup;
+        expect(findClauseInGroup(nested, "z")?.tag).toBe("z");
+        expect(next.children[1]).toMatchObject({ tags: ["z", "c"] });
     });
 });

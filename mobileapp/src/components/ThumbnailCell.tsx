@@ -125,7 +125,8 @@ export const ThumbnailCell = memo(function ThumbnailCell({
     const longPressTriggeredRef = useRef<boolean>(false);
 
     useEffect(() => {
-        if (entry.status === "idle") {
+        if (entry.status === "idle" || entry.status === "error") {
+            // requestThumbnail applies the failed-load cooldown and retry cap.
             requestThumbnail(file);
         }
     }, [entry.status, file]);

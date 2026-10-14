@@ -27,6 +27,13 @@ interface PendingReady {
     bytes: Uint8Array;
 }
 
+interface ThumbnailFailure {
+    attempts: number;
+    failedAt: number;
+    /** Set for network loads, which can be retried; absent for primed thumbs. */
+    file?: EnteFile;
+}
+
 /**
  * Soft cap on decrypted thumbnail blob URLs retained in RAM this session.
  * Keeps recently-seen thumbs warm during long scrolls while staying small
@@ -41,6 +48,11 @@ const MAX_CONCURRENT_IDLE = 8;
 const MAX_CONCURRENT_SCROLLING = 3;
 const MAX_APPLIES_PER_FRAME_IDLE = 4;
 const MAX_APPLIES_PER_FRAME_SCROLLING = 2;
+
+/** Failed loads stop auto-retrying after this many attempts. */
+const MAX_THUMBNAIL_ATTEMPTS = 3;
+/** A remount only retries a failed load once it is this old. */
+const REMOUNT_RETRY_DELAY_MS = 10_000;
 
 const idleEntry: ThumbnailEntry = { status: "idle" };
 const loadingEntry: ThumbnailEntry = { status: "loading" };
@@ -60,6 +72,8 @@ const lowQueue: Array<() => void> = [];
 /** Decrypted bytes waiting for main-thread blob URL + React notify. */
 const pendingReady: PendingReady[] = [];
 let applyFrameScheduled = false;
+
+const failureByFileId: Map<number, ThumbnailFailure> = new Map();
 
 const maxConcurrentNow = (): number =>
     isGalleryScrolling() ? MAX_CONCURRENT_SCROLLING : MAX_CONCURRENT_IDLE;
@@ -223,6 +237,57 @@ const resetToIdle = (fileId: number): void => {
 };
 
 /**
+ * True while {@link loading} is still the entry for {@link fileId}. Invalidating,
+ * clearing, or re-priming the file replaces that entry, so older async work
+ * must stop instead of applying or persisting stale bytes.
+ */
+const isCurrentLoad = (fileId: number, loading: ThumbnailEntry): boolean =>
+    cache.get(fileId) === loading;
+
+/** Mark a load as failed, unless it was superseded while in flight. */
+const failLoad = (
+    fileId: number,
+    loading: ThumbnailEntry,
+    file?: EnteFile,
+): void => {
+    if (!isCurrentLoad(fileId, loading)) {
+        return;
+    }
+    const attempts = (failureByFileId.get(fileId)?.attempts ?? 0) + 1;
+    failureByFileId.set(fileId, { attempts, failedAt: Date.now(), file });
+    cache.set(fileId, { status: "error" });
+    notify(fileId);
+};
+
+const isRetryAllowed = (fileId: number, minAgeMs: number): boolean => {
+    const failure = failureByFileId.get(fileId);
+    if (!failure) {
+        return true;
+    }
+    return (
+        failure.attempts < MAX_THUMBNAIL_ATTEMPTS &&
+        Date.now() - failure.failedAt >= minAgeMs
+    );
+};
+
+/** Retry failed network loads once the device is back online. */
+const retryFailedThumbnails = (): void => {
+    for (const [fileId, failure] of failureByFileId) {
+        if (failure.file && isRetryAllowed(fileId, 0)) {
+            loadThumbnail(failure.file);
+        }
+    }
+};
+
+const dropPendingReady = (fileId: number): void => {
+    for (let i = pendingReady.length - 1; i >= 0; i--) {
+        if (pendingReady[i]?.fileId === fileId) {
+            pendingReady.splice(i, 1);
+        }
+    }
+};
+
+/**
  * Apply blob URL + notify immediately. Prefer {@link scheduleSetReady} so
  * scroll frames are not starved by a burst of ready thumbs.
  */
@@ -291,11 +356,8 @@ const scheduleApplyFrame = (): void => {
  */
 const scheduleSetReady = (fileId: number, bytes: Uint8Array): void => {
     // Replace any older pending payload for the same file.
-    for (let i = pendingReady.length - 1; i >= 0; i--) {
-        if (pendingReady[i]?.fileId === fileId) {
-            pendingReady.splice(i, 1);
-        }
-    }
+    dropPendingReady(fileId);
+    failureByFileId.delete(fileId);
     pendingReady.push({ fileId, bytes });
     scheduleApplyFrame();
 };
@@ -324,16 +386,21 @@ export const getThumbnailEntry = (fileId: number): ThumbnailEntry =>
 
 const loadThumbnail = (file: EnteFile): void => {
     const existing: ThumbnailEntry | undefined = cache.get(file.id);
-    if (existing && existing.status !== "idle") {
+    if (existing && existing.status !== "idle" && existing.status !== "error") {
         return;
     }
 
-    cache.set(file.id, { status: "loading" });
+    const loading: ThumbnailEntry = { status: "loading" };
+    cache.set(file.id, loading);
     notify(file.id);
 
     const task = (): void => {
         void (async (): Promise<void> => {
             try {
+                // Invalidated or re-primed while queued.
+                if (!isCurrentLoad(file.id, loading)) {
+                    return;
+                }
                 relieveHeapPressureIfNeeded();
 
                 // Cell scrolled away during a fling — do not burn decrypt CPU.
@@ -343,6 +410,9 @@ const loadThumbnail = (file: EnteFile): void => {
                 }
 
                 const cached = await getThumbnailCiphertext(file.id);
+                if (!isCurrentLoad(file.id, loading)) {
+                    return;
+                }
                 if (cached) {
                     if (!hasSubscribers(file.id) && isGalleryScrolling()) {
                         resetToIdle(file.id);
@@ -352,6 +422,9 @@ const loadThumbnail = (file: EnteFile): void => {
                         cached,
                         file.key,
                     );
+                    if (!isCurrentLoad(file.id, loading)) {
+                        return;
+                    }
                     // Warm session cache even if unsubscribed; notify only if
                     // still visible (handled inside applyReadyNow).
                     scheduleSetReady(file.id, bytes);
@@ -367,6 +440,9 @@ const loadThumbnail = (file: EnteFile): void => {
                 const core = getEnteCore();
                 const ciphertext =
                     await core.fetchEncryptedThumbnail(file);
+                if (!isCurrentLoad(file.id, loading)) {
+                    return;
+                }
                 // Persisting is fire-and-forget (the put swallows its own
                 // errors) so it never delays first paint.
                 if (!hasSubscribers(file.id)) {
@@ -379,11 +455,13 @@ const loadThumbnail = (file: EnteFile): void => {
                     ciphertext,
                     file.key,
                 );
+                if (!isCurrentLoad(file.id, loading)) {
+                    return;
+                }
                 scheduleSetReady(file.id, bytes);
                 void putThumbnailCiphertext(file.id, ciphertext);
             } catch {
-                cache.set(file.id, { status: "error" });
-                notify(file.id);
+                failLoad(file.id, loading, file);
             } finally {
                 finishTask();
             }
@@ -393,9 +471,18 @@ const loadThumbnail = (file: EnteFile): void => {
     enqueueLoad(file.id, task);
 };
 
+/**
+ * Return the cached entry, starting a load when the thumbnail is idle, or when
+ * it failed and the retry limits allow another attempt (a remount must wait
+ * {@link REMOUNT_RETRY_DELAY_MS} after the last failure).
+ */
 export const requestThumbnail = (file: EnteFile): ThumbnailEntry => {
     const entry: ThumbnailEntry = getThumbnailEntry(file.id);
-    if (entry.status === "idle") {
+    if (
+        entry.status === "idle" ||
+        (entry.status === "error" &&
+            isRetryAllowed(file.id, REMOUNT_RETRY_DELAY_MS))
+    ) {
         loadThumbnail(file);
         return loadingEntry;
     }
@@ -447,16 +534,19 @@ export const primeThumbnailFromBytes = (
         dropReadyBytes(existing);
         revokeEntryUrl(existing);
     }
-    cache.set(fileId, { status: "loading" });
+    dropPendingReady(fileId);
+    const loading: ThumbnailEntry = { status: "loading" };
+    cache.set(fileId, loading);
     notify(fileId);
 
     void (async (): Promise<void> => {
         try {
             const thumbBytes = await generateImageThumbnail(imageBytes, mimeType);
-            scheduleSetReady(fileId, thumbBytes);
+            if (isCurrentLoad(fileId, loading)) {
+                scheduleSetReady(fileId, thumbBytes);
+            }
         } catch {
-            cache.set(fileId, { status: "error" });
-            notify(fileId);
+            failLoad(fileId, loading);
         }
     })();
 };
@@ -473,7 +563,9 @@ export const primeVideoThumbnailFromBytes = (
         dropReadyBytes(existing);
         revokeEntryUrl(existing);
     }
-    cache.set(fileId, { status: "loading" });
+    dropPendingReady(fileId);
+    const loading: ThumbnailEntry = { status: "loading" };
+    cache.set(fileId, loading);
     notify(fileId);
 
     void (async (): Promise<void> => {
@@ -481,10 +573,11 @@ export const primeVideoThumbnailFromBytes = (
             const { extractVideoFrameJpeg } = await import("@/lib/ffmpeg");
             const frameBytes = await extractVideoFrameJpeg(videoBytes, "video/mp4");
             const thumbBytes = await generateImageThumbnail(frameBytes);
-            scheduleSetReady(fileId, thumbBytes);
+            if (isCurrentLoad(fileId, loading)) {
+                scheduleSetReady(fileId, thumbBytes);
+            }
         } catch {
-            cache.set(fileId, { status: "error" });
-            notify(fileId);
+            failLoad(fileId, loading);
         }
     })();
 };
@@ -495,11 +588,8 @@ export const primeVideoThumbnailFromBytes = (
 export const invalidateThumbnailCache = async (
     fileId: number,
 ): Promise<void> => {
-    for (let i = pendingReady.length - 1; i >= 0; i--) {
-        if (pendingReady[i]?.fileId === fileId) {
-            pendingReady.splice(i, 1);
-        }
-    }
+    dropPendingReady(fileId);
+    failureByFileId.delete(fileId);
     const entry = cache.get(fileId);
     if (entry) {
         discardCacheEntry(fileId, entry);
@@ -513,6 +603,7 @@ export const clearThumbnailCache = (): void => {
         revokeEntryUrl(entry);
     }
     cache.clear();
+    failureByFileId.clear();
     sessionReadyBytes = 0;
     listeners.clear();
     highQueue.length = 0;
@@ -521,3 +612,7 @@ export const clearThumbnailCache = (): void => {
     applyFrameScheduled = false;
     // inFlight is left alone: loads already started still call finishTask.
 };
+
+if (typeof window !== "undefined") {
+    window.addEventListener("online", retryFailedThumbnails);
+}

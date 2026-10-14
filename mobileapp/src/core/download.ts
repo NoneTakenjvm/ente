@@ -109,6 +109,14 @@ const readResponseBytes = async (
     return result;
 };
 
+/** Backoff before retry {@link attempt} after a 5xx or network failure. */
+const transientRetryDelayMs = (attempt: number): number =>
+    500 * 3 ** (attempt - 1);
+
+/**
+ * Fetch encrypted bytes, retrying 429, 5xx, and network failures up to
+ * {@link maxAttempts} times. Other 4xx responses and aborts fail immediately.
+ */
 const fetchEncryptedBytes = async (
     http: HttpClient,
     session: CoreSession,
@@ -121,11 +129,27 @@ const fetchEncryptedBytes = async (
     let attempt = 0;
     while (attempt < maxAttempts) {
         attempt += 1;
-        const res = await fetch(url, { headers: http.authHeaders(), signal });
-        if (res.status === 429 && attempt < maxAttempts) {
-            http.logRateLimitHeaders(res, url);
+        const canRetry = attempt < maxAttempts;
+        let res: Response;
+        try {
+            res = await fetch(url, { headers: http.authHeaders(), signal });
+        } catch (error: unknown) {
+            // Network failures surface as a TypeError; aborts are rethrown.
+            if (!(error instanceof TypeError) || !canRetry) {
+                throw error;
+            }
             await new Promise((resolve) =>
-                setTimeout(resolve, retryAfterMs(res) * attempt));
+                setTimeout(resolve, transientRetryDelayMs(attempt)));
+            signal?.throwIfAborted();
+            continue;
+        }
+        if (canRetry && (res.status === 429 || res.status >= 500)) {
+            http.logRateLimitHeaders(res, url);
+            const delayMs =
+                res.status === 429 ?
+                    retryAfterMs(res) * attempt :
+                    transientRetryDelayMs(attempt);
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
             signal?.throwIfAborted();
             continue;
         }
@@ -221,7 +245,7 @@ export const fetchEncryptedFile = async (
                 http,
                 session,
                 `https://files.ente.com/?fileID=${file.id}`,
-                1,
+                3,
                 onProgress,
                 knownTotal,
                 signal,
@@ -230,7 +254,7 @@ export const fetchEncryptedFile = async (
                 http,
                 session,
                 `${origin}/files/download/${file.id}?token=${encodeURIComponent(requireAuth(session).authToken)}`,
-                1,
+                3,
                 onProgress,
                 knownTotal,
                 signal,

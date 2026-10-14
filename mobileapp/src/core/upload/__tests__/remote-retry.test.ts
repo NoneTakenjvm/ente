@@ -83,13 +83,15 @@ const response = (body: unknown, status = 200): Response =>
     });
 
 afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     mockFetch.mockReset();
 });
 
 describe("withUploadRetry via putFile/postEnteFile", () => {
+    // Backoff waits are ~31s in total; fake only setTimeout so they run instantly.
     beforeEach(() => {
-        vi.useRealTimers();
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     });
 
     it("retries putFile on HTTP 500 then succeeds", async () => {
@@ -99,7 +101,9 @@ describe("withUploadRetry via putFile/postEnteFile", () => {
             .mockResolvedValueOnce(response(null, 200));
 
         const fileData = new Uint8Array([1, 2, 3]) as Uint8Array<ArrayBuffer>;
-        await putFile(http, "https://upload/obj", fileData);
+        const upload = putFile(http, "https://upload/obj", fileData);
+        await vi.runAllTimersAsync();
+        await upload;
 
         expect(mockFetch).toHaveBeenCalledTimes(3);
         expect(mockFetch.mock.calls[0]![0]).toBe("https://upload/obj");
@@ -120,11 +124,13 @@ describe("withUploadRetry via putFile/postEnteFile", () => {
         mockFetch.mockResolvedValue(response(null, 500));
 
         const fileData = new Uint8Array([1, 2, 3]) as Uint8Array<ArrayBuffer>;
-        await expect(putFile(http, "https://upload/obj", fileData)).rejects.toThrow(
-            "HTTP 500",
-        );
-        // 4 total attempts (1 + 3 retries) for putFile.
-        expect(mockFetch).toHaveBeenCalledTimes(4);
+        const upload = expect(
+            putFile(http, "https://upload/obj", fileData),
+        ).rejects.toThrow("HTTP 500");
+        await vi.runAllTimersAsync();
+        await upload;
+        // 7 total attempts (1 + 6 retries) for putFile.
+        expect(mockFetch).toHaveBeenCalledTimes(7);
     });
 
     it("retries postEnteFile on 5xx then finalizes to a single file", async () => {
@@ -132,14 +138,16 @@ describe("withUploadRetry via putFile/postEnteFile", () => {
             .mockResolvedValueOnce(response(null, 503))
             .mockResolvedValueOnce(response(remoteFilePayload(42), 200));
 
-        const posted = await postEnteFile(http, postRequest);
+        const posted = postEnteFile(http, postRequest);
+        await vi.runAllTimersAsync();
+        const result = await posted;
 
         expect(mockFetch).toHaveBeenCalledTimes(2);
         // The request is replayed unchanged, so the server can dedupe by object key.
         expect(mockFetch.mock.calls[0]![1]!.body).toBe(
             mockFetch.mock.calls[1]![1]!.body,
         );
-        expect(posted.id).toBe(42);
+        expect(result.id).toBe(42);
     });
 
     it("handles a network TypeError as retryable and succeeds after retries", async () => {
@@ -148,7 +156,9 @@ describe("withUploadRetry via putFile/postEnteFile", () => {
             .mockResolvedValueOnce(response(null, 200));
 
         const fileData = new Uint8Array([1, 2, 3]) as Uint8Array<ArrayBuffer>;
-        await putFile(http, "https://upload/obj", fileData);
+        const upload = putFile(http, "https://upload/obj", fileData);
+        await vi.runAllTimersAsync();
+        await upload;
         expect(mockFetch).toHaveBeenCalledTimes(2);
     });
 
@@ -157,10 +167,12 @@ describe("withUploadRetry via putFile/postEnteFile", () => {
             .mockResolvedValueOnce(response(null, 503))
             .mockResolvedValueOnce(response({ objectKey: "obj", url: "u" }));
 
-        const minted = await fetchUploadURLWithMetadata(http, {
+        const minting = fetchUploadURLWithMetadata(http, {
             contentLength: 3,
             contentMd5: "md5",
         });
+        await vi.runAllTimersAsync();
+        const minted = await minting;
 
         expect(mockFetch).toHaveBeenCalledTimes(2);
         expect(minted).toEqual({ objectKey: "obj", url: "u" });

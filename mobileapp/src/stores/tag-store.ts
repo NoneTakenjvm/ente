@@ -17,9 +17,7 @@ import {
     extractUserTags,
     isSystemTag,
     isTagFilterActive,
-    isTagFilterClause,
     isTagFilterGroup,
-    isTagFilterKit,
     isReservedTag,
     newTagFilterNodeId,
     tagIndexToMaps,
@@ -36,6 +34,8 @@ import {
 } from "@/lib/tags";
 import { normalizeTagName } from "@/lib/tag-writes";
 import {
+    removeTagFromTree,
+    renameTagInTree,
     setClauseInGroupOnFilter,
     setClauseModeOnFilter,
     setKitInGroupOnFilter,
@@ -481,14 +481,16 @@ const removeNodeFromTree = (
     nodeId: string,
 ): TagFilterGroup => ({
     ...root,
-    children: root.children
-        .filter((child) => child.id !== nodeId)
-        .map((child) => {
-            if (!isTagFilterGroup(child)) {
-                return child;
-            }
-            return removeNodeFromTree(child, nodeId);
-        }),
+    children: root.children.flatMap((child): TagFilterNode[] => {
+        if (child.id === nodeId) {
+            return [];
+        }
+        if (!isTagFilterGroup(child)) {
+            return [child];
+        }
+        const next = removeNodeFromTree(child, nodeId);
+        return next.children.length > 0 ? [next] : [];
+    }),
 });
 
 const updateGroupOp = (
@@ -608,59 +610,6 @@ const wrapSiblingsInGroup = (
         }),
     };
 };
-
-const renameTagInTree = (
-    root: TagFilterGroup,
-    oldName: string,
-    newName: string,
-): TagFilterGroup => ({
-    ...root,
-    children: root.children.map((child) => {
-        if (isTagFilterClause(child)) {
-            return child.tag === oldName ?
-                { ...child, tag: newName } :
-                child;
-        }
-        if (isTagFilterKit(child)) {
-            if (!child.tags.includes(oldName)) {
-                return child;
-            }
-            return {
-                ...child,
-                tags: child.tags.map((tag) =>
-                    tag === oldName ? newName : tag),
-            };
-        }
-        return renameTagInTree(child, oldName, newName);
-    }),
-});
-
-const removeTagFromTree = (
-    root: TagFilterGroup,
-    tagName: string,
-): TagFilterGroup => ({
-    ...root,
-    children: root.children
-        .flatMap((child): TagFilterNode[] => {
-            if (isTagFilterClause(child) && child.tag === tagName) {
-                return [];
-            }
-            if (isTagFilterKit(child)) {
-                const nextTags = child.tags.filter((tag) => tag !== tagName);
-                if (nextTags.length === 0) {
-                    return [];
-                }
-                if (nextTags.length === child.tags.length) {
-                    return [child];
-                }
-                return [{ ...child, tags: nextTags }];
-            }
-            if (!isTagFilterGroup(child)) {
-                return [child];
-            }
-            return [removeTagFromTree(child, tagName)];
-        }),
-});
 
 const createTagStore: StateCreator<TagState> = (set, get) => ({
     ...initialTagState,

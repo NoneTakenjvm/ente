@@ -8,7 +8,8 @@ import {
     serializeTagFilter,
     type QueryAlbum,
 } from "@/lib/query-albums";
-import type { TagFilterSelection } from "@/lib/tags";
+import { rewriteQueryAlbumTags } from "@/lib/album-tag-rewrite";
+import type { TagFilterGroup, TagFilterSelection } from "@/lib/tags";
 
 interface AlbumState {
     albums: QueryAlbum[];
@@ -24,6 +25,10 @@ interface AlbumState {
     ) => void;
     reorderAlbums: (orderedIds: string[]) => void;
     deleteAlbum: (id: string) => void;
+    rewriteAlbumTags: (
+        affectedNames: string[],
+        rewriteRoot: (root: TagFilterGroup) => TagFilterGroup,
+    ) => void;
     reset: () => void;
 }
 
@@ -95,6 +100,21 @@ const createAlbumStore: StateCreator<AlbumState> = (set, get) => ({
 
     deleteAlbum: (id: string): void => {
         const albums = get().albums.filter((album) => album.id !== id);
+        set({ albums });
+        persistAlbums(albums);
+    },
+
+    rewriteAlbumTags: (
+        affectedNames: string[],
+        rewriteRoot: (root: TagFilterGroup) => TagFilterGroup,
+    ): void => {
+        const tagNames = new Set(affectedNames);
+        const current = get().albums;
+        const albums = current.map((album) =>
+            rewriteQueryAlbumTags(album, tagNames, rewriteRoot));
+        if (albums.every((album, index) => album === current[index])) {
+            return;
+        }
         set({ albums });
         persistAlbums(albums);
     },

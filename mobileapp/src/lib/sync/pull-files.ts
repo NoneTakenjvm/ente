@@ -44,18 +44,39 @@ export interface PullFilesResult {
 }
 
 /**
- * Persist deferred per-collection cursors after the encrypted library snapshot.
+ * Persist deferred per-collection cursors after the encrypted library snapshot,
+ * removing each from {@link pendingCursors} once written.
  *
  * [Note: sync cursors after files] Advancing cursors before `saveEncryptedFiles`
  * left albums marked fully synced while the on-disk library stayed truncated.
  * The next open then early-skipped those albums until Force resync.
+ *
+ * @param heldCollectionId a collection whose cursor stays pending (the
+ * Favourites collection, until its membership is committed).
  */
 const commitPendingSyncCursors = async (
     pendingCursors: Map<number, number>,
+    heldCollectionId?: number,
 ): Promise<void> => {
     for (const [collectionId, sinceTime] of pendingCursors) {
+        if (collectionId === heldCollectionId) {
+            continue;
+        }
         await saveCollectionSyncTime(collectionId, sinceTime);
+        pendingCursors.delete(collectionId);
     }
+};
+
+/** Persist the library snapshot, minus trashed files, with outbox overlays. */
+const saveLibrarySnapshot = async (
+    libraryById: ReadonlyMap<number, EnteFile>,
+): Promise<void> => {
+    const trashItems = await loadEncryptedTrashItems(getSessionCacheKey());
+    const trashedIds = new Set((trashItems ?? []).map((item) => item.file.id));
+    const forDisk = applyOutboxVisibilityToFiles(
+        applyOutboxTagsToFiles(sortFilesByUpload([...libraryById.values()])),
+    ).filter((file) => !trashedIds.has(file.id));
+    await saveEncryptedFiles(forDisk, getSessionCacheKey());
 };
 
 const groupFilesByCollectionId = (
@@ -75,12 +96,19 @@ const groupFilesByCollectionId = (
 
 /**
  * Incrementally pull file changes for all collections and persist encrypted snapshots.
+ *
+ * [Note: pull checkpoints] After each batch of collections the library is
+ * saved and then that batch's cursors, so a kill mid-pull resumes from the
+ * last finished batch. A cursor is never written before the files it covers.
+ * The Favourites cursor waits for the membership commit at the end.
  */
 export const pullFiles = async (
     options: PullFilesOptions,
 ): Promise<PullFilesResult> => {
     const { collections, onProgress } = options;
     let didUpdate = false;
+    /** True while `libraryById` holds merges not yet saved to disk. */
+    let hasUnsavedChanges = false;
     const libraryById = new Map(
         dedupeFilesById(options.files).map((file) => [file.id, file]),
     );
@@ -135,6 +163,7 @@ export const pullFiles = async (
                 const collectionFilesById =
                     filesByCollectionId.get(collection.id) ??
                     new Map<number, EnteFile>();
+                filesByCollectionId.set(collection.id, collectionFilesById);
 
                 while (true) {
                     const { changes, hasMore } =
@@ -189,11 +218,13 @@ export const pullFiles = async (
                             collection.id,
                             collectionFilesById,
                             decrypted,
+                            filesByCollectionId,
                         );
                     }
 
                     pendingCursors.set(collection.id, sinceTime);
                     didUpdate = true;
+                    hasUnsavedChanges = true;
 
                     if (!hasMore) {
                         break;
@@ -206,28 +237,25 @@ export const pullFiles = async (
                 }
             }),
         );
+        // Checkpoint: files first, then the cursors they cover.
+        if (hasUnsavedChanges) {
+            await saveLibrarySnapshot(libraryById);
+            hasUnsavedChanges = false;
+        }
+        await commitPendingSyncCursors(pendingCursors, userFavorites?.id);
     }
 
     if (userFavorites && favoritesMembershipTouched) {
         await commitFavoriteMembershipSync();
     }
 
-    const files = sortFilesByUpload([...libraryById.values()]);
-    if (didUpdate) {
-        const trashItems = await loadEncryptedTrashItems(getSessionCacheKey());
-        const trashedIds = new Set(
-            (trashItems ?? []).map((item) => item.file.id),
-        );
-        const forDisk = applyOutboxVisibilityToFiles(
-            applyOutboxTagsToFiles(files),
-        ).filter((file) => !trashedIds.has(file.id));
-        await saveEncryptedFiles(forDisk, getSessionCacheKey());
+    if (hasUnsavedChanges) {
+        await saveLibrarySnapshot(libraryById);
     }
-    // Cursors only after a durable library snapshot (or when no file changes).
     await commitPendingSyncCursors(pendingCursors);
 
     return {
-        files,
+        files: sortFilesByUpload([...libraryById.values()]),
         didUpdate,
         favoritesMembershipTouched,
     };

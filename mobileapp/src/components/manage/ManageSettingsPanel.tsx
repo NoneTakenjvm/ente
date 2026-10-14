@@ -429,8 +429,9 @@ export function ManageSettingsPanel(): JSX.Element {
             return;
         }
         tileAbort.current?.abort();
-        tileAbort.current = new AbortController();
-        const { signal } = tileAbort.current;
+        const controller = new AbortController();
+        const { signal } = controller;
+        tileAbort.current = controller;
         setTileJobStatus("running");
         void import("@/lib/kit-tile-embedding-job")
             .then(({ runKitTileEmbeddingJob }) =>
@@ -443,12 +444,31 @@ export function ManageSettingsPanel(): JSX.Element {
                         includeInKitNearnessByName,
                     ),
                     signal,
-                    onProgress: setTileCoverage,
+                    onProgress: (progress) => {
+                        if (!signal.aborted) {
+                            setTileCoverage(progress);
+                        }
+                    },
                 }))
             .then(() => {
-                setTileJobStatus(signal.aborted ? "paused" : "done");
+                // A superseded run must not overwrite the newer run's state.
+                if (tileAbort.current !== controller) {
+                    return;
+                }
+                if (signal.aborted) {
+                    setTileJobStatus("paused");
+                    return;
+                }
+                setTileJobStatus("done");
             })
             .catch((error: unknown) => {
+                if (tileAbort.current !== controller) {
+                    return;
+                }
+                if (signal.aborted) {
+                    setTileJobStatus("paused");
+                    return;
+                }
                 setTileJobStatus("error");
                 toast.error(
                     error instanceof Error ? error.message : "Tile scan failed",

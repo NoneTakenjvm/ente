@@ -85,16 +85,30 @@ export function CropEditorOverlay({
     const imageRef = useRef<HTMLImageElement>(null);
     const workingUrlRef = useRef<string | undefined>(undefined);
     const workspaceRef = useRef<HTMLDivElement>(null);
+    /** Latest file for the load effect, which reruns only when the file id changes. */
+    const fileRef = useRef<EnteFile>(file);
+    const mountedRef = useRef<boolean>(false);
     const mimeType = mimeTypeForFile(file);
+    useEffect((): void => {
+        fileRef.current = file;
+    });
+
+    useEffect((): (() => void) => {
+        mountedRef.current = true;
+        return (): void => {
+            mountedRef.current = false;
+        };
+    }, []);
 
     useEffect(() => {
         let cancelled = false;
 
         const loadBytes = async (): Promise<void> => {
+            const loadFile = fileRef.current;
             try {
                 const bytes =
-                    getLocalMediaOverride(file.id) ??
-                    (await getEnteCore().getDecryptedFile(file));
+                    getLocalMediaOverride(loadFile.id) ??
+                    (await getEnteCore().getDecryptedFile(loadFile));
                 if (cancelled) {
                     return;
                 }
@@ -122,7 +136,7 @@ export function CropEditorOverlay({
                 workingUrlRef.current = undefined;
             }
         };
-    }, [file, mimeType]);
+    }, [file.id, mimeType]);
 
     useEffect(() => {
         const element = workspaceRef.current;
@@ -148,6 +162,9 @@ export function CropEditorOverlay({
     }, [loading]);
 
     const replaceWorkingImage = useCallback((bytes: Uint8Array): void => {
+        if (!mountedRef.current) {
+            return;
+        }
         const url = URL.createObjectURL(
             new Blob([Uint8Array.from(bytes)], { type: "image/jpeg" }),
         );
@@ -223,6 +240,9 @@ export function CropEditorOverlay({
             setCompletedCrop(undefined);
             void bakeRotation(workingBytes, "image/jpeg", degrees)
                 .then((rotated) => {
+                    if (!mountedRef.current) {
+                        return;
+                    }
                     replaceWorkingImage(rotated.bytes);
                 })
                 .catch((rotateError: unknown) => {

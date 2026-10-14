@@ -51,16 +51,61 @@ const qualityWorkerCount = (): number => {
     return Math.min(8, Math.max(2, navigator.hardwareConcurrency ?? 4));
 };
 
+type PendingScore = {
+    worker: Worker;
+    resolve: (score: number) => void;
+    reject: (error: Error) => void;
+};
+
 let workers: Worker[] | undefined;
 let workerRoundRobin = 0;
 let requestCounter = 0;
+/** Score requests awaiting a worker reply, keyed by request id. */
+const pendingScores = new Map<number, PendingScore>();
+
+const handleWorkerMessage = (
+    event: MessageEvent<ImageQualityWorkerResponse>,
+): void => {
+    const data = event.data;
+    const pending = pendingScores.get(data.id);
+    if (!pending) {
+        return;
+    }
+    pendingScores.delete(data.id);
+    if (data.error !== undefined || data.score === undefined) {
+        pending.reject(new Error(data.error ?? "Quality score failed"));
+        return;
+    }
+    pending.resolve(data.score);
+};
+
+/** Reject every score request waiting on `worker` so no caller hangs. */
+const rejectPendingScores = (worker: Worker, error: Error): void => {
+    for (const [requestId, pending] of pendingScores) {
+        if (pending.worker === worker) {
+            pendingScores.delete(requestId);
+            pending.reject(error);
+        }
+    }
+};
+
+const createQualityWorker = (): Worker => {
+    const worker = new Worker(
+        new URL("../workers/image-quality.worker.ts", import.meta.url),
+    );
+    worker.addEventListener("message", handleWorkerMessage);
+    worker.addEventListener("error", (event) => {
+        rejectPendingScores(worker, new Error(event.message || "Quality worker failed"));
+    });
+    worker.addEventListener("messageerror", () => {
+        rejectPendingScores(worker, new Error("Quality worker reply unreadable"));
+    });
+    return worker;
+};
 
 const getQualityWorkers = (): Worker[] => {
     if (!workers) {
-        workers = Array.from({ length: qualityWorkerCount() }, () =>
-            new Worker(
-                new URL("../workers/image-quality.worker.ts", import.meta.url),
-            ));
+        workers = Array.from({ length: qualityWorkerCount() }, createQualityWorker);
     }
     return workers;
 };
@@ -82,23 +127,6 @@ const scoreBytesInWorker = (
     new Promise((resolve, reject) => {
         const worker = nextWorker();
         const requestId = ++requestCounter;
-
-        const handleMessage = (
-            event: MessageEvent<ImageQualityWorkerResponse>,
-        ): void => {
-            const data = event.data;
-            if (data.id !== requestId) {
-                return;
-            }
-            worker.removeEventListener("message", handleMessage);
-            if (data.error !== undefined || data.score === undefined) {
-                reject(new Error(data.error ?? "Quality score failed"));
-                return;
-            }
-            resolve(data.score);
-        };
-
-        worker.addEventListener("message", handleMessage);
         const request: ImageQualityWorkerRequest = {
             id: requestId,
             fileId,
@@ -108,6 +136,8 @@ const scoreBytesInWorker = (
             fileBytes,
         };
         worker.postMessage(request, [request.bytes.buffer]);
+        // Registered after postMessage: a reply cannot arrive synchronously.
+        pendingScores.set(requestId, { worker, resolve, reject });
     });
 
 /**
@@ -219,7 +249,11 @@ export const runImageQualityJob = async (
             return;
         }
         scoresSincePersist = 0;
-        persistChain = persistChain.then(() => persistIndex(entries));
+        persistChain = persistChain
+            .then(() => persistIndex(entries))
+            .catch((error: unknown) => {
+                console.warn("Image quality index persist failed", error);
+            });
         await persistChain;
     };
 
@@ -268,6 +302,7 @@ export const runImageQualityJob = async (
 
 export const terminateImageQualityWorker = (): void => {
     workers?.forEach((worker) => {
+        rejectPendingScores(worker, new Error("Quality worker terminated"));
         worker.terminate();
     });
     workers = undefined;

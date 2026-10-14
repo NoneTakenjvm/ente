@@ -280,6 +280,17 @@ describe("tags", () => {
         expect(filtered.map((file) => file.id)).toEqual([1, 3]);
     });
 
+    it("an empty nested group matches no files in an OR root", () => {
+        const files = [fileWithTags(1, ["selfie"]), fileWithTags(2, [])];
+        const { fileIdsByTag } = tagIndexToMaps(buildTagIndex(files));
+        const filtered = filterFilesByTags(
+            files,
+            filterWithRoot(orRoot(andRoot(), includeClause("selfie"))),
+            fileIdsByTag,
+        );
+        expect(filtered.map((file) => file.id)).toEqual([1]);
+    });
+
     it("tag presence scope ignores system tags even when indexed", () => {
         const files = [
             fileWithTags(1, ["compressed"]),

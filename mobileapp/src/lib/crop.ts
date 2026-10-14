@@ -8,6 +8,7 @@ import {
     DEFAULT_JPEG_QUALITY,
     MAX_JPEG_QUALITY,
     MIN_JPEG_QUALITY,
+    CompressWorkerTimeoutError,
     postCompressRequest,
     type EncodeJpegResult,
 } from "@/lib/compress";
@@ -356,7 +357,12 @@ export const encodeCroppedJpeg = async (
             cropRect,
             clampedQuality,
         );
-    } catch {
+    } catch (error: unknown) {
+        // A timed-out worker is a stuck encode; retrying it on the main thread
+        // would stall the UI for the same work.
+        if (error instanceof CompressWorkerTimeoutError) {
+            throw error;
+        }
         return encodeCroppedJpegMainThread(bytes, cropRect, clampedQuality);
     }
 };
