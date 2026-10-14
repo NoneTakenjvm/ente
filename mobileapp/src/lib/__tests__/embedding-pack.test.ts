@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-    KIT_EMBEDDING_DIMS,
-    l2NormalizeEmbedding,
-    packEmbeddingVector,
-} from "@/lib/kit-embedding";
+import { l2NormalizeEmbedding } from "@/lib/embedding-vector";
+import { KIT_EMBEDDING_DIMS, packEmbeddingVector } from "@/lib/kit-embedding";
 
 describe("embedding Float32 packing", () => {
     it("packEmbeddingVector returns the same Float32Array instance", () => {

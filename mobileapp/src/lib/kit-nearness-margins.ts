@@ -12,7 +12,7 @@
  *   kit tag, trained in whitened coordinates `z = L⁻¹(x − μ)` (converges in
  *   ~100 Adam steps) and mapped back to raw space so scoring is one dot.
  *
- * Research and measured gains: `scripts/kit-nearness-s2-research.md`, pass 5.
+ * Research and measured gains: `docs/research/kit-nearness-s2-research.md`, pass 5.
  *
  * The same tag models also drive the kit presence list ("kit likeness"):
  * see {@link tagPresenceProbabilities} and {@link countKitPresence}.

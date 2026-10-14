@@ -1,37 +1,23 @@
 import { describe, expect, it } from "vitest";
-import type { EnteFile } from "ente-media/file";
 import type { CollectionFileChange } from "@/core/api/files";
 import {
     dedupeFilesById,
-    filterFilesForCollection,
     mergeFavoritesCollectionIntoLibrary,
     mergeFileChangesIntoLibrary,
 } from "@/lib/sync/merge-files";
-
-const file = (id: number, collectionID: number): EnteFile =>
-    ({
-        id,
-        collectionID,
-        key: "key",
-        metadata: {
-            fileType: 0,
-            title: `${id}.jpg`,
-            creationTime: id,
-            modificationTime: id,
-        },
-    }) as EnteFile;
+import { stubFile } from "@/test-utils/fixtures";
 
 describe("merge-files", () => {
     it("mergeFileChangesIntoLibrary applies upserts and deletions", () => {
-        const library = new Map([[1, file(1, 10)]]);
-        const collectionFiles = new Map([[1, file(1, 10)]]);
+        const library = new Map([[1, stubFile({ id: 1, collectionID: 10 })]]);
+        const collectionFiles = new Map([[1, stubFile({ id: 1, collectionID: 10 })]]);
         const changes: CollectionFileChange[] = [
             { id: 1, updationTime: 2, isDeleted: true },
             {
                 id: 2,
                 updationTime: 3,
                 isDeleted: false,
-                file: file(2, 10),
+                file: stubFile({ id: 2, collectionID: 10 }),
             },
         ];
 
@@ -48,9 +34,9 @@ describe("merge-files", () => {
     });
 
     it("mergeFileChangesIntoLibrary keeps a file still present in another collection", () => {
-        const library = new Map([[1, file(1, 10)]]);
-        const collectionFiles = new Map([[1, file(1, 10)]]);
-        const otherFiles = new Map([[1, file(1, 20)]]);
+        const library = new Map([[1, stubFile({ id: 1, collectionID: 10 })]]);
+        const collectionFiles = new Map([[1, stubFile({ id: 1, collectionID: 10 })]]);
+        const otherFiles = new Map([[1, stubFile({ id: 1, collectionID: 20 })]]);
         const changes: CollectionFileChange[] = [
             { id: 1, updationTime: 2, isDeleted: true },
         ];
@@ -71,20 +57,20 @@ describe("merge-files", () => {
     });
 
     it("mergeFavoritesCollectionIntoLibrary keeps album collectionID and does not delete on unfavourite", () => {
-        const library = new Map([[1, file(1, 10)]]);
+        const library = new Map([[1, stubFile({ id: 1, collectionID: 10 })]]);
         const changes: CollectionFileChange[] = [
             {
                 id: 1,
                 updationTime: 2,
                 isDeleted: false,
-                file: file(1, 99),
+                file: stubFile({ id: 1, collectionID: 99 }),
             },
             { id: 1, updationTime: 3, isDeleted: true },
             {
                 id: 2,
                 updationTime: 4,
                 isDeleted: false,
-                file: file(2, 99),
+                file: stubFile({ id: 2, collectionID: 99 }),
             },
         ];
 
@@ -95,12 +81,10 @@ describe("merge-files", () => {
     });
 
     it("dedupeFilesById keeps one entry per id", () => {
-        expect(dedupeFilesById([file(1, 1), file(1, 2)])).toHaveLength(1);
-    });
-
-    it("filterFilesForCollection filters by collection", () => {
-        const all = [file(1, 10), file(2, 20)];
-        expect(filterFilesForCollection(all, 10)).toHaveLength(1);
-        expect(filterFilesForCollection(all, null)).toHaveLength(2);
+        const duplicates = [
+            stubFile({ id: 1, collectionID: 1 }),
+            stubFile({ id: 1, collectionID: 2 }),
+        ];
+        expect(dedupeFilesById(duplicates)).toHaveLength(1);
     });
 });

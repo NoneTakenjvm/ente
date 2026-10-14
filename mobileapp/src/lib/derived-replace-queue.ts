@@ -1,4 +1,5 @@
 import type { EnteFile } from "ente-media/file";
+import { wait } from "ente-utils/promise";
 
 interface DerivedReplaceWaiter {
     resolve: (file: EnteFile) => void;
@@ -18,9 +19,6 @@ const activeFileIds = new Set<number>();
 
 const toError = (error: unknown): Error =>
     error instanceof Error ? error : new Error(String(error));
-
-const yieldToCoalesce = (): Promise<void> =>
-    new Promise((resolve) => setTimeout(resolve, 0));
 
 /**
  * Persist derived bytes for {@link replaceFileId}. When a newer crop arrives
@@ -97,7 +95,7 @@ const drainDerivedReplaceQueue = async (
     const savedWaiters = new Set<DerivedReplaceWaiter>();
     try {
         while (pendingByFileId.has(fileId)) {
-            await yieldToCoalesce();
+            await wait(0);
             const entry = pendingByFileId.get(fileId);
             if (!entry) {
                 break;
@@ -130,7 +128,7 @@ const drainDerivedReplaceQueue = async (
                     stillPending?.options ?? entry.options ?? options;
                 pendingByFileId.delete(fileId);
                 // Let a same-tick enqueue land before we treat this as final.
-                await yieldToCoalesce();
+                await wait(0);
                 const revived = pendingByFileId.get(fileId);
                 if (revived) {
                     revived.waiters = [...waiters, ...revived.waiters];

@@ -10,16 +10,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -73,6 +64,7 @@ import { useLibraryStore } from "@/stores/library-store";
 import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
 import { Tags, Plus } from "lucide-react";
+import { errorMessage, plural } from "@/lib/format";
 
 export function ManageTagsPanel(): JSX.Element {
     const tags = useTagStore((s) => s.tags);
@@ -169,9 +161,7 @@ export function ManageTagsPanel(): JSX.Element {
                 return true;
             } catch (taskError) {
                 setError(
-                    taskError instanceof Error ?
-                        taskError.message :
-                        "Operation failed",
+                    errorMessage(taskError, "Operation failed"),
                 );
                 return false;
             } finally {
@@ -380,7 +370,7 @@ export function ManageTagsPanel(): JSX.Element {
                     return;
                 }
                 toast.error(
-                    error instanceof Error ? error.message : "Tune failed",
+                    errorMessage(error, "Tune failed"),
                 );
             } finally {
                 if (tuneAbort.current === abort) {
@@ -961,8 +951,7 @@ export function ManageTagsPanel(): JSX.Element {
                                             {suggestion.name}
                                         </p>
                                         <p className="text-xs text-muted-foreground">
-                                            On {suggestion.count} photo
-                                            {suggestion.count === 1 ? "" : "s"}
+                                            On {plural(suggestion.count, "photo")}
                                         </p>
                                     </div>
                                     <Button
@@ -982,34 +971,19 @@ export function ManageTagsPanel(): JSX.Element {
                 </DialogContent>
             </Dialog>
 
-            <AlertDialog
+            <ConfirmDialog
                 open={deleteTarget !== undefined}
-                onOpenChange={(open) => {
-                    if (!open) {
-                        setDeleteTarget(undefined);
-                    }
-                }}
-            >
-                <AlertDialogContent>
-                    <AlertDialogHeader>
-                        <AlertDialogTitle>Remove tag?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                            {deleteTarget ?
-                                `Remove "${deleteTarget}" from ${fileIdsByTag.get(deleteTarget)?.size ?? 0} photo${(fileIdsByTag.get(deleteTarget)?.size ?? 0) === 1 ? "" : "s"}?` :
-                                ""}
-                        </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction
-                            variant="destructive"
-                            onClick={handleConfirmDelete}
-                        >
-                            Remove tag
-                        </AlertDialogAction>
-                    </AlertDialogFooter>
-                </AlertDialogContent>
-            </AlertDialog>
+                title="Remove tag?"
+                description={
+                    deleteTarget ?
+                        `Remove "${deleteTarget}" from ${plural(fileIdsByTag.get(deleteTarget)?.size ?? 0, "photo")}?` :
+                        ""
+                }
+                confirmLabel="Remove tag"
+                destructive
+                onCancel={() => setDeleteTarget(undefined)}
+                onConfirm={handleConfirmDelete}
+            />
         </div>
     );
 }

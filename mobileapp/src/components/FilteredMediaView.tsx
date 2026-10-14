@@ -84,11 +84,6 @@ export function FilteredMediaView({
         setViewerFileId(undefined);
     }, []);
 
-    const handleFileUpdated = useCallback((file: EnteFile): void => {
-        setViewerFileId((current) =>
-            current === undefined ? undefined : file.id);
-    }, []);
-
     if (loading && files.length === 0) {
         return <PageLoader message={loadingMessage} />;
     }
@@ -109,7 +104,6 @@ export function FilteredMediaView({
                     files={files}
                     initialFileId={viewerFileId}
                     onClose={handleCloseViewer}
-                    onFileUpdated={handleFileUpdated}
                     albumCoverFileId={albumCoverFileId}
                     onSetAlbumCover={onSetAlbumCover}
                 />

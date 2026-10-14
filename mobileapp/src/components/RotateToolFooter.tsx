@@ -10,6 +10,7 @@ import {
 import { useLibraryStore } from "@/stores/library-store";
 import { useSelectionStore } from "@/stores/selection-store";
 import { toast } from "sonner";
+import { plural } from "@/lib/format";
 
 const APPLY_CONCURRENCY = 3;
 
@@ -92,7 +93,7 @@ export function RotateToolFooter(): JSX.Element | null {
             );
             if (failed === 0) {
                 toast.success(
-                    done === 1 ? "Rotated 1 photo" : `Rotated ${done} photos`,
+                    `Rotated ${plural(done, "photo")}`,
                     { id: progress },
                 );
                 setRotateActive(false);

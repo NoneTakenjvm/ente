@@ -1,13 +1,11 @@
 import type { RotationDegrees } from "@/lib/rotate";
 
-export type PendingRotationDegrees = RotationDegrees;
-
 /**
  * Advance a draft clockwise rotation by 90°. Returns undefined at 0° (cleared).
  */
 export const nextPendingRotation = (
-    current: PendingRotationDegrees | undefined,
-): PendingRotationDegrees | undefined => {
+    current: RotationDegrees | undefined,
+): RotationDegrees | undefined => {
     if (current === undefined) {
         return 90;
     }
@@ -25,7 +23,7 @@ export const nextPendingRotation = (
  * For 90/270 the image is scaled so the longer projected axis fits the square cell.
  */
 export const previewTransformForRotation = (
-    degrees: PendingRotationDegrees | 0,
+    degrees: RotationDegrees | 0,
     cellWidth: number,
     cellHeight: number,
 ): string | undefined => {
@@ -44,14 +42,14 @@ export const previewTransformForRotation = (
 };
 
 export const countPendingRotations = (
-    pending: Record<number, PendingRotationDegrees>,
+    pending: Record<number, RotationDegrees>,
 ): number => Object.keys(pending).length;
 
 /**
  * Ask before discarding draft rotations. Returns true when it is safe to exit.
  */
 export const confirmDiscardPendingRotations = (
-    pending: Record<number, PendingRotationDegrees>,
+    pending: Record<number, RotationDegrees>,
 ): boolean => {
     const count = countPendingRotations(pending);
     if (count === 0) {

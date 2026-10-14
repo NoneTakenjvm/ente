@@ -4,6 +4,7 @@ import {
     CompressionSkippedError,
 } from "@/lib/compress";
 import { fileFileName } from "ente-media/file-metadata";
+import { errorMessage } from "@/lib/format";
 import type { CompressEncoder } from "@/lib/transcode/compress-media";
 
 export type CompressJobStage =
@@ -149,9 +150,7 @@ export const runCompressJob = async (
         }
         result.failed += 1;
         result.errors.push(
-            error instanceof Error ?
-                `${file.id}: ${error.message}` :
-                `${file.id}: compress failed`,
+            `${file.id}: ${errorMessage(error, "compress failed")}`,
         );
         report("error");
     };

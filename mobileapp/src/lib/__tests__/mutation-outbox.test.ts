@@ -1,14 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ItemVisibility } from "ente-media/file-metadata";
-import type { EnteFile } from "ente-media/file";
+import { stubFile } from "@/test-utils/fixtures";
 
 vi.mock("@/db/kv", () => ({
-    loadEncryptedFavoriteOutbox: vi.fn(async () => undefined),
-    saveEncryptedFavoriteOutbox: vi.fn(async () => undefined),
-    loadEncryptedVisibilityOutbox: vi.fn(async () => undefined),
-    saveEncryptedVisibilityOutbox: vi.fn(async () => undefined),
-    loadEncryptedDerivedReplaceOutbox: vi.fn(async () => undefined),
-    saveEncryptedDerivedReplaceOutbox: vi.fn(async () => undefined),
+    loadKv: vi.fn(async (_key: string): Promise<unknown> => undefined),
+    saveKv: vi.fn(async () => undefined),
 }));
 
 const payloadStore = new Map<number, Uint8Array>();
@@ -22,23 +18,11 @@ vi.mock("@/db/derived-replace-payloads", () => ({
     deleteDerivedReplacePayload: vi.fn(async (fileId: number) => {
         payloadStore.delete(fileId);
     }),
-    clearDerivedReplacePayloads: vi.fn(async () => {
-        payloadStore.clear();
-    }),
 }));
 
 vi.mock("@/lib/cache-key", () => ({
     getSessionCacheKey: () => "test-cache-key",
 }));
-
-const stubFile = (id: number, ownerID = 1): EnteFile =>
-    ({
-        id,
-        ownerID,
-        collectionID: 10,
-        key: "key",
-        metadata: { fileType: 0 },
-    }) as EnteFile;
 
 describe("favorite outbox", () => {
     beforeEach(async () => {
@@ -55,7 +39,7 @@ describe("favorite outbox", () => {
         } = await import("@/lib/favorite-outbox");
 
         await hydrateFavoriteOutbox();
-        await upsertFavoriteOutboxEntry(stubFile(42), 1, true);
+        await upsertFavoriteOutboxEntry(stubFile({ id: 42, collectionID: 10 }), 1, true);
         expect(getFavoriteOutboxEntries()).toHaveLength(1);
         expect(getFavoriteOutboxEntries()[0]?.fileId).toBe(42);
 
@@ -70,11 +54,11 @@ describe("favorite outbox", () => {
             hydrateFavoriteOutbox,
             ensureFavoriteOutboxHydrated,
         } = await import("@/lib/favorite-outbox");
-        const { loadEncryptedFavoriteOutbox } = await import("@/db/kv");
+        const { loadKv } = await import("@/db/kv");
 
         await hydrateFavoriteOutbox();
-        await upsertFavoriteOutboxEntry(stubFile(7), 1, true);
-        vi.mocked(loadEncryptedFavoriteOutbox).mockResolvedValueOnce([]);
+        await upsertFavoriteOutboxEntry(stubFile({ id: 7, collectionID: 10 }), 1, true);
+        vi.mocked(loadKv).mockResolvedValueOnce([]);
 
         await ensureFavoriteOutboxHydrated();
         expect(getFavoriteOutboxEntries()[0]?.fileId).toBe(7);
@@ -98,7 +82,7 @@ describe("visibility outbox", () => {
         } = await import("@/lib/visibility-outbox");
 
         await hydrateVisibilityOutbox();
-        const file = stubFile(7);
+        const file = stubFile({ id: 7, collectionID: 10 });
         await upsertVisibilityOutboxEntry(7, ItemVisibility.archived);
         const applied = applyOutboxVisibilityToFiles([file]);
         expect(isFileArchivedLocally(applied[0]!)).toBe(true);

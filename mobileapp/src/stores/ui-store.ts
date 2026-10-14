@@ -27,20 +27,17 @@ export type BackgroundJobStatus =
 interface PhashJobState {
     status: BackgroundJobStatus;
     progress: { current: number; total: number };
-    error: string | undefined;
     setStatus: (status: BackgroundJobStatus) => void;
     setProgress: (current: number, total: number) => void;
-    setError: (error: string | undefined) => void;
     reset: () => void;
 }
 
 const initialPhashJob: Pick<
     PhashJobState,
-    "status" | "progress" | "error"
+    "status" | "progress"
 > = {
     status: "idle",
     progress: { current: 0, total: 0 },
-    error: undefined,
 };
 
 const createPhashJobStore: StateCreator<PhashJobState> = (set) => ({
@@ -52,10 +49,6 @@ const createPhashJobStore: StateCreator<PhashJobState> = (set) => ({
 
     setProgress: (current: number, total: number): void => {
         set({ progress: { current, total } });
-    },
-
-    setError: (error: string | undefined): void => {
-        set({ error });
     },
 
     reset: (): void => {

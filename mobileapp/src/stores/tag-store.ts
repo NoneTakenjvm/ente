@@ -1,8 +1,7 @@
 import { create } from "zustand";
 import type { StateCreator } from "zustand";
 import type { PersistedTagIndex } from "@/db/kv";
-import { saveEncryptedTagIndex } from "@/db/kv";
-import { getSessionCacheKey } from "@/lib/cache-key";
+import { saveKv } from "@/db/kv";
 import { enqueueOrganizerConfigPatch } from "@/lib/organizer-config-save-queue";
 import {
     configFromPersisted,
@@ -61,8 +60,6 @@ interface TagState {
     tagFilter: TagFilterSelection;
     /** Session overlay filter when refining an open album view. */
     albumViewFilter: TagFilterSelection;
-    /** Bumps whenever the tag→file index changes. */
-    tagIndexRevision: number;
     /**
      * File ids touched by the latest {@link applyFilesTags} call.
      * `undefined` means a full rebuild / structural rename — gallery must
@@ -164,7 +161,6 @@ const initialTagState: Pick<
     "includeInEffectsPresenceByName" |
     "tagFilter" |
     "albumViewFilter" |
-    "tagIndexRevision" |
     "lastTagTouchFileIds"
 > = {
     tags: [],
@@ -177,7 +173,6 @@ const initialTagState: Pick<
         initialTypeState.includeInEffectsPresenceByName,
     tagFilter: emptyTagFilter(),
     albumViewFilter: emptyTagFilter(),
-    tagIndexRevision: 0,
     lastTagTouchFileIds: undefined,
 };
 
@@ -227,7 +222,7 @@ let pendingTagIndexMaps: {
 
 const enqueueTagIndexPersist = (index: PersistedTagIndex): Promise<void> => {
     tagIndexPersistChain = tagIndexPersistChain
-        .then(() => saveEncryptedTagIndex(index, getSessionCacheKey()))
+        .then(() => saveKv("tagIndex", index))
         .catch((error: unknown) => {
             console.warn("Tag index persist failed", error);
         });
@@ -462,7 +457,6 @@ const commitIncrementalIndex = (
         tags: tagList,
         fileIdsByTag,
         registeredTagNames,
-        tagIndexRevision: get().tagIndexRevision + 1,
         lastTagTouchFileIds,
     });
     schedulePersistCurrentIndex(tagList, fileIdsByTag);
@@ -666,7 +660,6 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         set({
             tags: tagList,
             fileIdsByTag,
-            tagIndexRevision: get().tagIndexRevision + 1,
             lastTagTouchFileIds: undefined,
         });
         if (scrubbed) {
@@ -701,7 +694,6 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             registeredTagNames,
             tags,
             fileIdsByTag,
-            tagIndexRevision: get().tagIndexRevision + 1,
             lastTagTouchFileIds: undefined,
         });
     },
@@ -726,7 +718,6 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             tags: merged.tags,
             fileIdsByTag: merged.fileIdsByTag,
             registeredTagNames,
-            tagIndexRevision: get().tagIndexRevision + 1,
             lastTagTouchFileIds: undefined,
         });
         persistCurrentIndexNow(merged.tags, merged.fileIdsByTag);
@@ -1034,7 +1025,6 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             tags: tagList,
             fileIdsByTag: fileIdsByTagNext,
             registeredTagNames: nextRegistered,
-            tagIndexRevision: get().tagIndexRevision + 1,
             lastTagTouchFileIds: undefined,
         });
         persistCurrentIndexNow(tagList, fileIdsByTagNext);
@@ -1222,7 +1212,6 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
                     root: renameTagInTree(albumViewFilter.root, oldName, newName),
                 } :
                 albumViewFilter,
-            tagIndexRevision: get().tagIndexRevision + 1,
             lastTagTouchFileIds: undefined,
         });
         persistCurrentIndexNow(tagList, fileIdsByTag);
@@ -1270,7 +1259,6 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             tagTypeByName,
             includeInKitNearnessByName,
             includeInEffectsPresenceByName,
-            tagIndexRevision: get().tagIndexRevision + 1,
             lastTagTouchFileIds: undefined,
         });
         persistCurrentIndexNow(tagList, fileIdsByTag);
@@ -1391,7 +1379,6 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             tagTypeByName,
             includeInKitNearnessByName,
             includeInEffectsPresenceByName,
-            tagIndexRevision: get().tagIndexRevision + 1,
             lastTagTouchFileIds: undefined,
         });
         persistCurrentIndexNow(mergedIndex.tags, mergedIndex.fileIdsByTag);

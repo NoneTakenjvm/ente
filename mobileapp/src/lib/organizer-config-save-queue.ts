@@ -2,13 +2,11 @@ import { getEnteCore } from "@/core";
 import { isOrganizerConfigBootstrapped } from "@/core/organizer-config";
 import type { OrganizerAppConfig } from "@/lib/organizer-config";
 import { mergeCloudViewSessions } from "@/lib/view-sessions";
+import { wait } from "ente-utils/promise";
 
 let pendingPatch: Partial<OrganizerAppConfig> = {};
 let flushing = false;
 let flushChain: Promise<void> = Promise.resolve();
-
-const yieldToCoalesce = (): Promise<void> =>
-    new Promise((resolve) => setTimeout(resolve, 0));
 
 /**
  * Coalesce queued patches. `viewSessions` uses LWW merge so two rapid Recents
@@ -72,7 +70,7 @@ const flushOrganizerConfigQueue = (): Promise<void> => {
             let failed = false;
             try {
                 while (Object.keys(pendingPatch).length > 0) {
-                    await yieldToCoalesce();
+                    await wait(0);
                     const toFlush = pendingPatch;
                     pendingPatch = {};
                     try {

@@ -145,10 +145,7 @@ export const hydrateTagFilter = (
     root: hydrateNode(persisted.root) as TagFilterGroup,
 });
 
-export const emptyPersistedTagFilter = (): PersistedTagFilterSelection =>
-    serializeTagFilter(emptyTagFilter());
-
-export const newQueryAlbumId = (): string =>
+const newQueryAlbumId = (): string =>
     `album-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
 export const createQueryAlbum = (

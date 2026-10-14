@@ -21,6 +21,7 @@ import {
     totalAllowanceBytes,
     type UserDetails,
 } from "@/core/api/user-details";
+import { errorMessage } from "@/lib/format";
 
 /**
  * Show Ente cloud storage usage vs plan allowance.
@@ -38,9 +39,7 @@ export function ManageUsagePanel(): JSX.Element {
             setDetails(next);
         } catch (loadError: unknown) {
             setError(
-                loadError instanceof Error ?
-                    loadError.message :
-                    "Could not load storage usage",
+                errorMessage(loadError, "Could not load storage usage"),
             );
         } finally {
             setLoading(false);

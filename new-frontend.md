@@ -7,12 +7,19 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-10-14 |
-| **Last agent / session** | Third review round: sync checkpoints, trash/derived-replace safety, tag-rewrite for query albums, thumbnail retry, compute-job aborts, viewer/editor leaks (`0.3.193`) |
+| **Last agent / session** | Simplification plan Phases 0–1 (`mobileapp/simplification-plan.md`): research code/scripts deleted, dead code removed, legacy IDB shims dropped (dbVersion 9), shared `format.ts` / `ConfirmDialog` / typed kv / test fixtures (`0.3.195`) |
 | **Current milestone** | Post-M8 UX / upload performance |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
-| **Next recommended action** | Phone QA of `0.3.193`: rename/delete/merge a tag used by a saved query album and confirm the album still matches; kill the app mid-sync and confirm the next sync resumes without re-pulling everything; empty trash on a fresh session; open a failed thumbnail after going offline then online (should retry); rotate a photo then check Similar/dedup no longer lists a stale hash; swipe fast in the viewer and in Recents (no snap-back). Then QA of `0.3.192`: pause, resume and stop a compress job and a phash job (status and progress must match, no stale "done"); compress then crop the same photo quickly and confirm one copy with the final edit and no orphaned outbox entry; fill the trash/archive selection and delete — selection must shrink. Then QA of `0.3.191`: compress 5+ videos (incl. a phone-recorded one) and confirm every copy has a thumbnail; crop/rotate a geotagged photo and confirm the location survives; filter by Manual rotate. Then QA of `0.3.190`: tag a file uploaded by the official app, then confirm its position under the "Uploaded At" sort does not move; crop/compress a photo and confirm the copy keeps the source's upload position. Then QA `0.3.189`: quick-rotate and quick-crop 20+ photos and Apply — progress should climb several at a time, all files end up rotated/cropped once, undo still works on a cropped photo, failed items stay pending for retry. Then QA the `0.3.188` perf items if not done yet. |
+| **Next recommended action** | Commit Phases 0–1, then phone QA of `0.3.195`: first open after update re-downloads thumbnails/cached video (dbVersion 9 clears them) and a library that only had the legacy kv blob re-pulls; viewer swipe/open-on-tap and edit save/revert (echo loop removed); every confirm dialog (panic, delete, revert, batch trash, dedup trash, album delete, recents clear, tag-filter, trash empty, tag delete); Manage → Settings no longer shows the Developer card. Set `NEXT_PUBLIC_DEV_TEST_EMAIL`/`NEXT_PUBLIC_DEV_TEST_PASSWORD` in `mobileapp/.env.local` for dev login. Then continue with Phase 2 of the simplification plan. Older QA backlog: see `0.3.193` and earlier below. |
 
-**This session (local only — not pushed, `0.3.193`):**
+**This session (local only — not committed, `0.3.195`): simplification plan Phases 0–1**
+1. **Deleted** — ~45 research/GA/debug/probe scripts and one-shot smokes; eval modules, the dHash kit-nearness path, corpus export and the tile pilot (+ Manage Developer card); dead store actions, exports and worker messages listed in the plan; `/tags` and `/favourites` redirect pages; `@ffmpeg/util`, `vaul`, `m0-spike`.
+2. **DB v9** — drops the tile-embeddings store, legacy kv `"files"`, shards meta, and clears thumbnails + file ciphertexts (LRU fields / file header now required). Outboxes untouched; the `bytesBase64` derived-replace shim stays until a drained build is confirmed (D4).
+3. **Shared helpers** — `lib/format.ts` (`plural`, `formatFileSize`, `errorMessage`), `components/ConfirmDialog.tsx` (replaces 5 modals + 5 inline dialogs), `db/kv.ts` `loadKv`/`saveKv` keyed by `KvValues` (wrappers gone; chunk decrypts in parallel), `lib/image-format.ts`, `lib/embedding-vector.ts`, `src/test-utils/fixtures.ts`, `scripts/e2e/lib.ts` + one `e2e-smoke.ts` suite; ente-utils `batch`/`wait`/`mergeUint8Arrays` replace local copies.
+4. **Docs** — research record trimmed to `mobileapp/docs/research/`; root audits archived to `mobileapp/docs/archive/`; test-account credentials now read from `.env.local` (password still needs rotating).
+5. **Known limits** — kit centroid now rounds to 1e-5 (shared normaliser); `withTimeout` and `arrayBufferFromUint8Array` kept (ente-utils semantics differ); `appendPhashChunk` still re-reads meta per append; `packStage1Embeddings` kept (not equivalent).
+
+**Previous session (local only, `0.3.193`):**
 1. **Derived-replace payloads** — lock/logout no longer wipes the encrypted payload store, so queued edits survive a lock (panic still wipes); a missing payload is logged before the entry is dropped.
 2. **Trash** — `emptyTrash` syncs first and uses the server's trash cursor (max with persisted) instead of the client clock; refuses with "Trash is not synced yet" when items exist but no cursor does.
 3. **In-place replace** — `updateImageBytesInPlace` spreads the source file's private metadata, so unknown keys survive.
@@ -97,7 +104,7 @@
 
 **Previous session (local only — not pushed):**
 1. **Agentic upload test** — login OK; upload failed with `HTTP 410` on `GET /files/upload-urls` (`"This upload API is no longer supported"`). Storage was fine (~61MB/10GB).
-2. **`0.3.178`** — mint per-object URLs via `POST /files/upload-url` + MD5; PUT sends `Content-MD5`. Dropped legacy URL pool prefetch. Smoke script: `scripts/e2e-upload-smoke.ts`.
+2. **`0.3.178`** — mint per-object URLs via `POST /files/upload-url` + MD5; PUT sends `Content-MD5`. Dropped legacy URL pool prefetch. Smoke script: `scripts/e2e-smoke.ts`.
 
 **Previous session (local only — not pushed):**
 1. **`0.3.177`** — disable CF `uploader.ente.com` proxy (direct S3 PUT again); drop dedicated crypto workers from the upload path; sequential URL take/PUT; Cancel aborts in-flight fetches. Keeps HEIC/timeouts/concurrency 4 / parallel encrypt.
@@ -108,10 +115,10 @@
 2. **`0.3.175` upload speed** — production PUTs via `uploader.ente.com` (official CF proxy); 4 dedicated crypto workers; parallel hash∥thumbnail, encrypt, file∥thumbnail PUT; JPEG SOF dimensions.
 
 **Previous session shipped:**
-1. **`0.3.173` UX batch** — stamp tap-only; idle-lock await + `useRequireSession`; zoom chrome tap while zoomed; tool footers safe-area; toaster island offset; wheel zoom; video zoom; AppShell `visualViewport` height; select perf via store-observed cells; crop lock aspect session pref; view-session resume **30m**. Notes in `mobileapp/ux-bugs-investigation.md`.
+1. **`0.3.173` UX batch** — stamp tap-only; idle-lock await + `useRequireSession`; zoom chrome tap while zoomed; tool footers safe-area; toaster island offset; wheel zoom; video zoom; AppShell `visualViewport` height; select perf via store-observed cells; crop lock aspect session pref; view-session resume **30m**. Notes in `mobileapp/docs/archive/ux-bugs-investigation.md`.
 
 **Previous session shipped:**
-1. **Investigation only** — nine reported UX issues documented in [`mobileapp/ux-bugs-investigation.md`](mobileapp/ux-bugs-investigation.md).
+1. **Investigation only** — nine reported UX issues documented in [`mobileapp/docs/archive/ux-bugs-investigation.md`](mobileapp/docs/archive/ux-bugs-investigation.md).
 2. Prior: **`0.3.172` production audit** — LWW-merge `viewSessions`; logout flush; 401; favourite membership validate.
 
 **Previous session shipped:**
@@ -178,7 +185,7 @@
 1. **Responsive Tools chrome** — below `md` keep Gallery Tools wrench dropdown; at `md+` show individual Query / Select / Stamp / Rotate icon buttons (albums: Select / Stamp / Rotate). Restored `TagQueryBuilderPanel` for wide layout. `APP_VERSION` → `0.3.143`.
 
 **Previous session shipped:**
-1. **Recently viewed sessions** — Recents tab (Albums→Recents→Manage); encrypted local `viewSessions` store; PhotoViewer records >1s full views (gallery/album); 1h resume; session list + view-only chronological detail with deleted placeholders + duplicate carousel slots (`initialIndex` + `readOnly`). Crop/replace remaps file ids. Delete session from session view header. Unit tests + Playwright `scripts/e2e-recents.ts` green. `APP_VERSION` → `0.3.142`.
+1. **Recently viewed sessions** — Recents tab (Albums→Recents→Manage); encrypted local `viewSessions` store; PhotoViewer records >1s full views (gallery/album); 1h resume; session list + view-only chronological detail with deleted placeholders + duplicate carousel slots (`initialIndex` + `readOnly`). Crop/replace remaps file ids. Delete session from session view header. Unit tests + Playwright `scripts/e2e-smoke.ts` green. `APP_VERSION` → `0.3.142`.
 
 **Previous session shipped:**
 1. **Quick rotate + Tools menu** — Gallery Tools dropdown (Query builder / Select / Stamp / Rotate); draft +90° CW taps with CSS preview; Apply uploads sequentially via `rotateAndUploadFile` (now goes through `toRenderableImageBlob` so HEIC works in Chromium); Discard / 4th tap clears. Albums get Tools without query. Playwright e2e green on `/dev-login`. `APP_VERSION` → `0.3.140`.
@@ -202,7 +209,7 @@
 1. **Kit presence never orphans** — every shown file is assigned to the closest remaining kit by mean tag presence (known=1, else CLIP p). No AND gate. Ties: more tags, then id. Counts always partition the view. Lint, 394 tests, build green. `APP_VERSION` → `0.3.135`.
 
 **Previous session shipped:**
-1. **Compress follow-up** — WebCodecs keeps hardware H.264 when AAC fails (audio remux or skip); batch video long-edge cap 1920; independent gallery-style filters on Manage → Compress (always size-desc); per-stage progress (download/compress/upload with XHR PUT %); CRF slider removed; selection footer shows photo/video counts + size; size chips on compress thumbs only. Lint + build green; Playwright smoke OK. `APP_VERSION` → `0.3.134`. Plan: `mobileapp/scripts/compress-followup.md`.
+1. **Compress follow-up** — WebCodecs keeps hardware H.264 when AAC fails (audio remux or skip); batch video long-edge cap 1920; independent gallery-style filters on Manage → Compress (always size-desc); per-stage progress (download/compress/upload with XHR PUT %); CRF slider removed; selection footer shows photo/video counts + size; size chips on compress thumbs only. Lint + build green; Playwright smoke OK. `APP_VERSION` → `0.3.134`. Plan: `mobileapp/scripts/compress-followup.md` (removed; see commit `81946e8e48`).
 2. **Kit presence = best fit among remaining** — `APP_VERSION` → `0.3.133`.
 1. **Why toggling barely moved other counts** — independent ONLY + shared sibling tags; most big-kit excludes changed zero other counts on the corpus.
 
@@ -218,8 +225,8 @@
 1. **Kit likeness include/exclude** — checkbox per kit in Options → Sort → Choose kit; unchecked kits sort to the bottom (muted) and are skipped as rivals when scoring gallery nearness (session-only `excludedKitLikenessIds`). Still selectable as the active kit. `APP_VERSION` → `0.3.128`.
 
 **Previous session (research only, nothing shipped):**
-1. **ONLY kit likeness retune** — drowning is AND-by-construction (59/59 nested parents outrank children). GA/grid for exact membership: λ=8 τ=0.06 h=1.5 t=4 + extra-tag penalty x=2; first-screen 49→55, exclusive AUC 68→77. Dropdown visual estimator: exact-set @0.4 doubles specific-kit top-5 recall (42%→83%). Not shipped — owner decision. Notes: `scripts/kit-nearness-s2-research.md`; runner `scripts/kit-nearness-s2-only-tune.ts`.
-2. **Exact-tag kit likeness (AND genes)** — AND vs exact with shipped λ16 τ0.02 h1.5 t4. Exact seeds do not help AND ranking. Runner `scripts/kit-nearness-s2-exact-membership.ts`.
+1. **ONLY kit likeness retune** — drowning is AND-by-construction (59/59 nested parents outrank children). GA/grid for exact membership: λ=8 τ=0.06 h=1.5 t=4 + extra-tag penalty x=2; first-screen 49→55, exclusive AUC 68→77. Dropdown visual estimator: exact-set @0.4 doubles specific-kit top-5 recall (42%→83%). Not shipped — owner decision. Notes: `mobileapp/docs/research/kit-nearness-s2-research.md`; runner `scripts/kit-nearness-s2-only-tune.ts` (removed; see commit `81946e8e48`).
+2. **Exact-tag kit likeness (AND genes)** — AND vs exact with shipped λ16 τ0.02 h1.5 t4. Exact seeds do not help AND ranking. Runner `scripts/kit-nearness-s2-exact-membership.ts` (removed; see commit `81946e8e48`).
 
 **Previous session shipped:**
 1. **No-tag ignores system tags** — tagged/untagged presence skips `SYSTEM_TAGS`; compress/crop incremental index updates no longer add them; hydrate scrubs dirty persisted buckets. `APP_VERSION` → `0.3.127`.
@@ -239,12 +246,12 @@
 3. **Mime / titles / thumbs** — compressed stills upload as `.avif` / `.webp`; `generateImageThumbnail` takes source mime; viewer and Manage copy updated. Lint, 384 tests, build green. `APP_VERSION` → `0.3.123`.
 
 **Previous session shipped:**
-1. **Kit presence research** — `scripts/kit-presence-s2.ts` measures how well per-photo kit scores recover which kits are in a view, against the tag labels, on views that mimic the app (whole set, tag-filtered, kit-filtered, 60-photo id windows, random) over 5 dup-safe splits. Old winner-takes-all: 12.5pp MAE, Spearman 0.14, top kit right 32%, 1.8 kits ≥30% shown <10% per view. Soft partition (softmax over medoid distances) barely helps and misses more kits — any score summing to 1 over kits splits photos between nested kits. Independent per-kit prevalence from the shipped pass-5 per-tag detectors: 5.5pp MAE, ρ 0.84, top kit right 95%, 0.06 missed; hardened to a count, ghosts fall 0.74 → 0.15 per view. Written up in `scripts/kit-nearness-s2-research.md` § "Kit presence".
+1. **Kit presence research** — `scripts/kit-presence-s2.ts` (removed; see commit `81946e8e48`) measures how well per-photo kit scores recover which kits are in a view, against the tag labels, on views that mimic the app (whole set, tag-filtered, kit-filtered, 60-photo id windows, random) over 5 dup-safe splits. Old winner-takes-all: 12.5pp MAE, Spearman 0.14, top kit right 32%, 1.8 kits ≥30% shown <10% per view. Soft partition (softmax over medoid distances) barely helps and misses more kits — any score summing to 1 over kits splits photos between nested kits. Independent per-kit prevalence from the shipped pass-5 per-tag detectors: 5.5pp MAE, ρ 0.84, top kit right 95%, 0.06 missed; hardened to a count, ghosts fall 0.74 → 0.15 per view. Written up in `mobileapp/docs/research/kit-nearness-s2-research.md` § "Kit presence".
 2. **Kit likeness list = per-kit fit counts** — `tagPresenceProbabilities` (shipped balanced tag models with the class-balance shift `log(n₊/n₋)` removed) and `countKitPresence` (a file fits when the product of its tag probabilities ≥ 0.5; known tags count as 1, unembedded files fit only through known tags; counts independent per kit) in `kit-nearness-margins.ts`; `presence` request in the margins worker sharing the cached whitening + tag models; `countKitPresenceInWorker` job; `TagFilterBar` posts the shown files per view change, dropdown shows `Kit (count)` sorted by count then tag count. Removed `rankKitsByBestFitShareEmbedding` / `formatKitFitPercent`. 3 new unit tests; lint, 368 tests, build green. `APP_VERSION` → `0.3.122`.
 3. **Incident, recovered** — a `git checkout -- src/lib/kit-nearness-sort.ts` during test triage reverted that file to the 2026-09-09 commit, dropping the uncommitted `0.3.119`/`0.3.120` edits (τ 0.02 / λ 16 constants and `kitEmbeddingRivalWeights`). Reconstructed from the compiled `.next` chunk of the `0.3.121` build plus this session's reads; verified the CLIP section matches the compiled module, tests and build green. The dHash section could not be cross-checked but had no known edits since the commit.
 
 **Previous session shipped:**
-1. **S2 kit nearness pass 6, batch 2 — research only, negative result** — owner scanned 5,882 tagged photos (all succeeded, ~135 ms/photo, 108,640 tile rows); `scripts/kit-nearness-s2-pass6.ts` slots tile-aware per-tag detectors into the shipped scorer under the pass-5 leakage-free protocol (global detector on tiles, MIL from zero / warm-started, naive instance labels, tile-mean and tile-max views alone and concatenated with the global vector, 4-corner-tile ablation, per-tag hybrid, additive dual terms). Pre-registered gates failed: the 11% "inconsistent" tag 86.8 → 88.2 AUC at best, the 62% "tiny" tag 91.6 → 92.2; MIL detectors are 2–7pp *below* the global ones and the global detector applied to crops collapses (distribution shift). Best tile-augmented scorer: +0.4–0.7pp hard AUC (CIs clear of zero on 4 confirmation seeds and the reserved test), first-screen never significant — at 13–18× scan cost and, for the significant variant, all tiles stored plus in-browser MIL. Verdict: do not ship. Also found: `floor(shortEdge/3)` in the tile layout adds a near-duplicate 4th column on most photos (18.5 tiles/photo vs ~14) — harmless for the result, noted for anyone reviving tiles. No `mobileapp/` source changes; no version bump.
+1. **S2 kit nearness pass 6, batch 2 — research only, negative result** — owner scanned 5,882 tagged photos (all succeeded, ~135 ms/photo, 108,640 tile rows); `scripts/kit-nearness-s2-pass6.ts` (removed; see commit `81946e8e48`) slots tile-aware per-tag detectors into the shipped scorer under the pass-5 leakage-free protocol (global detector on tiles, MIL from zero / warm-started, naive instance labels, tile-mean and tile-max views alone and concatenated with the global vector, 4-corner-tile ablation, per-tag hybrid, additive dual terms). Pre-registered gates failed: the 11% "inconsistent" tag 86.8 → 88.2 AUC at best, the 62% "tiny" tag 91.6 → 92.2; MIL detectors are 2–7pp *below* the global ones and the global detector applied to crops collapses (distribution shift). Best tile-augmented scorer: +0.4–0.7pp hard AUC (CIs clear of zero on 4 confirmation seeds and the reserved test), first-screen never significant — at 13–18× scan cost and, for the significant variant, all tiles stored plus in-browser MIL. Verdict: do not ship. Also found: `floor(shortEdge/3)` in the tile layout adds a near-duplicate 4th column on most photos (18.5 tiles/photo vs ~14) — harmless for the result, noted for anyone reviving tiles. No `mobileapp/` source changes; no version bump.
 
 **Previous session shipped:**
 1. **S2 kit nearness pass 6, batch 1 — tile pilot** — diagnostic first: the residual pass-5 error is concentrated on two tags (`t_0005` detector 87%, `t_0004` 91%; the rest 94–97.5%), the owner confirms both are small in frame, and the S2 preprocessor centre-crops so edge items are never seen. Shipped a dev-only pilot: `kit-tile-layout.ts` (1/3-shortest-edge square grid covering the frame, 12–15 tiles per photo), `embed-tiles` in the CLIP worker (decode once, crop, one ORT batch, transferred `Float32Array`), encrypted per-file `tileEmbeddings` object store (DB v6), `kit-tile-embedding-job.ts` (resumable, tagged photos first, Stop/Resume/Clear in Manage → Developer), corpus export v4 with `tiles` offsets + float32 sidecar download. No ranking change; phone build unaffected. 5 new tests; lint, 366 tests, build green. `APP_VERSION` → `0.3.121`.
@@ -253,16 +260,16 @@
 1. **S2 kit nearness pass 5 in the app** — `kit-nearness-margins.ts` (packed-array whitening, per-tag logistic models, scorer), `kit-nearness-margins.worker.ts` (off-thread, per-session cache of whitening + tag models, terminated on logout), `kit-nearness-margins-job.ts` (training sample from embedded tagged stills capped at 3000, labels from the tag index, production score reused from `kitEmbeddingDistanceCompetitive`). Gallery shows the production order immediately and swaps in the learned order when the worker answers; falls back to production for no matched kit, exclusivity off, single-tag kits, thin samples (< 8 examples), or worker failure. Parity harness on the corpus: shipped code = research pick within noise (hard AUC 93.0 / 93.3 on confirmation / reserved; +5.0pp vs pass 4, CI clear of zero). 12 new unit tests; lint, 361 tests, build green. `APP_VERSION` → `0.3.120`.
 
 **Previous session shipped:**
-1. **S2 kit nearness pass 5 (research only)** — same leakage-free protocol as pass 4. Whitened (shrunk-LDA) hard-negative margin + class-balanced logistic regression per kit tag trained in whitened coordinates, min over tags. Saved-kit hard AUC 84.5 → 93.0 (pass 4: 88.0), first-screen 56.6 → 76.4; +4.9pp / +6.0pp over pass 4 with CIs clear of zero, 0 kits hurt; confirmed on reserved test (+4.5pp) and dup-threshold 2/10 stress runs. Ablations, dead ends, production recipe, measured costs and fallbacks written up. Runner `mobileapp/scripts/kit-nearness-s2-pass5.ts` (~2 min per run). Superseded pass-4 recommendation; pass-4 integration map still applies.
+1. **S2 kit nearness pass 5 (research only)** — same leakage-free protocol as pass 4. Whitened (shrunk-LDA) hard-negative margin + class-balanced logistic regression per kit tag trained in whitened coordinates, min over tags. Saved-kit hard AUC 84.5 → 93.0 (pass 4: 88.0), first-screen 56.6 → 76.4; +4.9pp / +6.0pp over pass 4 with CIs clear of zero, 0 kits hurt; confirmed on reserved test (+4.5pp) and dup-threshold 2/10 stress runs. Ablations, dead ends, production recipe, measured costs and fallbacks written up. Runner `mobileapp/scripts/kit-nearness-s2-pass5.ts` (removed; see commit `81946e8e48`) (~2 min per run). Superseded pass-4 recommendation; pass-4 integration map still applies.
 
 **Previous session shipped:**
 1. **S2 pass-4 implementation handoff (docs only)** — exact formula, reproducible protocol, privacy constraints, dead ends, integration map, fallbacks, tuner implications, remaining research and definition of done. Pass-4 runner now preserves the handoff when regenerating results.
 
 **Previous session shipped:**
-1. **S2 kit nearness pass 4 (research only)** — leakage-free global/dHash-grouped splits; full-pool retrieval metrics; 223 scoring cells; fixed 8/8 negative + weakest-tag margins confirmed on a reserved train/validation/test split. Saved-kit hard AUC 84.4% → 88.3%; full first-screen 57.8% → 71.9%. Notes: `mobileapp/scripts/kit-nearness-s2-research.md`.
+1. **S2 kit nearness pass 4 (research only)** — leakage-free global/dHash-grouped splits; full-pool retrieval metrics; 223 scoring cells; fixed 8/8 negative + weakest-tag margins confirmed on a reserved train/validation/test split. Saved-kit hard AUC 84.4% → 88.3%; full first-screen 57.8% → 71.9%. Notes: `mobileapp/docs/research/kit-nearness-s2-research.md`.
 
 **Previous session shipped:**
-1. **S2 kit nearness default** — CLIP centroid, rival λ=16, τ=0.02; gene cap 24; holdout grid tuner (no GA); old per-kit tunes dropped (`tuneVersion: 2`). Research: `mobileapp/scripts/kit-nearness-s2-research.md`. `APP_VERSION` → `0.3.119`.
+1. **S2 kit nearness default** — CLIP centroid, rival λ=16, τ=0.02; gene cap 24; holdout grid tuner (no GA); old per-kit tunes dropped (`tuneVersion: 2`). Research: `mobileapp/docs/research/kit-nearness-s2-research.md`. `APP_VERSION` → `0.3.119`.
 
 **Previous session shipped:**
 1. **S2 load order** — WASM fp32 first so a failed WebGPU `InferenceSession.create` cannot poison Transformers.js `wasmInitPromise` (the identical `156035816` on every backend). WebGPU fp32 is an upgrade after ORT is up. Skip q8. Guard embedding/phash hydrate until the cache key exists. `APP_VERSION` → `0.3.118`.
@@ -640,7 +647,7 @@
    - **Stage 2 (crops)**: `mobileapp/src/lib/crop-match.ts` — a **64-bit color-palette signature** (`colorHashFromImageData`, translation-invariant) proposes candidates; a **48×48 grayscale template match** (`templateMatchScore`, scale+offset SAD over all 8 source orientations with coarse/full tiers and early-abort) verifies them. `mergeCropMatches` in `similarity-groups.ts` runs async in chunks, capped at `MAX_CROP_CHECKS_PER_FILE = 4`, and unions crop groups into the Stage-1 union-find.
    - **Validation** (`mobileapp/scripts/crop-match-validate.ts`, real photos): rotate/crop recall **30/32**, cross-photo FP **0/28**. Cost: ~20 ms/pair on reject path, so the per-file cap keeps the async pass bounded.
    - Replaced `sortFilesNewestFirst` in `ente-core.ts` with `sortFilesByUpload`. Upload paths stamp `uploadedAt`/`editedAt` (`upload-image.ts`, `upload-video.ts`, `upload-compressed-media.ts`).
-   - Dead-end exploration scripts removed (`crop-bench*`, `orb-cost*`); `@webarkit/purecv-wasm` dev-dependency dropped. Kept `crop-match-validate.ts` + `similarity-spike-real.ts` as reproducible regression harnesses.
+   - Dead-end exploration scripts removed (`crop-bench*`, `orb-cost*`); `@webarkit/purecv-wasm` dev-dependency dropped. Kept `crop-match-validate.ts` + `similarity-spike-real.ts` (removed; see commit `81946e8e48`) as reproducible regression harnesses.
 
 **Key storage (M3):** Master key and `cacheKey = HKDF(masterKey)` live in memory only. Metadata, collections, tag index, and **trash items** (+ trash collection keys) persist as blobs encrypted with `cacheKey` in IndexedDB (`ente-organizer-{userId}`). Thumbnails persist as server ciphertext (CDN bytes + decryption header) — readable only with `file.key` from decrypted metadata after login. **Videos** persist in IDB (`fileCiphertexts`) as server ciphertext **additionally wrapped with `cacheKey`** (size-capped LRU), plus an in-memory blob-URL session LRU; without login there is no `cacheKey`/`file.key`, so disk blobs are opaque. Sync cursors store timestamps only (including trash `lastUpdatedAt`). Sign out clears memory; **Lock** wipes IDB + memory. Full-res **images** are never persisted.
 
@@ -889,7 +896,7 @@ Deliverable: a Node/TS script that logs in and dumps one decrypted photo + its d
 ### M0 checklist
 
 - [x] Read `cli/pkg/sign_in.go` and `web/packages/accounts/services/srp.ts`; confirm auth steps match your account (SRP vs email OTP vs 2FA)
-- [x] Script authenticates against production (or self-hosted) API — `mobileapp/scripts/lib/auth.ts`
+- [x] Script authenticates against production (or self-hosted) API — `mobileapp/scripts/ente-cli.ts`
 - [x] Master key recovered; at least one collection key decrypted — `session.ts` + `sync.ts`
 - [x] One file entry fetched via diff or `/collections/file` — `/collections/v2/diff` in `sync.ts`
 - [x] `decryptRemoteFile` equivalent produces readable metadata JSON (inspect `pubMagicMetadata.data.caption`) — via `ente-media/file`
@@ -907,7 +914,7 @@ npm run spike
 ENTE_EMAIL=you@example.com ENTE_PASSWORD=... ENTE_TOTP=123456 npm run spike -- --file-id 12345
 ```
 
-Outputs land in `mobileapp/scripts/output/` (gitignored). Crypto shim at `scripts/lib/crypto-shim.ts` redirects `ente-base/crypto` → libsodium for Node compatibility.
+Outputs land in `mobileapp/scripts/output/` (gitignored). Crypto shim at `src/core/crypto-shim.ts` redirects `ente-base/crypto` → libsodium for Node compatibility.
 
 **Exit criteria:** decrypted bytes match what the official app shows; metadata JSON is human-readable and you can identify where tags will live (`caption` or custom `pubMagicMetadata` key).
 

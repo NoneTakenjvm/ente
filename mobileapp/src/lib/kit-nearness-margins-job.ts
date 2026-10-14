@@ -18,7 +18,7 @@ import {
     type KitWorkerRequest,
 } from "@/lib/kit-nearness-margins";
 import { isEnteVideoFile } from "@/lib/media-kind";
-import { packRelativeEmbeddings } from "@/lib/relative-sort";
+import { packEmbeddings } from "@/lib/relative-sort";
 import { isTagIncludedInKitNearness } from "@/lib/tag-types";
 import { createWorkerIdleTimer } from "@/lib/worker-idle-timer";
 import type { EnteFile } from "ente-media/file";
@@ -131,11 +131,11 @@ export const buildKitMarginsRanking = (
             kind: "rank",
             dim: KIT_EMBEDDING_DIMS,
             trainingIds: Float64Array.from(training.ids),
-            trainingVectors: packRelativeEmbeddings(training.ids, embeddings),
+            trainingVectors: packEmbeddings(training.ids, embeddings),
             trainingProductionScores: training.scores,
             tags,
             candidateIds: Float64Array.from(candidates.ids),
-            candidateVectors: packRelativeEmbeddings(
+            candidateVectors: packEmbeddings(
                 candidates.ids,
                 embeddings,
             ),
@@ -224,10 +224,10 @@ export const estimateKitPresenceInWorker = async (
         requestId: ++requestCounter,
         dim: KIT_EMBEDDING_DIMS,
         trainingIds: Float64Array.from(trainingIds),
-        trainingVectors: packRelativeEmbeddings(trainingIds, input.embeddings),
+        trainingVectors: packEmbeddings(trainingIds, input.embeddings),
         tags,
         candidateIds: Float64Array.from(candidateIds),
-        candidateVectors: packRelativeEmbeddings(candidateIds, input.embeddings),
+        candidateVectors: packEmbeddings(candidateIds, input.embeddings),
     };
     const pending = postToWorker<KitPresenceWorkerResponse>(request, [
         request.trainingIds.buffer,

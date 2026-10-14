@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
     findKitModeInGroup,
-    kitIsIncluded,
     removeTagFilterNode,
     removeTagFromTree,
     renameTagInTree,
@@ -21,20 +20,7 @@ import {
     type TagFilterClauseNode,
     type TagFilterGroup,
 } from "@/lib/tags";
-
-const includeClause = (tag: string): TagFilterClauseNode => ({
-    kind: "clause",
-    id: newTagFilterNodeId(),
-    tag,
-    mode: "include",
-});
-
-const andRoot = (...children: TagFilterGroup["children"]): TagFilterGroup => ({
-    kind: "group",
-    id: newTagFilterNodeId(),
-    op: "and",
-    children,
-});
+import { andRoot, includeClause } from "@/test-utils/fixtures";
 
 const presenceOff = new Map([["junk", false]]);
 
@@ -111,7 +97,6 @@ describe("tag-filter-mutations", () => {
             { presetId: "k1", name: "Beach", tags: ["a", "b"] },
             "include",
         );
-        expect(kitIsIncluded(filter.root, "k1")).toBe(true);
         expect(filter.root.children).toHaveLength(1);
         expect(findKitModeInGroup(filter.root, "k1")).toBe("include");
         filter = setKitModeOnFilter(

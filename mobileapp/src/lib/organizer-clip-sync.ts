@@ -16,12 +16,12 @@ import {
     type PersistedEmbeddingMeta,
 } from "@/db/kv";
 import { getSessionCacheKey } from "@/lib/cache-key";
+import { l2NormalizeEmbedding } from "@/lib/embedding-vector";
 import { waitWhileGalleryScrolling } from "@/lib/gallery-scroll-activity";
 import {
     KIT_EMBEDDING_DIMS,
     KIT_EMBEDDING_MODEL_ID,
     embeddingToNumberArray,
-    l2NormalizeEmbedding,
     type EmbeddingMap,
     type EmbeddingVector,
     type ReadonlyEmbeddingMap,

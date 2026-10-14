@@ -14,7 +14,7 @@ import {
 import { sortFilesByImageSize } from "@/lib/image-size-sort";
 import { sortFilesByImageQuality } from "@/lib/image-quality";
 import {
-    packRelativeEmbeddings,
+    packEmbeddings,
     sortFilesByRelative,
 } from "@/lib/relative-sort";
 import { sortRelativeIdsInWorker } from "@/lib/relative-sort-job";
@@ -56,6 +56,7 @@ import { useTagStore } from "@/stores/tag-store";
 import { useUIStore } from "@/stores/ui-store";
 import type { EnteFile } from "ente-media/file";
 import { toast } from "sonner";
+import { errorMessage } from "@/lib/format";
 
 /** Keep a frozen id order; drop gone ids; append newcomers at the end. */
 const reconcileFrozenFileOrder = (
@@ -123,7 +124,6 @@ export function useMediaDisplayPipeline({
     const includeInEffectsPresenceByName = useTagStore(
         (s) => s.includeInEffectsPresenceByName,
     );
-    const tagIndexRevision = useTagStore((s) => s.tagIndexRevision);
     const lastTagTouchFileIds = useTagStore((s) => s.lastTagTouchFileIds);
 
     const mediaViewOrder = useUIStore((s) => s.mediaViewOrder);
@@ -266,9 +266,7 @@ export function useMediaDisplayPipeline({
                     if (!cancelled && !abort.signal.aborted) {
                         toast.dismiss(toastId);
                         toast.error(
-                            error instanceof Error ?
-                                error.message :
-                                "Could not embed seed photos",
+                            errorMessage(error, "Could not embed seed photos"),
                         );
                     }
                     return;
@@ -557,7 +555,7 @@ export function useMediaDisplayPipeline({
             sortOnMainThread();
             return;
         }
-        const packed = packRelativeEmbeddings(withEmbeddingIds, embeddings);
+        const packed = packEmbeddings(withEmbeddingIds, embeddings);
         void sortRelativeIdsInWorker(
             withEmbeddingIds,
             packed,
@@ -591,7 +589,6 @@ export function useMediaDisplayPipeline({
     );
 
     const filteredFiles = useMemo(() => {
-        void tagIndexRevision;
         if (!isTagFilterActive(tagFilter)) {
             filteredFilesCacheRef.current = baseFiles;
             filterBasisRef.current = {
@@ -651,7 +648,6 @@ export function useMediaDisplayPipeline({
         includeInEffectsPresenceByName,
         lastTagTouchFileIds,
         tagFilter,
-        tagIndexRevision,
     ]);
 
     const tagFilterFitActive =

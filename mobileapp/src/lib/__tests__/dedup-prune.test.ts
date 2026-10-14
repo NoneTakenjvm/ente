@@ -6,25 +6,12 @@ import {
     planDuplicateGroupPrune,
     type DedupGroupItem,
 } from "@/lib/dedup-prune";
-
-const file = (id: number, collectionID: number): EnteFile =>
-    ({
-        id,
-        ownerID: 1,
-        collectionID,
-        key: "key",
-        metadata: {
-            fileType: 0,
-            title: `${id}.jpg`,
-            creationTime: 1,
-            modificationTime: 1,
-        },
-    }) as unknown as EnteFile;
+import { stubFile } from "@/test-utils/fixtures";
 
 describe("dedup-prune", () => {
     it("plans trash for non-keepers and links keeper into missing albums", () => {
-        const keeper = file(1, 10);
-        const loser = file(2, 20);
+        const keeper = stubFile({ id: 1, collectionID: 10 });
+        const loser = stubFile({ id: 2, collectionID: 20 });
 
         const plan = planDuplicateGroupPrune([
             {
@@ -60,8 +47,8 @@ describe("dedup-prune", () => {
             creationTime = 1,
         ): DedupGroupItem => ({
             file: {
-                ...file(id, 10),
-                metadata: { ...file(id, 10).metadata, creationTime },
+                ...stubFile({ id, collectionID: 10 }),
+                metadata: { ...stubFile({ id, collectionID: 10 }).metadata, creationTime },
                 info: { fileSize },
                 pubMagicMetadata: { version: 1, count: 1, data },
             } as unknown as EnteFile,

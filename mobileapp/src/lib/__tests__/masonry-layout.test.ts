@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { fileAspectRatio } from "@/lib/file-aspect-ratio";
 import {
     computeMasonryLayout,
-    groupMasonryItemsByColumn,
     masonryViewOrderKey,
     visibleMasonryItemsFromColumns,
 } from "@/lib/masonry-layout";
@@ -80,8 +79,12 @@ describe("visibleMasonryItemsFromColumns", () => {
         const files = Array.from({ length: 20 }, (_, index) =>
             fileWithDimensions(index + 1, 100, 100));
         const layout = computeMasonryLayout(files, 320, 2);
-        const columns = groupMasonryItemsByColumn(layout.items);
-        const visible = visibleMasonryItemsFromColumns(columns, 0, 80, 0);
+        const visible = visibleMasonryItemsFromColumns(
+            layout.itemsByColumn,
+            0,
+            80,
+            0,
+        );
 
         expect(visible.length).toBeGreaterThan(0);
         expect(visible.length).toBeLessThan(layout.items.length);

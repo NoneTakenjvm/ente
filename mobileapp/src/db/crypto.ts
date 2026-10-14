@@ -4,6 +4,7 @@ import {
     deriveSubKeyBytes,
     toB64,
 } from "ente-base/crypto";
+import { wait } from "ente-utils/promise";
 
 const cacheKeyContext = "enteorg1";
 const cacheKeySubKeyID = 1;
@@ -30,14 +31,6 @@ export const deriveCacheKey = async (masterKey: string): Promise<string> => {
 };
 
 /**
- * Yield so the UI can paint before a large JSON.stringify blocks.
- */
-const yieldToUi = (): Promise<void> =>
-    new Promise((resolve) => {
-        setTimeout(resolve, 0);
-    });
-
-/**
  * Encrypt a JSON-serializable value for IndexedDB storage.
  *
  * Large payloads (full library) stringify on the main thread after a yield,
@@ -48,7 +41,8 @@ export const encryptCachePayload = async (
     data: unknown,
     cacheKey: string,
 ): Promise<EncryptedPayload> => {
-    await yieldToUi();
+    // Yield so the UI can paint before a large JSON.stringify blocks.
+    await wait(0);
     const json = JSON.stringify(data);
     const bytes = new TextEncoder().encode(json);
     const encrypted = await encryptBlob(bytes, cacheKey);

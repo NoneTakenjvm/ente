@@ -27,8 +27,7 @@ import {
     Undo2,
     X,
 } from "lucide-react";
-import { ConfirmDeleteModal } from "@/components/ConfirmDeleteModal";
-import { ConfirmRevertEditModal } from "@/components/ConfirmRevertEditModal";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
     CropEditorOverlay,
     type CropSaveResult,
@@ -67,8 +66,6 @@ import {
 import { blobFromUint8Array } from "@/lib/bytes-blob";
 import { toRenderableImageBlob } from "@/lib/renderable-image";
 import { cn } from "@/lib/utils";
-import { filePixelSize } from "@/lib/file-aspect-ratio";
-import { deviceViewerSize } from "@/lib/viewport-fit";
 import { VIEW_SESSION_QUALIFY_MS } from "@/lib/view-sessions";
 import {
     forgetSessionVideoUrl,
@@ -104,6 +101,7 @@ import { useVideoPlaybackStore } from "@/stores/video-playback-store";
 import { useViewSessionsStore } from "@/stores/view-sessions-store";
 import type { EnteFile } from "ente-media/file";
 import { toast } from "sonner";
+import { errorMessage, formatFileSize } from "@/lib/format";
 
 type CarouselDragMode = "horizontal" | "dismiss";
 
@@ -116,11 +114,11 @@ interface CarouselDragStart {
 }
 interface PhotoViewerProps {
     files: EnteFile[];
-    /** Preferred when the file list may contain duplicate ids (e.g. Recents). */
+    /** Start position, read on mount only. Preferred when the file list may contain duplicate ids (e.g. Recents). */
     initialIndex?: number;
+    /** Start file, read on mount only. */
     initialFileId?: number;
     onClose: () => void;
-    onFileUpdated?: (file: EnteFile) => void;
     albumCoverFileId?: number;
     onSetAlbumCover?: (fileId: number) => void;
     /** Hide mutation chrome (tags, crop, delete, favourite, …). */
@@ -165,19 +163,6 @@ interface SlideMedia {
     bytesTotal?: number;
 }
 
-const formatDownloadBytes = (bytes: number): string => {
-    if (!Number.isFinite(bytes) || bytes < 0) {
-        return "?";
-    }
-    if (bytes < 1024) {
-        return `${Math.round(bytes)} B`;
-    }
-    if (bytes < 1024 * 1024) {
-        return `${(bytes / 1024).toFixed(1)} KB`;
-    }
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-};
-
 /**
  * Label + optional size/progress for full-media download in the viewer.
  */
@@ -195,9 +180,9 @@ function MediaDownloadIndicator({
         bytesLoaded !== undefined &&
         bytesTotal !== undefined &&
         bytesTotal > 0 ?
-            `${formatDownloadBytes(bytesLoaded)} / ${formatDownloadBytes(bytesTotal)}` :
+            `${formatFileSize(bytesLoaded)} / ${formatFileSize(bytesTotal)}` :
             bytesLoaded !== undefined && bytesLoaded > 0 ?
-                formatDownloadBytes(bytesLoaded) :
+                formatFileSize(bytesLoaded) :
                 undefined;
 
     return (
@@ -333,9 +318,6 @@ const retainOrRevokeMediaUrl = (
         URL.revokeObjectURL(url);
     }
 };
-
-const errorMessage = (error: unknown, fallback: string): string =>
-    error instanceof Error ? error.message : fallback;
 
 const isZoomableKind = (kind: MediaKind | null): boolean =>
     kind === "image" || kind === "gif" || kind === "video";
@@ -478,7 +460,6 @@ export const PhotoViewer = memo(function PhotoViewer({
     initialIndex,
     initialFileId,
     onClose,
-    onFileUpdated,
     albumCoverFileId,
     onSetAlbumCover,
     readOnly = false,
@@ -509,7 +490,6 @@ export const PhotoViewer = memo(function PhotoViewer({
     const [carouselAnimating, setCarouselAnimating] = useState<boolean>(false);
     const [viewportWidth, setViewportWidth] = useState<number>(0);
     const [viewportHeight, setViewportHeight] = useState<number>(0);
-    const [deviceViewportLabel, setDeviceViewportLabel] = useState<string>("");
     const [chromeVisible, setChromeVisible] = useState<boolean>(true);
     const [videoScrubbing, setVideoScrubbing] = useState<boolean>(false);
     const coarsePointer = useCoarsePointer();
@@ -548,12 +528,6 @@ export const PhotoViewer = memo(function PhotoViewer({
     const brokenReloadIdsRef = useRef<Set<number>>(new Set());
     /** Load pump for the current window; a no-op after unmount. */
     const pumpLoadsRef = useRef<() => void>(() => undefined);
-    const viewerFileIdRef = useRef<number>(
-        sessionFiles[resolveViewerStartIndex(sessionFiles, initialIndex, initialFileId)]
-            ?.id ?? initialFileId ?? 0,
-    );
-    /** Last `initialIndex` prop applied, so local edits to `sessionFiles` do not move the viewer. */
-    const appliedInitialIndexRef = useRef<number | undefined>(initialIndex);
     const currentIndexRef = useRef<number>(currentIndex);
     const sessionFilesRef = useRef<EnteFile[]>(sessionFiles);
     const tagBaselineRef = useRef<string[]>([]);
@@ -592,19 +566,8 @@ export const PhotoViewer = memo(function PhotoViewer({
         };
     }, []);
 
-    const notifyFileUpdated = useCallback(
-        (updated: EnteFile): void => {
-            if (!viewerActiveRef.current) {
-                return;
-            }
-            onFileUpdated?.(updated);
-        },
-        [onFileUpdated],
-    );
-
     const file = sessionFiles[currentIndex];
     const mediaKind = file ? mediaKindForFile(file) : null;
-    const imagePixelSize = file ? filePixelSize(file) : undefined;
     const isVideo = file?.metadata.fileType === FileType.video;
     const relativeSort = useUIStore((s) => s.relativeSort);
     const relativeStartFileId = useUIStore((s) => s.relativeStartFileId);
@@ -698,41 +661,6 @@ export const PhotoViewer = memo(function PhotoViewer({
     }, [isVideo, videoMuted, videoVolume, file?.id, activeSlideMedia?.status]);
 
     useEffect(() => {
-        if (initialIndex !== undefined) {
-            if (initialIndex === appliedInitialIndexRef.current) {
-                return;
-            }
-            appliedInitialIndexRef.current = initialIndex;
-            if (initialIndex >= 0 && initialIndex < sessionFiles.length) {
-                setCurrentIndex(initialIndex);
-                const nextFile = sessionFiles[initialIndex];
-                if (nextFile) {
-                    viewerFileIdRef.current = nextFile.id;
-                }
-            }
-            return;
-        }
-        if (initialFileId === undefined) {
-            return;
-        }
-        if (initialFileId === viewerFileIdRef.current) {
-            return;
-        }
-        viewerFileIdRef.current = initialFileId;
-        const index = sessionFiles.findIndex((entry) => entry.id === initialFileId);
-        if (index >= 0) {
-            setCurrentIndex(index);
-        }
-    }, [initialFileId, initialIndex, sessionFiles]);
-
-    useEffect(() => {
-        if (!file || sessionFiles.some((entry) => entry.id === file.id)) {
-            return;
-        }
-        onClose();
-    }, [file, onClose, sessionFiles]);
-
-    useEffect(() => {
         const viewport = viewportRef.current;
         if (!viewport) {
             return;
@@ -749,23 +677,6 @@ export const PhotoViewer = memo(function PhotoViewer({
         };
     }, []);
 
-    useEffect(() => {
-        const updateDeviceSize = (): void => {
-            const size = deviceViewerSize();
-            setDeviceViewportLabel(`${size.width}×${size.height}`);
-        };
-        updateDeviceSize();
-        window.addEventListener("resize", updateDeviceSize);
-        window.visualViewport?.addEventListener("resize", updateDeviceSize);
-        return (): void => {
-            window.removeEventListener("resize", updateDeviceSize);
-            window.visualViewport?.removeEventListener(
-                "resize",
-                updateDeviceSize,
-            );
-        };
-    }, []);
-
     const setSlideMedia = useCallback(
         (fileId: number, media: SlideMedia): void => {
             setMediaByFileId((current) => {
@@ -775,10 +686,6 @@ export const PhotoViewer = memo(function PhotoViewer({
             });
         },
         [],
-    );
-
-    const goToIndexRef = useRef<(index: number, animate?: boolean) => void>(
-        () => undefined,
     );
 
     // Zoomed pan must not advance the carousel — edge overflow stays in-image only.
@@ -1174,8 +1081,6 @@ export const PhotoViewer = memo(function PhotoViewer({
         },
         [currentIndex, resetZoom, sessionFiles.length, viewportWidth],
     );
-
-    goToIndexRef.current = goToIndex;
 
     const goPrev = useCallback((): void => {
         goToIndex(currentIndex - 1, true);
@@ -1662,10 +1567,9 @@ export const PhotoViewer = memo(function PhotoViewer({
             const updated = useLibraryStore.getState().getFileById(fileId);
             if (updated) {
                 replaceSessionFile(fileId, updated);
-                notifyFileUpdated(updated);
             }
         },
-        [notifyFileUpdated, replaceSessionFile],
+        [replaceSessionFile],
     );
 
     const beginTagDraft = useCallback((): void => {
@@ -1772,8 +1676,6 @@ export const PhotoViewer = memo(function PhotoViewer({
 
     const handleDerivedFileFinalized = useCallback(
         (sourceId: number, uploaded: EnteFile): void => {
-            const stillViewingSource =
-                sessionFiles[currentIndexRef.current]?.id === sourceId;
             const url = mediaUrlsRef.current.get(sourceId);
             const byteSize = mediaByteSizesRef.current.get(sourceId);
             if (url) {
@@ -1796,11 +1698,8 @@ export const PhotoViewer = memo(function PhotoViewer({
                 next.set(uploaded.id, media);
                 return next;
             });
-            if (stillViewingSource) {
-                notifyFileUpdated(uploaded);
-            }
         },
-        [notifyFileUpdated, replaceSessionFile, sessionFiles],
+        [replaceSessionFile],
     );
 
     const handleEditSaved = useCallback(
@@ -1825,7 +1724,6 @@ export const PhotoViewer = memo(function PhotoViewer({
             }
             setSlideMedia(sourceId, { status: "ready", url });
             replaceSessionFile(sourceId, result.optimisticFile);
-            notifyFileUpdated(result.optimisticFile);
             clearPointers();
             resetZoom();
             setCropMode(false);
@@ -1838,13 +1736,8 @@ export const PhotoViewer = memo(function PhotoViewer({
                     const reverted = useLibraryStore.getState().allFiles.find(
                         (entry) => entry.id === sourceId,
                     );
-                    const stillViewingSource =
-                        sessionFiles[currentIndexRef.current]?.id === sourceId;
                     if (reverted) {
                         replaceSessionFile(sourceId, reverted);
-                        if (stillViewingSource) {
-                            notifyFileUpdated(reverted);
-                        }
                     }
                     discardSlideUrl(sourceId);
                     forgetSessionVideoUrl(sourceId);
@@ -1858,10 +1751,8 @@ export const PhotoViewer = memo(function PhotoViewer({
             discardSlideUrl,
             file,
             handleDerivedFileFinalized,
-            notifyFileUpdated,
             replaceSessionFile,
             resetZoom,
-            sessionFiles,
             setSlideMedia,
         ],
     );
@@ -1936,7 +1827,6 @@ export const PhotoViewer = memo(function PhotoViewer({
                     URL.revokeObjectURL(previousUrl);
                 }
                 replaceSessionFile(sourceId, result.optimisticFile);
-                notifyFileUpdated(result.optimisticFile);
 
                 await result.finalize.then((uploaded) => {
                     handleDerivedFileFinalized(sourceId, uploaded);
@@ -1947,7 +1837,6 @@ export const PhotoViewer = memo(function PhotoViewer({
                 );
                 if (reverted) {
                     replaceSessionFile(sourceId, reverted);
-                    notifyFileUpdated(reverted);
                 }
                 discardSlideUrl(sourceId);
                 setSlideMedia(sourceId, { status: "loading" });
@@ -1999,8 +1888,6 @@ export const PhotoViewer = memo(function PhotoViewer({
                 }
                 setSessionFiles(remaining);
                 setCurrentIndex(nextIndex);
-                viewerFileIdRef.current = neighbor.id;
-                notifyFileUpdated(neighbor);
             })
             .catch((error: unknown) => {
                 setDeleteError(
@@ -2391,23 +2278,6 @@ export const PhotoViewer = memo(function PhotoViewer({
                         {slideOffsets.map((offset) => renderSlide(offset))}
                     </div>
                 </div>
-                {chromeShown && deviceViewportLabel ? (
-                    <div
-                        className={cn(
-                            "pointer-events-none absolute left-3 z-20 flex flex-col gap-0.5 rounded bg-black/60 px-1.5 py-1 text-[10px] leading-tight text-white tabular-nums",
-                            isVideo ? "bottom-40" : "bottom-24",
-                        )}
-                        aria-hidden
-                    >
-                        {imagePixelSize ? (
-                            <span>
-                                Image: {imagePixelSize.width}×
-                                {imagePixelSize.height}
-                            </span>
-                        ) : null}
-                        <span>Viewport: {deviceViewportLabel}</span>
-                    </div>
-                ) : null}
             </div>
 
             <div
@@ -2526,41 +2396,29 @@ export const PhotoViewer = memo(function PhotoViewer({
                 />
             ) : null}
             {!readOnly ? (
-                <ConfirmDeleteModal
+                <ConfirmDialog
                     open={showDeleteConfirm}
+                    title="Move this photo to trash?"
+                    description="It can be restored from Manage → Trash within 30 days."
+                    confirmLabel="Move to trash"
+                    destructive
                     isWorking={deleteBusy}
-                    onCancel={() => {
-                        if (!deleteBusy) {
-                            setShowDeleteConfirm(false);
-                        }
-                    }}
+                    onCancel={() => setShowDeleteConfirm(false)}
                     onConfirm={handleConfirmDelete}
                 />
             ) : null}
             {!readOnly ? (
-                <ConfirmRevertEditModal
+                <ConfirmDialog
                     open={showRevertConfirm}
+                    title="Revert last edit?"
+                    description="This restores the previous version of this photo from this device. The change uploads in the background."
+                    confirmLabel="Revert"
+                    workingLabel="Reverting…"
                     isWorking={revertBusy}
-                    onCancel={() => {
-                        if (!revertBusy) {
-                            setShowRevertConfirm(false);
-                        }
-                    }}
+                    onCancel={() => setShowRevertConfirm(false)}
                     onConfirm={handleRevertLastEdit}
                 />
             ) : null}
         </div>
     );
-}, (prev, next) => {
-    return (
-        prev.initialFileId === next.initialFileId &&
-        prev.initialIndex === next.initialIndex &&
-        prev.onClose === next.onClose &&
-        prev.onFileUpdated === next.onFileUpdated &&
-        prev.albumCoverFileId === next.albumCoverFileId &&
-        prev.onSetAlbumCover === next.onSetAlbumCover &&
-        prev.readOnly === next.readOnly
-    );
-    // `files` is snapshotted into sessionFiles on mount — ignore identity churn
-    // from the gallery page while the viewer is open.
 });

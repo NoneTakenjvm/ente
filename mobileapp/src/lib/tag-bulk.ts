@@ -190,7 +190,7 @@ export const normalizeTagNameList = (
 /**
  * Move `tag` to the front of a recent list (MRU).
  */
-export const pushRecentTag = (
+const pushRecentTag = (
     recent: string[],
     tag: string,
     max: number,

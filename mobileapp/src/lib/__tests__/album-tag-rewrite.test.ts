@@ -5,17 +5,9 @@ import { createQueryAlbum } from "@/lib/query-albums";
 import {
     emptyTagFilter,
     newTagFilterNodeId,
-    type TagFilterClauseNode,
-    type TagFilterGroup,
     type TagFilterKitNode,
 } from "@/lib/tags";
-
-const includeClause = (tag: string): TagFilterClauseNode => ({
-    kind: "clause",
-    id: newTagFilterNodeId(),
-    tag,
-    mode: "include",
-});
+import { andRoot, includeClause } from "@/test-utils/fixtures";
 
 const kitNode = (tags: string[]): TagFilterKitNode => ({
     kind: "kit",
@@ -24,13 +16,6 @@ const kitNode = (tags: string[]): TagFilterKitNode => ({
     name: "Beach",
     tags,
     mode: "include",
-});
-
-const andRoot = (...children: TagFilterGroup["children"]): TagFilterGroup => ({
-    kind: "group",
-    id: newTagFilterNodeId(),
-    op: "and",
-    children,
 });
 
 describe("rewriteQueryAlbumTags", () => {

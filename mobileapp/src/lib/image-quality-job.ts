@@ -1,10 +1,5 @@
 import type { EnteFile } from "ente-media/file";
-import {
-    loadEncryptedQualityIndex,
-    saveEncryptedQualityIndex,
-    type PersistedQualityIndex,
-} from "@/db/kv";
-import { getSessionCacheKey } from "@/lib/cache-key";
+import { loadKv, saveKv, type PersistedQualityIndex } from "@/db/kv";
 import { fileByteSize } from "@/lib/compress";
 import { QUALITY_INDEX_VERSION } from "@/lib/image-quality";
 import {
@@ -33,10 +28,7 @@ const indexFromMap = (entries: Map<number, number>): PersistedQualityIndex => ({
 });
 
 const persistIndex = async (entries: Map<number, number>): Promise<void> => {
-    await saveEncryptedQualityIndex(
-        indexFromMap(entries),
-        getSessionCacheKey(),
-    );
+    await saveKv("qualityIndex", indexFromMap(entries));
 };
 
 const qualityWorkerCount = (): number => {
@@ -143,7 +135,7 @@ const scoreBytesInWorker = (
  * Manage → Settings rescan rather than ranking with incompatible numbers.
  */
 export const hydrateQualityIndex = async (): Promise<Map<number, number>> => {
-    const persisted = await loadEncryptedQualityIndex(getSessionCacheKey());
+    const persisted = await loadKv("qualityIndex");
     if (persisted?.version !== QUALITY_INDEX_VERSION) {
         return new Map();
     }

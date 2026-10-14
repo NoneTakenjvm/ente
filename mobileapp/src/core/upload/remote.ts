@@ -1,6 +1,7 @@
 import { RemoteEnteFile } from "ente-media/file";
 import { z } from "zod";
 import type { HttpClient } from "../api/http";
+import { wait } from "ente-utils/promise";
 
 const ObjectUploadURL = z.object({
     objectKey: z.string(),
@@ -169,7 +170,7 @@ export const withUploadRetry = async <T>(
             }
             // Waits 1s, 2s, 4s, then 8s for the rest: about 31s in total.
             const delayMs = Math.min(8_000, 1_000 * 2 ** (attempt - 1));
-            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            await wait(delayMs);
         }
     }
     throw lastError;

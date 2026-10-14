@@ -4,12 +4,9 @@ import {
     getTrashLastUpdatedAt,
     saveTrashLastUpdatedAt,
 } from "@/db/cursors";
-import { getSessionCacheKey } from "@/lib/cache-key";
 import {
-    loadEncryptedTrashCollectionKeys,
-    loadEncryptedTrashItems,
-    saveEncryptedTrashCollectionKeys,
-    saveEncryptedTrashItems,
+    loadKv,
+    saveKv,
     type PersistedTrashCollectionKey,
     type PersistedTrashItem,
 } from "@/db/kv";
@@ -18,7 +15,7 @@ import { decryptRemoteFile } from "ente-media/file";
 
 export type TrashItem = PersistedTrashItem;
 
-export interface PullTrashResult {
+interface PullTrashResult {
     items: TrashItem[];
     permanentlyDeletedFileIds: number[];
     lastUpdatedAt: number;
@@ -35,19 +32,18 @@ export const pullTrash = async (
 ): Promise<PullTrashResult> => {
     const core = getEnteCore();
     const http = core.getHttpClient();
-    const cacheKey = getSessionCacheKey();
 
     const collectionKeyByID = new Map(
         collections.map((collection) => [collection.id, collection.key]),
     );
     const trashItemCollectionKeys =
-        (await loadEncryptedTrashCollectionKeys(cacheKey)) ?? [];
+        (await loadKv("trashCollectionKeys")) ?? [];
     for (const { id, key } of trashItemCollectionKeys) {
         collectionKeyByID.set(id, key);
     }
 
     const trashItemsByID = new Map(
-        ((await loadEncryptedTrashItems(cacheKey)) ?? []).map((item) => [
+        ((await loadKv("trashItems")) ?? []).map((item) => [
             item.file.id,
             item,
         ]),
@@ -88,10 +84,7 @@ export const pullTrash = async (
                     id: collection.id,
                     key: collectionKey,
                 });
-                await saveEncryptedTrashCollectionKeys(
-                    trashItemCollectionKeys,
-                    cacheKey,
-                );
+                await saveKv("trashCollectionKeys", trashItemCollectionKeys);
             }
 
             trashItemsByID.set(fileID, {
@@ -102,7 +95,7 @@ export const pullTrash = async (
         }
 
         const items = [...trashItemsByID.values()];
-        await saveEncryptedTrashItems(items, cacheKey);
+        await saveKv("trashItems", items);
         await saveTrashLastUpdatedAt(sinceTime);
         if (!hasMore) {
             break;
@@ -111,7 +104,7 @@ export const pullTrash = async (
 
     // Preserve optimistic seeds written while this pull was in flight — a
     // concurrent seed would otherwise be wiped by the final IDB write.
-    const latestLocal = (await loadEncryptedTrashItems(cacheKey)) ?? [];
+    const latestLocal = (await loadKv("trashItems")) ?? [];
     for (const item of latestLocal) {
         if (
             removedFromTrashIds.has(item.file.id) ||
@@ -131,8 +124,8 @@ export const pullTrash = async (
     ]
         .filter(([id]) => trashCollectionIDs.has(id))
         .map(([id, key]) => ({ id, key }));
-    await saveEncryptedTrashCollectionKeys(prunedKeys, cacheKey);
-    await saveEncryptedTrashItems(items, cacheKey);
+    await saveKv("trashCollectionKeys", prunedKeys);
+    await saveKv("trashItems", items);
     await saveTrashLastUpdatedAt(sinceTime);
 
     return {

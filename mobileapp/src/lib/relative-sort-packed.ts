@@ -5,6 +5,7 @@
  * {@link packed}[i * dim]. Same nearest/farthest-neighbor walk as the gallery
  * relative sort; kept separate so the worker bundle stays small.
  */
+import { createRng } from "@/lib/shuffle-files";
 
 export type RelativePackedMode = "closest" | "furthest";
 
@@ -96,13 +97,7 @@ export const pickRelativeStartIndex = (
     if (ids.length === 0) {
         return 0;
     }
-    let state = seed >>> 0;
-    state += 0x6d2b79f5;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    const u = ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    return Math.floor(u * ids.length);
+    return Math.floor(createRng(seed)() * ids.length);
 };
 
 const pickStartIndex = (

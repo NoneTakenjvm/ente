@@ -94,22 +94,6 @@ const insertTopNeighbour = (
 };
 
 /**
- * For each embedded vector, find up to {@link CLIP_CONFIRM_TOP_K} nearest
- * others with score ≤ {@link CLIP_SCORE_COLLECT_MAX}.
- */
-export const findClipTopNeighbours = (
-    vectors: readonly ArrayLike<number>[],
-    topK: number = CLIP_CONFIRM_TOP_K,
-    collectMax: number = CLIP_SCORE_COLLECT_MAX,
-): ClipNeighbour[][] => {
-    const topByIndex: ClipNeighbour[][] = vectors.map(() => []);
-    for (let row = 0; row < vectors.length; row++) {
-        scanClipNeighbourRow(vectors, row, topByIndex, topK, collectMax);
-    }
-    return topByIndex;
-};
-
-/**
  * Score `vectors[row]` against every later vector and offer each pair within
  * `collectMax` to both rows' top-K lists, so one pass over all rows compares
  * each pair once. Row `row` is final once this returns.

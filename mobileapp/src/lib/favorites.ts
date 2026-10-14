@@ -99,7 +99,7 @@ export const mergePendingFavoriteUpdates = (
  * by hash: every non-owned library row with that hash/type (may scan
  * {@link allFiles}).
  */
-export const fileIdsForFavoriteUpdate = (
+const fileIdsForFavoriteUpdate = (
     update: UnsyncedFavoriteUpdate,
     userId: number,
     allFiles: EnteFile[],

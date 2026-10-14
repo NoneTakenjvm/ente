@@ -1,6 +1,7 @@
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
 import type { PhashEntry } from "@/lib/crop-match";
+import { getSessionCacheKey } from "@/lib/cache-key";
 import type {
     ViewSession,
     ViewSessionTombstone,
@@ -8,16 +9,131 @@ import type {
 import { decryptCachePayload, encryptCachePayload } from "./crypto";
 import { getOrganizerDB, type KvKey } from "./index";
 
-const loadKv = async <T>(
-    key: KvKey,
-    cacheKey: string,
-): Promise<T | undefined> => {
+export interface PersistedTagIndex {
+    tags: string[];
+    fileIdsByTag: Record<string, number[]>;
+}
+
+/** Meta for chunked phash storage (v4); entries live in the `phashChunks` store. */
+interface PersistedPhashMeta {
+    version: 4;
+    nextChunkId: number;
+}
+
+/** fileId → entry, or null for a file removed since earlier chunks. */
+interface PhashChunkPayload {
+    entries: Record<number, PhashEntry | null>;
+}
+
+/** fileId → combined quality score in [0, 1] (higher = better). */
+export interface PersistedQualityIndex {
+    version: 3;
+    entries: Record<number, number>;
+}
+
+export interface PersistedTagOutboxEntry {
+    fileId: number;
+    intendedTags: string[];
+    enqueuedAt: number;
+}
+
+export interface PersistedFavoriteOutboxEntry {
+    fileId: number;
+    isFavorite: boolean;
+    fileHashAndTypeKey?: string;
+    enqueuedAt: number;
+}
+
+export interface PersistedVisibilityOutboxEntry {
+    fileId: number;
+    visibility: number;
+    enqueuedAt: number;
+}
+
+export interface PersistedDerivedReplaceOutboxEntry {
+    fileId: number;
+    width: number;
+    height: number;
+    kind: "crop" | "rotate" | "auto-crop" | "video-edit" | "compress";
+    enqueuedAt: number;
+    /** @deprecated Legacy field; ignored on hydrate. */
+    bytesBase64?: string;
+}
+
+/** Decrypted trash item persisted for offline / Manage → Trash. */
+export interface PersistedTrashItem {
+    file: EnteFile;
+    updatedAt: number;
+    deleteBy: number;
+}
+
+export interface PersistedTrashCollectionKey {
+    id: number;
+    key: string;
+}
+
+/**
+ * Meta for chunked embedding storage (v2). Vectors live in the
+ * {@code embeddingChunks} object store — each flush encrypts only the dirty
+ * batch, not the whole library. Chunk rows are discovered via getAll (no
+ * growing chunkIds list to re-encrypt every flush).
+ */
+export interface PersistedEmbeddingMeta {
+    version: 2;
+    modelId: string;
+    dims: number;
+    nextChunkId: number;
+}
+
+interface EmbeddingChunkPayload {
+    entries: Record<number, number[]>;
+}
+
+interface PersistedViewSessions {
+    sessions: ViewSession[];
+    /** Deleted session ids retained for cloud LWW merge. */
+    tombstones?: ViewSessionTombstone[];
+}
+
+/** Decrypted value type of every `kv` record, by key. */
+interface KvValues {
+    collections: Collection[];
+    tagIndex: PersistedTagIndex;
+    /** Older versions are still present on disk; callers check `version`. */
+    phashIndex: { version?: number; nextChunkId?: number };
+    qualityIndex: PersistedQualityIndex;
+    embeddingIndex: PersistedEmbeddingMeta;
+    tagOutbox: PersistedTagOutboxEntry[];
+    favoriteOutbox: PersistedFavoriteOutboxEntry[];
+    /**
+     * File IDs present in the user's Favourites collection on remote
+     * (membership oracle — independent of deduped library `collectionID`).
+     */
+    favoriteMembership: number[];
+    visibilityOutbox: PersistedVisibilityOutboxEntry[];
+    derivedReplaceOutbox: PersistedDerivedReplaceOutboxEntry[];
+    trashItems: PersistedTrashItem[];
+    trashCollectionKeys: PersistedTrashCollectionKey[];
+    viewSessions: PersistedViewSessions;
+}
+
+type ChunkStore = "phashChunks" | "embeddingChunks";
+
+/**
+ * Load and decrypt a `kv` record; `undefined` when nothing is stored.
+ *
+ * @param cacheKey defaults to the session cache key.
+ */
+export const loadKv = async <K extends keyof KvValues & KvKey>(
+    key: K,
+    cacheKey: string = getSessionCacheKey(),
+): Promise<KvValues[K] | undefined> => {
     const db = await getOrganizerDB();
     const record = await db.get("kv", key);
     if (!record) {
         return undefined;
     }
-    return decryptCachePayload<T>(
+    return decryptCachePayload<KvValues[K]>(
         {
             encryptedData: record.encryptedData,
             decryptionHeader: record.decryptionHeader,
@@ -26,27 +142,15 @@ const loadKv = async <T>(
     );
 };
 
-const saveKv = async (
-    key: KvKey,
-    value: unknown,
-    cacheKey: string,
+/** Encrypt and store a `kv` record. */
+export const saveKv = async <K extends keyof KvValues & KvKey>(
+    key: K,
+    value: KvValues[K],
+    cacheKey: string = getSessionCacheKey(),
 ): Promise<void> => {
     const payload = await encryptCachePayload(value, cacheKey);
     const db = await getOrganizerDB();
     await db.put("kv", { key, ...payload });
-};
-
-export const loadEncryptedCollections = async (
-    cacheKey: string,
-): Promise<Collection[] | undefined> => {
-    return loadKv<Collection[]>("collections", cacheKey);
-};
-
-export const saveEncryptedCollections = async (
-    collections: Collection[],
-    cacheKey: string,
-): Promise<void> => {
-    await saveKv("collections", collections, cacheKey);
 };
 
 export const loadEncryptedFiles = async (
@@ -64,39 +168,52 @@ export const saveEncryptedFiles = async (
     await saveEncryptedFilesSharded(files, cacheKey);
 };
 
-export {
-    markLibraryCacheFilesDirty,
-    markLibraryCacheFullyDirty,
-} from "./file-shards";
+export { markLibraryCacheFilesDirty } from "./file-shards";
 
-export interface PersistedTagIndex {
-    tags: string[];
-    fileIdsByTag: Record<string, number[]>;
-}
-
-export const loadEncryptedTagIndex = async (
-    cacheKey: string,
-): Promise<PersistedTagIndex | undefined> => {
-    return loadKv<PersistedTagIndex>("tagIndex", cacheKey);
-};
-
-export const saveEncryptedTagIndex = async (
-    index: PersistedTagIndex,
+/**
+ * Encrypt `payload` and append it to a chunk store as row `record.chunkId`
+ * (plus any extra plaintext fields on `record`). The caller updates its meta.
+ */
+const appendChunk = async (
+    store: ChunkStore,
+    record: { chunkId: number; modelId?: string; dims?: number },
+    payload: unknown,
     cacheKey: string,
 ): Promise<void> => {
-    await saveKv("tagIndex", index, cacheKey);
+    const encrypted = await encryptCachePayload(payload, cacheKey);
+    const db = await getOrganizerDB();
+    await db.put(store, {
+        ...record,
+        encryptedData: encrypted.encryptedData,
+        decryptionHeader: encrypted.decryptionHeader,
+    } as Parameters<typeof db.put<typeof store>>[1]);
 };
 
-/** Meta for chunked phash storage (v4); entries live in the `phashChunks` store. */
-export interface PersistedPhashMeta {
-    version: 4;
-    nextChunkId: number;
-}
-
-/** fileId → entry, or null for a file removed since earlier chunks. */
-interface PhashChunkPayload {
-    entries: Record<number, PhashEntry | null>;
-}
+/**
+ * Decrypt the chunk rows accepted by `accept`, in chunk id order (IndexedDB
+ * key order), so callers can apply later chunks over earlier ones.
+ */
+const loadChunks = async <T>(
+    store: ChunkStore,
+    cacheKey: string,
+    accept: (record: { modelId?: string; dims?: number }) => boolean = () =>
+        true,
+): Promise<T[]> => {
+    const db = await getOrganizerDB();
+    const records = await db.getAll(store);
+    return Promise.all(
+        records
+            .filter(accept)
+            .map((record) =>
+                decryptCachePayload<T>(
+                    {
+                        encryptedData: record.encryptedData,
+                        decryptionHeader: record.decryptionHeader,
+                    },
+                    cacheKey,
+                )),
+    );
+};
 
 /**
  * Load the phash chunk meta. Older monolithic indexes (v3 and below) hold
@@ -106,7 +223,7 @@ interface PhashChunkPayload {
 export const loadPhashMeta = async (
     cacheKey: string,
 ): Promise<PersistedPhashMeta | undefined> => {
-    const meta = await loadKv<{ version?: number }>("phashIndex", cacheKey);
+    const meta = await loadKv("phashIndex", cacheKey);
     return meta?.version === 4 ? (meta as PersistedPhashMeta) : undefined;
 };
 
@@ -129,20 +246,18 @@ export const appendPhashChunk = async (
         version: 4,
         nextChunkId: 0,
     };
-    const chunkId = meta.nextChunkId;
     const payload: PhashChunkPayload = {
         entries: Object.fromEntries(entries),
     };
-    const encrypted = await encryptCachePayload(payload, cacheKey);
-    const db = await getOrganizerDB();
-    await db.put("phashChunks", {
-        chunkId,
-        encryptedData: encrypted.encryptedData,
-        decryptionHeader: encrypted.decryptionHeader,
-    });
+    await appendChunk(
+        "phashChunks",
+        { chunkId: meta.nextChunkId },
+        payload,
+        cacheKey,
+    );
     const nextMeta: PersistedPhashMeta = {
         version: 4,
-        nextChunkId: chunkId + 1,
+        nextChunkId: meta.nextChunkId + 1,
     };
     await saveKv("phashIndex", nextMeta, cacheKey);
 };
@@ -151,17 +266,12 @@ export const appendPhashChunk = async (
 export const loadAllPhashChunks = async (
     cacheKey: string,
 ): Promise<Map<number, PhashEntry>> => {
-    const db = await getOrganizerDB();
-    const records = await db.getAll("phashChunks");
+    const payloads = await loadChunks<PhashChunkPayload>(
+        "phashChunks",
+        cacheKey,
+    );
     const entries = new Map<number, PhashEntry>();
-    for (const record of records) {
-        const payload = await decryptCachePayload<PhashChunkPayload>(
-            {
-                encryptedData: record.encryptedData,
-                decryptionHeader: record.decryptionHeader,
-            },
-            cacheKey,
-        );
+    for (const payload of payloads) {
         for (const [id, entry] of Object.entries(payload.entries)) {
             if (entry) {
                 entries.set(Number(id), entry);
@@ -181,216 +291,17 @@ export const clearPhashChunks = async (cacheKey: string): Promise<void> => {
     await saveKv("phashIndex", meta, cacheKey);
 };
 
-/** fileId → combined quality score in [0, 1] (higher = better). */
-export interface PersistedQualityIndex {
-    version: 3;
-    entries: Record<number, number>;
-}
-
-export const loadEncryptedQualityIndex = async (
-    cacheKey: string,
-): Promise<PersistedQualityIndex | undefined> => {
-    return loadKv<PersistedQualityIndex>("qualityIndex", cacheKey);
-};
-
-export const saveEncryptedQualityIndex = async (
-    index: PersistedQualityIndex,
-    cacheKey: string,
-): Promise<void> => {
-    await saveKv("qualityIndex", index, cacheKey);
-};
-
-export interface PersistedTagOutboxEntry {
-    fileId: number;
-    intendedTags: string[];
-    enqueuedAt: number;
-}
-
-export const loadEncryptedTagOutbox = async (
-    cacheKey: string,
-): Promise<PersistedTagOutboxEntry[] | undefined> => {
-    return loadKv<PersistedTagOutboxEntry[]>("tagOutbox", cacheKey);
-};
-
-export const saveEncryptedTagOutbox = async (
-    entries: PersistedTagOutboxEntry[],
-    cacheKey: string,
-): Promise<void> => {
-    await saveKv("tagOutbox", entries, cacheKey);
-};
-
-export interface PersistedFavoriteOutboxEntry {
-    fileId: number;
-    isFavorite: boolean;
-    fileHashAndTypeKey?: string;
-    enqueuedAt: number;
-}
-
-export const loadEncryptedFavoriteOutbox = async (
-    cacheKey: string,
-): Promise<PersistedFavoriteOutboxEntry[] | undefined> => {
-    return loadKv<PersistedFavoriteOutboxEntry[]>("favoriteOutbox", cacheKey);
-};
-
-export const saveEncryptedFavoriteOutbox = async (
-    entries: PersistedFavoriteOutboxEntry[],
-    cacheKey: string,
-): Promise<void> => {
-    await saveKv("favoriteOutbox", entries, cacheKey);
-};
-
-/**
- * File IDs present in the user's Favourites collection on remote
- * (membership oracle — independent of deduped library `collectionID`).
- */
-export const loadEncryptedFavoriteMembership = async (
-    cacheKey: string,
-): Promise<number[] | undefined> => {
-    const decoded = await loadKv<unknown>("favoriteMembership", cacheKey);
-    if (!Array.isArray(decoded)) {
-        return undefined;
-    }
-    const ids = decoded.filter(
-        (id): id is number => typeof id === "number" && Number.isFinite(id),
-    );
-    return ids.length === decoded.length ? ids : undefined;
-};
-
-export const saveEncryptedFavoriteMembership = async (
-    fileIds: number[],
-    cacheKey: string,
-): Promise<void> => {
-    await saveKv("favoriteMembership", fileIds, cacheKey);
-};
-
-export interface PersistedVisibilityOutboxEntry {
-    fileId: number;
-    visibility: number;
-    enqueuedAt: number;
-}
-
-export const loadEncryptedVisibilityOutbox = async (
-    cacheKey: string,
-): Promise<PersistedVisibilityOutboxEntry[] | undefined> => {
-    return loadKv<PersistedVisibilityOutboxEntry[]>("visibilityOutbox", cacheKey);
-};
-
-export const saveEncryptedVisibilityOutbox = async (
-    entries: PersistedVisibilityOutboxEntry[],
-    cacheKey: string,
-): Promise<void> => {
-    await saveKv("visibilityOutbox", entries, cacheKey);
-};
-
-export interface PersistedDerivedReplaceOutboxEntry {
-    fileId: number;
-    width: number;
-    height: number;
-    kind: "crop" | "rotate" | "auto-crop" | "video-edit" | "compress";
-    enqueuedAt: number;
-    /** @deprecated Legacy field; ignored on hydrate. */
-    bytesBase64?: string;
-}
-
-export const loadEncryptedDerivedReplaceOutbox = async (
-    cacheKey: string,
-): Promise<PersistedDerivedReplaceOutboxEntry[] | undefined> => {
-    return loadKv<PersistedDerivedReplaceOutboxEntry[]>("derivedReplaceOutbox", cacheKey);
-};
-
-export const saveEncryptedDerivedReplaceOutbox = async (
-    entries: PersistedDerivedReplaceOutboxEntry[],
-    cacheKey: string,
-): Promise<void> => {
-    await saveKv("derivedReplaceOutbox", entries, cacheKey);
-};
-
-/** Decrypted trash item persisted for offline / Manage → Trash. */
-export interface PersistedTrashItem {
-    file: EnteFile;
-    updatedAt: number;
-    deleteBy: number;
-}
-
-export interface PersistedTrashCollectionKey {
-    id: number;
-    key: string;
-}
-
-export const loadEncryptedTrashItems = async (
-    cacheKey: string,
-): Promise<PersistedTrashItem[] | undefined> => {
-    return loadKv<PersistedTrashItem[]>("trashItems", cacheKey);
-};
-
-export const saveEncryptedTrashItems = async (
-    items: PersistedTrashItem[],
-    cacheKey: string,
-): Promise<void> => {
-    await saveKv("trashItems", items, cacheKey);
-};
-
-export const loadEncryptedTrashCollectionKeys = async (
-    cacheKey: string,
-): Promise<PersistedTrashCollectionKey[] | undefined> => {
-    return loadKv<PersistedTrashCollectionKey[]>("trashCollectionKeys", cacheKey);
-};
-
-export const saveEncryptedTrashCollectionKeys = async (
-    keys: PersistedTrashCollectionKey[],
-    cacheKey: string,
-): Promise<void> => {
-    await saveKv("trashCollectionKeys", keys, cacheKey);
-};
-
-/** CLIP vectors for kit nearness ranking (and corpus export). */
-export interface PersistedEmbeddingIndex {
-    version: 1;
-    modelId: string;
-    dims: number;
-    /** fileId → L2-normalized float embedding */
-    entries: Record<number, number[]>;
-}
-
-/**
- * Meta for chunked embedding storage (v2). Vectors live in the
- * {@code embeddingChunks} object store — each flush encrypts only the dirty
- * batch, not the whole library. Chunk rows are discovered via getAll (no
- * growing chunkIds list to re-encrypt every flush).
- */
-export interface PersistedEmbeddingMeta {
-    version: 2;
-    modelId: string;
-    dims: number;
-    nextChunkId: number;
-}
-
-export interface EmbeddingChunkPayload {
-    entries: Record<number, number[]>;
-}
-
 export const loadEmbeddingMeta = async (
     cacheKey: string,
 ): Promise<PersistedEmbeddingMeta | undefined> => {
-    const parsed = await loadKv<
-        PersistedEmbeddingMeta | PersistedEmbeddingIndex
-    >("embeddingIndex", cacheKey);
-    if (!parsed || typeof parsed !== "object") {
-        return undefined;
-    }
-    if ((parsed as PersistedEmbeddingMeta).version === 2) {
-        return parsed as PersistedEmbeddingMeta;
-    }
-    // v1 monolith is obsolete — caller treats as empty and rescans.
-    return undefined;
+    const parsed = await loadKv("embeddingIndex", cacheKey);
+    return parsed?.version === 2 ? parsed : undefined;
 };
 
-export const saveEmbeddingMeta = async (
+export const saveEmbeddingMeta = (
     meta: PersistedEmbeddingMeta,
     cacheKey: string,
-): Promise<void> => {
-    await saveKv("embeddingIndex", meta, cacheKey);
-};
+): Promise<void> => saveKv("embeddingIndex", meta, cacheKey);
 
 export const clearEmbeddingChunks = async (): Promise<void> => {
     const db = await getOrganizerDB();
@@ -409,7 +320,6 @@ export const appendEmbeddingChunk = async (
     if (entries.size === 0) {
         return meta;
     }
-    const chunkId = meta.nextChunkId;
     const jsonEntries: Record<number, number[]> = {};
     for (const [fileId, vector] of entries) {
         jsonEntries[fileId] = Array.isArray(vector) ?
@@ -419,18 +329,15 @@ export const appendEmbeddingChunk = async (
     const payload: EmbeddingChunkPayload = {
         entries: jsonEntries,
     };
-    const encrypted = await encryptCachePayload(payload, cacheKey);
-    const db = await getOrganizerDB();
-    await db.put("embeddingChunks", {
-        chunkId,
-        modelId: meta.modelId,
-        dims: meta.dims,
-        encryptedData: encrypted.encryptedData,
-        decryptionHeader: encrypted.decryptionHeader,
-    });
+    await appendChunk(
+        "embeddingChunks",
+        { chunkId: meta.nextChunkId, modelId: meta.modelId, dims: meta.dims },
+        payload,
+        cacheKey,
+    );
     const nextMeta: PersistedEmbeddingMeta = {
         ...meta,
-        nextChunkId: chunkId + 1,
+        nextChunkId: meta.nextChunkId + 1,
     };
     await saveEmbeddingMeta(nextMeta, cacheKey);
     return nextMeta;
@@ -443,20 +350,13 @@ export const loadAllEmbeddingChunks = async (
     meta: PersistedEmbeddingMeta,
     cacheKey: string,
 ): Promise<Map<number, Float32Array>> => {
-    const db = await getOrganizerDB();
+    const payloads = await loadChunks<EmbeddingChunkPayload>(
+        "embeddingChunks",
+        cacheKey,
+        (record) => record.modelId === meta.modelId && record.dims === meta.dims,
+    );
     const map = new Map<number, Float32Array>();
-    const records = await db.getAll("embeddingChunks");
-    for (const record of records) {
-        if (record.modelId !== meta.modelId || record.dims !== meta.dims) {
-            continue;
-        }
-        const payload = await decryptCachePayload<EmbeddingChunkPayload>(
-            {
-                encryptedData: record.encryptedData,
-                decryptionHeader: record.decryptionHeader,
-            },
-            cacheKey,
-        );
+    for (const payload of payloads) {
         for (const [id, vector] of Object.entries(payload.entries)) {
             if (Array.isArray(vector) && vector.length === meta.dims) {
                 map.set(Number(id), Float32Array.from(vector));
@@ -464,23 +364,4 @@ export const loadAllEmbeddingChunks = async (
         }
     }
     return map;
-};
-
-export interface PersistedViewSessions {
-    sessions: ViewSession[];
-    /** Deleted session ids retained for cloud LWW merge. */
-    tombstones?: ViewSessionTombstone[];
-}
-
-export const loadEncryptedViewSessions = async (
-    cacheKey: string,
-): Promise<PersistedViewSessions | undefined> => {
-    return loadKv<PersistedViewSessions>("viewSessions", cacheKey);
-};
-
-export const saveEncryptedViewSessions = async (
-    data: PersistedViewSessions,
-    cacheKey: string,
-): Promise<void> => {
-    await saveKv("viewSessions", data, cacheKey);
 };

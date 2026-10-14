@@ -4,7 +4,7 @@ export interface CoreSession {
     userID?: number;
 }
 
-export const clientPackageName = "io.ente.photos.web";
+const clientPackageName = "io.ente.photos.web";
 
 export const createEmptySession = (): CoreSession => ({});
 

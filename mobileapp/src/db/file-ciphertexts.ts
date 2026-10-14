@@ -26,12 +26,6 @@ type FileCiphertextLruMeta = {
     lastAccess: number;
 };
 
-const isWrappedRecord = (
-    record: FileCiphertextRecord,
-): record is FileCiphertextRecord & { fileDecryptionHeader: string } =>
-    typeof record.fileDecryptionHeader === "string" &&
-    record.fileDecryptionHeader.length > 0;
-
 const fileCiphertextTouches = new LruTouchCoalescer(async (batch) => {
     if (!hasOrganizerDB()) {
         return;
@@ -40,7 +34,7 @@ const fileCiphertextTouches = new LruTouchCoalescer(async (batch) => {
     const tx = db.transaction("fileCiphertexts", "readwrite");
     for (const [fileId, lastAccess] of batch) {
         const record = await tx.store.get(fileId);
-        if (!record || !isWrappedRecord(record)) {
+        if (!record) {
             continue;
         }
         await tx.store.put({
@@ -123,8 +117,7 @@ const evictUntilFit = async (
 
 /**
  * Read cached full-file ciphertext, unwrap the cacheKey layer, and return the
- * Ente server ciphertext. Touches LRU in memory (batched flush). Drops legacy
- * unwrapped rows.
+ * Ente server ciphertext. Touches LRU in memory (batched flush).
  */
 export const getFileCiphertext = async (
     fileId: number,
@@ -145,10 +138,6 @@ export const getFileCiphertext = async (
         fileId,
     );
     if (!record) {
-        return undefined;
-    }
-    if (!isWrappedRecord(record)) {
-        await db.delete("fileCiphertexts", fileId);
         return undefined;
     }
 

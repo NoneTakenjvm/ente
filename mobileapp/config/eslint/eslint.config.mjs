@@ -79,6 +79,7 @@ export default defineConfig(
             "src/lib/**/*.ts",
             "src/db/**/*.ts",
             "src/workers/**/*.ts",
+            "src/test-utils/**/*.ts",
             "src/hooks/**/*.ts",
         ],
         rules: {

@@ -4,7 +4,6 @@ import { enqueueOrganizerConfigPatch } from "@/lib/organizer-config-save-queue";
 import type { PersistedQueryAlbums } from "@/lib/query-albums";
 import {
     createQueryAlbum,
-    emptyPersistedQueryAlbums,
     serializeTagFilter,
     type QueryAlbum,
 } from "@/lib/query-albums";
@@ -125,5 +124,3 @@ const createAlbumStore: StateCreator<AlbumState> = (set, get) => ({
 });
 
 export const useAlbumStore = create<AlbumState>(createAlbumStore);
-
-export { emptyPersistedQueryAlbums };

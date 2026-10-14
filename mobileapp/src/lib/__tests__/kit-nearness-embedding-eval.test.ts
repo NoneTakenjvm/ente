@@ -11,18 +11,7 @@ import {
     mannWhitneyAuc,
     type KitEmbeddingEvalFold,
 } from "@/lib/kit-nearness-embedding-eval";
-
-const toEmb = (values: number[]): Float32Array => Float32Array.from(values);
-const embMap = (
-    entries: Array<[number, number[]]>,
-): Map<number, Float32Array> =>
-    new Map(entries.map(([id, v]) => [id, toEmb(v)]));
-
-const axis = (dim: number, dims = 512): number[] => {
-    const out = new Array(dims).fill(0);
-    out[dim] = 1;
-    return out;
-};
+import { axis, embMap } from "@/test-utils/fixtures";
 
 describe("kit-nearness-embedding-genome", () => {
     it("default genome is centroid with S2 rival settings", () => {

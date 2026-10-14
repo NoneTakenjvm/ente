@@ -13,7 +13,7 @@ export const MIN_GALLERY_COLUMNS = 2;
 export const MAX_GALLERY_COLUMNS = 8;
 
 /** Default Similar-photos group cap (true duplicates rarely exceed a handful). */
-export const DEFAULT_SIMILAR_MAX_GROUP_SIZE = 5;
+const DEFAULT_SIMILAR_MAX_GROUP_SIZE = 5;
 export const MIN_SIMILAR_MAX_GROUP_SIZE = 1;
 export const MAX_SIMILAR_MAX_GROUP_SIZE = 5;
 
@@ -59,7 +59,7 @@ export const clampGalleryColumns = (value: number): GalleryColumnCount => {
 /**
  * Clamp a Similar max-group-size value into the allowed settings range.
  */
-export const clampSimilarMaxGroupSize = (value: number): number => {
+const clampSimilarMaxGroupSize = (value: number): number => {
     if (!Number.isFinite(value)) {
         return DEFAULT_SIMILAR_MAX_GROUP_SIZE;
     }

@@ -36,7 +36,6 @@ import type { TagFilterFitSort } from "@/lib/tag-filter-fit-sort";
 import type { UploadedAtSort } from "@/lib/uploaded-at-sort";
 import type { TagPreset } from "@/lib/tag-presets";
 import { cn } from "@/lib/utils";
-import { useTagStore } from "@/stores/tag-store";
 import { useUIStore } from "@/stores/ui-store";
 
 type OptionsSectionId =
@@ -275,16 +274,16 @@ interface TagScopeFilterDropdownProps {
     videoCount: number;
     croppedCount: number;
     notCroppedCount: number;
-    tagScope?: TagScope;
-    onTagScopeChange?: (scope: TagScope) => void;
-    favoritesScope?: FavoritesScope;
-    onFavoritesScopeChange?: (scope: FavoritesScope) => void;
-    mediaScope?: MediaScope;
-    onMediaScopeChange?: (scope: MediaScope) => void;
-    croppedScope?: CroppedScope;
-    onCroppedScopeChange?: (scope: CroppedScope) => void;
-    rotatedScope?: RotatedScope;
-    onRotatedScopeChange?: (scope: RotatedScope) => void;
+    tagScope: TagScope;
+    onTagScopeChange: (scope: TagScope) => void;
+    favoritesScope: FavoritesScope;
+    onFavoritesScopeChange: (scope: FavoritesScope) => void;
+    mediaScope: MediaScope;
+    onMediaScopeChange: (scope: MediaScope) => void;
+    croppedScope: CroppedScope;
+    onCroppedScopeChange: (scope: CroppedScope) => void;
+    rotatedScope: RotatedScope;
+    onRotatedScopeChange: (scope: RotatedScope) => void;
     /** Gallery-only: reorder by viewer viewport fit (not a hide-filter). */
     viewportFitSort?: ViewportFitSort;
     onViewportFitSortChange?: (mode: ViewportFitSort) => void;
@@ -357,15 +356,15 @@ export function TagScopeFilterDropdown({
     videoCount,
     croppedCount,
     notCroppedCount,
-    tagScope: controlledScope,
+    tagScope,
     onTagScopeChange,
-    favoritesScope: controlledFavoritesScope,
+    favoritesScope,
     onFavoritesScopeChange,
-    mediaScope: controlledMediaScope,
+    mediaScope,
     onMediaScopeChange,
-    croppedScope: controlledCroppedScope,
+    croppedScope,
     onCroppedScopeChange,
-    rotatedScope: controlledRotatedScope,
+    rotatedScope,
     onRotatedScopeChange,
     viewportFitSort,
     onViewportFitSortChange,
@@ -394,12 +393,6 @@ export function TagScopeFilterDropdown({
     kitLikenessRivalPenalty,
     onKitLikenessRivalPenaltyChange,
 }: TagScopeFilterDropdownProps): JSX.Element {
-    const storeFilter = useTagStore((s) => s.tagFilter);
-    const setTagScope = useTagStore((s) => s.setTagScope);
-    const setFavoritesScope = useTagStore((s) => s.setFavoritesScope);
-    const setMediaScope = useTagStore((s) => s.setMediaScope);
-    const setCroppedScope = useTagStore((s) => s.setCroppedScope);
-    const setRotatedScope = useTagStore((s) => s.setRotatedScope);
     const viewportTargetWidth = useUIStore((s) => s.viewportTargetWidth);
     const viewportTargetHeight = useUIStore((s) => s.viewportTargetHeight);
     const setViewportTargetSize = useUIStore((s) => s.setViewportTargetSize);
@@ -441,11 +434,7 @@ export function TagScopeFilterDropdown({
         setViewportWidthDraft(String(size.viewportTargetWidth));
         setViewportHeightDraft(String(size.viewportTargetHeight));
     };
-    const tagScope = controlledScope ?? storeFilter.tagScope;
-    const favoritesScope = controlledFavoritesScope ?? storeFilter.favoritesScope;
-    const mediaScope = controlledMediaScope ?? storeFilter.mediaScope;
-    const croppedScope = controlledCroppedScope ?? storeFilter.croppedScope;
-    const rotatedScope = controlledRotatedScope ?? storeFilter.rotatedScope;
+
     const showViewportFit = onViewportFitSortChange !== undefined;
     const fitSort = viewportFitSort ?? "none";
     const showUploadedAt = onUploadedAtSortChange !== undefined;
@@ -614,13 +603,6 @@ export function TagScopeFilterDropdown({
 
     const optionsActive = filterActive || sortActive;
 
-    const handleScopeChange = onTagScopeChange ?? setTagScope;
-    const handleFavoritesScopeChange =
-        onFavoritesScopeChange ?? setFavoritesScope;
-    const handleMediaScopeChange = onMediaScopeChange ?? setMediaScope;
-    const handleCroppedScopeChange = onCroppedScopeChange ?? setCroppedScope;
-    const handleRotatedScopeChange = onRotatedScopeChange ?? setRotatedScope;
-
     const filterPanel = (
         <>
             <div className="px-1 pb-1">
@@ -632,11 +614,11 @@ export function TagScopeFilterDropdown({
                     aria-pressed={!filterActive}
                     disabled={!filterActive}
                     onClick={() => {
-                        handleScopeChange("all");
-                        handleFavoritesScopeChange("all");
-                        handleCroppedScopeChange("all");
-                        handleRotatedScopeChange("all");
-                        handleMediaScopeChange("all");
+                        onTagScopeChange("all");
+                        onFavoritesScopeChange("all");
+                        onCroppedScopeChange("all");
+                        onRotatedScopeChange("all");
+                        onMediaScopeChange("all");
                     }}
                 >
                     Clear
@@ -647,7 +629,7 @@ export function TagScopeFilterDropdown({
                 title="Tag presence"
                 {...sectionState("tagPresence", tagScope !== "all")}
                 value={tagScope}
-                onChange={handleScopeChange}
+                onChange={onTagScopeChange}
                 options={[
                     { value: "all", label: "All" },
                     { value: "tagged", label: "Any tag", count: taggedCount },
@@ -663,7 +645,7 @@ export function TagScopeFilterDropdown({
                 title="Favourites"
                 {...sectionState("favourites", favoritesScope !== "all")}
                 value={favoritesScope}
-                onChange={handleFavoritesScopeChange}
+                onChange={onFavoritesScopeChange}
                 options={[
                     { value: "all", label: "All" },
                     {
@@ -683,7 +665,7 @@ export function TagScopeFilterDropdown({
                 title="Manual crop"
                 {...sectionState("manualCrop", croppedScope !== "all")}
                 value={croppedScope}
-                onChange={handleCroppedScopeChange}
+                onChange={onCroppedScopeChange}
                 options={[
                     { value: "all", label: "All" },
                     {
@@ -703,7 +685,7 @@ export function TagScopeFilterDropdown({
                 title="Manual rotate"
                 {...sectionState("manualRotate", rotatedScope !== "all")}
                 value={rotatedScope}
-                onChange={handleRotatedScopeChange}
+                onChange={onRotatedScopeChange}
                 options={[
                     { value: "all", label: "All" },
                     { value: "rotated", label: "Rotated" },
@@ -715,7 +697,7 @@ export function TagScopeFilterDropdown({
                 title="Media type"
                 {...sectionState("mediaType", mediaScope !== "all")}
                 value={mediaScope}
-                onChange={handleMediaScopeChange}
+                onChange={onMediaScopeChange}
                 options={[
                     { value: "all", label: "All" },
                     { value: "photo", label: "Photo", count: photoCount },

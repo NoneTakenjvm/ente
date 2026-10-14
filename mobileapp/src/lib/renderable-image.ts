@@ -5,7 +5,7 @@ import { isHEICExtension } from "ente-media/formats";
 import { heicToJPEG } from "ente-media/heic-convert";
 import { decodeLivePhoto } from "ente-media/live-photo";
 import type { EnteFile } from "ente-media/file";
-import { detectImageFormatFromBytes } from "@/lib/compress";
+import { detectImageFormatFromBytes } from "@/lib/image-format";
 import { blobFromUint8Array } from "@/lib/bytes-blob";
 
 /**

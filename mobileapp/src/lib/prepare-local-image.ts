@@ -1,10 +1,10 @@
 import { heicToJPEG } from "ente-media/heic-convert";
 import {
     DEFAULT_JPEG_QUALITY,
-    detectImageFormatFromBytes,
     encodeJpegFromBytes,
     type EncodeJpegResult,
 } from "@/lib/compress";
+import { detectImageFormatFromBytes } from "@/lib/image-format";
 import { blobFromUint8Array } from "@/lib/bytes-blob";
 import { withTimeout } from "@/lib/with-timeout";
 import { readJpegDimensionsFromBytes } from "@/core/upload/jpeg-dimensions";

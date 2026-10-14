@@ -5,15 +5,7 @@ import {
     isDerivedReplaceInFlight,
     resetDerivedReplaceQueueForTests,
 } from "@/lib/derived-replace-queue";
-
-const stubFile = (id: number): EnteFile =>
-    ({
-        id,
-        ownerID: 1,
-        collectionID: 10,
-        key: "key",
-        metadata: { fileType: 0 },
-    }) as EnteFile;
+import { stubFile } from "@/test-utils/fixtures";
 
 describe("derived-replace-queue", () => {
     beforeEach(() => {
@@ -38,7 +30,7 @@ describe("derived-replace-queue", () => {
             if (saveCount === 1) {
                 return firstSave;
             }
-            return stubFile(30);
+            return stubFile({ id: 30, collectionID: 10 });
         };
 
         const first = enqueueDerivedReplace(
@@ -57,7 +49,7 @@ describe("derived-replace-queue", () => {
             save,
         );
 
-        resolveFirstSave?.(stubFile(20));
+        resolveFirstSave?.(stubFile({ id: 20, collectionID: 10 }));
         const [a, b] = await Promise.all([first, second]);
         expect(a.id).toBe(30);
         expect(b.id).toBe(30);
@@ -71,7 +63,7 @@ describe("derived-replace-queue", () => {
             5,
             new Uint8Array([1]),
             { width: 1, height: 1 },
-            async () => stubFile(99),
+            async () => stubFile({ id: 99, collectionID: 10 }),
             {
                 onCompleted: async () => {
                     order.push("completed");
@@ -124,7 +116,7 @@ describe("derived-replace-queue", () => {
         );
         const secondOutcome = expect(second).rejects.toThrow("second failed");
 
-        resolveFirst?.(stubFile(70));
+        resolveFirst?.(stubFile({ id: 70, collectionID: 10 }));
         await expect(first).resolves.toMatchObject({ id: 70 });
         await secondOutcome;
         expect(saveCount).toBe(2);
@@ -146,7 +138,7 @@ describe("derived-replace-queue", () => {
                     resolveFirst = resolve;
                 });
             }
-            return stubFile(90);
+            return stubFile({ id: 90, collectionID: 10 });
         };
         const firstCompleted = vi.fn(async () => undefined);
         const secondCompleted = vi.fn(async () => undefined);
@@ -167,7 +159,7 @@ describe("derived-replace-queue", () => {
             { onCompleted: secondCompleted },
         );
 
-        resolveFirst?.(stubFile(80));
+        resolveFirst?.(stubFile({ id: 80, collectionID: 10 }));
         await Promise.all([first, second]);
         expect(firstCompleted).not.toHaveBeenCalled();
         expect(secondCompleted).toHaveBeenCalledWith(

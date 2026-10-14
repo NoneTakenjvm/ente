@@ -18,6 +18,7 @@
  * {@link imageFilesForPhash}; any stale video vectors in {@link existing} are
  * dropped at job start.
  */
+import { l2NormalizeEmbedding } from "@/lib/embedding-vector";
 import { getSessionCacheKey } from "@/lib/cache-key";
 import {
     CLIP_EMBEDDING_BATCH_SIZE_AUTO,
@@ -51,10 +52,9 @@ import type {
     ClipEmbeddingInbound,
     ClipEmbeddingInitDoneMessage,
     ClipEmbeddingOutbound,
-    ClipEmbeddingTileTiming,
 } from "@/workers/clip-embedding-worker-types";
 
-/** Model id baked into corpus exports so offline eval stays consistent. */
+/** CLIP model id; changing it invalidates the persisted embedding index. */
 export const KIT_EMBEDDING_MODEL_ID = "Xenova/mobileclip_s2";
 
 export const KIT_EMBEDDING_DIMS = 512;
@@ -68,7 +68,7 @@ export type EmbeddingVector = Float32Array;
 export type EmbeddingMap = Map<number, EmbeddingVector>;
 export type ReadonlyEmbeddingMap = ReadonlyMap<number, EmbeddingVector>;
 
-export type KitEmbeddingDevice = ClipEmbeddingDevice;
+type KitEmbeddingDevice = ClipEmbeddingDevice;
 
 /**
  * Ensure a dims-checked Float32Array (returns the same instance when already packed).
@@ -121,25 +121,7 @@ type PendingInit = {
     reject: (error: Error) => void;
 };
 
-/** Row-major tile vectors for one thumbnail (`rows × columns × 512`). */
-export type KitTileEmbeddings = {
-    rows: number;
-    columns: number;
-    vectors: Float32Array;
-};
-
-export type KitTileEmbeddingResult = {
-    tiles: KitTileEmbeddings;
-    timing?: ClipEmbeddingTileTiming;
-};
-
-type PendingTiles = {
-    resolve: (result: KitTileEmbeddingResult) => void;
-    reject: (error: Error) => void;
-};
-
 const pendingBatches = new Map<number, PendingEmbedBatch>();
-const pendingTiles = new Map<number, PendingTiles>();
 let pendingInit: PendingInit | undefined;
 
 const isCoarsePointerMobile = (): boolean => {
@@ -153,7 +135,7 @@ const isCoarsePointerMobile = (): boolean => {
  * Default ORT batch size when settings are Auto.
  * WebGPU benefits from larger batches; WASM stays small (CPU + memory).
  */
-export const defaultKitEmbeddingBatchSizeFor = (
+const defaultKitEmbeddingBatchSizeFor = (
     device: KitEmbeddingDevice,
 ): number => {
     if (device === "webgpu") {
@@ -165,7 +147,7 @@ export const defaultKitEmbeddingBatchSizeFor = (
 /**
  * Resolve ORT batch size from a persisted setting (Auto or 4/8/12/16).
  */
-export const resolveKitEmbeddingBatchSize = (
+const resolveKitEmbeddingBatchSize = (
     device: KitEmbeddingDevice,
     setting: number,
 ): number => {
@@ -242,28 +224,7 @@ const attachMessageRouter = (worker: Worker): void => {
                 batchFallbackReason = done.batchFallbackReason;
             }
             pending.resolve(done.results);
-            return;
         }
-        if (data.kind === "embed-tiles-done") {
-            const pending = pendingTiles.get(data.id);
-            if (!pending) {
-                return;
-            }
-            pendingTiles.delete(data.id);
-            if (data.error || !data.vectors) {
-                pending.reject(new Error(data.error ?? "embed-tiles failed"));
-                return;
-            }
-            pending.resolve({
-                tiles: {
-                    rows: data.rows,
-                    columns: data.columns,
-                    vectors: data.vectors,
-                },
-                timing: data.timing,
-            });
-        }
-        // Legacy single-embed replies are unused by the batch job path.
     };
 };
 
@@ -279,7 +240,7 @@ const getClipWorker = (): Worker => {
 };
 
 /** Load the model (WASM, then WebGPU upgrade) if it is not already resident. */
-export const ensureKitEmbeddingWorkerReady = async (): Promise<void> => {
+const ensureKitEmbeddingWorkerReady = async (): Promise<void> => {
     if (!initPromise) {
         initPromise = new Promise<void>((resolve, reject) => {
             const worker = getClipWorker();
@@ -290,31 +251,6 @@ export const ensureKitEmbeddingWorkerReady = async (): Promise<void> => {
         });
     }
     await initPromise;
-};
-
-/**
- * Embed every {@link kitTileGrid} tile of one thumbnail in the CLIP worker.
- *
- * Copies `bytes` before transferring, so the caller's buffer stays usable.
- */
-export const embedKitTilesInWorker = async (
-    fileId: number,
-    bytes: Uint8Array,
-): Promise<KitTileEmbeddingResult> => {
-    await ensureKitEmbeddingWorkerReady();
-    return new Promise((resolve, reject) => {
-        const worker = getClipWorker();
-        const id = ++requestCounter;
-        const transfer = bytes.slice();
-        pendingTiles.set(id, { resolve, reject });
-        const message: ClipEmbeddingInbound = {
-            kind: "embed-tiles",
-            id,
-            fileId,
-            bytes: transfer,
-        };
-        worker.postMessage(message, [transfer.buffer]);
-    });
 };
 
 const embedBatchInWorker = (
@@ -337,28 +273,6 @@ const embedBatchInWorker = (
         };
         worker.postMessage(message, transferables);
     });
-
-/** L2-normalize into a packed Float32Array; undefined when empty / non-finite. */
-export const l2NormalizeEmbedding = (
-    data: ArrayLike<number>,
-): EmbeddingVector | undefined => {
-    let norm = 0;
-    // Indexed: ArrayLike is not necessarily Iterable.
-    // eslint-disable-next-line @typescript-eslint/prefer-for-of -- ArrayLike
-    for (let i = 0; i < data.length; i += 1) {
-        const value = data[i]!;
-        norm += value * value;
-    }
-    norm = Math.sqrt(norm);
-    if (!Number.isFinite(norm) || norm <= 0) {
-        return undefined;
-    }
-    const out = new Float32Array(data.length);
-    for (let i = 0; i < data.length; i += 1) {
-        out[i] = Math.round((data[i]! / norm) * 1e5) / 1e5;
-    }
-    return out;
-};
 
 const emptyMeta = (): PersistedEmbeddingMeta => ({
     version: 2,
@@ -503,7 +417,7 @@ const ensureEmbeddingMeta = async (
     return meta;
 };
 
-export type KitEmbeddingProgress = {
+type KitEmbeddingProgress = {
     completed: number;
     total: number;
     phase: "model" | "embed";
@@ -515,7 +429,7 @@ export type KitEmbeddingProgress = {
     batchMode?: ClipEmbeddingBatchMode;
 };
 
-export type RunKitEmbeddingJobOptions = {
+type RunKitEmbeddingJobOptions = {
     files: readonly EnteFile[];
     userId: number;
     existing?: EmbeddingMap;
@@ -804,10 +718,6 @@ export const terminateKitEmbeddingWorker = (): void => {
         pending.reject(new Error("CLIP worker terminated"));
     }
     pendingBatches.clear();
-    for (const pending of pendingTiles.values()) {
-        pending.reject(new Error("CLIP worker terminated"));
-    }
-    pendingTiles.clear();
     if (pendingInit) {
         pendingInit.reject(new Error("CLIP worker terminated"));
         pendingInit = undefined;

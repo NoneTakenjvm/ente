@@ -23,6 +23,7 @@ import {
     pickKitEmbeddingMedoids,
 } from "@/lib/kit-nearness-sort";
 import { isEnteVideoFile } from "@/lib/media-kind";
+import { createRng, shuffleInPlace } from "@/lib/shuffle-files";
 import type { EnteFile } from "ente-media/file";
 
 export type KitEmbeddingFitnessBreakdown = {
@@ -41,30 +42,10 @@ export type KitEmbeddingEvalFold = {
     rivalSeedIdSets: number[][];
 };
 
-export type BuildKitEmbeddingFoldOptions = {
+type BuildKitEmbeddingFoldOptions = {
     seedFraction?: number;
     negativePoolSize?: number;
     random?: () => number;
-};
-
-/** Seeded PRNG in `[0, 1)` (LCG) for reproducible folds. */
-export const mulberry32 = (seed: number): (() => number) => {
-    let state = seed >>> 0;
-    return (): number => {
-        state = (Math.imul(1664525, state) + 1013904223) >>> 0;
-        return state / 0x1_0000_0000;
-    };
-};
-
-/** Fisher–Yates shuffle of {@link items} using {@link random}; returns it. */
-export const shuffleInPlace = <T>(items: T[], random: () => number): T[] => {
-    for (let i = items.length - 1; i > 0; i -= 1) {
-        const j = Math.floor(random() * (i + 1));
-        const tmp = items[i]!;
-        items[i] = items[j]!;
-        items[j] = tmp;
-    }
-    return items;
 };
 
 /**
@@ -92,7 +73,7 @@ export const mannWhitneyAuc = (
     return (wins + 0.5 * ties) / total;
 };
 
-export const topKHitRate = (
+const topKHitRate = (
     rankedIds: readonly number[],
     positiveSet: ReadonlySet<number>,
     k: number,
@@ -156,7 +137,7 @@ export const buildKitEmbeddingEvalFold = (
     rivalKits: readonly { tags: readonly string[] }[],
     options?: BuildKitEmbeddingFoldOptions,
 ): KitEmbeddingEvalFold | undefined => {
-    const random = options?.random ?? mulberry32(42);
+    const random = options?.random ?? createRng(42);
     const seedFraction = options?.seedFraction ?? 0.6;
     const negativePoolSize = options?.negativePoolSize ?? 200;
 

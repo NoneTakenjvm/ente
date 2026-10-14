@@ -1,16 +1,7 @@
 import { useMemo, useState, type FormEvent, type JSX } from "react";
 import { AlbumCoverPickerSheet } from "@/components/albums/AlbumCoverPickerSheet";
 import { AlbumCoverThumb } from "@/components/albums/AlbumCoverThumb";
-import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -43,6 +34,7 @@ import { useAlbumStore } from "@/stores/album-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useTagStore } from "@/stores/tag-store";
+import { plural } from "@/lib/format";
 
 interface AlbumEditorPanelProps {
     album: QueryAlbum | undefined;
@@ -244,7 +236,7 @@ export function AlbumEditorPanel({
                         disabled={!isFlatTagFilterRoot(filter.root)}
                     />
                     <span className="text-xs text-muted-foreground">
-                        {matchCount} photo{matchCount === 1 ? "" : "s"} match
+                        {plural(matchCount, "photo")} match
                     </span>
                 </div>
                 {!isFlatTagFilterRoot(filter.root) ? (
@@ -291,33 +283,22 @@ export function AlbumEditorPanel({
                 ) : null}
             </div>
 
-            <AlertDialog
+            <ConfirmDialog
                 open={showDeleteConfirm}
-                onOpenChange={setShowDeleteConfirm}
-            >
-                <AlertDialogContent>
-                    <AlertDialogHeader>
-                        <AlertDialogTitle>Delete album?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                            {album ?
-                                `"${album.name}" will be removed. Your photos are not affected.` :
-                                ""}
-                        </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction
-                            variant="destructive"
-                            onClick={() => {
-                                setShowDeleteConfirm(false);
-                                onDelete?.();
-                            }}
-                        >
-                            Delete
-                        </AlertDialogAction>
-                    </AlertDialogFooter>
-                </AlertDialogContent>
-            </AlertDialog>
+                title="Delete album?"
+                description={
+                    album ?
+                        `"${album.name}" will be removed. Your photos are not affected.` :
+                        ""
+                }
+                confirmLabel="Delete"
+                destructive
+                onCancel={() => setShowDeleteConfirm(false)}
+                onConfirm={() => {
+                    setShowDeleteConfirm(false);
+                    onDelete?.();
+                }}
+            />
 
             <AlbumCoverPickerSheet
                 open={showCoverPicker}

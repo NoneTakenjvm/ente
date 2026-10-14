@@ -5,25 +5,7 @@ import {
     scoreImageQuality,
     sortFilesByImageQuality,
 } from "@/lib/image-quality";
-
-const rgbaImageData = (
-    width: number,
-    height: number,
-    pixel: (x: number, y: number) => [number, number, number, number],
-): ImageData => {
-    const data = new Uint8ClampedArray(width * height * 4);
-    for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-            const [r, g, b, a] = pixel(x, y);
-            const i = (y * width + x) * 4;
-            data[i] = r;
-            data[i + 1] = g;
-            data[i + 2] = b;
-            data[i + 3] = a;
-        }
-    }
-    return { width, height, data, colorSpace: "srgb" } as ImageData;
-};
+import { rgbaImageData } from "@/test-utils/fixtures";
 
 const flatGray = (width: number, height: number, value: number): ImageData =>
     rgbaImageData(width, height, () => [value, value, value, 255]);

@@ -97,7 +97,7 @@ export const flushAllDurableState = (): Promise<void> => {
 /**
  * Fire-and-forget flush for pagehide / visibilitychange.
  */
-export const requestDurableFlush = (): void => {
+const requestDurableFlush = (): void => {
     flushAllDurableState().catch((error: unknown) => {
         console.warn("[durable-flush] flush failed", error);
     });

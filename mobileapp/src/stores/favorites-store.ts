@@ -40,10 +40,8 @@ interface FavoritesState {
         collections: Collection[],
         allFiles: EnteFile[],
     ) => void;
-    addPending: (fileId: number) => void;
     removePending: (fileId: number) => void;
     removeTrashedFileIds: (fileIds: number[]) => void;
-    clearUnsynced: () => void;
     reset: () => void;
 }
 
@@ -156,12 +154,6 @@ const createFavoritesStore: StateCreator<FavoritesState> = (set, get) => ({
         });
     },
 
-    addPending: (fileId: number): void => {
-        const pendingFavoriteFileIds = new Set(get().pendingFavoriteFileIds);
-        pendingFavoriteFileIds.add(fileId);
-        set({ pendingFavoriteFileIds });
-    },
-
     removePending: (fileId: number): void => {
         const pendingFavoriteFileIds = new Set(get().pendingFavoriteFileIds);
         pendingFavoriteFileIds.delete(fileId);
@@ -186,10 +178,6 @@ const createFavoritesStore: StateCreator<FavoritesState> = (set, get) => ({
             }
         }
         set({ favoriteFileIds, pendingFavoriteFileIds, unsyncedFavoriteUpdates });
-    },
-
-    clearUnsynced: (): void => {
-        set({ unsyncedFavoriteUpdates: new Map() });
     },
 
     reset: (): void => {

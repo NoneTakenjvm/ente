@@ -7,13 +7,13 @@ import {
     getCollectionSyncTime,
     saveCollectionSyncTime,
 } from "@/db/cursors";
-import { loadEncryptedTrashItems, saveEncryptedFiles } from "@/db/kv";
+import { loadKv, saveEncryptedFiles } from "@/db/kv";
 import { invalidateThumbnailCache } from "@/lib/thumbnail-cache";
 import { getSessionCacheKey } from "@/lib/cache-key";
 import { removePhashEntry } from "@/lib/similarity-job";
 import {
     applyFavoriteMembershipChanges,
-    beginFavoriteMembershipFullSync,
+    resetFavoriteMembershipForFullSync,
     commitFavoriteMembershipSync,
     ensureFavoriteMembershipHydrated,
     needsFavoriteMembershipFullSync,
@@ -30,13 +30,13 @@ import { applyOutboxVisibilityToFiles } from "@/lib/visibility-outbox";
 
 const collectionSyncConcurrency = 2;
 
-export interface PullFilesOptions {
+interface PullFilesOptions {
     collections: Collection[];
     files: EnteFile[];
     onProgress?: (current: number, total: number) => void;
 }
 
-export interface PullFilesResult {
+interface PullFilesResult {
     files: EnteFile[];
     didUpdate: boolean;
     /** True when favourite membership was re-committed (even with no changes). */
@@ -71,7 +71,7 @@ const commitPendingSyncCursors = async (
 const saveLibrarySnapshot = async (
     libraryById: ReadonlyMap<number, EnteFile>,
 ): Promise<void> => {
-    const trashItems = await loadEncryptedTrashItems(getSessionCacheKey());
+    const trashItems = await loadKv("trashItems");
     const trashedIds = new Set((trashItems ?? []).map((item) => item.file.id));
     const forDisk = applyOutboxVisibilityToFiles(
         applyOutboxTagsToFiles(sortFilesByUpload([...libraryById.values()])),
@@ -148,7 +148,7 @@ export const pullFiles = async (
                     isUserFavorites && needsFavoriteMembershipFullSync();
                 if (forceFavoritesFullSync) {
                     sinceTime = 0;
-                    beginFavoriteMembershipFullSync();
+                    resetFavoriteMembershipForFullSync();
                 }
 
                 if (

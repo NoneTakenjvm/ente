@@ -4,6 +4,7 @@ import {
     QUALITY_ANALYSIS_MAX,
     scoreImageQuality,
 } from "@/lib/image-quality";
+import { errorMessage } from "@/lib/format";
 
 export interface ImageQualityWorkerRequest {
     id: number;
@@ -70,7 +71,7 @@ self.onmessage = async (
         const response: ImageQualityWorkerResponse = {
             id,
             fileId,
-            error: error instanceof Error ? error.message : "Quality score failed",
+            error: errorMessage(error, "Quality score failed"),
         };
         self.postMessage(response);
     }

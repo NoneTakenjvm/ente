@@ -42,6 +42,20 @@ export const isManageToolSection = (
 ): section is ManageToolSection =>
     (toolSections as string[]).includes(section);
 
+/** Parse a `?section=` query value, falling back to the hub. */
+export const parseManageSection = (
+    value: string | string[] | undefined,
+): ManageSection => {
+    const sectionIds: string[] = [
+        ...hubCategories.map(({ id }) => id),
+        ...toolCategories.map(({ id }) => id),
+    ];
+    if (typeof value === "string" && sectionIds.includes(value)) {
+        return value as ManageSection;
+    }
+    return "hub";
+};
+
 const CategoryList = <T extends string>({
     categories,
     onSelect,

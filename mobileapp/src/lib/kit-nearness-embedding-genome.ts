@@ -57,14 +57,14 @@ export const KIT_NEARNESS_TUNE_MIN_LIFT = 0.02;
 /** Need enough embedded members for a meaningful holdout. */
 export const KIT_NEARNESS_TUNE_MIN_MEMBERS = 12;
 
-export type KitEmbeddingGeneSpec = {
+type KitEmbeddingGeneSpec = {
     key: keyof KitEmbeddingNearnessGenome;
     lo: number;
     hi: number;
     integer: boolean;
 };
 
-export const KIT_EMBEDDING_GENE_SPECS: readonly KitEmbeddingGeneSpec[] = [
+const KIT_EMBEDDING_GENE_SPECS: readonly KitEmbeddingGeneSpec[] = [
     { key: "rivalTau", lo: 0.02, hi: 0.4, integer: false },
     { key: "rivalLambda", lo: 0, hi: 24, integer: false },
     { key: "maxMedoids", lo: 1, hi: 5, integer: true },

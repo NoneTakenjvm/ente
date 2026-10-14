@@ -14,13 +14,14 @@ import {
     requestThumbnail,
     subscribeThumbnail,
 } from "@/lib/thumbnail-cache";
-import { fileByteSize, formatFileSize } from "@/lib/compress";
+import { fileByteSize } from "@/lib/compress";
 import { previewTransformForRotation } from "@/lib/rotate-draft";
 import type { RotationDegrees } from "@/lib/rotate";
 import { Check, CircleCheck, Play } from "lucide-react";
 import { FileType } from "ente-media/file-type";
 import type { EnteFile } from "ente-media/file";
 import { selectedIdSet, useSelectionStore } from "@/stores/selection-store";
+import { formatFileSize } from "@/lib/format";
 
 const LONG_PRESS_MS = 450;
 const LONG_PRESS_MOVE_PX = 10;

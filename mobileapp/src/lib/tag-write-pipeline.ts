@@ -9,6 +9,8 @@ import {
 import { batched } from "@/lib/batched";
 import { extractTags } from "@/lib/tags";
 import { tagsEqual } from "@/lib/tag-writes";
+import { wait } from "ente-utils/promise";
+import { errorMessage } from "@/lib/format";
 
 export type TagWriteResult =
     { status: "verified"; file: EnteFile } |
@@ -26,12 +28,9 @@ export interface TagBatchWriteResult {
 }
 
 /** Chunk size for tag metadata PUTs (Ente max is 1000; smaller limits conflict blast radius). */
-export const tagMetadataBatchSize = 100;
+const tagMetadataBatchSize = 100;
 
 const maxTransportAttempts = 3;
-
-const sleep = (ms: number): Promise<void> =>
-    new Promise((resolve) => setTimeout(resolve, ms));
 
 const retryDelayMs = (attempt: number, error: unknown): number => {
     if (error instanceof MetadataUpdateError && error.retryAfterMs) {
@@ -51,7 +50,7 @@ const isRetryableTransportError = (error: unknown): boolean => {
     if (error instanceof TypeError) {
         return true;
     }
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     return /failed to fetch|network|load failed/i.test(message);
 };
 
@@ -82,7 +81,7 @@ const putTagsWithTransportRetry = async (
             ) {
                 throw lastError;
             }
-            await sleep(retryDelayMs(attempt, error));
+            await wait(retryDelayMs(attempt, error));
         }
     }
     throw lastError ?? new Error(`Tag PUT failed for file ${file.id}`);
@@ -158,7 +157,7 @@ const writeBatchChunkWithRetry = async (
             ) {
                 throw error;
             }
-            await sleep(retryDelayMs(attempt, error));
+            await wait(retryDelayMs(attempt, error));
         }
     }
     throw lastError;

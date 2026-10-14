@@ -7,6 +7,8 @@ import type { EnteFile } from "ente-media/file";
 import type { HttpClient } from "./api/http";
 import { isProductionEnteOrigin, urlForLog } from "./api/http";
 import { requireAuth, type CoreSession } from "./session";
+import { mergeUint8Arrays } from "ente-utils/array";
+import { wait } from "ente-utils/promise";
 
 export interface ServerCiphertext {
     encryptedData: Uint8Array;
@@ -18,7 +20,7 @@ export interface ServerCiphertext {
  *
  * {@link total} is 0 when neither Content-Length nor a known size is available.
  */
-export interface BytesProgress {
+interface BytesProgress {
     loaded: number;
     total: number;
 }
@@ -96,17 +98,11 @@ const readResponseBytes = async (
         onProgress({ loaded, total });
     }
 
-    const result = new Uint8Array(loaded);
-    let offset = 0;
-    for (const chunk of chunks) {
-        result.set(chunk, offset);
-        offset += chunk.byteLength;
-    }
     onProgress?.({
         loaded,
         total: total > 0 ? total : loaded,
     });
-    return result;
+    return mergeUint8Arrays(chunks);
 };
 
 /** Backoff before retry {@link attempt} after a 5xx or network failure. */
@@ -138,8 +134,7 @@ const fetchEncryptedBytes = async (
             if (!(error instanceof TypeError) || !canRetry) {
                 throw error;
             }
-            await new Promise((resolve) =>
-                setTimeout(resolve, transientRetryDelayMs(attempt)));
+            await wait(transientRetryDelayMs(attempt));
             signal?.throwIfAborted();
             continue;
         }
@@ -149,7 +144,7 @@ const fetchEncryptedBytes = async (
                 res.status === 429 ?
                     retryAfterMs(res) * attempt :
                     transientRetryDelayMs(attempt);
-            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            await wait(delayMs);
             signal?.throwIfAborted();
             continue;
         }

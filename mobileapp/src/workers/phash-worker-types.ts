@@ -24,30 +24,7 @@ export interface PhashWorkerResponse {
 }
 
 /**
- * A crop-verification request sent to the worker pool. The luminance grids and
- * color signatures (already computed in the hash phase) are decoded and
- * template-matched entirely inside the worker, so the UI thread never blocks.
- */
-export interface CropCheckMessage {
-    kind: "crop-check";
-    id: number;
-    aColor: string;
-    aGrid: string;
-    bColor: string;
-    bGrid: string;
-}
-
-export interface CropCheckResult {
-    kind: "crop-check";
-    id: number;
-    /** True when the two images could be the same photo under a crop. */
-    match: boolean;
-    error?: string;
-}
-
-/**
  * Batched crop checks: unique grids are decoded once, then each pair is verified.
- * Prefer this over repeated {@link CropCheckMessage} for Stage-2.
  */
 export interface CropCheckBatchMessage {
     kind: "crop-check-batch";
@@ -100,14 +77,12 @@ export interface Stage1ResultMessage {
 
 export type PhashWorkerInbound =
     PhashWorkerRequest |
-    CropCheckMessage |
     CropCheckBatchMessage |
     Stage1Message |
     Stage1AbortMessage;
 
 export type PhashWorkerOutbound =
     PhashWorkerResponse |
-    CropCheckResult |
     CropCheckBatchResult |
     Stage1ProgressMessage |
     Stage1ResultMessage;

@@ -26,6 +26,7 @@ import {
     resetUnauthorizedGate,
     setUnauthorizedHandler,
 } from "@/lib/session-invalidation";
+import { errorMessage } from "@/lib/format";
 
 export type SessionStatus = "idle" | "loading" | "authenticated" | "error";
 
@@ -199,7 +200,7 @@ const createSessionStore: StateCreator<SessionState> = (set) => ({
                 status: "error",
                 userID: undefined,
                 errorMessage:
-                    error instanceof Error ? error.message : "Login failed",
+                    errorMessage(error, "Login failed"),
             });
             throw error;
         }

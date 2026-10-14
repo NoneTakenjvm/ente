@@ -11,16 +11,7 @@ import { PageLoader } from "@/components/PageLoader";
 import { SessionListCard } from "@/components/recents/SessionListCard";
 import { SessionViewThumb } from "@/components/recents/SessionViewThumb";
 import { SyncBanner } from "@/components/SyncBanner";
-import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import {
     Empty,
@@ -236,33 +227,15 @@ export default function RecentsPage(): JSX.Element {
                     readOnly
                 />
             ) : null}
-            <AlertDialog
+            <ConfirmDialog
                 open={showDeleteConfirm}
-                onOpenChange={(open) => {
-                    if (!open) {
-                        setShowDeleteConfirm(false);
-                    }
-                }}
-            >
-                <AlertDialogContent>
-                    <AlertDialogHeader>
-                        <AlertDialogTitle>Delete this session?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                            This removes the browsing history for this session
-                            from Recents. Your photos are not affected.
-                        </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction
-                            variant="destructive"
-                            onClick={handleConfirmDelete}
-                        >
-                            Delete session
-                        </AlertDialogAction>
-                    </AlertDialogFooter>
-                </AlertDialogContent>
-            </AlertDialog>
+                title="Delete this session?"
+                description="This removes the browsing history for this session from Recents. Your photos are not affected."
+                confirmLabel="Delete session"
+                destructive
+                onCancel={() => setShowDeleteConfirm(false)}
+                onConfirm={handleConfirmDelete}
+            />
         </AppShell>
     );
 }

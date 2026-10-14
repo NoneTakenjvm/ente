@@ -8,19 +8,13 @@ import {
     type KitMarginsRankingInput,
 } from "@/lib/kit-nearness-margins-job";
 import { fileWithOrganizerTags } from "@/lib/tag-writes";
+import { axis, toEmb } from "@/test-utils/fixtures";
 
-const toEmb = (values: number[]): Float32Array => Float32Array.from(values);
 const file = (id: number, tags: string[], fileType = FileType.image): EnteFile =>
     fileWithOrganizerTags(
         { id, metadata: { fileType } } as unknown as EnteFile,
         tags,
     );
-
-const axis = (d: number): number[] => {
-    const out = new Array<number>(KIT_EMBEDDING_DIMS).fill(0);
-    out[d] = 1;
-    return out;
-};
 
 /**
  * Library with `count` files per group: members (a+b), a-only, b-only, and

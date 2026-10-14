@@ -3,18 +3,23 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { PixelCrop } from "react-image-crop";
 import { beforeAll, describe, expect, it } from "vitest";
 import { installCanvasPolyfill } from "@/lib/__tests__/canvas-setup";
 import { encodeCroppedJpeg } from "@/lib/crop";
-import {
-    bakeRotation,
-    encodeBakedCrop,
-    fullFramePixelCrop,
-} from "@/lib/crop-editor";
+import { encodeBakedCrop } from "@/lib/crop-editor";
 import { rotateImageBytes } from "@/lib/rotate";
 
 beforeAll(() => {
     installCanvasPolyfill();
+});
+
+const fullFramePixelCrop = (width: number, height: number): PixelCrop => ({
+    unit: "px",
+    x: 0,
+    y: 0,
+    width,
+    height,
 });
 
 const quadrantFixturePng = (): Uint8Array =>
@@ -70,7 +75,7 @@ describe("rotateImageBytes", () => {
 describe("baked rotate + crop pipeline (editor path)", () => {
     it("crop after 90° rotation uses rotated dimensions", async () => {
         const source = quadrantFixturePng();
-        const rotated = await bakeRotation(source, "image/png", 90);
+        const rotated = await rotateImageBytes(source, "image/png", 90);
 
         const cropped = await encodeBakedCrop(
             rotated.bytes,
@@ -89,7 +94,7 @@ describe("baked rotate + crop pipeline (editor path)", () => {
 
     it("full-frame crop after rotate preserves rotated size", async () => {
         const source = quadrantFixturePng();
-        const rotated = await bakeRotation(source, "image/png", 90);
+        const rotated = await rotateImageBytes(source, "image/png", 90);
 
         const cropped = await encodeBakedCrop(
             rotated.bytes,
@@ -108,8 +113,8 @@ describe("baked rotate + crop pipeline (editor path)", () => {
 
     it("double 90° rotation returns to original dimensions", async () => {
         const source = quadrantFixturePng();
-        const once = await bakeRotation(source, "image/png", 90);
-        const twice = await bakeRotation(once.bytes, "image/jpeg", 90);
+        const once = await rotateImageBytes(source, "image/png", 90);
+        const twice = await rotateImageBytes(once.bytes, "image/jpeg", 90);
 
         expect(twice.width).toBe(4);
         expect(twice.height).toBe(2);
@@ -138,7 +143,7 @@ describe("CSS-rotate encode regression (old broken path)", () => {
         const source = quadrantFixturePng();
 
         const baked = await encodeBakedCrop(
-            (await bakeRotation(source, "image/png", 90)).bytes,
+            (await rotateImageBytes(source, "image/png", 90)).bytes,
             fullFramePixelCrop(1, 2),
             {
                 width: 2,

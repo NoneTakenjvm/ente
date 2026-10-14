@@ -20,15 +20,6 @@ import { getOrganizerDB, type FileShardRecord } from "./index";
 /** Fixed bucket count — ~500 files/shard around a 32k library. */
 export const FILE_LIBRARY_SHARD_COUNT = 64;
 
-export const FILE_SHARDS_META_VERSION = 1 as const;
-
-export type FileShardsMeta = {
-    version: typeof FILE_SHARDS_META_VERSION;
-    shardCount: number;
-};
-
-const shardsMetaKey = "file-shards-meta";
-
 /** Last persisted id → updationTime (sync / structural dirty detection). */
 let lastPersistedUpdation = new Map<number, number>();
 
@@ -43,13 +34,9 @@ let saveChain: Promise<void> = Promise.resolve();
 /**
  * Stable shard bucket for a file id.
  */
-export const fileLibraryShardId = (
-    fileId: number,
-    shardCount: number = FILE_LIBRARY_SHARD_COUNT,
-): number => {
-    const count = shardCount > 0 ? shardCount : FILE_LIBRARY_SHARD_COUNT;
-    return ((fileId % count) + count) % count;
-};
+export const fileLibraryShardId = (fileId: number): number =>
+    ((fileId % FILE_LIBRARY_SHARD_COUNT) + FILE_LIBRARY_SHARD_COUNT) %
+    FILE_LIBRARY_SHARD_COUNT;
 
 /**
  * Drop in-memory dirty baseline (logout / DB wipe).
@@ -72,46 +59,12 @@ export const markLibraryCacheFilesDirty = (
     }
 };
 
-/**
- * Force every non-empty shard to rewrite on the next save.
- */
-export const markLibraryCacheFullyDirty = (): void => {
-    pendingDirtyAll = true;
-};
-
-const loadShardsMeta = async (): Promise<FileShardsMeta | undefined> => {
-    const db = await getOrganizerDB();
-    const raw = await db.get("meta", shardsMetaKey);
-    if (typeof raw !== "string" || raw.length === 0) {
-        return undefined;
-    }
-    try {
-        const parsed = JSON.parse(raw) as FileShardsMeta;
-        if (
-            parsed?.version !== FILE_SHARDS_META_VERSION ||
-            typeof parsed.shardCount !== "number" ||
-            parsed.shardCount <= 0
-        ) {
-            return undefined;
-        }
-        return parsed;
-    } catch {
-        return undefined;
-    }
-};
-
-const saveShardsMeta = async (meta: FileShardsMeta): Promise<void> => {
-    const db = await getOrganizerDB();
-    await db.put("meta", JSON.stringify(meta), shardsMetaKey);
-};
-
 const groupFilesByShard = (
     files: readonly EnteFile[],
-    shardCount: number,
 ): Map<number, EnteFile[]> => {
     const groups = new Map<number, EnteFile[]>();
     for (const file of files) {
-        const shardId = fileLibraryShardId(file.id, shardCount);
+        const shardId = fileLibraryShardId(file.id);
         const list = groups.get(shardId);
         if (list) {
             list.push(file);
@@ -127,7 +80,6 @@ const groupFilesByShard = (
  */
 export const dirtyFileShardIdsFromUpdation = (
     files: readonly EnteFile[],
-    shardCount: number,
     previous: ReadonlyMap<number, number>,
 ): Set<number> => {
     const dirty = new Set<number>();
@@ -137,12 +89,12 @@ export const dirtyFileShardIdsFromUpdation = (
         nextIds.add(file.id);
         const prev = previous.get(file.id);
         if (prev === undefined || prev !== file.updationTime) {
-            dirty.add(fileLibraryShardId(file.id, shardCount));
+            dirty.add(fileLibraryShardId(file.id));
         }
     }
     for (const [fileId] of previous) {
         if (!nextIds.has(fileId)) {
-            dirty.add(fileLibraryShardId(fileId, shardCount));
+            dirty.add(fileLibraryShardId(fileId));
         }
     }
     return dirty;
@@ -153,7 +105,6 @@ export const dirtyFileShardIdsFromUpdation = (
  */
 export const resolveDirtyFileShardIds = (
     files: readonly EnteFile[],
-    shardCount: number,
     previous: ReadonlyMap<number, number>,
     markedFileIds: ReadonlySet<number>,
     forceAll: boolean,
@@ -161,16 +112,16 @@ export const resolveDirtyFileShardIds = (
     if (forceAll || previous.size === 0) {
         const all = new Set<number>();
         for (const file of files) {
-            all.add(fileLibraryShardId(file.id, shardCount));
+            all.add(fileLibraryShardId(file.id));
         }
         for (const fileId of previous.keys()) {
-            all.add(fileLibraryShardId(fileId, shardCount));
+            all.add(fileLibraryShardId(fileId));
         }
         return all;
     }
-    const dirty = dirtyFileShardIdsFromUpdation(files, shardCount, previous);
+    const dirty = dirtyFileShardIdsFromUpdation(files, previous);
     for (const fileId of markedFileIds) {
-        dirty.add(fileLibraryShardId(fileId, shardCount));
+        dirty.add(fileLibraryShardId(fileId));
     }
     return dirty;
 };
@@ -222,7 +173,7 @@ const decryptShardFiles = async (
 };
 
 /**
- * Load library files from shards (migrating legacy monolith once if needed).
+ * Load library files from shards.
  */
 export const loadEncryptedFilesSharded = async (
     cacheKey: string,
@@ -236,36 +187,11 @@ export const loadEncryptedFilesSharded = async (
         lastPersistedUpdation = snapshotUpdation(files);
         pendingDirtyFileIds = new Set();
         pendingDirtyAll = false;
-        const meta = await loadShardsMeta();
-        if (!meta) {
-            await saveShardsMeta({
-                version: FILE_SHARDS_META_VERSION,
-                shardCount: FILE_LIBRARY_SHARD_COUNT,
-            });
-        }
         return files;
     }
 
-    const db = await getOrganizerDB();
-    const legacy = await db.get("kv", "files");
-    if (!legacy) {
-        lastPersistedUpdation = new Map();
-        return undefined;
-    }
-    const files = await decryptCachePayload<EnteFile[]>(
-        {
-            encryptedData: legacy.encryptedData,
-            decryptionHeader: legacy.decryptionHeader,
-        },
-        cacheKey,
-    );
-    if (!Array.isArray(files)) {
-        lastPersistedUpdation = new Map();
-        return undefined;
-    }
-    await saveEncryptedFilesSharded(files, cacheKey, { forceAllShards: true });
-    await db.delete("kv", "files");
-    return files;
+    lastPersistedUpdation = new Map();
+    return undefined;
 };
 
 export type SaveEncryptedFilesOptions = {
@@ -295,13 +221,7 @@ const saveChangedShards = async (
     cacheKey: string,
     options?: SaveEncryptedFilesOptions,
 ): Promise<void> => {
-    const shardCount = FILE_LIBRARY_SHARD_COUNT;
-    await saveShardsMeta({
-        version: FILE_SHARDS_META_VERSION,
-        shardCount,
-    });
-
-    const groups = groupFilesByShard(files, shardCount);
+    const groups = groupFilesByShard(files);
     const marked = pendingDirtyFileIds;
     const forceAll = Boolean(options?.forceAllShards) || pendingDirtyAll;
     pendingDirtyFileIds = new Set();
@@ -309,7 +229,6 @@ const saveChangedShards = async (
 
     const dirty = resolveDirtyFileShardIds(
         files,
-        shardCount,
         lastPersistedUpdation,
         marked,
         forceAll,
@@ -342,11 +261,6 @@ const saveChangedShards = async (
         markLibraryCacheFilesDirty(marked);
         pendingDirtyAll ||= forceAll;
         throw error;
-    }
-
-    const db = await getOrganizerDB();
-    if (await db.get("kv", "files")) {
-        await db.delete("kv", "files");
     }
 
     lastPersistedUpdation = snapshotUpdation(files);

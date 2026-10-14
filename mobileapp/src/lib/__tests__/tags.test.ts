@@ -9,7 +9,6 @@ import {
     extractUserTags,
     filterFilesByTags,
     patchFilteredFilesForTagTouch,
-    countFilesMatchingTagFilter,
     countFileKindsInCandidates,
     countTaggedInCandidates,
     countUntaggedInCandidates,
@@ -20,46 +19,13 @@ import {
     type TagFilterGroup,
     type TagFilterSelection,
 } from "@/lib/tags";
-
-const fileWithTags = (id: number, tags: string[]): EnteFile =>
-    ({
-        id,
-        collectionID: 1,
-        key: "key",
-        metadata: {
-            fileType: 0,
-            title: "photo.jpg",
-            creationTime: 1,
-            modificationTime: 1,
-        },
-        pubMagicMetadata: {
-            version: 1,
-            count: 1,
-            data: {
-                _organizer_v1: { tags, updatedAt: 1 },
-            },
-        },
-    }) as unknown as EnteFile;
-
-const includeClause = (tag: string): TagFilterClauseNode => ({
-    kind: "clause",
-    id: newTagFilterNodeId(),
-    tag,
-    mode: "include",
-});
+import { andRoot, fileWithTags, includeClause } from "@/test-utils/fixtures";
 
 const excludeClause = (tag: string): TagFilterClauseNode => ({
     kind: "clause",
     id: newTagFilterNodeId(),
     tag,
     mode: "exclude",
-});
-
-const andRoot = (...children: TagFilterGroup["children"]): TagFilterGroup => ({
-    kind: "group",
-    id: newTagFilterNodeId(),
-    op: "and",
-    children,
 });
 
 const orRoot = (...children: TagFilterGroup["children"]): TagFilterGroup => ({
@@ -238,25 +204,6 @@ describe("tags", () => {
         expect(filtered.map((file) => file.id)).toEqual([1]);
     });
 
-    it("countFilesMatchingTagFilter counts intersection in candidate set", () => {
-        const files = [
-            fileWithTags(1, ["selfie"]),
-            fileWithTags(2, ["selfie", "vietnam"]),
-        ];
-        const index = buildTagIndex(files);
-        const { fileIdsByTag } = tagIndexToMaps(index);
-        expect(
-            countFilesMatchingTagFilter(
-                new Set([1, 2]),
-                filterWithRoot(
-                    andRoot(includeClause("selfie"), includeClause("vietnam")),
-                ),
-                fileIdsByTag,
-                files,
-            ),
-        ).toBe(1);
-    });
-
     it("filterFilesByTags supports untagged scope", () => {
         const files = [
             fileWithTags(1, []),
@@ -336,30 +283,6 @@ describe("tags", () => {
         expect(
             countUntaggedInCandidates(new Set([1, 2, 3, 4]), fileIdsByTag),
         ).toBe(3);
-    });
-
-    it("countFilesMatchingTagFilter counts untagged files in candidate set", () => {
-        const files = [
-            fileWithTags(1, []),
-            fileWithTags(2, ["selfie"]),
-        ];
-        const index = buildTagIndex(files);
-        const { fileIdsByTag } = tagIndexToMaps(index);
-        expect(
-            countFilesMatchingTagFilter(
-                new Set([1, 2]),
-                {
-                    tagScope: "untagged",
-                    favoritesScope: "all",
-                    mediaScope: "all",
-                    croppedScope: "all",
-                    rotatedScope: "all",
-                    root: createEmptyTagFilterRoot(),
-                },
-                fileIdsByTag,
-                files,
-            ),
-        ).toBe(1);
     });
 
     it("filterFilesByTags supports tagged scope for all tagged files", () => {
@@ -479,30 +402,6 @@ describe("tags", () => {
             fileIdsByTag,
         );
         expect(filtered.map((file) => file.id)).toEqual([1, 3]);
-    });
-
-    it("countFilesMatchingTagFilter counts tagged files in candidate set", () => {
-        const files = [
-            fileWithTags(1, []),
-            fileWithTags(2, ["selfie"]),
-        ];
-        const index = buildTagIndex(files);
-        const { fileIdsByTag } = tagIndexToMaps(index);
-        expect(
-            countFilesMatchingTagFilter(
-                new Set([1, 2]),
-                {
-                    tagScope: "tagged",
-                    favoritesScope: "all",
-                    mediaScope: "all",
-                    croppedScope: "all",
-                    rotatedScope: "all",
-                    root: createEmptyTagFilterRoot(),
-                },
-                fileIdsByTag,
-                files,
-            ),
-        ).toBe(1);
     });
 
     it("filterFilesByTags supports favorites scope", () => {

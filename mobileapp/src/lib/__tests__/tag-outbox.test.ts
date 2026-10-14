@@ -2,16 +2,16 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { EnteFile } from "ente-media/file";
 import { fileWithOrganizerTags } from "@/lib/tag-writes";
 
-const saveEncryptedTagOutbox = vi.fn(async () => {});
-const loadEncryptedTagOutbox = vi.fn(async () => [] as Array<{
+const saveKv = vi.fn(async (_key: string, _value: unknown) => {});
+const loadKv = vi.fn(async (_key: string) => [] as Array<{
     fileId: number;
     intendedTags: string[];
     enqueuedAt: number;
 }>);
 
 vi.mock("@/db/kv", () => ({
-    saveEncryptedTagOutbox,
-    loadEncryptedTagOutbox,
+    saveKv,
+    loadKv,
 }));
 
 vi.mock("@/lib/cache-key", () => ({
@@ -29,28 +29,28 @@ describe("tag-outbox", () => {
     });
 
     it("upsert replaces an existing entry for the same file", async () => {
-        const { upsertTagOutboxEntry, getTagOutboxEntry, hydrateTagOutbox } =
+        const { upsertTagOutboxEntries, getTagOutboxEntry, hydrateTagOutbox } =
             await import("@/lib/tag-outbox");
 
         await hydrateTagOutbox();
-        await upsertTagOutboxEntry(1, ["a"]);
-        await upsertTagOutboxEntry(1, ["a", "b"]);
+        await upsertTagOutboxEntries([{ fileId: 1, intendedTags: ["a"] }]);
+        await upsertTagOutboxEntries([{ fileId: 1, intendedTags: ["a", "b"] }]);
 
         expect(getTagOutboxEntry(1)?.intendedTags).toEqual(["a", "b"]);
-        expect(saveEncryptedTagOutbox).toHaveBeenCalled();
+        expect(saveKv).toHaveBeenCalled();
     });
 
     it("ensureTagOutboxHydrated does not clear newer in-memory entries", async () => {
         const {
-            upsertTagOutboxEntry,
+            upsertTagOutboxEntries,
             getTagOutboxEntry,
             hydrateTagOutbox,
             ensureTagOutboxHydrated,
         } = await import("@/lib/tag-outbox");
 
         await hydrateTagOutbox();
-        await upsertTagOutboxEntry(1, ["pending"]);
-        loadEncryptedTagOutbox.mockResolvedValueOnce([]);
+        await upsertTagOutboxEntries([{ fileId: 1, intendedTags: ["pending"] }]);
+        loadKv.mockResolvedValueOnce([]);
 
         await ensureTagOutboxHydrated();
 
@@ -58,11 +58,11 @@ describe("tag-outbox", () => {
     });
 
     it("applyOutboxTagsToFiles overlays pending tags onto files", async () => {
-        const { upsertTagOutboxEntry, applyOutboxTagsToFiles, hydrateTagOutbox } =
+        const { upsertTagOutboxEntries, applyOutboxTagsToFiles, hydrateTagOutbox } =
             await import("@/lib/tag-outbox");
 
         await hydrateTagOutbox();
-        await upsertTagOutboxEntry(2, ["pending"]);
+        await upsertTagOutboxEntries([{ fileId: 2, intendedTags: ["pending"] }]);
 
         const files = [
             stubFile(1, ["keep"]),
@@ -80,15 +80,15 @@ describe("tag-outbox", () => {
 
     it("reconcileTagOutboxWithFiles removes entries confirmed on server", async () => {
         const {
-            upsertTagOutboxEntry,
+            upsertTagOutboxEntries,
             getTagOutboxEntries,
             hydrateTagOutbox,
             reconcileTagOutboxWithFiles,
         } = await import("@/lib/tag-outbox");
 
         await hydrateTagOutbox();
-        await upsertTagOutboxEntry(1, ["a"]);
-        await upsertTagOutboxEntry(2, ["pending"]);
+        await upsertTagOutboxEntries([{ fileId: 1, intendedTags: ["a"] }]);
+        await upsertTagOutboxEntries([{ fileId: 2, intendedTags: ["pending"] }]);
 
         await reconcileTagOutboxWithFiles([
             stubFile(1, ["a"]),
@@ -100,19 +100,19 @@ describe("tag-outbox", () => {
 
     it("removeTagOutboxEntries clears multiple files in one persist", async () => {
         const {
-            upsertTagOutboxEntry,
+            upsertTagOutboxEntries,
             removeTagOutboxEntries,
             getTagOutboxEntries,
             hydrateTagOutbox,
         } = await import("@/lib/tag-outbox");
 
         await hydrateTagOutbox();
-        await upsertTagOutboxEntry(1, ["a"]);
-        await upsertTagOutboxEntry(2, ["b"]);
+        await upsertTagOutboxEntries([{ fileId: 1, intendedTags: ["a"] }]);
+        await upsertTagOutboxEntries([{ fileId: 2, intendedTags: ["b"] }]);
         await removeTagOutboxEntries([1, 2]);
 
         expect(getTagOutboxEntries()).toEqual([]);
-        expect(saveEncryptedTagOutbox).toHaveBeenCalledWith([], "test-cache-key");
+        expect(saveKv).toHaveBeenCalledWith("tagOutbox", []);
     });
 
     it("upsertTagOutboxEntries persists once for many files", async () => {
@@ -123,7 +123,7 @@ describe("tag-outbox", () => {
         } = await import("@/lib/tag-outbox");
 
         await hydrateTagOutbox();
-        saveEncryptedTagOutbox.mockClear();
+        saveKv.mockClear();
 
         await upsertTagOutboxEntries([
             { fileId: 1, intendedTags: ["a"] },
@@ -134,7 +134,7 @@ describe("tag-outbox", () => {
         expect(getTagOutboxEntries().map((entry) => entry.fileId).sort()).toEqual([
             1, 2, 3,
         ]);
-        expect(saveEncryptedTagOutbox).toHaveBeenCalledTimes(1);
+        expect(saveKv).toHaveBeenCalledTimes(1);
     });
 
     it("enqueueTagOutboxEntries updates memory without awaiting persist", async () => {
@@ -159,11 +159,11 @@ describe("tag-outbox", () => {
         } = await import("@/lib/tag-outbox");
 
         await hydrateTagOutbox();
-        saveEncryptedTagOutbox.mockRejectedValueOnce(new Error("idb"));
+        saveKv.mockRejectedValueOnce(new Error("idb"));
         enqueueTagOutboxEntries([{ fileId: 1, intendedTags: ["a"] }]);
         await flushTagOutboxPersist();
 
-        saveEncryptedTagOutbox.mockResolvedValue(undefined);
+        saveKv.mockResolvedValue(undefined);
         enqueueTagOutboxEntries([{ fileId: 2, intendedTags: ["b"] }]);
         await flushTagOutboxPersist();
 
@@ -172,7 +172,7 @@ describe("tag-outbox", () => {
                 .map((entry) => entry.fileId)
                 .sort(),
         ).toEqual([1, 2]);
-        const lastWrite = saveEncryptedTagOutbox.mock.calls.at(-1)?.[0] as
+        const lastWrite = saveKv.mock.calls.at(-1)?.[1] as
             Array<{ fileId: number }> | undefined;
         expect(lastWrite?.map((entry) => entry.fileId).sort()).toEqual([1, 2]);
     });

@@ -1,10 +1,9 @@
 import { deleteDB, openDB, type IDBPDatabase } from "idb";
 
-const dbVersion = 8;
+const dbVersion = 9;
 
 export type KvKey =
     | "collections" |
-    "files" |
     "tagIndex" |
     "phashIndex" |
     "qualityIndex" |
@@ -18,7 +17,7 @@ export type KvKey =
     "trashCollectionKeys" |
     "viewSessions";
 
-export interface KvRecord {
+interface KvRecord {
     key: KvKey;
     encryptedData: string;
     decryptionHeader: string;
@@ -28,10 +27,10 @@ export interface ThumbnailRecord {
     fileId: number;
     encryptedData: string;
     decryptionHeader: string;
-    /** Ciphertext byte length (missing on legacy rows). */
-    byteSize?: number;
-    /** LRU touch time (missing on legacy rows). */
-    lastAccess?: number;
+    /** Ciphertext byte length. */
+    byteSize: number;
+    /** LRU touch time. */
+    lastAccess: number;
 }
 
 /**
@@ -39,14 +38,12 @@ export interface ThumbnailRecord {
  * session {@code cacheKey}. Without login (no cacheKey / file.key) the blob is
  * opaque. {@link decryptionHeader} is the cacheKey layer; {@link fileDecryptionHeader}
  * is the original stream header for {@code file.key}.
- *
- * Legacy rows may omit {@link fileDecryptionHeader}; those are deleted on read.
  */
 export interface FileCiphertextRecord {
     fileId: number;
     encryptedData: ArrayBuffer;
     decryptionHeader: string;
-    fileDecryptionHeader?: string;
+    fileDecryptionHeader: string;
     byteSize: number;
     lastAccess: number;
 }
@@ -63,32 +60,17 @@ export interface DerivedReplacePayloadRecord {
     byteSize: number;
 }
 
-export interface SyncCursorRecord {
+interface SyncCursorRecord {
     collectionId: number;
     sinceTime: number;
 }
 
 /** One encrypted CLIP embedding chunk (append-only during scan). */
-export interface EmbeddingChunkRecord {
+interface EmbeddingChunkRecord {
     chunkId: number;
     modelId: string;
     dims: number;
     encryptedData: string;
-    decryptionHeader: string;
-}
-
-/**
- * Tile CLIP vectors for one photo (kit nearness tile pilot, local builds).
- * {@link encryptedData} is the cacheKey-wrapped float32 matrix
- * `rows × columns × dims`, row-major in {@link kitTileGrid} order.
- */
-export interface TileEmbeddingRecord {
-    fileId: number;
-    modelId: string;
-    layout: string;
-    rows: number;
-    columns: number;
-    encryptedData: ArrayBuffer;
     decryptionHeader: string;
 }
 
@@ -99,13 +81,13 @@ export interface FileShardRecord {
 }
 
 /** One encrypted chunk of phash entries (append-only; later chunks win). */
-export interface PhashChunkRecord {
+interface PhashChunkRecord {
     chunkId: number;
     encryptedData: string;
     decryptionHeader: string;
 }
 
-export interface OrganizerDB {
+interface OrganizerDB {
     kv: {
         key: KvKey;
         value: KvRecord;
@@ -130,10 +112,6 @@ export interface OrganizerDB {
         key: number;
         value: EmbeddingChunkRecord;
     };
-    tileEmbeddings: {
-        key: number;
-        value: TileEmbeddingRecord;
-    };
     fileShards: {
         key: number;
         value: FileShardRecord;
@@ -157,7 +135,7 @@ let dbPromise: Promise<IDBPDatabase<OrganizerDB>> | undefined;
 
 const openOrganizerDB = (userId: number): Promise<IDBPDatabase<OrganizerDB>> =>
     openDB<OrganizerDB>(dbNameForUser(userId), dbVersion, {
-        upgrade(db) {
+        upgrade(db, oldVersion, _newVersion, transaction) {
             if (!db.objectStoreNames.contains("kv")) {
                 db.createObjectStore("kv", { keyPath: "key" });
             }
@@ -178,9 +156,6 @@ const openOrganizerDB = (userId: number): Promise<IDBPDatabase<OrganizerDB>> =>
             if (!db.objectStoreNames.contains("embeddingChunks")) {
                 db.createObjectStore("embeddingChunks", { keyPath: "chunkId" });
             }
-            if (!db.objectStoreNames.contains("tileEmbeddings")) {
-                db.createObjectStore("tileEmbeddings", { keyPath: "fileId" });
-            }
             if (!db.objectStoreNames.contains("fileShards")) {
                 db.createObjectStore("fileShards", { keyPath: "shardId" });
             }
@@ -189,6 +164,20 @@ const openOrganizerDB = (userId: number): Promise<IDBPDatabase<OrganizerDB>> =>
             }
             if (!db.objectStoreNames.contains("meta")) {
                 db.createObjectStore("meta");
+            }
+
+            // v9 dropped the tile-embeddings store and legacy row formats
+            // (kv "files" monolith, shards meta, thumbnail/ciphertext rows
+            // without LRU fields). Caches re-pull; outboxes are untouched.
+            if (oldVersion > 0 && oldVersion < 9) {
+                const untypedDB = db as unknown as IDBPDatabase;
+                if (untypedDB.objectStoreNames.contains("tileEmbeddings")) {
+                    untypedDB.deleteObjectStore("tileEmbeddings");
+                }
+                void transaction.objectStore("kv").delete("files" as KvKey);
+                void transaction.objectStore("meta").delete("file-shards-meta");
+                void transaction.objectStore("thumbnails").clear();
+                void transaction.objectStore("fileCiphertexts").clear();
             }
         },
     });

@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import type { EnteFile } from "ente-media/file";
 import {
     addTagNames,
     mergeTagNames,
@@ -9,16 +8,7 @@ import {
     tagsForFile,
     tagsEqual,
 } from "@/lib/tag-writes";
-
-const fileWithTags = (tags: string[]): EnteFile =>
-    ({
-        id: 1,
-        pubMagicMetadata: {
-            version: 1,
-            count: 1,
-            data: { _organizer_v1: { tags, updatedAt: 1 } },
-        },
-    }) as unknown as EnteFile;
+import { fileWithTags } from "@/test-utils/fixtures";
 
 describe("tag-writes", () => {
     it("normalizeTagName trims and rejects empty", () => {
@@ -49,7 +39,7 @@ describe("tag-writes", () => {
 
     it("tagsForFile applies mutator to file tags", () => {
         expect(
-            tagsForFile(fileWithTags(["x"]), (tags) => addTagNames(tags, "y")),
+            tagsForFile(fileWithTags(1, ["x"]), (tags) => addTagNames(tags, "y")),
         ).toEqual(["x", "y"]);
     });
 

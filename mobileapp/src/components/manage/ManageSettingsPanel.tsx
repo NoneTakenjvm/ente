@@ -21,8 +21,6 @@ import {
     MIN_GALLERY_COLUMNS,
     MIN_SIMILAR_MAX_GROUP_SIZE,
 } from "@/lib/app-settings";
-import { getEnteCore } from "@/core";
-import { isLocalDevToolsVisible } from "@/lib/dev-flags";
 import {
     getKitEmbeddingBatchFallbackReason,
     getKitEmbeddingWebGpuSkipReason,
@@ -30,24 +28,15 @@ import {
     runKitEmbeddingJob,
     stripVideoEmbeddings,
 } from "@/lib/kit-embedding";
-import type { KitTileEmbeddingCoverage } from "@/lib/kit-tile-embedding-job";
-import { KIT_TILE_LAYOUT_ID } from "@/lib/kit-tile-layout";
-import { isEnteVideoFile } from "@/lib/media-kind";
 import { imageFilesForPhash } from "@/lib/similarity-job";
-import { isTagIncludedInKitNearness } from "@/lib/tag-types";
-import { extractUserTags } from "@/lib/tags";
-import { isFileArchivedLocally } from "@/lib/visibility-outbox";
-import type { EnteFile } from "ente-media/file";
 import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
 import { useLibraryStore } from "@/stores/library-store";
-import { usePhashIndexStore } from "@/stores/phash-index-store";
 import { useQualityIndexStore } from "@/stores/quality-index-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useSettingsStore } from "@/stores/settings-store";
-import { useTagSpeedStore } from "@/stores/tag-speed-store";
-import { useTagStore } from "@/stores/tag-store";
 import type { BackgroundJobStatus } from "@/stores/ui-store";
 import { runImageQualityJob } from "@/lib/image-quality-job";
+import { errorMessage } from "@/lib/format";
 
 const columnOptions: number[] = Array.from(
     { length: MAX_GALLERY_COLUMNS - MIN_GALLERY_COLUMNS + 1 },
@@ -63,26 +52,6 @@ const clipBatchSizeOptions: number[] = [
     CLIP_EMBEDDING_BATCH_SIZE_AUTO,
     ...CLIP_EMBEDDING_BATCH_SIZE_OPTIONS,
 ];
-
-/** Non-archived stills carrying at least one kit-nearness tag (the corpus). */
-const kitNearnessTaggedFileIds = (
-    files: readonly EnteFile[],
-    includeInKitNearnessByName: ReadonlyMap<string, boolean>,
-): Set<number> =>
-    new Set(
-        files
-            .filter(
-                (file) =>
-                    !isEnteVideoFile(file) &&
-                    !isFileArchivedLocally(file) &&
-                    extractUserTags(file).some((tag) =>
-                        isTagIncludedInKitNearness(
-                            tag,
-                            includeInKitNearnessByName,
-                        )),
-            )
-            .map((file) => file.id),
-    );
 
 /** First selected toggle value as an integer, or `undefined` when none/invalid. */
 const parseToggleInteger = (next: unknown): number | undefined => {
@@ -105,10 +74,7 @@ export function ManageSettingsPanel(): JSX.Element {
         (s) => s.clipEmbeddingBatchSize,
     );
     const patchSettings = useSettingsStore((s) => s.patchSettings);
-    const [corpusExporting, setCorpusExporting] = useState(false);
-    const [corpusExportLabel, setCorpusExportLabel] = useState("Exporting…");
     const [forceResyncing, setForceResyncing] = useState(false);
-    const [showDevTools, setShowDevTools] = useState(false);
     const [clipJobStatus, setClipJobStatus] =
         useState<BackgroundJobStatus>("idle");
     const [clipProgress, setClipProgress] = useState({ current: 0, total: 0 });
@@ -125,12 +91,6 @@ export function ManageSettingsPanel(): JSX.Element {
     });
     const qualityAbort = useRef<AbortController | undefined>(undefined);
     const qualityPaused = useRef(false);
-    const [tileJobStatus, setTileJobStatus] =
-        useState<BackgroundJobStatus>("idle");
-    const [tileCoverage, setTileCoverage] = useState<
-        KitTileEmbeddingCoverage | undefined
-    >(undefined);
-    const tileAbort = useRef<AbortController | undefined>(undefined);
 
     const allFiles = useLibraryStore((s) => s.allFiles);
     const allFilesCount = allFiles.length;
@@ -146,9 +106,6 @@ export function ManageSettingsPanel(): JSX.Element {
     const qualityHydrated = useQualityIndexStore((s) => s.isHydrated);
     const hydrateQuality = useQualityIndexStore((s) => s.hydrate);
     const setQualityEntries = useQualityIndexStore((s) => s.setEntries);
-    const includeInKitNearnessByName = useTagStore(
-        (s) => s.includeInKitNearnessByName,
-    );
 
     const clipCandidateCount = useMemo(
         () => imageFilesForPhash(allFiles, userId).length,
@@ -158,10 +115,6 @@ export function ManageSettingsPanel(): JSX.Element {
     const qualityCandidateCount = clipCandidateCount;
     const qualityIndexedCount = qualityEntries.size;
 
-    useEffect(() => {
-        setShowDevTools(isLocalDevToolsVisible());
-    }, []);
-
     // Job status is local state, so a job left running would be invisible on
     // return and a second one could start alongside it.
     useEffect(() => {
@@ -170,52 +123,8 @@ export function ManageSettingsPanel(): JSX.Element {
             qualityPaused.current = true;
             clipAbort.current?.abort();
             qualityAbort.current?.abort();
-            tileAbort.current?.abort();
         };
     }, []);
-
-    // Tile pilot coverage for the Developer card (local builds only).
-    useEffect(() => {
-        if (
-            !showDevTools ||
-            !embeddingHydrated ||
-            allFiles.length === 0 ||
-            tileJobStatus === "running"
-        ) {
-            return;
-        }
-        let cancelled = false;
-        void import("@/lib/kit-tile-embedding-job")
-            .then(({ kitTileEmbeddingCoverage }) =>
-                kitTileEmbeddingCoverage({
-                    files: allFiles,
-                    userId,
-                    embeddings: embeddingEntries,
-                    priorityFileIds: kitNearnessTaggedFileIds(
-                        allFiles,
-                        includeInKitNearnessByName,
-                    ),
-                }))
-            .then((coverage) => {
-                if (!cancelled) {
-                    setTileCoverage(coverage);
-                }
-            })
-            .catch((error: unknown) => {
-                console.warn("[kit-tiles] coverage failed", error);
-            });
-        return (): void => {
-            cancelled = true;
-        };
-    }, [
-        showDevTools,
-        embeddingHydrated,
-        allFiles,
-        userId,
-        embeddingEntries,
-        includeInKitNearnessByName,
-        tileJobStatus,
-    ]);
 
     useEffect(() => {
         if (embeddingHydrated) {
@@ -354,9 +263,7 @@ export function ManageSettingsPanel(): JSX.Element {
                 }
                 setClipJobStatus("error");
                 toast.error(
-                    error instanceof Error ?
-                        error.message :
-                        "CLIP scan failed",
+                    errorMessage(error, "CLIP scan failed"),
                 );
             });
     };
@@ -421,9 +328,7 @@ export function ManageSettingsPanel(): JSX.Element {
                 }
                 setQualityJobStatus("error");
                 toast.error(
-                    error instanceof Error ?
-                        error.message :
-                        "Image quality scan failed",
+                    errorMessage(error, "Image quality scan failed"),
                 );
             });
     };
@@ -434,68 +339,6 @@ export function ManageSettingsPanel(): JSX.Element {
         setQualityJobStatus("paused");
     };
 
-    const handleStartTileJob = (): void => {
-        if (tileJobStatus === "running") {
-            return;
-        }
-        tileAbort.current?.abort();
-        const controller = new AbortController();
-        const { signal } = controller;
-        tileAbort.current = controller;
-        setTileJobStatus("running");
-        void import("@/lib/kit-tile-embedding-job")
-            .then(({ runKitTileEmbeddingJob }) =>
-                runKitTileEmbeddingJob({
-                    files: allFiles,
-                    userId,
-                    embeddings: embeddingEntries,
-                    priorityFileIds: kitNearnessTaggedFileIds(
-                        allFiles,
-                        includeInKitNearnessByName,
-                    ),
-                    signal,
-                    onProgress: (progress) => {
-                        if (!signal.aborted) {
-                            setTileCoverage(progress);
-                        }
-                    },
-                }))
-            .then(() => {
-                // A superseded run must not overwrite the newer run's state.
-                if (tileAbort.current !== controller) {
-                    return;
-                }
-                if (signal.aborted) {
-                    setTileJobStatus("paused");
-                    return;
-                }
-                setTileJobStatus("done");
-            })
-            .catch((error: unknown) => {
-                if (tileAbort.current !== controller) {
-                    return;
-                }
-                if (signal.aborted) {
-                    setTileJobStatus("paused");
-                    return;
-                }
-                setTileJobStatus("error");
-                toast.error(
-                    error instanceof Error ? error.message : "Tile scan failed",
-                );
-            });
-    };
-
-    const handleClearTiles = async (): Promise<void> => {
-        const { clearTileEmbeddings } = await import("@/db/tile-embeddings");
-        await clearTileEmbeddings();
-        setTileJobStatus("idle");
-        setTileCoverage(
-            (coverage) =>
-                coverage && { ...coverage, completed: 0, priorityCompleted: 0 },
-        );
-        toast.message("Tile embeddings cleared");
-    };
     const runForceResync = async (): Promise<void> => {
         if (forceResyncing || syncStatus === "syncing") {
             return;
@@ -507,92 +350,10 @@ export function ManageSettingsPanel(): JSX.Element {
             toast.success(`Library resynced — ${count} files loaded`);
         } catch (error: unknown) {
             const message =
-                error instanceof Error ? error.message : "Resync failed";
+                errorMessage(error, "Resync failed");
             toast.error(message);
         } finally {
             setForceResyncing(false);
-        }
-    };
-
-    const exportKitNearnessCorpus = async (): Promise<void> => {
-        if (!isLocalDevToolsVisible() || corpusExporting) {
-            return;
-        }
-        setCorpusExporting(true);
-        setCorpusExportLabel("Loading CLIP model…");
-        try {
-            const {
-                buildAnonymisedKitNearnessCorpus,
-                downloadAnonymisedKitNearnessCorpus,
-            } = await import("@/lib/kit-nearness-corpus-export");
-            const { getTileEmbeddingsFor } = await import(
-                "@/db/tile-embeddings"
-            );
-            const phashStore = usePhashIndexStore.getState();
-            if (!phashStore.isHydrated) {
-                await phashStore.hydrate();
-            }
-            const files = useLibraryStore.getState().allFiles;
-            const onlyFileIds = kitNearnessTaggedFileIds(
-                files,
-                includeInKitNearnessByName,
-            );
-            const embeddings = await runKitEmbeddingJob({
-                files,
-                userId: getEnteCore().getUserID(),
-                onlyFileIds,
-                existing: new Map(embeddingEntries),
-                onProgress: (progress) => {
-                    if (progress.phase === "model") {
-                        setCorpusExportLabel("Loading CLIP model…");
-                        return;
-                    }
-                    if (progress.total === 0) {
-                        setCorpusExportLabel("Building export…");
-                        return;
-                    }
-                    setCorpusExportLabel(
-                        `Embedding ${progress.completed}/${progress.total}…`,
-                    );
-                },
-            });
-            setEmbeddingEntries(embeddings);
-            setCorpusExportLabel("Reading tiles…");
-            const tileEmbeddings = await getTileEmbeddingsFor(
-                onlyFileIds,
-                KIT_EMBEDDING_MODEL_ID,
-                KIT_TILE_LAYOUT_ID,
-            );
-            setCorpusExportLabel("Building export…");
-            const corpus = buildAnonymisedKitNearnessCorpus({
-                files,
-                phashEntries: usePhashIndexStore.getState().entries,
-                kits: useTagSpeedStore.getState().presets,
-                includeInKitNearnessByName,
-                embeddings,
-                tileEmbeddings,
-            });
-            if (!corpus.photos.length) {
-                toast.message(
-                    "Nothing to export — enable Kit nearness on tags in Manage → Tags first",
-                );
-                return;
-            }
-            const withVectors = corpus.photos.filter(
-                (photo) => photo.embedding?.length,
-            ).length;
-            const withTiles = corpus.photos.filter((photo) => photo.tiles).length;
-            downloadAnonymisedKitNearnessCorpus(corpus);
-            toast.success(
-                `Exported ${corpus.photos.length} photos (${withVectors} with CLIP, ${withTiles} with tiles), ${corpus.kits.length} kits`,
-            );
-        } catch (error: unknown) {
-            const message =
-                error instanceof Error ? error.message : "Export failed";
-            toast.error(message);
-        } finally {
-            setCorpusExporting(false);
-            setCorpusExportLabel("Exporting…");
         }
     };
 
@@ -947,89 +708,6 @@ export function ManageSettingsPanel(): JSX.Element {
                     </div>
                 </CardContent>
             </Card>
-
-            {showDevTools ? (
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Developer</CardTitle>
-                        <CardDescription>
-                            Local builds only. Export an anonymised kit-nearness
-                            corpus for tags with “Kit nearness” enabled (dHash +
-                            CLIP embeddings + remapped tag ids — no images or
-                            real tag names). First run downloads a ~150MB CLIP
-                            model; keep this tab open until the JSON downloads.
-                            Tile pilot: embeds a 1/3-scale square grid per
-                            thumbnail (≈12–15 forwards per photo) for stills that
-                            already have a CLIP vector, tagged photos first; the
-                            export then adds a float32 sidecar.
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent className="flex flex-col gap-3">
-                        <p className="text-sm text-muted-foreground">
-                            {tileCoverage ?
-                                `Tiles: ${tileCoverage.priorityCompleted.toLocaleString()} / ${tileCoverage.priorityTotal.toLocaleString()} tagged · ${tileCoverage.completed.toLocaleString()} / ${tileCoverage.total.toLocaleString()} all` :
-                                "Tiles: loading…"}
-                            {tileJobStatus === "running" ? " · scanning" : null}
-                            {tileJobStatus === "paused" ? " · stopped" : null}
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                            <Button
-                                type="button"
-                                variant="outline"
-                                disabled={
-                                    tileJobStatus === "running" ||
-                                    !tileCoverage ||
-                                    tileCoverage.completed >= tileCoverage.total
-                                }
-                                onClick={handleStartTileJob}
-                            >
-                                {tileCoverage &&
-                                tileCoverage.completed >= tileCoverage.total ?
-                                    "Tiles complete" :
-                                    tileJobStatus === "paused" ?
-                                        "Resume tile scan" :
-                                        "Scan tiles"}
-                            </Button>
-                            {tileJobStatus === "running" ? (
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    onClick={() => {
-                                        tileAbort.current?.abort();
-                                    }}
-                                >
-                                    Stop
-                                </Button>
-                            ) : null}
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                disabled={
-                                    tileJobStatus === "running" ||
-                                    !tileCoverage?.completed
-                                }
-                                onClick={() => {
-                                    void handleClearTiles();
-                                }}
-                            >
-                                Clear tiles
-                            </Button>
-                            <Button
-                                type="button"
-                                variant="outline"
-                                disabled={corpusExporting}
-                                onClick={() => {
-                                    void exportKitNearnessCorpus();
-                                }}
-                            >
-                                {corpusExporting ?
-                                    corpusExportLabel :
-                                    "Export kit-nearness corpus"}
-                            </Button>
-                        </div>
-                    </CardContent>
-                </Card>
-            ) : null}
         </div>
     );
 }

@@ -6,12 +6,12 @@ import {
     type PointerEvent as ReactPointerEvent,
 } from "react";
 
-const MIN_SCALE: number = 1;
-const MAX_SCALE: number = 4;
-const DOUBLE_TAP_SCALE: number = 3;
-const ZOOM_TRANSITION_MS: number = 250;
+const MIN_SCALE = 1;
+const MAX_SCALE = 4;
+const DOUBLE_TAP_SCALE = 3;
+const ZOOM_TRANSITION_MS = 250;
 
-export interface PanBounds {
+interface PanBounds {
     minX: number;
     maxX: number;
     minY: number;
@@ -25,7 +25,6 @@ interface PinchLayout {
 
 interface PinchZoomOptions {
     enabled: boolean;
-    onPanRelease?: (edgeOverflowX: number) => void;
     layoutRef?: { current: PinchLayout | null };
 }
 
@@ -51,29 +50,22 @@ interface PinchZoomState {
     transformStyle: { transform: string; transition?: string };
 }
 
-const clamp: (value: number, min: number, max: number) => number = (
-    value: number,
-    min: number,
-    max: number,
-): number => Math.min(max, Math.max(min, value));
+const clamp = (value: number, min: number, max: number): number =>
+    Math.min(max, Math.max(min, value));
 
 /**
  * Size of an image as rendered with `object-fit: contain` inside a container.
  */
-export const getObjectContainSize: (
-    media: HTMLImageElement | HTMLVideoElement,
-    containerWidth: number,
-    containerHeight: number,
-) => { width: number; height: number } = (
+const getObjectContainSize = (
     media: HTMLImageElement | HTMLVideoElement,
     containerWidth: number,
     containerHeight: number,
 ): { width: number; height: number } => {
-    const naturalWidth: number =
+    const naturalWidth =
         media instanceof HTMLVideoElement ?
             media.videoWidth :
             media.naturalWidth;
-    const naturalHeight: number =
+    const naturalHeight =
         media instanceof HTMLVideoElement ?
             media.videoHeight :
             media.naturalHeight;
@@ -88,7 +80,7 @@ export const getObjectContainSize: (
             height: media.clientHeight,
         };
     }
-    const fitScale: number = Math.min(
+    const fitScale = Math.min(
         containerWidth / naturalWidth,
         containerHeight / naturalHeight,
     );
@@ -98,23 +90,17 @@ export const getObjectContainSize: (
     };
 };
 
-export const computePanBounds: (
-    containerWidth: number,
-    containerHeight: number,
-    imageWidth: number,
-    imageHeight: number,
-    scale: number,
-) => PanBounds = (
+const computePanBounds = (
     containerWidth: number,
     containerHeight: number,
     imageWidth: number,
     imageHeight: number,
     scale: number,
 ): PanBounds => {
-    const scaledWidth: number = imageWidth * scale;
-    const scaledHeight: number = imageHeight * scale;
-    const maxX: number = Math.max(0, (scaledWidth - containerWidth) / 2);
-    const maxY: number = Math.max(0, (scaledHeight - containerHeight) / 2);
+    const scaledWidth = imageWidth * scale;
+    const scaledHeight = imageHeight * scale;
+    const maxX = Math.max(0, (scaledWidth - containerWidth) / 2);
+    const maxY = Math.max(0, (scaledHeight - containerHeight) / 2);
     return {
         minX: -maxX,
         maxX,
@@ -123,70 +109,47 @@ export const computePanBounds: (
     };
 };
 
-const pinchDistance: (
+const pinchDistance = (
     pointers: Map<number, { x: number; y: number }>,
-) => number = (pointers: Map<number, { x: number; y: number }>): number => {
-    const points: { x: number; y: number }[] = [...pointers.values()];
+): number => {
+    const points = [...pointers.values()];
     return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
 };
 
-export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
+export const usePinchZoom = ({
     enabled,
-    onPanRelease,
     layoutRef,
 }: PinchZoomOptions): PinchZoomState => {
-    const [scale, setScale]: [number, (value: number | ((current: number) => number)) => void] =
-        useState<number>(1);
-    const [translateX, setTranslateX]: [
-        number,
-        (value: number | ((current: number) => number)) => void,
-    ] = useState<number>(0);
-    const [translateY, setTranslateY]: [
-        number,
-        (value: number | ((current: number) => number)) => void,
-    ] = useState<number>(0);
-    const [transitionEnabled, setTransitionEnabled]: [
-        boolean,
-        (value: boolean) => void,
-    ] = useState<boolean>(false);
+    const [scale, setScale] = useState(1);
+    const [translateX, setTranslateX] = useState(0);
+    const [translateY, setTranslateY] = useState(0);
+    const [transitionEnabled, setTransitionEnabled] = useState(false);
 
-    const scaleRef: { current: number } = useRef<number>(1);
+    const scaleRef = useRef(1);
     useEffect((): void => {
         scaleRef.current = scale;
     }, [scale]);
 
-    const onPanReleaseRef: { current: ((edgeOverflowX: number) => void) | undefined } =
-        useRef(onPanRelease);
-    useEffect((): void => {
-        onPanReleaseRef.current = onPanRelease;
-    }, [onPanRelease]);
-
-    const boundsRef: { current: PanBounds } = useRef<PanBounds>({
+    const boundsRef = useRef<PanBounds>({
         minX: 0,
         maxX: 0,
         minY: 0,
         maxY: 0,
     });
-    const edgeOverflowAccumRef: { current: number } = useRef<number>(0);
-    const pointersRef: { current: Map<number, { x: number; y: number }> } =
-        useRef<Map<number, { x: number; y: number }>>(new Map());
-    const pinchStartRef: {
-        current: { distance: number; scale: number } | undefined;
-    } = useRef<{ distance: number; scale: number } | undefined>(undefined);
-    const panStartRef: {
-        current: { x: number; y: number; translateX: number; translateY: number } |
-            undefined;
-    } = useRef<
+    const pointersRef = useRef<Map<number, { x: number; y: number }>>(
+        new Map(),
+    );
+    const pinchStartRef = useRef<
+        { distance: number; scale: number } | undefined
+    >(undefined);
+    const panStartRef = useRef<
         { x: number; y: number; translateX: number; translateY: number } |
         undefined
     >(undefined);
 
-    const applyPanBounds: (
-        container: HTMLElement,
-        image: HTMLImageElement | HTMLVideoElement,
-    ) => void = useCallback(
+    const applyPanBounds = useCallback(
         (container: HTMLElement, image: HTMLImageElement | HTMLVideoElement): void => {
-            const containedSize: { width: number; height: number } = getObjectContainSize(
+            const containedSize = getObjectContainSize(
                 image,
                 container.clientWidth,
                 container.clientHeight,
@@ -214,19 +177,19 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
         [scale],
     );
 
-    const syncBoundsFromLayout: () => void = useCallback((): void => {
-        const layout: PinchLayout | null | undefined = layoutRef?.current;
+    const syncBoundsFromLayout = useCallback((): void => {
+        const layout = layoutRef?.current;
         if (!layout || scale <= 1.01) {
             return;
         }
         applyPanBounds(layout.container, layout.image);
     }, [applyPanBounds, layoutRef, scale]);
 
-    const shouldCaptureGestures: () => boolean = useCallback((): boolean => {
+    const shouldCaptureGestures = useCallback((): boolean => {
         return scaleRef.current > 1.01 || pointersRef.current.size >= 2;
     }, []);
 
-    const initPinchStartIfNeeded: () => void = useCallback((): void => {
+    const initPinchStartIfNeeded = useCallback((): void => {
         if (pointersRef.current.size !== 2) {
             return;
         }
@@ -237,31 +200,27 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
         panStartRef.current = undefined;
     }, []);
 
-    const getPointerCount: () => number = useCallback(
+    const getPointerCount = useCallback(
         (): number => pointersRef.current.size,
         [],
     );
 
-    const registerPointer: (pointerId: number, x: number, y: number) => void =
+    const registerPointer =
         useCallback((pointerId: number, x: number, y: number): void => {
             if (!enabled) {
                 return;
-            }
-            if (pointersRef.current.size === 0) {
-                edgeOverflowAccumRef.current = 0;
             }
             pointersRef.current.set(pointerId, { x, y });
             initPinchStartIfNeeded();
         }, [enabled, initPinchStartIfNeeded]);
 
-    const clearPointers: () => void = useCallback((): void => {
+    const clearPointers = useCallback((): void => {
         pointersRef.current.clear();
         pinchStartRef.current = undefined;
         panStartRef.current = undefined;
-        edgeOverflowAccumRef.current = 0;
     }, []);
 
-    const reset: () => void = useCallback((): void => {
+    const reset = useCallback((): void => {
         setTransitionEnabled(false);
         setScale(1);
         setTranslateX(0);
@@ -269,18 +228,14 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
         clearPointers();
     }, [clearPointers]);
 
-    const animateZoomTo: (
-        nextScale: number,
-        nextTranslateX: number,
-        nextTranslateY: number,
-    ) => void = useCallback(
+    const animateZoomTo = useCallback(
         (
             nextScale: number,
             nextTranslateX: number,
             nextTranslateY: number,
         ): void => {
             setTransitionEnabled(true);
-            const applyZoom: () => void = (): void => {
+            const applyZoom = (): void => {
                 setScale(nextScale);
                 setTranslateX(nextTranslateX);
                 setTranslateY(nextTranslateY);
@@ -299,10 +254,7 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
         [],
     );
 
-    const updatePanBounds: (
-        container: HTMLElement,
-        image: HTMLImageElement | HTMLVideoElement,
-    ) => void = useCallback(
+    const updatePanBounds = useCallback(
         (container: HTMLElement, image: HTMLImageElement | HTMLVideoElement): void => {
             if (!enabled || scale <= 1.01) {
                 boundsRef.current = { minX: 0, maxX: 0, minY: 0, maxY: 0 };
@@ -313,23 +265,18 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
         [applyPanBounds, enabled, scale],
     );
 
-    const finishGesture: () => void = useCallback((): void => {
+    const finishGesture = useCallback((): void => {
         if (pointersRef.current.size > 0) {
             return;
         }
-        const edgeOverflow: number = edgeOverflowAccumRef.current;
-        edgeOverflowAccumRef.current = 0;
         panStartRef.current = undefined;
         pinchStartRef.current = undefined;
         if (scale > 1.01) {
             syncBoundsFromLayout();
-            if (edgeOverflow !== 0) {
-                onPanReleaseRef.current?.(edgeOverflow);
-            }
         }
     }, [scale, syncBoundsFromLayout]);
 
-    const releasePointer: (pointerId: number) => void = useCallback(
+    const releasePointer = useCallback(
         (pointerId: number): void => {
             if (!pointersRef.current.has(pointerId)) {
                 return;
@@ -343,11 +290,7 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
         [finishGesture],
     );
 
-    const onDoubleTap: (
-        clientX: number,
-        clientY: number,
-        container: HTMLElement,
-    ) => void = useCallback(
+    const onDoubleTap = useCallback(
         (clientX: number, clientY: number, container: HTMLElement): void => {
             if (!enabled) {
                 return;
@@ -357,9 +300,9 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
                 clearPointers();
                 return;
             }
-            const rect: DOMRect = container.getBoundingClientRect();
-            const offsetX: number = clientX - rect.left - rect.width / 2;
-            const offsetY: number = clientY - rect.top - rect.height / 2;
+            const rect = container.getBoundingClientRect();
+            const offsetX = clientX - rect.left - rect.width / 2;
+            const offsetY = clientY - rect.top - rect.height / 2;
             animateZoomTo(
                 DOUBLE_TAP_SCALE,
                 -offsetX * (DOUBLE_TAP_SCALE - 1),
@@ -369,14 +312,11 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
         [animateZoomTo, clearPointers, enabled],
     );
 
-    const onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void =
+    const onPointerDown =
         useCallback(
             (event: ReactPointerEvent<HTMLElement>): void => {
                 if (!enabled) {
                     return;
-                }
-                if (pointersRef.current.size === 0) {
-                    edgeOverflowAccumRef.current = 0;
                 }
                 pointersRef.current.set(event.pointerId, {
                     x: event.clientX,
@@ -401,7 +341,7 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
             [enabled, initPinchStartIfNeeded, shouldCaptureGestures, translateX, translateY],
         );
 
-    const onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void =
+    const onPointerMove =
         useCallback(
             (event: ReactPointerEvent<HTMLElement>): void => {
                 if (!enabled || !pointersRef.current.has(event.pointerId)) {
@@ -416,7 +356,7 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
                 }
                 event.stopPropagation();
                 if (pointersRef.current.size === 2 && pinchStartRef.current) {
-                    const nextScale: number = clamp(
+                    const nextScale = clamp(
                         pinchStartRef.current.scale *
                             (pinchDistance(pointersRef.current) /
                                 pinchStartRef.current.distance),
@@ -437,35 +377,31 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
                     panStartRef.current &&
                     scaleRef.current > 1
                 ) {
-                    const bounds: PanBounds = boundsRef.current;
-                    const desiredX: number =
+                    const bounds = boundsRef.current;
+                    const desiredX =
                         panStartRef.current.translateX +
                         (event.clientX - panStartRef.current.x);
-                    const desiredY: number =
+                    const desiredY =
                         panStartRef.current.translateY +
                         (event.clientY - panStartRef.current.y);
-                    const clampedX: number = clamp(
+                    const clampedX = clamp(
                         desiredX,
                         bounds.minX,
                         bounds.maxX,
                     );
-                    const clampedY: number = clamp(
+                    const clampedY = clamp(
                         desiredY,
                         bounds.minY,
                         bounds.maxY,
                     );
-                    const overflowX: number = desiredX - clampedX;
                     setTranslateX(clampedX);
                     setTranslateY(clampedY);
-                    if (overflowX !== 0) {
-                        edgeOverflowAccumRef.current += overflowX;
-                    }
                 }
             },
             [enabled, shouldCaptureGestures],
         );
 
-    const onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void =
+    const onPointerUp =
         useCallback(
             (event: ReactPointerEvent<HTMLElement>): void => {
                 if (!pointersRef.current.has(event.pointerId)) {
@@ -483,7 +419,7 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
             [finishGesture, shouldCaptureGestures],
         );
 
-    const onWheel: (event: WheelEvent) => void = useCallback(
+    const onWheel = useCallback(
         (event: WheelEvent): void => {
             if (!enabled) {
                 return;
@@ -491,10 +427,10 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
             // Trackpad pinch sends ctrlKey; plain mouse wheel should zoom too.
             event.preventDefault();
             event.stopPropagation();
-            const intensity: number =
+            const intensity =
                 event.deltaMode === 1 ? 0.12 : Math.min(0.25, Math.abs(event.deltaY) * 0.0015);
-            const delta: number = event.deltaY > 0 ? -intensity : intensity;
-            const nextScale: number = clamp(
+            const delta = event.deltaY > 0 ? -intensity : intensity;
+            const nextScale = clamp(
                 scaleRef.current + delta,
                 MIN_SCALE,
                 MAX_SCALE,
@@ -515,7 +451,7 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
     // React registers wheel listeners as passive, so preventDefault in an
     // onWheel prop cannot stop a trackpad pinch (ctrl+wheel) from zooming the
     // whole page. Attach the listener natively instead.
-    const wheelTargetRef: (element: HTMLElement | null) => (() => void) | undefined =
+    const wheelTargetRef =
         useCallback(
             (element: HTMLElement | null): (() => void) | undefined => {
                 if (!element) {
@@ -538,9 +474,7 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
         if (!enabled) {
             return (): void => undefined;
         }
-        const handleGlobalPointerEnd: (event: PointerEvent) => void = (
-            event: PointerEvent,
-        ): void => {
+        const handleGlobalPointerEnd = (event: PointerEvent): void => {
             releasePointer(event.pointerId);
         };
         window.addEventListener("pointerup", handleGlobalPointerEnd);

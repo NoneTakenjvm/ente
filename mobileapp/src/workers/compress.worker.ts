@@ -15,86 +15,21 @@ import {
     type CompressImagePreset,
 } from "@/lib/compress-classify";
 import { arrayBufferFromUint8Array } from "@/lib/bytes-blob";
+import {
+    detectImageFormatFromBytes,
+    type DetectedImageFormat,
+} from "@/lib/image-format";
 import type {
     CompressWorkerRequest,
     CompressWorkerResponse,
     CropRect,
 } from "@/workers/compress-worker-types";
-
-type ImageFormat = "jpeg" | "png" | "webp" | "gif" | "heic" | "avif" | "unknown";
-
-const detectFormat = (bytes: Uint8Array): ImageFormat => {
-    if (
-        bytes.length >= 3 &&
-        bytes[0] === 0xff &&
-        bytes[1] === 0xd8 &&
-        bytes[2] === 0xff
-    ) {
-        return "jpeg";
-    }
-    if (
-        bytes.length >= 8 &&
-        bytes[0] === 0x89 &&
-        bytes[1] === 0x50 &&
-        bytes[2] === 0x4e &&
-        bytes[3] === 0x47
-    ) {
-        return "png";
-    }
-    if (
-        bytes.length >= 12 &&
-        bytes[0] === 0x52 &&
-        bytes[1] === 0x49 &&
-        bytes[2] === 0x46 &&
-        bytes[3] === 0x46 &&
-        bytes[8] === 0x57 &&
-        bytes[9] === 0x45 &&
-        bytes[10] === 0x42 &&
-        bytes[11] === 0x50
-    ) {
-        return "webp";
-    }
-    if (
-        bytes.length >= 6 &&
-        bytes[0] === 0x47 &&
-        bytes[1] === 0x49 &&
-        bytes[2] === 0x46
-    ) {
-        return "gif";
-    }
-    if (bytes.length >= 12) {
-        const brand = String.fromCharCode(
-            bytes[4] ?? 0,
-            bytes[5] ?? 0,
-            bytes[6] ?? 0,
-            bytes[7] ?? 0,
-        );
-        if (brand === "ftyp") {
-            const subtype = String.fromCharCode(
-                bytes[8] ?? 0,
-                bytes[9] ?? 0,
-                bytes[10] ?? 0,
-                bytes[11] ?? 0,
-            );
-            if (subtype.startsWith("avif") || subtype.startsWith("avis")) {
-                return "avif";
-            }
-            if (
-                subtype.startsWith("heic") ||
-                subtype.startsWith("heix") ||
-                subtype.startsWith("mif1")
-            ) {
-                return "heic";
-            }
-        }
-    }
-    return "unknown";
-};
+import { errorMessage } from "@/lib/format";
 
 const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer =>
     arrayBufferFromUint8Array(bytes);
 
-const mimeForFormat = (format: ImageFormat): string => {
+const mimeForFormat = (format: DetectedImageFormat): string => {
     switch (format) {
         case "jpeg":
             return "image/jpeg";
@@ -115,7 +50,7 @@ const mimeForFormat = (format: ImageFormat): string => {
 
 const decodeViaBitmap = async (
     bytes: Uint8Array,
-    format: ImageFormat,
+    format: DetectedImageFormat,
 ): Promise<ImageData> => {
     const blob = new Blob([toArrayBuffer(bytes)], { type: mimeForFormat(format) });
     const bitmap = await createImageBitmap(blob);
@@ -132,7 +67,7 @@ const decodeViaBitmap = async (
 
 const decodeToImageData = async (
     bytes: Uint8Array,
-    format: ImageFormat,
+    format: DetectedImageFormat,
 ): Promise<ImageData> => {
     try {
         return await decodeViaBitmap(bytes, format);
@@ -367,7 +302,7 @@ self.onmessage = async (
         minSizeBytes = 0,
     }: CompressWorkerRequest = event.data;
     try {
-        const format = detectFormat(bytes);
+        const format = detectImageFormatFromBytes(bytes);
         let imageData = await decodeToImageData(bytes, format);
         if (cropRect) {
             imageData = await cropImageData(imageData, cropRect);
@@ -424,7 +359,7 @@ self.onmessage = async (
     } catch (error: unknown) {
         const response: CompressWorkerResponse = {
             id,
-            error: error instanceof Error ? error.message : "Encode failed",
+            error: errorMessage(error, "Encode failed"),
         };
         self.postMessage(response);
     }

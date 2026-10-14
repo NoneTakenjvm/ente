@@ -1,22 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { sortFilesByTagFilterFit } from "@/lib/tag-filter-fit-sort";
-import type { EnteFile } from "ente-media/file";
-
-const toEmb = (values: number[]): Float32Array => Float32Array.from(values);
-const embMap = (entries: Array<[number, number[]]>): Map<number, Float32Array> =>
-    new Map(entries.map(([id, v]) => [id, toEmb(v)]));
-
-const file = (id: number): EnteFile => ({ id }) as EnteFile;
-
-const axis = (dim: number, dims = 512): number[] => {
-    const out = new Array(dims).fill(0);
-    out[dim] = 1;
-    return out;
-};
+import { axis, bareFile, embMap } from "@/test-utils/fixtures";
 
 describe("sortFilesByTagFilterFit", () => {
     it("returns a copy for none / tiny sets", () => {
-        const files = [file(1)];
+        const files = [bareFile(1)];
         expect(sortFilesByTagFilterFit(files, "none", new Map())).toEqual(
             files,
         );
@@ -33,7 +21,7 @@ describe("sortFilesByTagFilterFit", () => {
             [3, axis(1)],
         ]);
         const ordered = sortFilesByTagFilterFit(
-            [file(3), file(1), file(2)],
+            [bareFile(3), bareFile(1), bareFile(2)],
             "best",
             embeddings,
         );
@@ -50,7 +38,7 @@ describe("sortFilesByTagFilterFit", () => {
             [3, axis(1)],
         ]);
         const ordered = sortFilesByTagFilterFit(
-            [file(1), file(2), file(3)],
+            [bareFile(1), bareFile(2), bareFile(3)],
             "worst",
             embeddings,
         );
@@ -63,7 +51,7 @@ describe("sortFilesByTagFilterFit", () => {
             [2, axis(0)],
         ]);
         const ordered = sortFilesByTagFilterFit(
-            [file(9), file(1), file(2)],
+            [bareFile(9), bareFile(1), bareFile(2)],
             "best",
             embeddings,
         );

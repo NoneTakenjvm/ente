@@ -13,7 +13,7 @@ const lockedEmailKey = "ntphotos-locked-email";
 export const idleLockMs = 15 * 60 * 1000;
 
 /** Drop persisted session credentials after this age. */
-export const sessionMaxAgeMs = 60 * 60 * 1000;
+const sessionMaxAgeMs = 60 * 60 * 1000;
 
 export interface PersistedSessionPayload {
     authToken: string;

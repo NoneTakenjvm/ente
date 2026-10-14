@@ -43,6 +43,7 @@ import { blobFromUint8Array } from "@/lib/bytes-blob";
 import { useLibraryStore } from "@/stores/library-store";
 import { useUIStore } from "@/stores/ui-store";
 import type { EnteFile } from "ente-media/file";
+import { errorMessage } from "@/lib/format";
 
 const CROP_WORKSPACE_INSET_PX = 16;
 const MIN_TRIM_GAP_SEC = 0.25;
@@ -303,9 +304,7 @@ export function VideoEditorOverlay({
                 })
                 .catch((rotateError: unknown) => {
                     setError(
-                        rotateError instanceof Error ?
-                            rotateError.message :
-                            "Could not rotate video",
+                        errorMessage(rotateError, "Could not rotate video"),
                     );
                     setVideoReady(true);
                 })
@@ -420,9 +419,7 @@ export function VideoEditorOverlay({
                 setSaving(false);
                 setEncodeProgress(undefined);
                 setError(
-                    saveError instanceof Error ?
-                        saveError.message :
-                        "Could not save video edits",
+                    errorMessage(saveError, "Could not save video edits"),
                 );
             });
     }, [

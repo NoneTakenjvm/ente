@@ -13,6 +13,7 @@ import {
     arrayBufferFromUint8Array,
     blobFromUint8Array,
 } from "@/lib/bytes-blob";
+import { formatFileSize } from "@/lib/format";
 import { createWorkerIdleTimer } from "@/lib/worker-idle-timer";
 
 export const COMPRESSED_TAG = "compressed";
@@ -45,17 +46,6 @@ export class CompressWorkerTimeoutError extends Error {
         this.name = "CompressWorkerTimeoutError";
     }
 }
-
-/** Compact byte label for overlays and selection chrome (e.g. `1.2 MB`). */
-export const formatFileSize = (bytes: number): string => {
-    if (bytes < 1024) {
-        return `${bytes} B`;
-    }
-    if (bytes < 1024 * 1024) {
-        return `${Math.round(bytes / 1024)} KB`;
-    }
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-};
 
 export interface MinSizeFilterPreset {
     label: string;
@@ -114,91 +104,6 @@ export interface EncodeJpegResult {
     height: number;
 }
 
-export type DetectedImageFormat =
-    | "jpeg" |
-    "png" |
-    "webp" |
-    "gif" |
-    "heic" |
-    "avif" |
-    "unknown";
-
-/**
- * Detect container format from magic bytes (for encode strategy and diagnostics).
- */
-export const detectImageFormatFromBytes = (
-    bytes: Uint8Array,
-): DetectedImageFormat => {
-    if (
-        bytes.length >= 3 &&
-        bytes[0] === 0xff &&
-        bytes[1] === 0xd8 &&
-        bytes[2] === 0xff
-    ) {
-        return "jpeg";
-    }
-    if (
-        bytes.length >= 8 &&
-        bytes[0] === 0x89 &&
-        bytes[1] === 0x50 &&
-        bytes[2] === 0x4e &&
-        bytes[3] === 0x47
-    ) {
-        return "png";
-    }
-    if (
-        bytes.length >= 12 &&
-        bytes[0] === 0x52 &&
-        bytes[1] === 0x49 &&
-        bytes[2] === 0x46 &&
-        bytes[3] === 0x46 &&
-        bytes[8] === 0x57 &&
-        bytes[9] === 0x45 &&
-        bytes[10] === 0x42 &&
-        bytes[11] === 0x50
-    ) {
-        return "webp";
-    }
-    if (
-        bytes.length >= 6 &&
-        bytes[0] === 0x47 &&
-        bytes[1] === 0x49 &&
-        bytes[2] === 0x46
-    ) {
-        return "gif";
-    }
-    if (bytes.length >= 12) {
-        const brand = String.fromCharCode(
-            bytes[4] ?? 0,
-            bytes[5] ?? 0,
-            bytes[6] ?? 0,
-            bytes[7] ?? 0,
-        );
-        if (brand === "ftyp") {
-            const subtype = String.fromCharCode(
-                bytes[8] ?? 0,
-                bytes[9] ?? 0,
-                bytes[10] ?? 0,
-                bytes[11] ?? 0,
-            );
-            if (
-                subtype.startsWith("avif") ||
-                subtype.startsWith("avis")
-            ) {
-                return "avif";
-            }
-            if (
-                subtype.startsWith("heic") ||
-                subtype.startsWith("heix") ||
-                subtype.startsWith("mif1")
-            ) {
-                return "heic";
-            }
-        }
-    }
-    return "unknown";
-};
-
 export interface SizeDelta {
     originalBytes: number;
     compressedBytes: number;
@@ -222,14 +127,6 @@ export const isCompressibleMediaType = (file: EnteFile): boolean => {
  */
 export const isAlreadyCompressed = (file: EnteFile): boolean =>
     extractTags(file).includes(COMPRESSED_TAG);
-
-/**
- * Return true when the file can be compressed from the viewer or manage tab.
- */
-export const canCompressMedia = (file: EnteFile): boolean =>
-    isCompressibleMediaType(file);
-
-export const canCompress = (file: EnteFile): boolean => canCompressMedia(file);
 
 /**
  * Files eligible for bulk compression on the manage tab.

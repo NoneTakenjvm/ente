@@ -1,11 +1,6 @@
 import type { EnteFile } from "ente-media/file";
 import type { FilePublicMagicMetadataData } from "ente-media/file-metadata";
-import {
-    loadEncryptedTagOutbox,
-    saveEncryptedTagOutbox,
-    type PersistedTagOutboxEntry,
-} from "@/db/kv";
-import { getSessionCacheKey } from "@/lib/cache-key";
+import { loadKv, saveKv, type PersistedTagOutboxEntry } from "@/db/kv";
 import { extractTags } from "@/lib/tags";
 import {
     fileWithOrganizerTags,
@@ -13,7 +8,7 @@ import {
     type OrganizerPublicMetadata,
 } from "@/lib/tag-writes";
 
-export interface TagOutboxEntry {
+interface TagOutboxEntry {
     fileId: number;
     intendedTags: string[];
     enqueuedAt: number;
@@ -31,7 +26,7 @@ const toPersisted = (entry: TagOutboxEntry): PersistedTagOutboxEntry => ({
 
 const flushTagOutboxToDisk = async (): Promise<void> => {
     const entries = [...outboxByFileId.values()].map(toPersisted);
-    await saveEncryptedTagOutbox(entries, getSessionCacheKey());
+    await saveKv("tagOutbox", entries);
 };
 
 const persistTagOutbox = (): Promise<void> => {
@@ -57,7 +52,7 @@ export const hydrateTagOutbox = async (): Promise<void> => {
         return tagOutboxHydrateInFlight;
     }
     tagOutboxHydrateInFlight = (async () => {
-        const persisted = await loadEncryptedTagOutbox(getSessionCacheKey());
+        const persisted = await loadKv("tagOutbox");
         outboxByFileId.clear();
         for (const entry of persisted ?? []) {
             outboxByFileId.set(entry.fileId, entry);
@@ -149,16 +144,6 @@ export const enqueueTagOutboxEntries = (
         .catch((error: unknown) => {
             console.warn("Tag outbox hydrate failed; intents not queued", error);
         });
-};
-
-/**
- * Queue or replace a pending tag write for a file.
- */
-export const upsertTagOutboxEntry = async (
-    fileId: number,
-    intendedTags: string[],
-): Promise<void> => {
-    await upsertTagOutboxEntries([{ fileId, intendedTags }]);
 };
 
 /**

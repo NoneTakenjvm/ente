@@ -2,6 +2,8 @@
  * Gzip helpers for Ente `mldata` payloads (CompressionStream / DecompressionStream).
  */
 
+import { ensureArrayBufferBacked } from "ente-base/bytes";
+
 /**
  * Gzip-compress a UTF-8 string to bytes.
  */
@@ -18,10 +20,8 @@ export const gzipString = async (text: string): Promise<Uint8Array> => {
 export const gunzipToString = async (
     data: Uint8Array,
 ): Promise<string> => {
-    // Copy into a plain ArrayBuffer-backed view — Blob rejects SharedArrayBuffer views.
-    const copy = new Uint8Array(data.byteLength);
-    copy.set(data);
-    const decompressed = new Blob([copy])
+    // Blob rejects SharedArrayBuffer views.
+    const decompressed = new Blob([ensureArrayBufferBacked(data)])
         .stream()
         .pipeThrough(new DecompressionStream("gzip"));
     return new Response(decompressed).text();

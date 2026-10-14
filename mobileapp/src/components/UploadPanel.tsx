@@ -52,6 +52,7 @@ import { cn } from "@/lib/utils";
 import { useLibraryStore } from "@/stores/library-store";
 import { useUploadJobStore } from "@/stores/ui-store";
 import type { Collection } from "ente-media/collection";
+import { errorMessage, plural } from "@/lib/format";
 
 type PanelPhase = "idle" | "staging" | "review" | "uploading" | "done" | "error";
 
@@ -78,14 +79,7 @@ const uploadableCollections = (collections: Collection[]): Collection[] =>
 
 const defaultUploadCollectionId = (
     albums: Collection[],
-    activeCollectionId: number | null,
 ): number | undefined => {
-    if (
-        activeCollectionId !== null &&
-        albums.some((album) => album.id === activeCollectionId)
-    ) {
-        return activeCollectionId;
-    }
     const preferred = albums.find(
         (album) => album.type === "album" || album.type === "folder",
     );
@@ -166,7 +160,6 @@ export function UploadPanel({
     onUploaded,
 }: UploadPanelProps): JSX.Element {
     const collections = useLibraryStore((s) => s.collections);
-    const activeCollectionId = useLibraryStore((s) => s.activeCollectionId);
     const syncStatus = useLibraryStore((s) => s.syncStatus);
     const uploadImageFile = useLibraryStore((s) => s.uploadImageFile);
     const uploadVideoFile = useLibraryStore((s) => s.uploadVideoFile);
@@ -183,10 +176,7 @@ export function UploadPanel({
         [collections],
     );
 
-    const selectedCollectionId = defaultUploadCollectionId(
-        albums,
-        activeCollectionId,
-    );
+    const selectedCollectionId = defaultUploadCollectionId(albums);
 
     const [phase, setPhase] = useState<PanelPhase>("idle");
     const [error, setError] = useState<string | undefined>();
@@ -312,9 +302,7 @@ export function UploadPanel({
                         completed += 1;
                     } catch (uploadError: unknown) {
                         const message =
-                            uploadError instanceof Error ?
-                                uploadError.message :
-                                "upload failed";
+                            errorMessage(uploadError, "upload failed");
                         if (/upload cancelled/i.test(message)) {
                             return;
                         }
@@ -355,7 +343,7 @@ export function UploadPanel({
                     setPhase("done");
                     setResultMessage(
                         completed > 0 ?
-                            `Cancelled after ${completed} upload${completed === 1 ? "" : "s"}. ${skipped} skipped.` :
+                            `Cancelled after ${plural(completed, "upload")}. ${skipped} skipped.` :
                             "Upload cancelled.",
                     );
                     toast.message("Upload cancelled");
@@ -365,10 +353,10 @@ export function UploadPanel({
                 if (failed === 0) {
                     setPhase("done");
                     setResultMessage(
-                        `Uploaded ${completed} file${completed === 1 ? "" : "s"}.`,
+                        `Uploaded ${plural(completed, "file")}.`,
                     );
                     toast.success(
-                        `Uploaded ${completed} file${completed === 1 ? "" : "s"}`,
+                        `Uploaded ${plural(completed, "file")}`,
                     );
                     onUploaded?.();
                     return;
@@ -382,9 +370,7 @@ export function UploadPanel({
                 toast.error(errors[0] ?? "Some uploads failed");
             } catch (batchError: unknown) {
                 const message =
-                    batchError instanceof Error ?
-                        batchError.message :
-                        "Upload failed";
+                    errorMessage(batchError, "Upload failed");
                 setPhase("error");
                 setError(message);
                 toast.error(message);
@@ -430,10 +416,10 @@ export function UploadPanel({
             const generation = ++stagingGenerationRef.current;
 
             toast.message(
-                `Selected ${files.length} file${files.length === 1 ? "" : "s"}…`,
+                `Selected ${plural(files.length, "file")}…`,
             );
             if (skipped > 0) {
-                toast.message(`Skipped ${skipped} unsupported file${skipped === 1 ? "" : "s"}`);
+                toast.message(`Skipped ${plural(skipped, "unsupported file")}`);
             }
 
             setError(undefined);
@@ -476,9 +462,7 @@ export function UploadPanel({
                         return;
                     }
                     const message =
-                        stagingError instanceof Error ?
-                            stagingError.message :
-                            "Could not prepare selected files";
+                        errorMessage(stagingError, "Could not prepare selected files");
                     setPhase(stagedFilesRef.current.length > 0 ? "review" : "idle");
                     setError(message);
                     toast.error(message);
@@ -682,8 +666,7 @@ export function UploadPanel({
                         <div className="flex flex-col gap-3 py-2">
                             <p className="flex items-center gap-2 text-sm text-muted-foreground">
                                 <Spinner />
-                                Preparing {stagingProgress.total} file
-                                {stagingProgress.total === 1 ? "" : "s"}…
+                                Preparing {plural(stagingProgress.total, "file")}…
                             </p>
                             {stagingProgress.total > 0 ? (
                                 <Progress value={stagingPercent} />
@@ -695,8 +678,7 @@ export function UploadPanel({
                     (phase === "review" || uploading || phase === "done" || phase === "error") ? (
                             <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
                                 <p className="text-xs text-muted-foreground">
-                                    {stagedFiles.length} file
-                                    {stagedFiles.length === 1 ? "" : "s"}
+                                    {plural(stagedFiles.length, "file")}
                                     {uploading ?
                                         ` · uploading ${uploadProgress.current}/${uploadProgress.total}` :
                                         ` · ${selectedIds.size} selected`}
@@ -790,8 +772,7 @@ export function UploadPanel({
                                 onClick={handleManualUpload}
                                 disabled={!canManualUpload}
                             >
-                                Upload {selectedIds.size} file
-                                {selectedIds.size === 1 ? "" : "s"}
+                                Upload {plural(selectedIds.size, "file")}
                             </Button>
                         ) : null}
                 </SheetFooter>

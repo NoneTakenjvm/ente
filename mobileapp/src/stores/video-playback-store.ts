@@ -36,7 +36,6 @@ interface VideoPlaybackState {
     hydrate: () => void;
     applyDefaultMuted: (muted: boolean) => void;
     setVolume: (volume: number) => void;
-    setMuted: (muted: boolean) => void;
     toggleMuted: () => void;
 }
 
@@ -63,10 +62,6 @@ export const useVideoPlaybackStore = create<VideoPlaybackState>((set, get) => ({
         const clamped = Math.min(1, Math.max(0, volume));
         persistVolume(clamped);
         set({ volume: clamped, muted: !(clamped > 0) });
-    },
-
-    setMuted: (muted: boolean): void => {
-        set({ muted });
     },
 
     toggleMuted: (): void => {

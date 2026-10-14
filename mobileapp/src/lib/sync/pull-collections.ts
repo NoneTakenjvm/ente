@@ -8,11 +8,10 @@ import {
     removeCollectionSyncTime,
     saveCollectionsUpdationTime,
 } from "@/db/cursors";
-import { saveEncryptedCollections } from "@/db/kv";
-import { getSessionCacheKey } from "@/lib/cache-key";
+import { saveKv } from "@/db/kv";
 import type { Collection } from "ente-media/collection";
 
-export interface PullCollectionsResult {
+interface PullCollectionsResult {
     collections: Collection[];
     didUpdate: boolean;
 }
@@ -41,8 +40,7 @@ export const pullCollections = async (
         }
     }
 
-    const cacheKey = getSessionCacheKey();
-    await saveEncryptedCollections(collections, cacheKey);
+    await saveKv("collections", collections);
     await saveCollectionsUpdationTime(sinceTime);
 
     return { collections, didUpdate: true };

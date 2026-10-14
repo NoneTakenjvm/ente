@@ -1,3 +1,4 @@
+// Writes the 4x2 quadrant PNG used by crop-rotate.integration.test (run via node).
 import { createCanvas } from "@napi-rs/canvas";
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

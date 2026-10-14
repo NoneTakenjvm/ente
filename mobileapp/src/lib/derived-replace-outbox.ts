@@ -1,14 +1,9 @@
-import {
-    loadEncryptedDerivedReplaceOutbox,
-    saveEncryptedDerivedReplaceOutbox,
-    type PersistedDerivedReplaceOutboxEntry,
-} from "@/db/kv";
+import { loadKv, saveKv, type PersistedDerivedReplaceOutboxEntry } from "@/db/kv";
 import {
     deleteDerivedReplacePayload,
     getDerivedReplacePayload,
     putDerivedReplacePayload,
 } from "@/db/derived-replace-payloads";
-import { getSessionCacheKey } from "@/lib/cache-key";
 
 export type DerivedReplaceKind =
     | "crop" |
@@ -42,7 +37,7 @@ const flushToDisk = async (): Promise<void> => {
     const entries: PersistedDerivedReplaceOutboxEntry[] = [
         ...outboxByFileId.values(),
     ];
-    await saveEncryptedDerivedReplaceOutbox(entries, getSessionCacheKey());
+    await saveKv("derivedReplaceOutbox", entries);
 };
 
 const persist = (): Promise<void> => {
@@ -55,9 +50,7 @@ const persist = (): Promise<void> => {
 };
 
 export const hydrateDerivedReplaceOutbox = async (): Promise<void> => {
-    const persisted = await loadEncryptedDerivedReplaceOutbox(
-        getSessionCacheKey(),
-    );
+    const persisted = await loadKv("derivedReplaceOutbox");
     outboxByFileId.clear();
     let migratedLegacy = false;
     for (const entry of persisted ?? []) {
@@ -90,7 +83,7 @@ export const hydrateDerivedReplaceOutbox = async (): Promise<void> => {
     }
 };
 
-export const ensureDerivedReplaceOutboxHydrated = async (): Promise<void> => {
+const ensureDerivedReplaceOutboxHydrated = async (): Promise<void> => {
     if (hydrated) {
         return;
     }

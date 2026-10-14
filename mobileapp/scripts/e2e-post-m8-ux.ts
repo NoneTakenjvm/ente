@@ -4,36 +4,14 @@
  *
  * Prerequisites: app running (`npm run dev` or preview).
  *
- *   npx tsx --tsconfig scripts/tsconfig.json scripts/e2e-post-m8-ux.ts
+ *   npm run test:e2e
  *
- * Optional: E2E_BASE_URL (default http://127.0.0.1:3000)
+ * Optional: E2E_BASE_URL (see scripts/e2e/lib.ts)
  */
-import { chromium, type Page } from "playwright";
-import {
-    testAccountEmail,
-    testAccountPassword,
-} from "../src/dev/test-account";
-
-const BASE = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
-
-const signIn = async (page: Page): Promise<void> => {
-    await page.goto(`${BASE}/login`, { waitUntil: "domcontentloaded" });
-    await page.getByLabel("Email").fill(testAccountEmail);
-    await page.getByLabel("Password").fill(testAccountPassword);
-    await page.getByRole("button", { name: "Sign in" }).click();
-    await page.waitForURL(/\/gallery/, { timeout: 180_000 });
-};
-
-const assert = (condition: boolean, message: string): void => {
-    if (!condition) {
-        throw new Error(message);
-    }
-};
+import { assert, BASE, launch, signIn } from "./e2e/lib";
 
 const main = async (): Promise<void> => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-    page.setViewportSize({ width: 390, height: 844 });
+    const { browser, page } = await launch();
 
     const failures: string[] = [];
 

@@ -1,10 +1,9 @@
-import type { Crop, PixelCrop } from "react-image-crop";
+import type { PixelCrop } from "react-image-crop";
 import {
     encodeCroppedJpeg,
     pixelCropToSourceRect,
     type CropRect,
 } from "@/lib/crop";
-import { rotateImageBytes, type RotationDegrees } from "@/lib/rotate";
 
 export interface PixelRect {
     x: number;
@@ -16,25 +15,6 @@ export interface PixelRect {
 const CONTENT_DETECT_MAX_EDGE = 512;
 const DEFAULT_CONTENT_THRESHOLD = 12;
 const DEFAULT_ALPHA_THRESHOLD = 8;
-
-export const fullImageCrop = (width: number, height: number): Crop => ({
-    unit: "px",
-    x: 0,
-    y: 0,
-    width,
-    height,
-});
-
-export const fullFramePixelCrop = (
-    displayWidth: number,
-    displayHeight: number,
-): PixelCrop => ({
-    unit: "px",
-    x: 0,
-    y: 0,
-    width: displayWidth,
-    height: displayHeight,
-});
 
 /** Fit natural pixels into a max box (object-contain) for the crop UI. */
 export const containedDisplaySize = (
@@ -599,49 +579,6 @@ export const hasMeaningfulBorder = (
     return trimmed >= 8;
 };
 
-/**
- * Initial crop rectangle in display space, trimmed to visible content when
- * the source image has black or transparent borders.
- */
-export const initialCropForDisplay = (
-    displayWidth: number,
-    displayHeight: number,
-    naturalWidth: number,
-    naturalHeight: number,
-    contentBounds?: PixelRect,
-): Crop => {
-    if (
-        !contentBounds ||
-        (contentBounds.x === 0 &&
-            contentBounds.y === 0 &&
-            contentBounds.width === naturalWidth &&
-            contentBounds.height === naturalHeight)
-    ) {
-        return fullImageCrop(displayWidth, displayHeight);
-    }
-    const scaleX = displayWidth / naturalWidth;
-    const scaleY = displayHeight / naturalHeight;
-    const x = Math.round(contentBounds.x * scaleX);
-    const y = Math.round(contentBounds.y * scaleY);
-    const width = Math.max(1, Math.round(contentBounds.width * scaleX));
-    const height = Math.max(1, Math.round(contentBounds.height * scaleY));
-    return {
-        unit: "px",
-        x,
-        y,
-        width: Math.min(width, displayWidth - x),
-        height: Math.min(height, displayHeight - y),
-    };
-};
-
-export const cropRectForSave = (
-    completedCrop: PixelCrop,
-    image: Pick<
-        HTMLImageElement,
-        "width" | "height" | "naturalWidth" | "naturalHeight"
-    >,
-): CropRect => pixelCropToSourceRect(completedCrop, image);
-
 export const cropRectForVideoSave = (
     completedCrop: PixelCrop,
     displayWidth: number,
@@ -656,36 +593,6 @@ export const cropRectForVideoSave = (
         naturalHeight: sourceHeight,
     });
 
-/** Canvas size after a 90° or 270° baked rotation. */
-export const dimensionsAfterQuarterTurn = (
-    width: number,
-    height: number,
-): { width: number; height: number } => ({
-    width: height,
-    height: width,
-});
-
-export const dimensionsAfterRotation = (
-    width: number,
-    height: number,
-    degrees: RotationDegrees,
-): { width: number; height: number } => {
-    if (degrees === 90 || degrees === 270) {
-        return dimensionsAfterQuarterTurn(width, height);
-    }
-    return { width, height };
-};
-
-/**
- * Bake rotation into working bytes (WYSIWYG editor path — no CSS transform).
- */
-export const bakeRotation = (
-    bytes: Uint8Array,
-    mimeType: string,
-    degrees: RotationDegrees,
-): ReturnType<typeof rotateImageBytes> =>
-    rotateImageBytes(bytes, mimeType, degrees);
-
 /**
  * Encode a crop from baked working bytes using display-space crop coordinates.
  */
@@ -697,8 +604,10 @@ export const encodeBakedCrop = (
         "width" | "height" | "naturalWidth" | "naturalHeight"
     >,
 ): ReturnType<typeof encodeCroppedJpeg> => {
-    const cropRect = cropRectForSave(completedCrop, image);
-    return encodeCroppedJpeg(workingBytes, cropRect);
+    return encodeCroppedJpeg(
+        workingBytes,
+        pixelCropToSourceRect(completedCrop, image),
+    );
 };
 
 export const videoCropChanged = (

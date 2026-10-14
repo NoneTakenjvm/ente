@@ -6,25 +6,7 @@ import {
     rowLooksLikeHomeIndicator,
     trimBottomHomeIndicator,
 } from "@/lib/crop-editor";
-
-const rgbaImageData = (
-    width: number,
-    height: number,
-    pixelAt: (x: number, y: number) => [number, number, number, number],
-): ImageData => {
-    const data = new Uint8ClampedArray(width * height * 4);
-    for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-            const [red, green, blue, alpha] = pixelAt(x, y);
-            const index = (y * width + x) * 4;
-            data[index] = red;
-            data[index + 1] = green;
-            data[index + 2] = blue;
-            data[index + 3] = alpha;
-        }
-    }
-    return { width, height, data, colorSpace: "srgb" } as ImageData;
-};
+import { rgbaImageData } from "@/test-utils/fixtures";
 
 describe("home indicator auto-crop trim", () => {
     it("detects a short centered bright bar on a full-width black row", () => {

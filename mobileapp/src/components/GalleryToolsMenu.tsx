@@ -11,7 +11,6 @@ import {
     TagQueryBuilderContent,
     type TagQueryBuilderContentProps,
 } from "@/components/TagQueryBuilderContent";
-import { TagQueryBuilderPanel } from "@/components/TagQueryBuilderPanel";
 import { Button } from "@/components/ui/button";
 import {
     DropdownMenu,
@@ -255,10 +254,38 @@ export function GalleryToolsMenu({
 
             <div className="hidden items-center gap-1 md:flex">
                 {query ? (
-                    <TagQueryBuilderPanel
-                        {...query}
-                        filterTarget={filterTarget}
-                    />
+                    <DropdownMenu>
+                        <DropdownMenuTrigger
+                            render={
+                                <Button
+                                    type="button"
+                                    variant={
+                                        query.hasQueryContent ?
+                                            "secondary" :
+                                            "outline"
+                                    }
+                                    size="icon-sm"
+                                    aria-label="Edit tag query"
+                                >
+                                    <ListFilter />
+                                </Button>
+                            }
+                        />
+                        <DropdownMenuContent
+                            align="start"
+                            className="flex max-h-[min(80dvh,28rem)] w-[min(100vw-2rem,24rem)] flex-col overflow-x-hidden overflow-y-auto overscroll-contain p-2"
+                        >
+                            <DropdownMenuGroup className="flex min-h-0 flex-1 flex-col gap-3">
+                                <DropdownMenuLabel className="shrink-0 px-0">
+                                    Query builder
+                                </DropdownMenuLabel>
+                                <TagQueryBuilderContent
+                                    {...query}
+                                    filterTarget={filterTarget}
+                                />
+                            </DropdownMenuGroup>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
                 ) : null}
                 <ToolButton
                     active={selectionEnabled}

@@ -44,20 +44,15 @@ export interface TagFilterDraft {
 /**
  * Local editable tag filter state for album create/edit forms.
  */
-export const useTagFilterDraft: (
-    initial?: TagFilterSelection,
-) => TagFilterDraft = (
+export const useTagFilterDraft = (
     initial: TagFilterSelection = emptyTagFilter(),
 ): TagFilterDraft => {
-    const [filter, setFilter]: [
-        TagFilterSelection,
-        (value: TagFilterSelection | ((current: TagFilterSelection) => TagFilterSelection)) => void,
-    ] = useState<TagFilterSelection>(initial);
+    const [filter, setFilter] = useState<TagFilterSelection>(initial);
     const includeInEffectsPresenceByName = useTagStore(
         (s) => s.includeInEffectsPresenceByName,
     );
 
-    const setTagScope: (scope: TagScope) => void = useCallback(
+    const setTagScope = useCallback(
         (scope: TagScope): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
                 setTagFilterScope(
@@ -69,7 +64,7 @@ export const useTagFilterDraft: (
         [includeInEffectsPresenceByName],
     );
 
-    const setFavoritesScope: (favoritesScope: FavoritesScope) => void = useCallback(
+    const setFavoritesScope = useCallback(
         (favoritesScope: FavoritesScope): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
                 setTagFilterFavoritesScope(current, favoritesScope));
@@ -77,7 +72,7 @@ export const useTagFilterDraft: (
         [],
     );
 
-    const setMediaScope: (mediaScope: MediaScope) => void = useCallback(
+    const setMediaScope = useCallback(
         (mediaScope: MediaScope): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
                 setTagFilterMediaScope(current, mediaScope));
@@ -85,7 +80,7 @@ export const useTagFilterDraft: (
         [],
     );
 
-    const setCroppedScope: (croppedScope: CroppedScope) => void = useCallback(
+    const setCroppedScope = useCallback(
         (croppedScope: CroppedScope): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
                 setTagFilterCroppedScope(current, croppedScope));
@@ -93,7 +88,7 @@ export const useTagFilterDraft: (
         [],
     );
 
-    const setRotatedScope: (rotatedScope: RotatedScope) => void = useCallback(
+    const setRotatedScope = useCallback(
         (rotatedScope: RotatedScope): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
                 setTagFilterRotatedScope(current, rotatedScope));
@@ -101,10 +96,7 @@ export const useTagFilterDraft: (
         [],
     );
 
-    const setTagFilterMode: (
-        tag: string,
-        mode: TagFilterMode | null,
-    ) => void = useCallback(
+    const setTagFilterMode = useCallback(
         (tag: string, mode: TagFilterMode | null): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
                 setTagFilterModeOnFilter(
@@ -117,10 +109,7 @@ export const useTagFilterDraft: (
         [includeInEffectsPresenceByName],
     );
 
-    const setKitMode: (
-        kit: KitFilterInput,
-        mode: TagFilterMode | null,
-    ) => void = useCallback(
+    const setKitMode = useCallback(
         (kit: KitFilterInput, mode: TagFilterMode | null): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
                 setKitModeOnFilter(
@@ -133,7 +122,7 @@ export const useTagFilterDraft: (
         [includeInEffectsPresenceByName],
     );
 
-    const setGroupOp: (groupId: string, op: TagFilterJoin) => void = useCallback(
+    const setGroupOp = useCallback(
         (groupId: string, op: TagFilterJoin): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
                 setTagFilterGroupOp(current, groupId, op));
@@ -141,13 +130,13 @@ export const useTagFilterDraft: (
         [],
     );
 
-    const wrapInGroup: (nodeIds: string[], op: TagFilterJoin) => void =
+    const wrapInGroup =
         useCallback((nodeIds: string[], op: TagFilterJoin): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
                 wrapTagFilterNodesInGroup(current, nodeIds, op));
         }, []);
 
-    const ungroup: (groupId: string) => void = useCallback(
+    const ungroup = useCallback(
         (groupId: string): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
                 ungroupTagFilterNode(current, groupId));
@@ -155,7 +144,7 @@ export const useTagFilterDraft: (
         [],
     );
 
-    const removeNode: (nodeId: string) => void = useCallback(
+    const removeNode = useCallback(
         (nodeId: string): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
                 removeTagFilterNode(current, nodeId));
@@ -163,10 +152,7 @@ export const useTagFilterDraft: (
         [],
     );
 
-    const setClauseMode: (
-        clauseId: string,
-        mode: TagFilterMode,
-    ) => void = useCallback(
+    const setClauseMode = useCallback(
         (clauseId: string, mode: TagFilterMode): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
                 setClauseModeOnFilter(
@@ -179,11 +165,7 @@ export const useTagFilterDraft: (
         [includeInEffectsPresenceByName],
     );
 
-    const setClauseInGroup: (
-        groupId: string,
-        tag: string,
-        mode: TagFilterMode | null,
-    ) => void = useCallback(
+    const setClauseInGroup = useCallback(
         (groupId: string, tag: string, mode: TagFilterMode | null): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
                 setClauseInGroupOnFilter(
@@ -197,11 +179,7 @@ export const useTagFilterDraft: (
         [includeInEffectsPresenceByName],
     );
 
-    const setKitInGroup: (
-        groupId: string,
-        kit: KitFilterInput,
-        mode: TagFilterMode | null,
-    ) => void = useCallback(
+    const setKitInGroup = useCallback(
         (
             groupId: string,
             kit: KitFilterInput,

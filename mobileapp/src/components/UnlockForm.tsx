@@ -18,6 +18,7 @@ import {
     isSessionAuthenticated,
     useSessionStore,
 } from "@/stores/session-store";
+import { errorMessage } from "@/lib/format";
 
 interface UnlockFormProps {
     onUseDifferentAccount: () => void;
@@ -30,7 +31,7 @@ export function UnlockForm({
     const unlock = useSessionStore((s) => s.unlock);
     const signOut = useSessionStore((s) => s.logout);
     const [loading, setLoading] = useState<boolean>(false);
-    const [errorMessage, setErrorMessage] = useState<string | undefined>();
+    const [unlockError, setUnlockError] = useState<string | undefined>();
 
     const email = getLockedSessionEmail();
 
@@ -42,17 +43,17 @@ export function UnlockForm({
 
     const handleUnlock = async (): Promise<void> => {
         setLoading(true);
-        setErrorMessage(undefined);
+        setUnlockError(undefined);
         try {
             const restored = await unlock();
             if (restored && isSessionAuthenticated()) {
                 await router.replace("/gallery");
                 return;
             }
-            setErrorMessage("Could not restore your session. Sign in again.");
+            setUnlockError("Could not restore your session. Sign in again.");
         } catch (error) {
-            setErrorMessage(
-                error instanceof Error ? error.message : "Unlock failed",
+            setUnlockError(
+                errorMessage(error, "Unlock failed"),
             );
         } finally {
             setLoading(false);
@@ -75,9 +76,9 @@ export function UnlockForm({
                 </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-                {errorMessage ? (
+                {unlockError ? (
                     <Alert variant="destructive">
-                        <AlertDescription>{errorMessage}</AlertDescription>
+                        <AlertDescription>{unlockError}</AlertDescription>
                     </Alert>
                 ) : null}
 

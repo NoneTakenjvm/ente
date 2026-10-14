@@ -368,7 +368,7 @@ export const isManuallyCroppedFile = (file: EnteFile): boolean => {
 /**
  * Return true when the file was rotated in this app (stamps the `rotated` tag).
  */
-export const isManuallyRotatedFile = (file: EnteFile): boolean =>
+const isManuallyRotatedFile = (file: EnteFile): boolean =>
     extractTags(file).includes("rotated");
 
 /**
@@ -632,7 +632,7 @@ const exactUserTagSetIds = (
 /**
  * Evaluate a tag filter expression tree against a candidate file id set.
  */
-export const evaluateTagFilterNode = (
+const evaluateTagFilterNode = (
     node: TagFilterNode,
     candidateIds: Set<number>,
     files: EnteFile[],
@@ -996,7 +996,7 @@ export const filterFilesByTags = (
 /**
  * Whether a single file matches the active tag filter (scopes + expression).
  */
-export const fileMatchesTagFilter = (
+const fileMatchesTagFilter = (
     file: EnteFile,
     filter: TagFilterSelection,
     fileIdsByTag: Map<string, Set<number>>,
@@ -1066,33 +1066,6 @@ export const patchFilteredFilesForTagTouch = (
     const next = previousFiltered.slice();
     next.splice(existingIndex, 1);
     return next;
-};
-
-/**
- * Count files matching the tag filter within a candidate id set.
- */
-export const countFilesMatchingTagFilter = (
-    candidateFileIds: Set<number>,
-    filter: TagFilterSelection,
-    fileIdsByTag: Map<string, Set<number>>,
-    files?: EnteFile[],
-    options?: TagFilterOptions,
-): number => {
-    if (!isTagFilterActive(filter)) {
-        return candidateFileIds.size;
-    }
-
-    const candidateFiles =
-        files?.filter((file) => candidateFileIds.has(file.id)) ?? [];
-
-    return resolveMatchingIds(
-        candidateFiles,
-        candidateFileIds,
-        filter,
-        fileIdsByTag,
-        options?.favoriteFileIds,
-        options?.includeInEffectsPresenceByName,
-    ).size;
 };
 
 /** Number of files in scope that have no presence-counting user tags. */

@@ -17,7 +17,7 @@ import { useState, type ReactNode, type JSX } from "react";
 import { useSessionStore } from "@/stores/session-store";
 import { useSelectionStore } from "@/stores/selection-store";
 import { Button } from "@/components/ui/button";
-import { ConfirmPanicModal } from "@/components/ConfirmPanicModal";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -250,8 +250,13 @@ function AccountMenu(): JSX.Element {
                     </DropdownMenuGroup>
                 </DropdownMenuContent>
             </DropdownMenu>
-            <ConfirmPanicModal
+            <ConfirmDialog
                 open={showPanicConfirm}
+                title="Wipe all local data?"
+                description="This permanently deletes every cached photo, tag index, and saved session on this device. You will need to sign in and re-sync from scratch."
+                confirmLabel="Wipe everything"
+                workingLabel="Wiping…"
+                destructive
                 isWorking={panicWorking}
                 onCancel={() => setShowPanicConfirm(false)}
                 onConfirm={handlePanicConfirm}

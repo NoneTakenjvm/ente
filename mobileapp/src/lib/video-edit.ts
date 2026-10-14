@@ -244,14 +244,3 @@ export const applyVideoEdits = async (
         duration,
     };
 };
-
-/**
- * Spatially crop a video to the given pixel rectangle via ffmpeg.
- */
-export const cropVideoBytes = async (
-    bytes: Uint8Array,
-    mimeType: string,
-    crop: VideoCropRect,
-    sourceDimensions: { width: number; height: number },
-): Promise<CroppedVideoResult> =>
-    applyVideoEdits(bytes, mimeType, { crop }, sourceDimensions);

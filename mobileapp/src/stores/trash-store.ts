@@ -2,11 +2,7 @@ import { create } from "zustand";
 import type { StateCreator } from "zustand";
 import { getEnteCore } from "@/core";
 import { getTrashLastUpdatedAt } from "@/db/cursors";
-import {
-    loadEncryptedTrashItems,
-    saveEncryptedTrashItems,
-} from "@/db/kv";
-import { getSessionCacheKey } from "@/lib/cache-key";
+import { loadKv, saveKv } from "@/db/kv";
 import { clearEditHistory } from "@/lib/edit-history";
 import { clearLocalMediaOverride } from "@/lib/local-media-overrides";
 import { pullTrash, type TrashItem } from "@/lib/sync/pull-trash";
@@ -15,6 +11,7 @@ import { invalidateVideoCache } from "@/lib/video-media-cache";
 import { fileCreationTime } from "ente-media/file-metadata";
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
+import { errorMessage } from "@/lib/format";
 
 const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -70,7 +67,7 @@ const initialState = {
 };
 
 const persistItems = async (items: TrashItem[]): Promise<void> => {
-    await saveEncryptedTrashItems(items, getSessionCacheKey());
+    await saveKv("trashItems", items);
 };
 
 const createTrashStore: StateCreator<TrashState> = (set, get) => ({
@@ -78,9 +75,8 @@ const createTrashStore: StateCreator<TrashState> = (set, get) => ({
 
     hydrateFromCache: async (): Promise<void> => {
         try {
-            const cacheKey = getSessionCacheKey();
             const [items, lastUpdatedAt] = await Promise.all([
-                loadEncryptedTrashItems(cacheKey),
+                loadKv("trashItems"),
                 getTrashLastUpdatedAt(),
             ]);
             set({
@@ -93,9 +89,7 @@ const createTrashStore: StateCreator<TrashState> = (set, get) => ({
             set({
                 isHydrated: true,
                 errorMessage:
-                    error instanceof Error ?
-                        error.message :
-                        "Could not load trash",
+                    errorMessage(error, "Could not load trash"),
             });
         }
     },
@@ -129,9 +123,7 @@ const createTrashStore: StateCreator<TrashState> = (set, get) => ({
             set({
                 isSyncing: false,
                 errorMessage:
-                    error instanceof Error ?
-                        error.message :
-                        "Trash sync failed",
+                    errorMessage(error, "Trash sync failed"),
             });
             throw error;
         }

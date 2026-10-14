@@ -1,9 +1,6 @@
 import { create, type StateCreator } from "zustand";
-import {
-    loadEncryptedViewSessions,
-    saveEncryptedViewSessions,
-} from "@/db/kv";
-import { getSessionCacheKey, hasSessionCacheKey } from "@/lib/cache-key";
+import { loadKv, saveKv } from "@/db/kv";
+import { hasSessionCacheKey } from "@/lib/cache-key";
 import { isLocalDevToolsEnabled } from "@/lib/dev-flags";
 import { enqueueOrganizerConfigPatch } from "@/lib/organizer-config-save-queue";
 import {
@@ -67,13 +64,10 @@ const enqueueLocalPersist = (
     persistChain = persistChain
         .catch(() => undefined)
         .then(() =>
-            saveEncryptedViewSessions(
-                {
-                    sessions: payload.sessions,
-                    tombstones: payload.tombstones,
-                },
-                getSessionCacheKey(),
-            ));
+            saveKv("viewSessions", {
+                sessions: payload.sessions,
+                tombstones: payload.tombstones,
+            }));
     return persistChain;
 };
 
@@ -149,9 +143,7 @@ const createViewSessionsStore: StateCreator<ViewSessionsState> = (
 
     hydrateFromCache: async (): Promise<void> => {
         try {
-            const cached = await loadEncryptedViewSessions(
-                getSessionCacheKey(),
-            );
+            const cached = await loadKv("viewSessions");
             const packed = packCloudViewSessions(
                 cached?.sessions ?? [],
                 cached?.tombstones ?? [],

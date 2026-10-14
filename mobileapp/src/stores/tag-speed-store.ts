@@ -46,7 +46,6 @@ interface TagSpeedState {
         affectedNames: string[],
         mutator: (tags: string[]) => string[],
     ) => void;
-    setPinnedTags: (tags: string[]) => void;
     togglePinnedTag: (tag: string) => void;
     recordRecentTags: (tags: string[]) => void;
     setLastBulkUndo: (entries: TagBulkUndoEntry[] | undefined) => void;
@@ -157,12 +156,6 @@ export const useTagSpeedStore = create<TagSpeedState>((set, get) => ({
             set({ pinnedTags: nextPinned });
             persistPinned(nextPinned);
         }
-    },
-
-    setPinnedTags: (tags): void => {
-        const pinnedTags = normalizeTagNameList(tags, MAX_PINNED_TAGS);
-        set({ pinnedTags });
-        persistPinned(pinnedTags);
     },
 
     togglePinnedTag: (tag): void => {

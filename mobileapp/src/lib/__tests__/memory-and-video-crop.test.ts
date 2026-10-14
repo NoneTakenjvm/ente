@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { blobFromUint8Array } from "@/lib/bytes-blob";
 import {
-    formatBytesShort,
     isJsHeapUnderPressure,
     readJsHeapSnapshot,
     type JsHeapSnapshot,
@@ -19,12 +18,6 @@ describe("blobFromUint8Array", () => {
 });
 
 describe("memory-probe", () => {
-    it("formatBytesShort formats common magnitudes", () => {
-        expect(formatBytesShort(512)).toBe("512B");
-        expect(formatBytesShort(2048)).toBe("2.0KB");
-        expect(formatBytesShort(5 * 1024 * 1024)).toBe("5.0MB");
-    });
-
     it("isJsHeapUnderPressure uses the soft ratio", () => {
         const ok: JsHeapSnapshot = {
             usedJsHeapBytes: 50,

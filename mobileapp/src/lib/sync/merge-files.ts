@@ -98,13 +98,3 @@ export const dedupeFilesById = (files: EnteFile[]): EnteFile[] => {
     }
     return [...byId.values()];
 };
-
-export const filterFilesForCollection = (
-    files: EnteFile[],
-    collectionId: number | null,
-): EnteFile[] => {
-    if (collectionId === null) {
-        return dedupeFilesById(files);
-    }
-    return files.filter((file) => file.collectionID === collectionId);
-};

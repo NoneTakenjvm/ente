@@ -89,16 +89,6 @@ export const viewportBlankFraction = (
 };
 
 /**
- * Fraction of the image cropped away if the viewer filled the frame (object-cover).
- *
- * Equal to {@link viewportBlankFraction} for a given aspect pair.
- */
-export const viewportCropFraction = (
-    imageAspect: number,
-    viewportAspect: number,
-): number => viewportBlankFraction(imageAspect, viewportAspect);
-
-/**
  * Reorder files by how well they fit the viewer viewport.
  *
  * - `best`: closest aspect match first (least blank / crop).

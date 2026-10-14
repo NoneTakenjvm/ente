@@ -4,7 +4,7 @@ import { ItemVisibility } from "ente-media/file-metadata";
 /**
  * Return true when the collection is hidden for the given user.
  */
-export const isHiddenCollection = (
+const isHiddenCollection = (
     collection: Collection,
     userId: number,
 ): boolean => {

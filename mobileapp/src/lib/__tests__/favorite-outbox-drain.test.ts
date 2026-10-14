@@ -1,17 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { EnteFile } from "ente-media/file";
 import { ItemVisibility } from "ente-media/file-metadata";
 import type { FavoriteOutboxEntry } from "@/lib/favorite-outbox";
+import { stubFile } from "@/test-utils/fixtures";
 
 vi.mock("@/db/kv", () => ({
-    loadEncryptedFavoriteOutbox: vi.fn(async () => undefined),
-    saveEncryptedFavoriteOutbox: vi.fn(async () => undefined),
-    loadEncryptedTagOutbox: vi.fn(async () => []),
-    saveEncryptedTagOutbox: vi.fn(async () => undefined),
-    loadEncryptedVisibilityOutbox: vi.fn(async () => undefined),
-    saveEncryptedVisibilityOutbox: vi.fn(async () => undefined),
-    loadEncryptedDerivedReplaceOutbox: vi.fn(async () => undefined),
-    saveEncryptedDerivedReplaceOutbox: vi.fn(async () => undefined),
+    loadKv: vi.fn(async () => undefined),
+    saveKv: vi.fn(async () => undefined),
 }));
 
 vi.mock("@/lib/cache-key", () => ({
@@ -21,15 +15,6 @@ vi.mock("@/lib/cache-key", () => ({
 vi.mock("sonner", () => ({
     toast: { error: vi.fn(), success: vi.fn() },
 }));
-
-const stubFile = (id: number): EnteFile =>
-    ({
-        id,
-        ownerID: 1,
-        collectionID: 10,
-        key: "key",
-        metadata: { fileType: 0 },
-    }) as EnteFile;
 
 describe("favourite outbox drain batching", () => {
     beforeEach(async () => {
@@ -53,7 +38,7 @@ describe("favourite outbox drain batching", () => {
         } = await import("@/lib/tag-outbox-runner");
 
         await hydrateFavoriteOutbox();
-        const files = Array.from({ length: 250 }, (_, i) => stubFile(i + 1));
+        const files = Array.from({ length: 250 }, (_, i) => stubFile({ id: i + 1, collectionID: 10 }));
         for (const file of files) {
             await upsertFavoriteOutboxEntry(file, 1, true);
         }
@@ -104,8 +89,8 @@ describe("favourite outbox drain batching", () => {
         } = await import("@/lib/tag-outbox-runner");
 
         await hydrateFavoriteOutbox();
-        await upsertFavoriteOutboxEntry(stubFile(1), 1, true);
-        await upsertFavoriteOutboxEntry(stubFile(2), 1, true);
+        await upsertFavoriteOutboxEntry(stubFile({ id: 1, collectionID: 10 }), 1, true);
+        await upsertFavoriteOutboxEntry(stubFile({ id: 2, collectionID: 10 }), 1, true);
 
         const applyFavoriteMutations = vi.fn(async () => {
             throw new Error("batch failed");
@@ -114,7 +99,10 @@ describe("favourite outbox drain batching", () => {
 
         startTagOutboxRunner({
             getFileById: (fileId: number) =>
-                [stubFile(1), stubFile(2)].find((file) => file.id === fileId),
+                [
+                    stubFile({ id: 1, collectionID: 10 }),
+                    stubFile({ id: 2, collectionID: 10 }),
+                ].find((file) => file.id === fileId),
             getCollections: () => [],
             patchFile: async () => undefined,
             applyFavoriteMutations,
@@ -142,14 +130,14 @@ describe("favourite outbox drain batching", () => {
         } = await import("@/lib/tag-outbox-runner");
 
         await hydrateFavoriteOutbox();
-        await upsertFavoriteOutboxEntry(stubFile(1), 1, true);
+        await upsertFavoriteOutboxEntry(stubFile({ id: 1, collectionID: 10 }), 1, true);
 
         const applyFavoriteMutations = vi.fn(
             async (entries: FavoriteOutboxEntry[]) => {
                 if (!entries[0]?.isFavorite) {
                     throw new Error("remote unavailable");
                 }
-                await upsertFavoriteOutboxEntry(stubFile(1), 1, false);
+                await upsertFavoriteOutboxEntry(stubFile({ id: 1, collectionID: 10 }), 1, false);
                 return {
                     ackedKeys: entries.map((entry) => String(entry.fileId)),
                 };
@@ -158,7 +146,7 @@ describe("favourite outbox drain batching", () => {
 
         startTagOutboxRunner({
             getFileById: (fileId: number) =>
-                fileId === 1 ? stubFile(1) : undefined,
+                fileId === 1 ? stubFile({ id: 1, collectionID: 10 }) : undefined,
             getCollections: () => [],
             patchFile: async () => undefined,
             applyFavoriteMutations,

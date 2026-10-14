@@ -94,7 +94,7 @@ export const planUsageBytes = (userDetails: UserDetails): number =>
 /**
  * Plan allowance in bytes before bonuses.
  */
-export const planStorageBytes = (userDetails: UserDetails): number =>
+const planStorageBytes = (userDetails: UserDetails): number =>
     isPartOfFamily(userDetails) ?
         (userDetails.familyData?.storage ?? 0) :
         userDetails.subscription.storage;

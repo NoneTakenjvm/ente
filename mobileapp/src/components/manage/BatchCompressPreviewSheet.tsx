@@ -7,8 +7,9 @@ import {
     SheetHeader,
     SheetTitle,
 } from "@/components/ui/sheet";
-import { fileByteSize, formatFileSize } from "@/lib/compress";
+import { fileByteSize } from "@/lib/compress";
 import type { EnteFile } from "ente-media/file";
+import { formatFileSize, plural } from "@/lib/format";
 
 interface BatchCompressPreviewSheetProps {
     open: boolean;
@@ -51,7 +52,7 @@ export function BatchCompressPreviewSheet({
 
                 <div className="flex flex-col gap-4 px-4">
                     <p className="text-sm text-muted-foreground">
-                        {files.length} file{files.length === 1 ? "" : "s"} selected ·{" "}
+                        {plural(files.length, "file")} selected ·{" "}
                         {formatFileSize(totalBytes)} total
                     </p>
                     <p className="text-sm text-muted-foreground">

@@ -4,12 +4,10 @@ import {
     DEFAULT_TAG_TYPE,
     configFromPersisted,
     configToPersisted,
-    filterKitNearnessTags,
     areAllTagsIncludedInKitNearness,
     isTagIncludedInEffectsPresence,
     isTagIncludedInKitNearness,
     normalizeTagTypeName,
-    sortTagsByUsage,
     tagsForTypeView,
     typeForTag,
 } from "@/lib/tag-types";
@@ -27,9 +25,6 @@ describe("tag-types", () => {
         ).toBe(false);
         const include = new Map([["beach", true]]);
         expect(isTagIncludedInKitNearness("beach", include)).toBe(true);
-        expect(
-            filterKitNearnessTags(["beach", "junk"], include),
-        ).toEqual(["beach"]);
         expect(
             areAllTagsIncludedInKitNearness(["beach", "junk"], include),
         ).toBe(false);
@@ -69,19 +64,6 @@ describe("tag-types", () => {
                 loaded.includeInEffectsPresenceByName,
             ),
         ).toBe(true);
-    });
-
-    it("sortTagsByUsage orders by count then name", () => {
-        const fileIdsByTag = new Map<string, Set<number>>([
-            ["a", new Set([1])],
-            ["b", new Set([1, 2, 3])],
-            ["c", new Set([1, 2])],
-        ]);
-        expect(sortTagsByUsage(["a", "b", "c"], fileIdsByTag)).toEqual([
-            "b",
-            "c",
-            "a",
-        ]);
     });
 
     it("tagsForTypeView filters by type and sorts by usage", () => {

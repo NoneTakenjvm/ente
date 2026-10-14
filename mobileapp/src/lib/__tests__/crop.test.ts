@@ -8,7 +8,6 @@ import {
     canCrop,
     clampCropRect,
     croppedReplaceTitle,
-    croppedUploadTitle,
     CROPPED_TAG,
     pixelCropToSourceRect,
 } from "@/lib/crop";
@@ -59,12 +58,6 @@ describe("crop", () => {
 
     it("canCrop rejects non-images", () => {
         expect(canCrop(fileWithTags(1, FileType.video, []))).toBe(false);
-    });
-
-    it("croppedUploadTitle appends -cropped.jpg", () => {
-        expect(croppedUploadTitle(fileWithTags(1, FileType.image, []))).toBe(
-            "vacation-cropped.jpg",
-        );
     });
 
     it("buildCroppedOrganizerTags merges source tags", () => {

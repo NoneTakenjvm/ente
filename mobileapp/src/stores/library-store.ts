@@ -4,11 +4,10 @@ import type { EnteFile } from "ente-media/file";
 import { getEnteCore, type Collection } from "@/core";
 import { bindOrganizerDB } from "@/db";
 import {
-    loadEncryptedCollections,
+    loadKv,
+    saveKv,
     loadEncryptedFiles,
-    loadEncryptedTagIndex,
     markLibraryCacheFilesDirty,
-    saveEncryptedCollections,
     saveEncryptedFiles,
 } from "@/db/kv";
 import { initSessionCacheKey, getSessionCacheKey } from "@/lib/cache-key";
@@ -127,9 +126,9 @@ import { buildCroppedOrganizerTags, croppedReplaceTitle } from "@/lib/crop";
 import { isFileFavorited } from "@/lib/favorites";
 import type { CompressMediaResult } from "@/lib/transcode/compress-media";
 import type { RotationDegrees } from "@/lib/rotate";
-import type { CroppedVideoResult, VideoCropRect } from "@/lib/video-edit";
-import { mimeTypeForFile } from "@/lib/media-kind";
+import type { CroppedVideoResult } from "@/lib/video-edit";
 import { ItemVisibility } from "ente-media/file-metadata";
+import { errorMessage } from "@/lib/format";
 
 export type SyncStatus =
     | "idle" |
@@ -141,7 +140,6 @@ export type SyncStatus =
 
 interface LibraryState {
     collections: Collection[];
-    activeCollectionId: number | null;
     allFiles: EnteFile[];
     /** O(1) file-id → index into {@link allFiles}. */
     fileIndexById: Map<number, number>;
@@ -161,14 +159,12 @@ interface LibraryState {
      * Use when the local library count looks truncated after a partial sync.
      */
     forceResyncLibrary: () => Promise<void>;
-    setActiveCollection: (id: number | null) => void;
     /**
      * Merge verified remote file metadata into the local library.
      * Batches many files into one array walk and one scheduled encrypt.
      */
     patchFiles: (updated: EnteFile[]) => void;
     patchFile: (updated: EnteFile) => Promise<void>;
-    applyLocalTagsOnFile: (fileId: number, intendedTags: string[]) => void;
     updateTagsOnFile: (fileId: number, mutator: TagMutator) => Promise<void>;
     renameTag: (
         oldName: string,
@@ -202,11 +198,6 @@ interface LibraryState {
             onProgress?: (progress: number) => void;
         },
     ) => Promise<void>;
-    compressAndUploadFile: (
-        fileId: number,
-        compressedBytes: Uint8Array,
-        dimensions: { width: number; height: number },
-    ) => Promise<EnteFile>;
     compressAndUploadMedia: (
         fileId: number,
         bytes: Uint8Array,
@@ -233,15 +224,6 @@ interface LibraryState {
     rotateAndUploadFile: (
         fileId: number,
         degrees: RotationDegrees,
-    ) => Promise<EnteFile>;
-    cropVideoAndUploadFile: (
-        fileId: number,
-        crop: VideoCropRect,
-    ) => Promise<EnteFile>;
-    cropAndUploadFile: (
-        fileId: number,
-        croppedBytes: Uint8Array,
-        dimensions: { width: number; height: number },
     ) => Promise<EnteFile>;
     cropAndReplaceFileOptimistic: (
         fileId: number,
@@ -499,7 +481,6 @@ const rewritePresetTags = (
 const initialState: Pick<
     LibraryState,
     | "collections" |
-    "activeCollectionId" |
     "allFiles" |
     "fileIndexById" |
     "filesRevision" |
@@ -508,7 +489,6 @@ const initialState: Pick<
     "syncError"
 > = {
     collections: [],
-    activeCollectionId: null,
     allFiles: [],
     fileIndexById: new Map(),
     filesRevision: 0,
@@ -795,9 +775,9 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         // Independent IDB reads + decrypts; outboxes and trash are hydrated
         // even for an empty cache so the bootstrap hook need not re-read them.
         const [collections, files, tagIndex] = await Promise.all([
-            loadEncryptedCollections(cacheKey),
+            loadKv("collections"),
             loadEncryptedFiles(cacheKey),
-            loadEncryptedTagIndex(cacheKey),
+            loadKv("tagIndex"),
             import("@/stores/view-sessions-store").then(
                 ({ useViewSessionsStore }) =>
                     useViewSessionsStore.getState().hydrateFromCache(),
@@ -889,10 +869,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                         ),
                         organizerBootstrap.collection,
                     ];
-                    await saveEncryptedCollections(
-                        collections,
-                        getSessionCacheKey(),
-                    );
+                    await saveKv("collections", collections);
                 }
                 useTagStore.getState().hydrateTagTypes(
                     organizerBootstrap.config.tagTypes,
@@ -1070,7 +1047,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 set({
                     syncStatus: offline ? "offline" : "error",
                     syncError:
-                        error instanceof Error ? error.message : "Sync failed",
+                        errorMessage(error, "Sync failed"),
                 });
                 if (!offline) {
                     throw error;
@@ -1095,10 +1072,6 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         await clearAllSyncCursors();
         resetFavoriteMembershipForFullSync();
         await get().syncRemote();
-    },
-
-    setActiveCollection: (id: number | null): void => {
-        set({ activeCollectionId: id });
     },
 
     patchFiles: (updated: EnteFile[]): void => {
@@ -1150,13 +1123,6 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         get().patchFiles([updated]);
     },
 
-    applyLocalTagsOnFile: (fileId: number, intendedTags: string[]): void => {
-        const file = get().getFileById(fileId);
-        if (file) {
-            applyOptimisticFileTags(set, get, file, intendedTags);
-        }
-    },
-
     updateTagsOnFile: async (
         fileId: number,
         mutator: TagMutator,
@@ -1180,7 +1146,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         newName: string,
         onProgress?: (completed: number, total: number) => void,
     ): Promise<BatchTagResult> => {
-        const { allFiles, collections } = get();
+        const { allFiles } = get();
         const fileIds =
             useTagStore.getState().fileIdsByTag.get(oldName) ?? new Set();
         const files = allFiles.filter((file) => fileIds.has(file.id));
@@ -1195,12 +1161,9 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             renameTagInTree(root, oldName, newName));
 
         return renameTagOnFiles(
-            getEnteCore().getHttpClient(),
             files,
-            collections,
             oldName,
             newName,
-            (file) => get().patchFile(file),
             onProgress,
         );
     },
@@ -1209,7 +1172,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         tagName: string,
         onProgress?: (completed: number, total: number) => void,
     ): Promise<BatchTagResult> => {
-        const { allFiles, collections } = get();
+        const { allFiles } = get();
         const fileIds =
             useTagStore.getState().fileIdsByTag.get(tagName) ?? new Set();
         const files = allFiles.filter((file) => fileIds.has(file.id));
@@ -1223,11 +1186,8 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             removeTagFromTree(root, tagName));
 
         return deleteTagOnFiles(
-            getEnteCore().getHttpClient(),
             files,
-            collections,
             tagName,
-            (file) => get().patchFile(file),
             onProgress,
         );
     },
@@ -1237,7 +1197,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         targetName: string,
         onProgress?: (completed: number, total: number) => void,
     ): Promise<BatchTagResult> => {
-        const { allFiles, collections } = get();
+        const { allFiles } = get();
         const affectedIds = new Set<number>();
         for (const source of sourceNames) {
             const ids = useTagStore.getState().fileIdsByTag.get(source);
@@ -1262,12 +1222,9 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             ));
 
         return mergeTagsOnFiles(
-            getEnteCore().getHttpClient(),
             files,
-            collections,
             sourceNames,
             targetName,
-            (file) => get().patchFile(file),
             onProgress,
         );
     },
@@ -1408,38 +1365,6 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             useFavoritesStore.getState().removeTrashedFileIds(trashedIds);
             await get().syncRemote();
         }
-    },
-
-    compressAndUploadFile: async (
-        fileId: number,
-        compressedBytes: Uint8Array,
-        dimensions: { width: number; height: number },
-    ): Promise<EnteFile> => {
-        const file = requireFile(get, fileId);
-        const collection = requireCollection(get, file.collectionID);
-
-        const originalSize = file.info?.fileSize;
-        if (
-            originalSize !== undefined &&
-            !isWorthReplacing(originalSize, compressedBytes.length)
-        ) {
-            throw new CompressionSkippedError();
-        }
-        const uploaded = await getEnteCore().uploadCompressedImage(
-            file,
-            compressedBytes,
-            collection,
-            dimensions,
-            compressedReplaceTitle(file),
-            buildCompressedOrganizerTags(file),
-        );
-
-        return replaceSourceWithCompressed(
-            set,
-            get,
-            file,
-            uploaded,
-        );
     },
 
     compressAndUploadMedia: async (
@@ -1622,51 +1547,6 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         }
         primeThumbnailFromBytes(updated.id, rotated.bytes);
         return updated;
-    },
-
-    cropVideoAndUploadFile: async (
-        fileId: number,
-        crop: VideoCropRect,
-    ): Promise<EnteFile> => {
-        const file = requireFile(get, fileId);
-        const collection = requireCollection(get, file.collectionID);
-
-        const bytes = await getEnteCore().getDecryptedFile(file);
-        const { cropVideoBytes } = await import("@/lib/video-edit");
-        const cropped = await cropVideoBytes(
-            bytes,
-            mimeTypeForFile(file),
-            crop,
-            videoDimensionsFromFile(file),
-        );
-        const uploaded = await getEnteCore().uploadCroppedVideo(
-            file,
-            cropped,
-            collection,
-            compressedReplaceTitle(file),
-            buildCroppedOrganizerTags(file),
-        );
-
-        return replaceSourceWithCompressed(
-            set,
-            get,
-            file,
-            uploaded,
-        );
-    },
-
-    cropAndUploadFile: async (
-        fileId: number,
-        croppedBytes: Uint8Array,
-        dimensions: { width: number; height: number },
-    ): Promise<EnteFile> => {
-        return uploadCroppedAndReplace(
-            set,
-            get,
-            requireFile(get, fileId),
-            croppedBytes,
-            dimensions,
-        );
     },
 
     cropAndReplaceFileOptimistic: (
@@ -1918,7 +1798,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             return { succeeded: 0, failed: 0, errors: [] };
         }
 
-        const { allFiles, collections } = get();
+        const { allFiles } = get();
         const idSet = new Set(uniqueIds);
         const files = allFiles.filter((file) => idSet.has(file.id));
         if (!files.length) {
@@ -1929,11 +1809,8 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             tagsForFile(file, mutator));
 
         return applyTagMutatorOnFiles(
-            getEnteCore().getHttpClient(),
             files,
-            collections,
             mutator,
-            (verified) => get().patchFile(verified),
         );
     },
 

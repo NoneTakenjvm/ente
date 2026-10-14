@@ -36,12 +36,12 @@ import {
 } from "@/lib/transcode/compress-media";
 import { useLibraryStore } from "@/stores/library-store";
 import type { EnteFile } from "ente-media/file";
+import { errorMessage } from "@/lib/format";
 
 type PanelPhase =
     "loading" |
     "encoding" |
     "ready" |
-    "uploading" |
     "success" |
     "error";
 
@@ -85,7 +85,6 @@ export function CompressionPanel({
     const [compressedUrl, setCompressedUrl] = useState<string | undefined>();
     const [loadProgress, setLoadProgress] = useState<number | undefined>();
     const [encodeProgress, setEncodeProgress] = useState<number | undefined>();
-    const [uploadProgress, setUploadProgress] = useState<number | undefined>();
     const [error, setError] = useState<string | undefined>();
 
     const encodeRequestId = useRef<number>(0);
@@ -206,9 +205,7 @@ export function CompressionPanel({
                         encodeError.message.includes("audio") ?
                             "Could not keep audio — skipped." :
                             "Already under the minimum file size — skipped." :
-                        encodeError instanceof Error ?
-                            encodeError.message :
-                            "Could not encode preview",
+                        errorMessage(encodeError, "Could not encode preview"),
                 );
             }
         };
@@ -231,9 +228,7 @@ export function CompressionPanel({
     const failUpload = useCallback((uploadError: unknown): void => {
         setPhase("error");
         setError(
-            uploadError instanceof Error ?
-                uploadError.message :
-                "Upload failed",
+            errorMessage(uploadError, "Upload failed"),
         );
     }, []);
 
@@ -241,8 +236,6 @@ export function CompressionPanel({
         if (!originalBytes || !compressedResult) {
             return;
         }
-        setPhase("uploading");
-        setUploadProgress(0);
         setError(undefined);
 
         try {
@@ -251,9 +244,6 @@ export function CompressionPanel({
                     file.id,
                     compressedResult,
                     originalBytes.length,
-                    (ratio) => {
-                        setUploadProgress(Math.round(ratio * 100));
-                    },
                 );
             onUploaded?.(optimisticFile);
             setPhase("success");
@@ -297,7 +287,7 @@ export function CompressionPanel({
         <Sheet
             open
             onOpenChange={(open) => {
-                if (!open && phase !== "uploading") {
+                if (!open) {
                     onClose();
                 }
             }}
@@ -403,24 +393,6 @@ export function CompressionPanel({
                         </div>
                     ) : null}
 
-                    {phase === "uploading" ? (
-                        <div className="flex flex-col gap-2">
-                            <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                                <Spinner />
-                                Uploading…
-                                {uploadProgress !== undefined ?
-                                    ` ${uploadProgress}%` :
-                                    ""}
-                            </p>
-                            {uploadProgress !== undefined ? (
-                                <Progress
-                                    value={uploadProgress}
-                                    className="w-full"
-                                />
-                            ) : null}
-                        </div>
-                    ) : null}
-
                     {phase === "success" ? (
                         <Alert>
                             <AlertDescription>
@@ -435,7 +407,6 @@ export function CompressionPanel({
                         type="button"
                         variant="outline"
                         onClick={onClose}
-                        disabled={phase === "uploading"}
                     >
                         {phase === "success" ? "Done" : "Cancel"}
                     </Button>

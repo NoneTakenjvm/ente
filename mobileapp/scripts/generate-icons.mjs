@@ -1,3 +1,4 @@
+// Generates the PWA icons in public/icons (npm run icons).
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";

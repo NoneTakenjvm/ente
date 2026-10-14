@@ -1,4 +1,3 @@
-import { sortFilesByUpload } from "@/lib/sort-files";
 import {
     addToFavoritesCollection,
     removeFromFavoritesCollection,
@@ -60,22 +59,6 @@ import type { EnteFile } from "ente-media/file";
 import type { FilePublicMagicMetadataData } from "ente-media/file-metadata";
 import type { OrganizerAppConfig } from "@/lib/organizer-config";
 
-export interface SyncLibraryOptions {
-    collectionId?: number;
-    sinceTime?: number;
-    onProgress?: (current: number, total: number) => void;
-}
-
-const collectionSyncConcurrency = 2;
-
-const dedupeFilesById = (files: EnteFile[]): EnteFile[] => {
-    const byId = new Map<number, EnteFile>();
-    for (const file of files) {
-        byId.set(file.id, file);
-    }
-    return [...byId.values()];
-};
-
 export class EnteCore {
     private readonly session: CoreSession;
     private readonly http: HttpClient;
@@ -128,45 +111,6 @@ export class EnteCore {
             resolved.key,
             sinceTime,
         );
-    }
-
-    async syncLibrary(options?: SyncLibraryOptions): Promise<EnteFile[]> {
-        const collections = await this.listCollections();
-        const sinceTime = options?.sinceTime ?? 0;
-        const targets = options?.collectionId ?
-            collections.filter((c) => c.id === options.collectionId) :
-            collections;
-
-        if (options?.collectionId && targets.length === 0) {
-            throw new Error(`Collection ${options.collectionId} not found`);
-        }
-
-        const allFiles: EnteFile[] = [];
-        const total = targets.length;
-
-        for (let i = 0; i < targets.length; i += collectionSyncConcurrency) {
-            const batch = targets.slice(i, i + collectionSyncConcurrency);
-            const batchResults = await Promise.all(
-                batch.map(async (collection, batchIndex) => {
-                    const index = i + batchIndex;
-                    options?.onProgress?.(index + 1, total);
-                    return syncCollectionFiles(
-                        this.http,
-                        collection.id,
-                        collection.key,
-                        sinceTime,
-                    );
-                }),
-            );
-            for (const files of batchResults) {
-                allFiles.push(...files);
-            }
-        }
-
-        if (options?.collectionId) {
-            return sortFilesByUpload(allFiles);
-        }
-        return sortFilesByUpload(dedupeFilesById(allFiles));
     }
 
     getCollectionChanges(sinceTime: number): Promise<CollectionChange[]> {

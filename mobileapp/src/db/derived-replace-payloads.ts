@@ -76,15 +76,3 @@ export const deleteDerivedReplacePayload = async (
         // ignore
     }
 };
-
-export const clearDerivedReplacePayloads = async (): Promise<void> => {
-    if (!hasOrganizerDB()) {
-        return;
-    }
-    try {
-        const db = await getOrganizerDB();
-        await db.clear("derivedReplacePayloads");
-    } catch {
-        // ignore
-    }
-};

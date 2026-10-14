@@ -1,14 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { EnteFile } from "ente-media/file";
 import {
     FILE_LIBRARY_SHARD_COUNT,
     dirtyFileShardIdsFromUpdation,
     fileLibraryShardId,
     resolveDirtyFileShardIds,
 } from "@/db/file-shards";
-
-const stubFile = (id: number, updationTime: number): EnteFile =>
-    ({ id, updationTime }) as EnteFile;
+import { stubFile } from "@/test-utils/fixtures";
 
 describe("fileLibraryShardId", () => {
     it("is stable and in range", () => {
@@ -30,10 +27,13 @@ describe("dirtyFileShardIdsFromUpdation", () => {
             [2, 20],
             [128, 30],
         ]);
-        const files = [stubFile(1, 10), stubFile(2, 21), stubFile(3, 1)];
+        const files = [
+            stubFile({ id: 1, updationTime: 10 }),
+            stubFile({ id: 2, updationTime: 21 }),
+            stubFile({ id: 3, updationTime: 1 }),
+        ];
         const dirty = dirtyFileShardIdsFromUpdation(
             files,
-            FILE_LIBRARY_SHARD_COUNT,
             previous,
         );
         expect(dirty.has(fileLibraryShardId(2))).toBe(true);
@@ -46,10 +46,9 @@ describe("dirtyFileShardIdsFromUpdation", () => {
 describe("resolveDirtyFileShardIds", () => {
     it("includes explicitly marked optimistic tag edits", () => {
         const previous = new Map<number, number>([[1, 10], [2, 20]]);
-        const files = [stubFile(1, 10), stubFile(2, 20)];
+        const files = [stubFile({ id: 1, updationTime: 10 }), stubFile({ id: 2, updationTime: 20 })];
         const dirty = resolveDirtyFileShardIds(
             files,
-            FILE_LIBRARY_SHARD_COUNT,
             previous,
             new Set([1]),
             false,
@@ -60,10 +59,9 @@ describe("resolveDirtyFileShardIds", () => {
 
     it("is empty when nothing changed and nothing marked", () => {
         const previous = new Map<number, number>([[1, 10], [2, 20]]);
-        const files = [stubFile(1, 10), stubFile(2, 20)];
+        const files = [stubFile({ id: 1, updationTime: 10 }), stubFile({ id: 2, updationTime: 20 })];
         const dirty = resolveDirtyFileShardIds(
             files,
-            FILE_LIBRARY_SHARD_COUNT,
             previous,
             new Set(),
             false,

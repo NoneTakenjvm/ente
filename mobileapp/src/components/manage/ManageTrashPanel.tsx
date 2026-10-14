@@ -7,16 +7,7 @@ import {
     type JSX,
 } from "react";
 import { RotateCcw, Trash2 } from "lucide-react";
-import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
     ThumbnailGrid,
     type ThumbnailGridSelection,
@@ -43,6 +34,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { useTrashStore } from "@/stores/trash-store";
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
+import { errorMessage, plural } from "@/lib/format";
 
 const daysUntilDelete = (deleteByMicros: number): number => {
     const msLeft = deleteByMicros / 1000 - Date.now();
@@ -77,7 +69,7 @@ export function ManageTrashPanel(): JSX.Element {
     const items = useTrashStore((s) => s.items);
     const isHydrated = useTrashStore((s) => s.isHydrated);
     const isSyncing = useTrashStore((s) => s.isSyncing);
-    const errorMessage = useTrashStore((s) => s.errorMessage);
+    const storeError = useTrashStore((s) => s.errorMessage);
     const hydrateFromCache = useTrashStore((s) => s.hydrateFromCache);
     const syncTrash = useTrashStore((s) => s.syncTrash);
     const restoreToCollection = useTrashStore((s) => s.restoreToCollection);
@@ -168,7 +160,7 @@ export function ManageTrashPanel(): JSX.Element {
             setPickedIds(new Set());
         } catch (error) {
             setActionError(
-                error instanceof Error ? error.message : "Trash action failed",
+                errorMessage(error, "Trash action failed"),
             );
         } finally {
             setBusy(false);
@@ -239,18 +231,17 @@ export function ManageTrashPanel(): JSX.Element {
         <div className="flex min-h-0 flex-1 flex-col gap-3">
             <div className="shrink-0 space-y-1 px-4 pt-3">
                 <p className="text-xs text-muted-foreground">
-                    {items.length} item{items.length === 1 ? "" : "s"} · earliest
-                    permanent delete in {soonestDays} day
-                    {soonestDays === 1 ? "" : "s"}
+                    {plural(items.length, "item")} · earliest
+                    permanent delete in {plural(soonestDays, "day")}
                 </p>
                 {isSyncing ? (
                     <p className="text-xs text-muted-foreground">Syncing…</p>
                 ) : null}
             </div>
-            {errorMessage || actionError ? (
+            {storeError || actionError ? (
                 <Alert variant="destructive" className="mx-4 shrink-0">
                     <AlertDescription>
-                        {actionError ?? errorMessage}
+                        {actionError ?? storeError}
                     </AlertDescription>
                 </Alert>
             ) : null}
@@ -327,40 +318,23 @@ export function ManageTrashPanel(): JSX.Element {
                 )}
             </footer>
 
-            <AlertDialog
+            <ConfirmDialog
                 open={confirm !== undefined}
-                onOpenChange={(open) => {
-                    if (!open && !busy) {
-                        setConfirm(undefined);
-                    }
-                }}
-            >
-                <AlertDialogContent>
-                    <AlertDialogHeader>
-                        <AlertDialogTitle>
-                            {confirm === "empty" ?
-                                "Empty trash permanently?" :
-                                "Delete forever?"}
-                        </AlertDialogTitle>
-                        <AlertDialogDescription>
-                            {confirm === "empty" ?
-                                `Permanently delete all ${items.length} item${items.length === 1 ? "" : "s"} in trash. This cannot be undone.` :
-                                `Permanently delete ${selectedIds.size} selected item${selectedIds.size === 1 ? "" : "s"}. This cannot be undone.`}
-                        </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                        <AlertDialogCancel disabled={busy}>
-                            Cancel
-                        </AlertDialogCancel>
-                        <AlertDialogAction
-                            disabled={busy}
-                            onClick={handleConfirmDestructive}
-                        >
-                            {busy ? <Spinner /> : "Delete permanently"}
-                        </AlertDialogAction>
-                    </AlertDialogFooter>
-                </AlertDialogContent>
-            </AlertDialog>
+                title={
+                    confirm === "empty" ?
+                        "Empty trash permanently?" :
+                        "Delete forever?"
+                }
+                description={
+                    confirm === "empty" ?
+                        `Permanently delete all ${plural(items.length, "item")} in trash. This cannot be undone.` :
+                        `Permanently delete ${plural(selectedIds.size, "selected item")}. This cannot be undone.`
+                }
+                confirmLabel="Delete permanently"
+                isWorking={busy}
+                onCancel={() => setConfirm(undefined)}
+                onConfirm={handleConfirmDestructive}
+            />
         </div>
     );
 }

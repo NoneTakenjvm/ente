@@ -1,11 +1,6 @@
 import type { EnteFile } from "ente-media/file";
 import { ItemVisibility, isArchivedFile } from "ente-media/file-metadata";
-import {
-    loadEncryptedVisibilityOutbox,
-    saveEncryptedVisibilityOutbox,
-    type PersistedVisibilityOutboxEntry,
-} from "@/db/kv";
-import { getSessionCacheKey } from "@/lib/cache-key";
+import { loadKv, saveKv, type PersistedVisibilityOutboxEntry } from "@/db/kv";
 
 export interface VisibilityOutboxEntry {
     fileId: number;
@@ -27,7 +22,7 @@ const toPersisted = (
 
 const flushVisibilityOutboxToDisk = async (): Promise<void> => {
     const entries = [...outboxByFileId.values()].map(toPersisted);
-    await saveEncryptedVisibilityOutbox(entries, getSessionCacheKey());
+    await saveKv("visibilityOutbox", entries);
 };
 
 const persistVisibilityOutbox = (): Promise<void> => {
@@ -40,7 +35,7 @@ const persistVisibilityOutbox = (): Promise<void> => {
 };
 
 export const hydrateVisibilityOutbox = async (): Promise<void> => {
-    const persisted = await loadEncryptedVisibilityOutbox(getSessionCacheKey());
+    const persisted = await loadKv("visibilityOutbox");
     outboxByFileId.clear();
     for (const entry of persisted ?? []) {
         outboxByFileId.set(entry.fileId, {

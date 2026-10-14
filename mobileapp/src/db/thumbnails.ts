@@ -44,17 +44,6 @@ type ThumbnailLruMeta = {
     lastAccess: number;
 };
 
-const estimateLegacyByteSize = (record: ThumbnailRecord): number => {
-    if (typeof record.byteSize === "number" && record.byteSize > 0) {
-        return record.byteSize;
-    }
-    // Base64 expands ~4/3; approximate original ciphertext length.
-    return Math.max(1, Math.floor((record.encryptedData.length * 3) / 4));
-};
-
-const recordLastAccess = (record: ThumbnailRecord): number =>
-    typeof record.lastAccess === "number" ? record.lastAccess : 0;
-
 const thumbnailTouches = new LruTouchCoalescer(async (batch) => {
     if (!hasOrganizerDB()) {
         return;
@@ -68,7 +57,6 @@ const thumbnailTouches = new LruTouchCoalescer(async (batch) => {
         }
         await tx.store.put({
             ...record,
-            byteSize: estimateLegacyByteSize(record),
             lastAccess,
         });
     }
@@ -91,16 +79,15 @@ const collectThumbnailLruMeta = async (
     while (cursor) {
         const record = cursor.value;
         if (excludeFileId === undefined || record.fileId !== excludeFileId) {
-            const byteSize = estimateLegacyByteSize(record);
             metas.push({
                 fileId: record.fileId,
-                byteSize,
+                byteSize: record.byteSize,
                 lastAccess: thumbnailTouches.overlay(
                     record.fileId,
-                    recordLastAccess(record),
+                    record.lastAccess,
                 ),
             });
-            usedBytes += byteSize;
+            usedBytes += record.byteSize;
         }
         cursor = await cursor.continue();
     }
@@ -216,11 +203,12 @@ export const getThumbnailCiphertext = async (
     }
 
     const now = Date.now();
-    const diskAccess = recordLastAccess(record);
-    const effectiveAccess = thumbnailTouches.overlay(fileId, diskAccess);
+    const effectiveAccess = thumbnailTouches.overlay(
+        fileId,
+        record.lastAccess,
+    );
     const needsTouch =
-        !isGalleryScrolling() &&
-        (!record.byteSize || now - effectiveAccess >= TOUCH_MIN_INTERVAL_MS);
+        !isGalleryScrolling() && now - effectiveAccess >= TOUCH_MIN_INTERVAL_MS;
     if (needsTouch) {
         thumbnailTouches.note(fileId, now);
     }
@@ -246,7 +234,7 @@ export const putThumbnailCiphertext = async (
     try {
         const db = await getOrganizerDB();
         const previous = await db.get("thumbnails", fileId);
-        const previousSize = previous ? estimateLegacyByteSize(previous) : 0;
+        const previousSize = previous?.byteSize ?? 0;
         let usedBytes = (await ensureDiskBytes(db)) - previousSize;
 
         if (usedBytes + byteSize > DISK_BUDGET_BYTES) {
@@ -284,7 +272,7 @@ export const deleteThumbnailCiphertext = async (
         await db.delete("thumbnails", fileId);
         thumbnailTouches.forget(fileId);
         if (previous) {
-            adjustDiskBytes(-estimateLegacyByteSize(previous));
+            adjustDiskBytes(-previous.byteSize);
         }
     } catch {
         cachedDiskBytes = undefined;

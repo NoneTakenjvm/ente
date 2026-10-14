@@ -73,7 +73,7 @@ const SOFT_COLOR_SCORE_FACTOR = 0.55;
  * exposure shifts (raw MAD ~0.1–0.2) still escalate; tighter than 0.3 so
  * unrelated photos rarely pay for a full photometric search.
  */
-export const CROP_REJECT_THRESHOLD = 0.25;
+const CROP_REJECT_THRESHOLD = 0.25;
 
 /** Nearest fast orientations (within this margin of the best) also escalate. */
 const ESCALATE_NEIGHBOR_MARGIN = 0.05;

@@ -15,6 +15,7 @@ import {
     ManageToolsHub,
     isManageToolSection,
     manageSectionTitle,
+    parseManageSection,
     type ManageSection,
 } from "@/components/manage/ManageHub";
 import { ManageArchivedPanel } from "@/components/manage/ManageArchivedPanel";
@@ -24,7 +25,7 @@ import { ManageAutoCropPanel } from "@/components/manage/ManageAutoCropPanel";
 import { ManageSettingsPanel } from "@/components/manage/ManageSettingsPanel";
 import { ManageTagsPanel } from "@/components/manage/ManageTagsPanel";
 import { PageLoader } from "@/components/PageLoader";
-import { ConfirmTrashModal } from "@/components/dedup/ConfirmTrashModal";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DedupGroupCard } from "@/components/dedup/DedupGroupCard";
 import { SyncBanner } from "@/components/SyncBanner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -92,34 +93,10 @@ import { useFavoritesStore } from "@/stores/favorites-store";
 import { useQualityIndexStore } from "@/stores/quality-index-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { usePhashJobStore, useUIStore } from "@/stores/ui-store";
+import { errorMessage, formatFileSize, plural } from "@/lib/format";
 
 /** Duplicate groups rendered per page; each card keeps its thumbnails mounted. */
 const dedupGroupPageSize = 50;
-
-const formatBytes = (bytes: number): string => {
-    if (bytes < 1024 * 1024) {
-        return `${Math.round(bytes / 1024)} KB`;
-    }
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-};
-
-const parseManageSection = (value: string | string[] | undefined): ManageSection => {
-    if (
-        value === "tools" ||
-        value === "exact" ||
-        value === "similar" ||
-        value === "compress" ||
-        value === "archived" ||
-        value === "trash" ||
-        value === "auto-crop" ||
-        value === "tags" ||
-        value === "usage" ||
-        value === "settings"
-    ) {
-        return value;
-    }
-    return "hub";
-};
 
 export default function ManagePage(): JSX.Element {
     const router = useRouter();
@@ -151,7 +128,6 @@ export default function ManagePage(): JSX.Element {
     const phashProgress = usePhashJobStore((s) => s.progress);
     const setPhashJobStatus = usePhashJobStore((s) => s.setStatus);
     const setPhashProgress = usePhashJobStore((s) => s.setProgress);
-    const setPhashJobError = usePhashJobStore((s) => s.setError);
 
     const dedupDryRun = useUIStore((s) => s.dedupDryRun);
     const setDedupDryRun = useUIStore((s) => s.setDedupDryRun);
@@ -439,9 +415,7 @@ export default function ManagePage(): JSX.Element {
             if (!cancelled && !abort.signal.aborted) {
                 setSimilarBusy(false);
                 setError(
-                    runError instanceof Error ?
-                        runError.message :
-                        "Similar-photo scan failed",
+                    errorMessage(runError, "Similar-photo scan failed"),
                 );
             }
         });
@@ -565,7 +539,6 @@ export default function ManagePage(): JSX.Element {
         const { signal } = controller;
         jobAbort.current = controller;
         jobPaused.current = false;
-        setPhashJobError(undefined);
         setPhashJobStatus("running");
 
         const candidates = imageFilesForPhash(allFiles, userId);
@@ -592,16 +565,11 @@ export default function ManagePage(): JSX.Element {
                 setPhashEntries(entries);
                 setPhashJobStatus("done");
             })
-            .catch((jobError: unknown) => {
+            .catch(() => {
                 if (signal.aborted) {
                     return;
                 }
                 setPhashJobStatus("error");
-                setPhashJobError(
-                    jobError instanceof Error ?
-                        jobError.message :
-                        "Similarity scan failed",
-                );
             });
     };
 
@@ -624,9 +592,7 @@ export default function ManagePage(): JSX.Element {
             }
         } catch (pruneError: unknown) {
             setError(
-                pruneError instanceof Error ?
-                    pruneError.message :
-                    "Cleanup failed",
+                errorMessage(pruneError, "Cleanup failed"),
             );
         } finally {
             setIsPruning(false);
@@ -728,11 +694,9 @@ export default function ManagePage(): JSX.Element {
                     <div className="flex shrink-0 flex-col gap-3 px-4 pt-3">
                         {dedupMode === "exact" ? (
                             <p className="text-xs text-muted-foreground">
-                                {exactGroups.length} duplicate group
-                                {exactGroups.length === 1 ? "" : "s"} ·{" "}
-                                {exactStats.count} file
-                                {exactStats.count === 1 ? "" : "s"} selected · ~
-                                {formatBytes(exactStats.size)} reclaimable
+                                {plural(exactGroups.length, "duplicate group")} ·{" "}
+                                {plural(exactStats.count, "file")} selected · ~
+                                {formatFileSize(exactStats.size)} reclaimable
                             </p>
                         ) : (
                             <>
@@ -833,8 +797,7 @@ export default function ManagePage(): JSX.Element {
                                     {phashIndexedCount > 0 ?
                                         ` · CLIP ${clipCoverageOnIndexed}/${phashIndexedCount}` :
                                         ""}
-                                    · {similarGroups.length} similar group
-                                    {similarGroups.length === 1 ? "" : "s"}
+                                    · {plural(similarGroups.length, "similar group")}
                                     {similarBusy && similarProgress ?
                                         ` · ${similarProgress.stepDescription}` :
                                         similarBusy ?
@@ -943,7 +906,7 @@ export default function ManagePage(): JSX.Element {
                                             group.items
                                                 .map((item) => item.collectionName)
                                                 .join(", ") :
-                                            `~${formatBytes(
+                                            `~${formatFileSize(
                                                 (group.items.length - 1) *
                                                       (group.items[0]?.file.info
                                                           ?.fileSize ?? 0),
@@ -993,12 +956,25 @@ export default function ManagePage(): JSX.Element {
                 </div>
             ) : null}
 
-            <ConfirmTrashModal
+            <ConfirmDialog
                 open={confirmOpen}
-                fileCount={prunePlan.filesToTrash.length}
-                linkCount={prunePlan.collectionsToLink.size}
-                dryRun={dedupDryRun}
+                title={dedupDryRun ? "Preview cleanup" : "Move duplicates to trash?"}
+                description={
+                    <>
+                        {dedupDryRun ?
+                            "Dry run enabled — no files will be changed." :
+                            null}
+                        {plural(prunePlan.filesToTrash.length, "file")} will be
+                        moved to trash.
+                        {prunePlan.collectionsToLink.size > 0 ?
+                            ` ${plural(prunePlan.collectionsToLink.size, "album link")} will be added so keepers stay visible where copies were.` :
+                            ""}
+                    </>
+                }
+                confirmLabel={dedupDryRun ? "Close preview" : "Move to trash"}
+                destructive={!dedupDryRun}
                 isWorking={isPruning}
+                confirmDisabled={prunePlan.filesToTrash.length === 0}
                 onCancel={() => setConfirmOpen(false)}
                 onConfirm={() => {
                     void handleConfirmPrune();

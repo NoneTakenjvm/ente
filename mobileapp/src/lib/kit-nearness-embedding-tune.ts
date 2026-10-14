@@ -20,10 +20,10 @@ import {
     buildKitEmbeddingEvalFold,
     evaluateKitEmbeddingGenome,
     listEmbeddedKitMembers,
-    mulberry32,
     type KitEmbeddingFitnessBreakdown,
 } from "@/lib/kit-nearness-embedding-eval";
 import type { ReadonlyEmbeddingMap } from "@/lib/kit-embedding";
+import { createRng } from "@/lib/shuffle-files";
 import type { EnteFile } from "ente-media/file";
 
 export type KitNearnessTuneProgress = {
@@ -131,7 +131,7 @@ export const runKitNearnessTune = async (
         embeddings,
         rivalKits.filter((kit) => kit.id !== options.kitId),
         {
-            random: mulberry32(seed),
+            random: createRng(seed),
             negativePoolSize: 220,
             seedFraction: 0.6,
         },

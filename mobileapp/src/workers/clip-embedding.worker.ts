@@ -11,28 +11,20 @@
  * Batched ORT forwards are attempted; a failed batch permanently falls back
  * to one image at a time so the scan still completes.
  */
-import { kitTileGrid } from "@/lib/kit-tile-layout";
+import { l2NormalizeEmbedding } from "@/lib/embedding-vector";
 import type {
     ClipEmbeddingBatchMode,
     ClipEmbeddingDevice,
     ClipEmbeddingDtype,
     ClipEmbeddingEmbedBatchDoneMessage,
     ClipEmbeddingEmbedBatchMessage,
-    ClipEmbeddingEmbedDoneMessage,
-    ClipEmbeddingEmbedMessage,
-    ClipEmbeddingEmbedTilesDoneMessage,
-    ClipEmbeddingEmbedTilesMessage,
     ClipEmbeddingInbound,
     ClipEmbeddingInitDoneMessage,
-    ClipEmbeddingTileTiming,
 } from "@/workers/clip-embedding-worker-types";
+import { errorMessage } from "@/lib/format";
 
 const MODEL_ID = "Xenova/mobileclip_s2";
 const EMBEDDING_DIMS = 512;
-/** Processor `crop_size` — tiles are drawn straight into this square. */
-const TILE_INPUT_SIZE = 256;
-/** Processor `rescale_factor`; `do_normalize` is false for this model. */
-const PIXEL_RESCALE = 1 / 255;
 /** Xenova config pins `vision_model` to fp32; quantized S2 is unreliable. */
 const SESSION_DTYPE: ClipEmbeddingDtype = "fp32";
 
@@ -202,22 +194,11 @@ const getSession = async (): Promise<void> => {
     }
 };
 
-const l2NormalizeEmbedding = (
+const normalizeToNumbers = (
     data: Float32Array | number[],
 ): number[] | undefined => {
-    let norm = 0;
-    for (const value of data) {
-        norm += value * value;
-    }
-    norm = Math.sqrt(norm);
-    if (!Number.isFinite(norm) || norm <= 0) {
-        return undefined;
-    }
-    const out: number[] = [];
-    for (const value of data) {
-        out.push(Math.round((value / norm) * 1e5) / 1e5);
-    }
-    return out;
+    const normalized = l2NormalizeEmbedding(data);
+    return normalized && Array.from(normalized);
 };
 
 const vectorsFromImageEmbeds = (
@@ -237,7 +218,7 @@ const vectorsFromImageEmbeds = (
         const rows = Math.min(batchSize, dims[0]!);
         for (let i = 0; i < rows; i++) {
             out.push(
-                l2NormalizeEmbedding(
+                normalizeToNumbers(
                     flat.subarray(i * EMBEDDING_DIMS, (i + 1) * EMBEDDING_DIMS),
                 ),
             );
@@ -250,7 +231,7 @@ const vectorsFromImageEmbeds = (
     if (flat.length === batchSize * EMBEDDING_DIMS) {
         for (let i = 0; i < batchSize; i++) {
             out.push(
-                l2NormalizeEmbedding(
+                normalizeToNumbers(
                     flat.subarray(i * EMBEDDING_DIMS, (i + 1) * EMBEDDING_DIMS),
                 ),
             );
@@ -258,7 +239,7 @@ const vectorsFromImageEmbeds = (
         return out;
     }
     if (flat.length === EMBEDDING_DIMS && batchSize === 1) {
-        return [l2NormalizeEmbedding(flat)];
+        return [normalizeToNumbers(flat)];
     }
     return Array.from({ length: batchSize }, () => undefined);
 };
@@ -401,26 +382,6 @@ const handleInit = async (id: number): Promise<void> => {
     }
 };
 
-const handleEmbed = (message: ClipEmbeddingEmbedMessage): void => {
-    void (async () => {
-        const done: ClipEmbeddingEmbedDoneMessage = {
-            kind: "embed-done",
-            id: message.id,
-            fileId: message.fileId,
-        };
-        try {
-            const { results } = await embedBatchBytes([
-                { fileId: message.fileId, bytes: message.bytes },
-            ]);
-            done.vector = results[0]?.vector;
-        } catch (error) {
-            done.error =
-                error instanceof Error ? error.message : "embed failed";
-        }
-        self.postMessage(done);
-    })();
-};
-
 const handleEmbedBatch = (message: ClipEmbeddingEmbedBatchMessage): void => {
     void (async () => {
         const done: ClipEmbeddingEmbedBatchDoneMessage = {
@@ -439,150 +400,7 @@ const handleEmbedBatch = (message: ClipEmbeddingEmbedBatchMessage): void => {
             }
         } catch (error) {
             done.error =
-                error instanceof Error ? error.message : "embed-batch failed";
-        }
-        self.postMessage(done);
-    })();
-};
-
-type TilePixelValues = {
-    rows: number;
-    columns: number;
-    count: number;
-    /** NCHW `count × 3 × 256 × 256`, already rescaled to `[0, 1]`. */
-    pixelValues: Float32Array;
-};
-
-/**
- * Decode once, then per {@link kitTileGrid} tile: one scaled `drawImage` into
- * a 256×256 canvas and one pass writing the RGB planes into a packed NCHW
- * tensor. Same maths as the Transformers.js processor for this model (canvas
- * resample, ×1/255, no normalisation) without its per-tile full-image canvas
- * copies and intermediate arrays.
- */
-const tilePixelValues = async (bytes: Uint8Array): Promise<TilePixelValues> => {
-    const bitmap = await createImageBitmap(jpegBlob(bytes));
-    try {
-        const grid = kitTileGrid(bitmap.width, bitmap.height);
-        const context = new OffscreenCanvas(
-            TILE_INPUT_SIZE,
-            TILE_INPUT_SIZE,
-        ).getContext("2d", { willReadFrequently: true });
-        if (!context) {
-            throw new Error("OffscreenCanvas 2d context unavailable");
-        }
-        const plane = TILE_INPUT_SIZE * TILE_INPUT_SIZE;
-        const pixelValues = new Float32Array(grid.rects.length * 3 * plane);
-        grid.rects.forEach(({ x, y, size }, index) => {
-            context.drawImage(
-                bitmap,
-                x,
-                y,
-                size,
-                size,
-                0,
-                0,
-                TILE_INPUT_SIZE,
-                TILE_INPUT_SIZE,
-            );
-            const rgba = context.getImageData(
-                0,
-                0,
-                TILE_INPUT_SIZE,
-                TILE_INPUT_SIZE,
-            ).data;
-            const red = index * 3 * plane;
-            const green = red + plane;
-            const blue = green + plane;
-            for (let p = 0, s = 0; p < plane; p += 1, s += 4) {
-                pixelValues[red + p] = rgba[s]! * PIXEL_RESCALE;
-                pixelValues[green + p] = rgba[s + 1]! * PIXEL_RESCALE;
-                pixelValues[blue + p] = rgba[s + 2]! * PIXEL_RESCALE;
-            }
-        });
-        return {
-            rows: grid.rows,
-            columns: grid.columns,
-            count: grid.rects.length,
-            pixelValues,
-        };
-    } finally {
-        bitmap.close();
-    }
-};
-
-/**
- * Embed every tile of one thumbnail as a single forward. Preprocessing runs
- * outside the ORT queue so the next photo's tiles are prepared while the GPU
- * works on this one. Any tile without a vector fails the whole photo — a
- * partial grid would silently bias max-over-tiles scoring.
- */
-const embedTilesBytes = async (
-    bytes: Uint8Array,
-): Promise<{
-    rows: number;
-    columns: number;
-    vectors: Float32Array;
-    timing: ClipEmbeddingTileTiming;
-}> => {
-    await getSession();
-    const preprocessStart = performance.now();
-    const { rows, columns, count, pixelValues } = await tilePixelValues(bytes);
-    const { Tensor } = await import("@huggingface/transformers");
-    const inputs = {
-        pixel_values: new Tensor("float32", pixelValues, [
-            count,
-            3,
-            TILE_INPUT_SIZE,
-            TILE_INPUT_SIZE,
-        ]),
-    };
-    const preprocessMs = performance.now() - preprocessStart;
-    let forwardMs = 0;
-    const output = await runSerialised(async () => {
-        const forwardStart = performance.now();
-        const result = await visionModel!(inputs);
-        forwardMs = performance.now() - forwardStart;
-        return result;
-    });
-    const vectors = vectorsFromImageEmbeds(output.image_embeds, count);
-    const packed = new Float32Array(count * EMBEDDING_DIMS);
-    vectors.forEach((vector, index) => {
-        if (vector?.length !== EMBEDDING_DIMS) {
-            throw new Error(`tile ${index} returned no 512-d image_embeds`);
-        }
-        packed.set(vector, index * EMBEDDING_DIMS);
-    });
-    return {
-        rows,
-        columns,
-        vectors: packed,
-        timing: { preprocessMs, forwardMs },
-    };
-};
-
-const handleEmbedTiles = (message: ClipEmbeddingEmbedTilesMessage): void => {
-    void (async () => {
-        const done: ClipEmbeddingEmbedTilesDoneMessage = {
-            kind: "embed-tiles-done",
-            id: message.id,
-            fileId: message.fileId,
-            rows: 0,
-            columns: 0,
-        };
-        try {
-            const { rows, columns, vectors, timing } = await embedTilesBytes(
-                message.bytes,
-            );
-            done.rows = rows;
-            done.columns = columns;
-            done.vectors = vectors;
-            done.timing = timing;
-            self.postMessage(done, [vectors.buffer]);
-            return;
-        } catch (error) {
-            done.error =
-                error instanceof Error ? error.message : "embed-tiles failed";
+                errorMessage(error, "embed-batch failed");
         }
         self.postMessage(done);
     })();
@@ -596,15 +414,5 @@ self.onmessage = (event: MessageEvent<ClipEmbeddingInbound>): void => {
         });
         return;
     }
-    if (message.kind === "embed") {
-        handleEmbed(message);
-        return;
-    }
-    if (message.kind === "embed-batch") {
-        handleEmbedBatch(message);
-        return;
-    }
-    if (message.kind === "embed-tiles") {
-        handleEmbedTiles(message);
-    }
+    handleEmbedBatch(message);
 };

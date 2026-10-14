@@ -7,26 +7,10 @@
 import type { EnteFile } from "ente-media/file";
 import { KIT_EMBEDDING_DIMS, type ReadonlyEmbeddingMap } from "@/lib/kit-embedding";
 import { isEnteVideoFile } from "@/lib/media-kind";
-import {
-    pickRelativeStartIndex,
-    sortIdsByRelativePacked,
-} from "@/lib/relative-sort-packed";
+import { sortIdsByRelativePacked } from "@/lib/relative-sort-packed";
 
 /** Gallery reorder by relative CLIP nearest/farthest-neighbor chain. */
 export type RelativeSort = "none" | "closest" | "furthest";
-
-export { pickRelativeStartIndex };
-
-/**
- * Pick a deterministic start id from `ids` using a mulberry32 sample.
- *
- * @param ids non-empty candidate file ids
- * @param seed session seed from the UI store
- */
-export const pickRelativeStartId = (
-    ids: readonly number[],
-    seed: number,
-): number => ids[pickRelativeStartIndex(ids, seed)]!;
 
 /**
  * Copy CLIP vectors for {@link fileIds} into a transferable Float32 buffer.
@@ -34,7 +18,7 @@ export const pickRelativeStartId = (
  * @param fileIds ids in the same order the packed walk should use
  * @param embeddings CLIP index (Ente file id → L2-normalized vector)
  */
-export const packRelativeEmbeddings = (
+export const packEmbeddings = (
     fileIds: readonly number[],
     embeddings: ReadonlyEmbeddingMap,
     dim: number = KIT_EMBEDDING_DIMS,
@@ -88,7 +72,7 @@ export const sortFilesByRelative = (
     }
 
     const ids = withEmbedding.map((file) => file.id);
-    const packed = packRelativeEmbeddings(ids, embeddings);
+    const packed = packEmbeddings(ids, embeddings);
     const orderedIds = sortIdsByRelativePacked(
         ids,
         packed,

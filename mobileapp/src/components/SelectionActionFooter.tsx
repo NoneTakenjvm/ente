@@ -13,7 +13,7 @@ import {
     Tag,
     Trash2,
 } from "lucide-react";
-import { ConfirmBatchTrashModal } from "@/components/ConfirmBatchTrashModal";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { TagPickerSheet } from "@/components/TagPickerSheet";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -40,6 +40,7 @@ import { selectedIdSet, useSelectionStore } from "@/stores/selection-store";
 import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
 import { toast } from "sonner";
+import { errorMessage, plural } from "@/lib/format";
 
 const isFullyApplied = (
     info: { count: number; total: number } | undefined,
@@ -147,9 +148,7 @@ export function SelectionActionFooter(): JSX.Element | null {
                 exitSelection();
             } catch (error) {
                 setTagError(
-                    error instanceof Error ?
-                        error.message :
-                        "Could not update tags",
+                    errorMessage(error, "Could not update tags"),
                 );
             } finally {
                 setTagBusy(false);
@@ -184,9 +183,7 @@ export function SelectionActionFooter(): JSX.Element | null {
             return "applied";
         } catch (error) {
             setTagError(
-                error instanceof Error ?
-                    error.message :
-                    "Could not update tags",
+                errorMessage(error, "Could not update tags"),
             );
             return "failed";
         } finally {
@@ -305,9 +302,7 @@ export function SelectionActionFooter(): JSX.Element | null {
                 exitSelection();
             } catch (error) {
                 toast.error(
-                    error instanceof Error ?
-                        error.message :
-                        "Could not update favourites",
+                    errorMessage(error, "Could not update favourites"),
                 );
             } finally {
                 setFavoriteBusy(false);
@@ -326,15 +321,11 @@ export function SelectionActionFooter(): JSX.Element | null {
             await batchSetArchived(ids, true);
             exitSelection();
             toast.success(
-                ids.length === 1 ?
-                    "Archived 1 photo" :
-                    `Archived ${ids.length} photos`,
+                `Archived ${plural(ids.length, "photo")}`,
             );
         } catch (error) {
             toast.error(
-                error instanceof Error ?
-                    error.message :
-                    "Could not archive",
+                errorMessage(error, "Could not archive"),
             );
         } finally {
             setArchiveBusy(false);
@@ -352,9 +343,7 @@ export function SelectionActionFooter(): JSX.Element | null {
             exitSelection();
         } catch (error) {
             toast.error(
-                error instanceof Error ?
-                    error.message :
-                    "Could not move to trash",
+                errorMessage(error, "Could not move to trash"),
             );
         } finally {
             setTrashBusy(false);
@@ -581,15 +570,14 @@ export function SelectionActionFooter(): JSX.Element | null {
                 onTogglePinTag={togglePinnedTag}
             />
 
-            <ConfirmBatchTrashModal
+            <ConfirmDialog
                 open={trashOpen}
-                count={count}
+                title={`Move ${plural(count, "item")} to trash?`}
+                description="They can be restored from the Ente app."
+                confirmLabel="Move to trash"
+                destructive
                 isWorking={trashBusy}
-                onCancel={() => {
-                    if (!trashBusy) {
-                        setTrashOpen(false);
-                    }
-                }}
+                onCancel={() => setTrashOpen(false)}
                 onConfirm={() => {
                     void handleTrash();
                 }}

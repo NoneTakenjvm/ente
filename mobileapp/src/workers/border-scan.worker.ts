@@ -4,6 +4,7 @@ import type {
     BorderScanWorkerRequest,
     BorderScanWorkerResponse,
 } from "@/workers/border-scan-worker-types";
+import { errorMessage } from "@/lib/format";
 
 const SCAN_MAX_EDGE = 128;
 const BORDER_THRESHOLD = 12;
@@ -163,7 +164,7 @@ self.onmessage = async (
         const response: BorderScanWorkerResponse = {
             id,
             fileId,
-            error: error instanceof Error ? error.message : "Border scan failed",
+            error: errorMessage(error, "Border scan failed"),
         };
         self.postMessage(response);
     }

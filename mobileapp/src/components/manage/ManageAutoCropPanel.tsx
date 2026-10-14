@@ -40,6 +40,7 @@ import {
 } from "@/lib/memory-probe";
 import { useLibraryStore } from "@/stores/library-store";
 import type { EnteFile } from "ente-media/file";
+import { errorMessage, plural } from "@/lib/format";
 
 interface ManageAutoCropPanelProps {
     files: EnteFile[];
@@ -227,9 +228,7 @@ export function ManageAutoCropPanel({
                 return;
             }
             setError(
-                scanError instanceof Error ?
-                    scanError.message :
-                    "Scan failed",
+                errorMessage(scanError, "Scan failed"),
             );
         } finally {
             if (!isCancelled()) {
@@ -414,8 +413,7 @@ export function ManageAutoCropPanel({
             ) : null}
             {candidates.length > 0 ? (
                 <p className="text-sm">
-                    {candidates.length} image
-                    {candidates.length === 1 ? "" : "s"} with borders ready to
+                    {plural(candidates.length, "image")} with borders ready to
                     crop.
                 </p>
             ) : null}

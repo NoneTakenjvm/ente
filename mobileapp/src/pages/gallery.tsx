@@ -303,11 +303,6 @@ function GalleryMediaBody(): JSX.Element {
         setViewerFileId(undefined);
     }, []);
 
-    const handleFileUpdated = useCallback((file: EnteFile): void => {
-        setViewerFileId((current) =>
-            current === undefined ? undefined : file.id);
-    }, []);
-
     const showFullPageLoader: boolean =
         !initialLoadDone &&
         (syncStatus === "loadingFromCache" || syncStatus === "syncing") &&
@@ -351,7 +346,6 @@ function GalleryMediaBody(): JSX.Element {
                     files={viewerFilesRef.current}
                     initialFileId={viewerFileId}
                     onClose={handleCloseViewer}
-                    onFileUpdated={handleFileUpdated}
                 />
             ) : null}
         </>

@@ -8,7 +8,6 @@ import {
     type JSX,
     type PointerEvent as ReactPointerEvent,
     type RefObject,
-    type UIEvent,
 } from "react";
 import AutoSizer from "react-virtualized-auto-sizer";
 import {
@@ -21,11 +20,6 @@ import {
     gridIndicesInContentMarquee,
     type MarqueeRect,
 } from "@/lib/marquee-selection";
-import {
-    computeMasonryLayoutFromAspects,
-    masonryItemsInMarquee,
-    visibleMasonryItems,
-} from "@/lib/masonry-layout";
 import { stagingPreviewUrl } from "@/lib/staging-preview";
 import {
     computeThumbnailGridLayout,
@@ -63,10 +57,6 @@ interface LocalUploadGridProps {
     footerInsetPx?: number;
 }
 
-type UploadMasonryLayout = ReturnType<
-    typeof computeMasonryLayoutFromAspects<LocalUploadItem>
->;
-
 interface RowData {
     items: LocalUploadItem[];
     layout: ThumbnailGridLayout;
@@ -77,7 +67,6 @@ interface LocalUploadCellProps {
     item: LocalUploadItem;
     width: number;
     height: number;
-    objectFit: "cover" | "contain";
     isSelected: boolean;
     onToggle: (id: string) => void;
     disabled: boolean;
@@ -136,13 +125,10 @@ const LocalUploadCell = memo(function LocalUploadCell({
     item,
     width,
     height,
-    objectFit,
     isSelected,
     onToggle,
     disabled,
 }: LocalUploadCellProps): JSX.Element {
-    const imageFitClass =
-        objectFit === "contain" ? "object-contain" : "object-cover";
     const imageSrc = useCellImageSrc(item, width);
 
     return (
@@ -172,8 +158,7 @@ const LocalUploadCell = memo(function LocalUploadCell({
                 {item.kind === "video" ? (
                     <video
                         className={cn(
-                            "pointer-events-none size-full",
-                            imageFitClass,
+                            "pointer-events-none size-full object-cover",
                         )}
                         src={item.previewUrl}
                         muted
@@ -183,8 +168,7 @@ const LocalUploadCell = memo(function LocalUploadCell({
                 ) : (
                     <img
                         className={cn(
-                            "pointer-events-none size-full",
-                            imageFitClass,
+                            "pointer-events-none size-full object-cover",
                         )}
                         src={imageSrc}
                         alt=""
@@ -223,7 +207,6 @@ const GridRow = memo(function GridRow({
                     item={item}
                     width={layout.itemSize}
                     height={layout.itemSize}
-                    objectFit="cover"
                     isSelected={selection.selectedIds.has(item.id)}
                     onToggle={selection.onToggle}
                     disabled={selection.disabled ?? false}
@@ -306,127 +289,14 @@ function SizedGrid({
     );
 }
 
-interface SizedMasonryGridProps {
-    items: LocalUploadItem[];
-    width: number;
-    height: number;
-    columns: GalleryColumnCount;
-    selection: LocalUploadGridSelection;
-    footerInsetPx: number;
-    scrollControllerRef: RefObject<MarqueeScrollController | null>;
-    /** Receives the placed layout so marquee hit-tests reuse it. */
-    layoutRef: RefObject<UploadMasonryLayout | null>;
-}
-
-function SizedMasonryGrid({
-    items,
-    width,
-    height,
-    columns,
-    selection,
-    footerInsetPx,
-    scrollControllerRef,
-    layoutRef,
-}: SizedMasonryGridProps): JSX.Element {
-    const [scrollTop, setScrollTop] = useState<number>(0);
-    const scrollerRef = useRef<HTMLDivElement>(null);
-    const layout = useMemo(
-        () =>
-            computeMasonryLayoutFromAspects(
-                items.map((item) => ({
-                    value: item,
-                    key: item.id,
-                    aspectRatio: 1,
-                })),
-                width,
-                columns,
-            ),
-        [columns, items, width],
-    );
-    useEffect(() => {
-        layoutRef.current = layout;
-    }, [layout, layoutRef]);
-    const visibleItems = useMemo(
-        () => visibleMasonryItems(layout.items, scrollTop, height),
-        [height, layout.items, scrollTop],
-    );
-
-    useEffect(() => {
-        scrollControllerRef.current = {
-            getScrollTop: (): number => scrollerRef.current?.scrollTop ?? 0,
-            setScrollTop: (next: number): void => {
-                const node = scrollerRef.current;
-                if (!node) {
-                    return;
-                }
-                const maxScroll = Math.max(0, node.scrollHeight - node.clientHeight);
-                const clamped = Math.min(Math.max(0, next), maxScroll);
-                if (node.scrollTop === clamped) {
-                    return;
-                }
-                node.scrollTop = clamped;
-                setScrollTop(clamped);
-            },
-        };
-        return (): void => {
-            scrollControllerRef.current = null;
-        };
-    }, [scrollControllerRef]);
-
-    const handleScroll = (event: UIEvent<HTMLDivElement>): void => {
-        setScrollTop(event.currentTarget.scrollTop);
-    };
-
-    return (
-        <div
-            ref={scrollerRef}
-            className="overflow-y-auto"
-            style={{ width, height, touchAction: "pan-y" }}
-            onScroll={handleScroll}
-        >
-            <div
-                className="relative w-full"
-                style={{
-                    height: layout.totalHeight + footerInsetPx,
-                }}
-            >
-                {visibleItems.map((item) => (
-                    <div
-                        key={item.key}
-                        className="absolute"
-                        style={{
-                            left: item.x,
-                            top: item.y,
-                            width: item.width,
-                            height: item.height,
-                        }}
-                    >
-                        <LocalUploadCell
-                            item={item.value}
-                            width={item.width}
-                            height={item.height}
-                            objectFit="contain"
-                            isSelected={selection.selectedIds.has(item.value.id)}
-                            onToggle={selection.onToggle}
-                            disabled={selection.disabled ?? false}
-                        />
-                    </div>
-                ))}
-            </div>
-        </div>
-    );
-}
-
 export function LocalUploadGrid({
     items,
     selection,
     footerInsetPx = 0,
 }: LocalUploadGridProps): JSX.Element {
     const galleryColumns = useSettingsStore((s) => s.galleryColumns);
-    const galleryThumbnailMode = useSettingsStore((s) => s.galleryThumbnailMode);
     const listRef = useRef<FixedSizeList<RowData>>(null);
     const scrollControllerRef = useRef<MarqueeScrollController | null>(null);
-    const masonryLayoutRef = useRef<UploadMasonryLayout | null>(null);
     const marqueeBaselineRef = useRef<Set<string>>(new Set());
     const marqueeAppliedIdsRef = useRef<Set<string>>(new Set());
     const marqueeLastIdsRef = useRef<string[]>([]);
@@ -436,12 +306,6 @@ export function LocalUploadGrid({
         (rect: MarqueeRect): string[] => {
             if (rect.width < 8 && rect.height < 8) {
                 return [];
-            }
-            if (galleryThumbnailMode === "fit") {
-                const layout = masonryLayoutRef.current;
-                return layout ?
-                    masonryItemsInMarquee(layout.items, rect).map((id) => String(id)) :
-                    [];
             }
             const layout = computeThumbnailGridLayout(gridWidth, galleryColumns);
             const indices = gridIndicesInContentMarquee(
@@ -455,7 +319,7 @@ export function LocalUploadGrid({
             );
             return indices.map((index) => items[index]!.id);
         },
-        [galleryColumns, galleryThumbnailMode, gridWidth, items],
+        [galleryColumns, gridWidth, items],
     );
 
     const handleMarqueeRect = useCallback(
@@ -531,30 +395,18 @@ export function LocalUploadGrid({
                     setGridWidth(width);
                 }}
             >
-                {({ height, width }: { height: number; width: number }) =>
-                    galleryThumbnailMode === "fit" ? (
-                        <SizedMasonryGrid
-                            items={items}
-                            width={width}
-                            height={height}
-                            columns={galleryColumns}
-                            selection={selection}
-                            footerInsetPx={footerInsetPx}
-                            scrollControllerRef={scrollControllerRef}
-                            layoutRef={masonryLayoutRef}
-                        />
-                    ) : (
-                        <SizedGrid
-                            items={items}
-                            width={width}
-                            height={height}
-                            columns={galleryColumns}
-                            selection={selection}
-                            footerInsetPx={footerInsetPx}
-                            listRef={listRef}
-                            scrollControllerRef={scrollControllerRef}
-                        />
-                    )}
+                {({ height, width }: { height: number; width: number }) => (
+                    <SizedGrid
+                        items={items}
+                        width={width}
+                        height={height}
+                        columns={galleryColumns}
+                        selection={selection}
+                        footerInsetPx={footerInsetPx}
+                        listRef={listRef}
+                        scrollControllerRef={scrollControllerRef}
+                    />
+                )}
             </AutoSizer>
             <div
                 ref={overlayRef}

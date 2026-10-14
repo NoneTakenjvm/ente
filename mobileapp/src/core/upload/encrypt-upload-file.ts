@@ -10,6 +10,7 @@ import {
     type BytesOrB64,
 } from "ente-base/crypto/types";
 import { createMd5 } from "./md5";
+import { wait } from "ente-utils/promise";
 
 /** A file encrypted for upload, plus the digests the upload needs. */
 export interface EncryptedUploadFile {
@@ -66,7 +67,7 @@ export const encryptFileForUpload = async (
         );
         md5.update(encryptedChunk);
         encryptedParts.push(new Blob([encryptedChunk]));
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await wait(0);
     }
 
     return {

@@ -11,7 +11,6 @@ import {
 } from "@/lib/similarity-match-cache";
 import {
     MAX_GROUP_SIZE,
-    runStage1ClusteringSync,
     type Stage1Cluster,
     type Stage1Item,
 } from "@/lib/similarity-stage1-core";
@@ -40,19 +39,15 @@ export const defaultSimilarityThreshold = 12;
 const colorBucketKey = (color: string): string => color.slice(0, 3);
 
 /** Hard cap on crop checks paid per file within a color bucket. */
-export const MAX_CROP_CHECKS_PER_FILE = 6;
+const MAX_CROP_CHECKS_PER_FILE = 6;
 
 /**
  * Hard cap on total Stage-2 crop pairs. Library-wide color buckets otherwise
  * produce ~O(n) candidates (~15k on a 7k library) and OOM the phone.
  */
-export const MAX_TOTAL_CROP_CANDIDATES = 2000;
+const MAX_TOTAL_CROP_CANDIDATES = 2000;
 
-export {
-    MAX_GROUP_SIZE,
-    MUTUAL_RANK_K,
-    TIGHT_MATCH_DISTANCE,
-} from "@/lib/similarity-stage1-core";
+export { MAX_GROUP_SIZE } from "@/lib/similarity-stage1-core";
 
 export type SimilarMatchProgress = {
     stepDescription: string;
@@ -214,29 +209,6 @@ export const trimSimilarityGroups = (
         .sort((a, b) => b.items.length - a.items.length);
 };
 
-/**
- * Stage-1 (sync): for tests. Production UI uses {@link runStage1InWorker} from
- * `@/lib/similarity-job`.
- */
-export const buildSimilarityGroups = (
-    entries: Map<number, PhashEntry>,
-    filesById: Map<number, EnteFile>,
-    collections: Collection[],
-    userId: number,
-    threshold: number,
-    maxGroupSize: number = MAX_GROUP_SIZE,
-): SimilarityGroup[] => {
-    const indexed = indexableFiles(entries, filesById, collections, userId);
-    if (indexed.length < 2) {
-        return [];
-    }
-    const clusters = runStage1ClusteringSync(toStage1Items(indexed), threshold);
-    return trimSimilarityGroups(
-        clustersToSimilarityGroups(clusters, filesById, collections, userId),
-        maxGroupSize,
-    );
-};
-
 /** Skip O(k²) max-distance when a component is this large (display will hide it anyway). */
 const MAX_DISTANCE_PAIRWISE_MEMBERS = 48;
 
@@ -277,7 +249,7 @@ const assembleGroup = (
     return toSimilarityGroup(items, maxDistance);
 };
 
-export interface CropMergeOptions {
+interface CropMergeOptions {
     entries: Map<number, PhashEntry>;
     filesById: Map<number, EnteFile>;
     collections: Collection[];

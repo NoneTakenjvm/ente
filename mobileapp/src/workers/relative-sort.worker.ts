@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 
 import { sortIdsByRelativePacked } from "@/lib/relative-sort-packed";
+import { errorMessage } from "@/lib/format";
 
 interface RelativeSortWorkerRequest {
     requestId: number;
@@ -37,7 +38,7 @@ self.onmessage = (event: MessageEvent<RelativeSortWorkerRequest>): void => {
     } catch (error: unknown) {
         const response: RelativeSortWorkerResponse = {
             requestId,
-            error: error instanceof Error ? error.message : "Relative sort failed",
+            error: errorMessage(error, "Relative sort failed"),
         };
         self.postMessage(response);
     }

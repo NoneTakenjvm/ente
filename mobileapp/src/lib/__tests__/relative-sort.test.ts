@@ -1,24 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { sortFilesByRelative } from "@/lib/relative-sort";
 import {
-    pickRelativeStartId,
-    sortFilesByRelative,
-} from "@/lib/relative-sort";
-import { sortIdsByRelativePacked } from "@/lib/relative-sort-packed";
-import type { EnteFile } from "ente-media/file";
-
-const toEmb = (values: number[]): Float32Array => Float32Array.from(values);
-const embMap = (entries: Array<[number, number[]]>): Map<number, Float32Array> =>
-    new Map(entries.map(([id, v]) => [id, toEmb(v)]));
-
-const file = (id: number): EnteFile => ({ id }) as EnteFile;
+    pickRelativeStartIndex,
+    sortIdsByRelativePacked,
+} from "@/lib/relative-sort-packed";
+import { axis, bareFile, embMap } from "@/test-utils/fixtures";
 
 /** Unit vector on one axis of a 512-d space. */
-const axis = (dim: number, dims = 512): number[] => {
-    const out = new Array(dims).fill(0);
-    out[dim] = 1;
-    return out;
-};
-
 /** L2-normalize a vector (copy). */
 const normalize = (vector: number[]): number[] => {
     let sumSquares = 0;
@@ -37,21 +25,19 @@ const blend01 = (axis1Weight: number): number[] => {
     return normalize(out);
 };
 
-describe("pickRelativeStartId", () => {
-    it("returns an id from the list", () => {
-        const ids = [10, 20, 30];
-        expect(ids).toContain(pickRelativeStartId(ids, 1));
-    });
-
-    it("is deterministic for a fixed seed", () => {
-        const ids = [1, 2, 3, 4, 5];
-        expect(pickRelativeStartId(ids, 42)).toBe(pickRelativeStartId(ids, 42));
-    });
-});
+/** First seed whose deterministic start pick over `ids` is `startId`. */
+const seedForStartId = (ids: readonly number[], startId: number): number => {
+    for (let seed = 0; seed <= 10_000; seed += 1) {
+        if (ids[pickRelativeStartIndex(ids, seed)] === startId) {
+            return seed;
+        }
+    }
+    throw new Error(`could not find seed for start id ${startId}`);
+};
 
 describe("sortFilesByRelative", () => {
     it("returns a copy for none / tiny sets", () => {
-        const files = [file(1)];
+        const files = [bareFile(1)];
         expect(sortFilesByRelative(files, "none", new Map(), 1)).toEqual(
             files,
         );
@@ -68,15 +54,9 @@ describe("sortFilesByRelative", () => {
             [3, blend01(1)],
             [4, axis(1)],
         ]);
-        let seed = 0;
-        while (pickRelativeStartId([1, 2, 3, 4], seed) !== 1) {
-            seed += 1;
-            if (seed > 10_000) {
-                throw new Error("could not find seed for start id 1");
-            }
-        }
+        const seed = seedForStartId([1, 2, 3, 4], 1);
         const ordered = sortFilesByRelative(
-            [file(4), file(3), file(2), file(1)],
+            [bareFile(4), bareFile(3), bareFile(2), bareFile(1)],
             "closest",
             embeddings,
             seed,
@@ -91,16 +71,10 @@ describe("sortFilesByRelative", () => {
             [3, blend01(1)],
             [4, axis(1)],
         ]);
-        let seed = 0;
-        while (pickRelativeStartId([1, 2, 3, 4], seed) !== 1) {
-            seed += 1;
-            if (seed > 10_000) {
-                throw new Error("could not find seed for start id 1");
-            }
-        }
+        const seed = seedForStartId([1, 2, 3, 4], 1);
         // From A: furthest is D; from D among {B,C}: B is farther → A-D-B-C.
         const ordered = sortFilesByRelative(
-            [file(1), file(2), file(3), file(4)],
+            [bareFile(1), bareFile(2), bareFile(3), bareFile(4)],
             "furthest",
             embeddings,
             seed,
@@ -115,7 +89,7 @@ describe("sortFilesByRelative", () => {
             [3, axis(1)],
             [9, axis(2)],
         ]);
-        const files = [file(9), file(1), file(3), file(2)];
+        const files = [bareFile(9), bareFile(1), bareFile(3), bareFile(2)];
         const ordered = sortFilesByRelative(files, "closest", embeddings, 7);
         expect(ordered.map((f) => f.id).sort((a, b) => a - b)).toEqual([
             1, 2, 3, 9,
@@ -131,7 +105,7 @@ describe("sortFilesByRelative", () => {
             [4, axis(1)],
         ]);
         const ordered = sortFilesByRelative(
-            [file(1), file(2), file(3), file(4)],
+            [bareFile(1), bareFile(2), bareFile(3), bareFile(4)],
             "closest",
             embeddings,
             0,
@@ -145,15 +119,9 @@ describe("sortFilesByRelative", () => {
             [1, axis(0)],
             [2, axis(1)],
         ]);
-        let seed = 0;
-        while (pickRelativeStartId([1, 2], seed) !== 1) {
-            seed += 1;
-            if (seed > 10_000) {
-                throw new Error("could not find seed for start id 1");
-            }
-        }
+        const seed = seedForStartId([1, 2], 1);
         const ordered = sortFilesByRelative(
-            [file(1), file(2), file(9)],
+            [bareFile(1), bareFile(2), bareFile(9)],
             "closest",
             embeddings,
             seed,

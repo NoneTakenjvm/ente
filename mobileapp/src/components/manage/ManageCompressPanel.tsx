@@ -38,7 +38,6 @@ import {
     DEFAULT_VIDEO_CRF,
     fileByteSize,
     filterCompressCandidatesByMinSize,
-    formatFileSize,
     isAlreadyCompressed,
     MIN_SIZE_FILTER_PRESETS,
     readCompressMinSizeBytes,
@@ -66,6 +65,7 @@ import { useLibraryStore } from "@/stores/library-store";
 import { useTagStore } from "@/stores/tag-store";
 import { ListFilter } from "lucide-react";
 import type { EnteFile } from "ente-media/file";
+import { errorMessage, formatFileSize, plural } from "@/lib/format";
 
 const COMPRESS_FOOTER_INSET_PX = 220;
 
@@ -236,10 +236,10 @@ export function ManageCompressPanel({
         }
         const parts: string[] = [];
         if (photos > 0) {
-            parts.push(`${photos} photo${photos === 1 ? "" : "s"}`);
+            parts.push(`${plural(photos, "photo")}`);
         }
         if (videos > 0) {
-            parts.push(`${videos} video${videos === 1 ? "" : "s"}`);
+            parts.push(`${plural(videos, "video")}`);
         }
         if (knownBytes > 0) {
             parts.push(formatFileSize(knownBytes));
@@ -374,7 +374,7 @@ export function ManageCompressPanel({
                 }
                 setJobStatus("done");
                 const parts = [
-                    `Compressed ${result.completed} file${result.completed === 1 ? "" : "s"}`,
+                    `Compressed ${plural(result.completed, "file")}`,
                 ];
                 if (result.skipped > 0) {
                     parts.push(`${result.skipped} skipped`);
@@ -394,9 +394,7 @@ export function ManageCompressPanel({
                 }
                 setJobStatus("error");
                 setJobError(
-                    error instanceof Error ?
-                        error.message :
-                        "Compression job failed",
+                    errorMessage(error, "Compression job failed"),
                 );
             });
     }, [
@@ -536,7 +534,7 @@ export function ManageCompressPanel({
                         triggerLabel={
                             clauseCount === 0 ?
                                 "Tags" :
-                                `${clauseCount} tag${clauseCount === 1 ? "" : "s"}`
+                                `${plural(clauseCount, "tag")}`
                         }
                         triggerVariant={clauseCount > 0 ? "secondary" : "outline"}
                         disabled={!isFlat || jobRunning}
@@ -597,8 +595,7 @@ export function ManageCompressPanel({
 
                 <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
                     <p className="text-xs text-muted-foreground">
-                        {candidates.length} compressible file
-                        {candidates.length === 1 ? "" : "s"} · {activeSelectedIds.size} selected
+                        {plural(candidates.length, "compressible file")} · {activeSelectedIds.size} selected
                         {libraryLoaded ? "" : " · loading…"}
                     </p>
                     <div className="flex flex-wrap gap-2">

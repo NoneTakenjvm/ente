@@ -1,12 +1,6 @@
-import {
-    useEffect,
-    useRef,
-    useState,
-    type Dispatch,
-    type SetStateAction,
-} from "react";
+import { useEffect, useRef, useState } from "react";
 import type { EnteFile } from "ente-media/file";
-import { getEnteCore, type Collection, type EnteCore } from "@/core";
+import { getEnteCore } from "@/core";
 import {
     pendingFavoriteFilesByHashAndType,
     useFavoritesStore,
@@ -17,48 +11,25 @@ import {
     hydrateDerivedReplaceOutbox,
     loadDerivedReplaceOutboxBytes,
     removeDerivedReplaceOutboxEntries,
-    type DerivedReplaceOutboxEntry,
 } from "@/lib/derived-replace-outbox";
-import {
-    favoriteOutboxEntryKey,
-    type FavoriteOutboxEntry,
-} from "@/lib/favorite-outbox";
+import { favoriteOutboxEntryKey } from "@/lib/favorite-outbox";
 import {
     addFavoriteMembershipIds,
     removeFavoriteMembershipIds,
 } from "@/lib/favorite-membership";
-import {
-    startTagOutboxRunner,
-    type FavoriteMutationsResult,
-} from "@/lib/tag-outbox-runner";
-import type { VisibilityOutboxEntry } from "@/lib/visibility-outbox";
+import { startTagOutboxRunner } from "@/lib/tag-outbox-runner";
 import { probeVideoDurationSec } from "@/lib/video-edit";
 
-const isFileIdInTrash: (fileId: number) => Promise<boolean> = async (
-    fileId: number,
-): Promise<boolean> => {
-    const trashStoreModule: {
-        useTrashStore: {
-            getState: () => {
-                items: Array<{ file: { id: number } }>;
-            };
-        };
-    } = await import("@/stores/trash-store");
-    return trashStoreModule.useTrashStore
+const isFileIdInTrash = async (fileId: number): Promise<boolean> => {
+    const { useTrashStore } = await import("@/stores/trash-store");
+    return useTrashStore
         .getState()
-        .items.some(
-            (item: { file: { id: number } }): boolean =>
-                item.file.id === fileId,
-        );
+        .items.some((item) => item.file.id === fileId);
 };
 
 const favoriteMutationContext = (
     library: ReturnType<typeof useLibraryStore.getState>,
-): {
-    collections: Collection[];
-    allFiles: EnteFile[];
-    pendingByHashAndType: typeof pendingFavoriteFilesByHashAndType;
-} => ({
+) => ({
     collections: library.collections,
     allFiles: library.allFiles,
     pendingByHashAndType: pendingFavoriteFilesByHashAndType,
@@ -88,17 +59,13 @@ export const resetLibraryBootstrap = (): void => {
 /**
  * Load encrypted cache then sync from Ente once per authenticated session.
  */
-export const useLibraryBootstrap: (
-    options?: UseLibraryBootstrapOptions,
-) => boolean = (options: UseLibraryBootstrapOptions = {}): boolean => {
-    const bootstrapFromCache: () => Promise<boolean> = useLibraryStore(
-        (state: { bootstrapFromCache: () => Promise<boolean> }): (() => Promise<boolean>) =>
-            state.bootstrapFromCache,
+export const useLibraryBootstrap = (
+    options: UseLibraryBootstrapOptions = {},
+): boolean => {
+    const bootstrapFromCache = useLibraryStore(
+        (state) => state.bootstrapFromCache,
     );
-    const syncRemote: () => Promise<void> = useLibraryStore(
-        (state: { syncRemote: () => Promise<void> }): (() => Promise<void>) =>
-            state.syncRemote,
-    );
+    const syncRemote = useLibraryStore((state) => state.syncRemote);
     // Callers pass afterSync inline; a ref keeps it out of the effect deps so
     // re-renders don't cancel the load before initialLoadDone is set.
     const afterSyncRef = useRef(options.afterSync);
@@ -106,39 +73,32 @@ export const useLibraryBootstrap: (
         afterSyncRef.current = options.afterSync;
     });
 
-    const [initialLoadDone, setInitialLoadDone]: [
-        boolean,
-        Dispatch<SetStateAction<boolean>>,
-    ] = useState<boolean>(false);
+    const [initialLoadDone, setInitialLoadDone] = useState(false);
 
-    useEffect((): (() => void) => {
+    useEffect(() => {
         if (!isSessionAuthenticated()) {
-            return (): void => {};
+            return () => {};
         }
 
-        let cancelled: boolean = false;
+        let cancelled = false;
 
-        const bootstrap: () => Promise<void> = async (): Promise<void> => {
+        const bootstrap = async (): Promise<void> => {
             // bootstrapFromCache hydrates the tag/favourite/visibility outboxes.
             await bootstrapFromCache();
             await hydrateDerivedReplaceOutbox();
             startTagOutboxRunner({
-                getFileById: (fileId: number): EnteFile | undefined =>
+                getFileById: (fileId) =>
                     useLibraryStore.getState().getFileById(fileId),
-                getCollections: (): Collection[] =>
+                getCollections: () =>
                     useLibraryStore.getState().collections,
-                patchFile: (file: EnteFile): Promise<void> =>
+                patchFile: (file) =>
                     useLibraryStore.getState().patchFile(file),
-                patchFiles: (files: EnteFile[]): void => {
+                patchFiles: (files) => {
                     useLibraryStore.getState().patchFiles(files);
                 },
-                applyFavoriteMutations: async (
-                    entries: FavoriteOutboxEntry[],
-                ): Promise<FavoriteMutationsResult> => {
-                    const library: ReturnType<
-                        typeof useLibraryStore.getState
-                    > = useLibraryStore.getState();
-                    const core: EnteCore = getEnteCore();
+                applyFavoriteMutations: async (entries) => {
+                    const library = useLibraryStore.getState();
+                    const core = getEnteCore();
                     const ctx = favoriteMutationContext(library);
 
                     const ackedKeys: string[] = [];
@@ -148,12 +108,10 @@ export const useLibraryBootstrap: (
                     const removeKeys: string[] = [];
 
                     for (const entry of entries) {
-                        const key: string = favoriteOutboxEntryKey(entry);
-                        const file: EnteFile | undefined =
-                            library.allFiles.find(
-                                (candidate: EnteFile): boolean =>
-                                    candidate.id === entry.fileId,
-                            );
+                        const key = favoriteOutboxEntryKey(entry);
+                        const file = library.allFiles.find(
+                            (candidate) => candidate.id === entry.fileId,
+                        );
                         if (!file) {
                             if (await isFileIdInTrash(entry.fileId)) {
                                 ackedKeys.push(key);
@@ -182,17 +140,11 @@ export const useLibraryBootstrap: (
                     }
                     return { ackedKeys };
                 },
-                applyFavoriteMutation: async (
-                    entry: FavoriteOutboxEntry,
-                ): Promise<void> => {
-                    const library: ReturnType<
-                        typeof useLibraryStore.getState
-                    > = useLibraryStore.getState();
-                    const file: EnteFile | undefined =
-                        library.allFiles.find(
-                            (candidate: EnteFile): boolean =>
-                                candidate.id === entry.fileId,
-                        );
+                applyFavoriteMutation: async (entry) => {
+                    const library = useLibraryStore.getState();
+                    const file = library.allFiles.find(
+                        (candidate) => candidate.id === entry.fileId,
+                    );
                     if (!file) {
                         if (await isFileIdInTrash(entry.fileId)) {
                             return;
@@ -201,7 +153,7 @@ export const useLibraryBootstrap: (
                             `File ${entry.fileId} not in library`,
                         );
                     }
-                    const core: EnteCore = getEnteCore();
+                    const core = getEnteCore();
                     const ctx = favoriteMutationContext(library);
                     if (entry.isFavorite) {
                         const membershipIds = await core.addToFavorites(
@@ -215,12 +167,10 @@ export const useLibraryBootstrap: (
                         await removeFavoriteMembershipIds(membershipIds);
                     }
                 },
-                syncFavorites: async (): Promise<void> => {
+                syncFavorites: async () => {
                     // Membership already patched after API success; rebuild
                     // UI sets from oracle + remaining outbox overlays.
-                    const library: ReturnType<
-                        typeof useLibraryStore.getState
-                    > = useLibraryStore.getState();
+                    const library = useLibraryStore.getState();
                     useFavoritesStore
                         .getState()
                         .rebuildFromLibrary(
@@ -229,41 +179,29 @@ export const useLibraryBootstrap: (
                             library.allFiles,
                         );
                 },
-                applyVisibilityMutation: async (
-                    entry: VisibilityOutboxEntry,
-                ): Promise<void> => {
-                    const library: ReturnType<
-                        typeof useLibraryStore.getState
-                    > = useLibraryStore.getState();
-                    const file: EnteFile | undefined =
-                        library.allFiles.find(
-                            (candidate: EnteFile): boolean =>
-                                candidate.id === entry.fileId,
-                        );
+                applyVisibilityMutation: async (entry) => {
+                    const library = useLibraryStore.getState();
+                    const file = library.allFiles.find(
+                        (candidate) => candidate.id === entry.fileId,
+                    );
                     if (!file) {
                         return;
                     }
-                    const collection: Collection | undefined =
-                        library.collections.find(
-                            (candidate: Collection): boolean =>
-                                candidate.id === file.collectionID,
-                        );
+                    const collection = library.collections.find(
+                        (candidate) => candidate.id === file.collectionID,
+                    );
                     if (!collection?.key) {
                         return;
                     }
-                    const updated: EnteFile =
-                        await getEnteCore().updateFileVisibility(
-                            file,
-                            collection.key,
-                            entry.visibility,
-                        );
+                    const updated = await getEnteCore().updateFileVisibility(
+                        file,
+                        collection.key,
+                        entry.visibility,
+                    );
                     await library.patchFile(updated);
                 },
-                retryDerivedReplace: async (
-                    entry: DerivedReplaceOutboxEntry,
-                ): Promise<void> => {
-                    const bytes: Uint8Array | undefined =
-                        await loadDerivedReplaceOutboxBytes(entry.fileId);
+                retryDerivedReplace: async (entry) => {
+                    const bytes = await loadDerivedReplaceOutboxBytes(entry.fileId);
                     if (!bytes) {
                         console.warn(
                             "Derived replace payload missing; dropping outbox entry",
@@ -274,9 +212,7 @@ export const useLibraryBootstrap: (
                         ]);
                         return;
                     }
-                    const library: ReturnType<
-                        typeof useLibraryStore.getState
-                    > = useLibraryStore.getState();
+                    const library = useLibraryStore.getState();
                     if (!library.getFileById(entry.fileId)) {
                         // Trashed or already replaced: there is nothing left
                         // to apply the edit to. A file that is merely not
@@ -289,51 +225,43 @@ export const useLibraryBootstrap: (
                         return;
                     }
                     if (entry.kind === "video-edit") {
-                        const duration: number =
-                            await probeVideoDurationSec(bytes, "video/mp4");
-                        const { finalize }: {
-                            finalize: Promise<EnteFile>;
-                        } = library.editVideoAndReplaceFileOptimistic(
-                            entry.fileId,
-                            {
-                                bytes,
-                                width: entry.width,
-                                height: entry.height,
-                                duration,
-                            },
+                        const duration = await probeVideoDurationSec(
+                            bytes,
+                            "video/mp4",
                         );
+                        const { finalize } =
+                            library.editVideoAndReplaceFileOptimistic(
+                                entry.fileId,
+                                {
+                                    bytes,
+                                    width: entry.width,
+                                    height: entry.height,
+                                    duration,
+                                },
+                            );
                         await finalize;
                         return;
                     }
                     if (entry.kind === "compress") {
-                        const source: EnteFile | undefined =
-                            library.allFiles.find(
-                                (candidate: EnteFile): boolean =>
-                                    candidate.id === entry.fileId,
-                            );
-                        const originalByteLength: number =
+                        const source = library.allFiles.find(
+                            (candidate) => candidate.id === entry.fileId,
+                        );
+                        const originalByteLength =
                             source?.info?.fileSize &&
                             source.info.fileSize > bytes.length ?
                                 source.info.fileSize :
                                 bytes.length * 2;
-                        const mediaKindModule: {
-                            mediaKindForFile: (
-                                file: EnteFile,
-                            ) => "image" | "gif" | "video" | null;
-                        } = await import("@/lib/media-kind");
-                        const kind: "image" | "gif" | "video" =
-                            (source ?
-                                mediaKindModule.mediaKindForFile(source) :
-                                undefined) ?? "image";
-                        const mimeType: string =
+                        const { mediaKindForFile } = await import("@/lib/media-kind");
+                        const kind =
+                            (source ? mediaKindForFile(source) : undefined) ??
+                            "image";
+                        const mimeType =
                             kind === "video" ?
                                 "video/mp4" :
                                 kind === "gif" ?
                                     "image/gif" :
                                     "image/jpeg";
-                        const { finalize }: {
-                            finalize: Promise<EnteFile>;
-                        } =
+                        const { finalize } =
                             library.compressAndReplaceMediaOptimistic(
                                 entry.fileId,
                                 {
@@ -358,7 +286,7 @@ export const useLibraryBootstrap: (
                         await finalize;
                         return;
                     }
-                    const { finalize }: { finalize: Promise<EnteFile> } =
+                    const { finalize } =
                         library.cropAndReplaceFileOptimistic(
                             entry.fileId,
                             bytes,
@@ -370,16 +298,16 @@ export const useLibraryBootstrap: (
                     await finalize;
                 },
             });
-            await syncRemote().catch((): void => {
+            await syncRemote().catch(() => {
                 // syncRemote records the error; later page mounts sync again.
             });
         };
 
-        const load = async (): Promise<void> => {
+        const load = async () => {
             try {
                 if (sessionBootstrap) {
                     await sessionBootstrap;
-                    void syncRemote().catch((): void => {
+                    void syncRemote().catch(() => {
                         // syncRemote records the error in the library store.
                     });
                 } else {
@@ -401,7 +329,7 @@ export const useLibraryBootstrap: (
         };
 
         void load();
-        return (): void => {
+        return () => {
             cancelled = true;
         };
     }, [bootstrapFromCache, syncRemote]);

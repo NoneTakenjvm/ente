@@ -3,8 +3,6 @@ import { FileType } from "ente-media/file-type";
 import type { EnteFile } from "ente-media/file";
 import {
     buildCompressedOrganizerTags,
-    canCompress,
-    canCompressMedia,
     compressManageCandidates,
     compressedReplaceTitle,
     encodeCompressedStillFromBytes,
@@ -57,18 +55,6 @@ describe("compress", () => {
         ).toBe(true);
         expect(
             isCompressibleMediaType(fileWithTags(1, FileType.video, [])),
-        ).toBe(true);
-    });
-
-    it("canCompress allows already-compressed images for re-compression", () => {
-        expect(
-            canCompress(fileWithTags(1, FileType.image, [COMPRESSED_TAG])),
-        ).toBe(true);
-    });
-
-    it("canCompressMedia allows videos with compressed tag", () => {
-        expect(
-            canCompressMedia(fileWithTags(1, FileType.video, [COMPRESSED_TAG])),
         ).toBe(true);
     });
 

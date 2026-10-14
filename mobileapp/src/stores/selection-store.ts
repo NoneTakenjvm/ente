@@ -48,7 +48,6 @@ interface SelectionState {
     toggleStampTag: (tag: string) => void;
     setStampPickMode: (mode: StampPickMode) => void;
     setStampSheetOpen: (open: boolean) => void;
-    clearStamp: () => void;
     setRotateActive: (active: boolean) => void;
     bumpRotate: (fileId: number) => void;
     clearPendingRotations: () => void;
@@ -224,15 +223,6 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
 
     setStampSheetOpen: (open: boolean): void => {
         set({ stampSheetOpen: open });
-    },
-
-    clearStamp: (): void => {
-        set({
-            stampActive: false,
-            stampTags: [],
-            stampPickMode: "kit",
-            stampSheetOpen: false,
-        });
     },
 
     setRotateActive: (active: boolean): void => {

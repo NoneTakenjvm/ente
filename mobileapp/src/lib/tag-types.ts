@@ -126,16 +126,6 @@ export const areAllTagsIncludedInKitNearness = (
         isTagIncludedInKitNearness(tag, includeInKitNearnessByName));
 
 /**
- * Keep only tags opted into kit nearness (order preserved).
- */
-export const filterKitNearnessTags = (
-    tags: readonly string[],
-    includeInKitNearnessByName: ReadonlyMap<string, boolean>,
-): string[] =>
-    tags.filter((tag) =>
-        isTagIncludedInKitNearness(tag, includeInKitNearnessByName));
-
-/**
  * Whether the tag counts toward tagged/untagged presence (default true).
  */
 export const isTagIncludedInEffectsPresence = (
@@ -146,7 +136,7 @@ export const isTagIncludedInEffectsPresence = (
 /**
  * Sort tags by how many files use them (descending), then alphabetically.
  */
-export const sortTagsByUsage = (
+const sortTagsByUsage = (
     tags: string[],
     fileIdsByTag: Map<string, Set<number>>,
 ): string[] =>

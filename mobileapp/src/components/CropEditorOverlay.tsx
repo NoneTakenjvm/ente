@@ -19,10 +19,10 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Spinner } from "@/components/ui/spinner";
 import {
-    bakeRotation,
     containedDisplaySize,
     encodeBakedCrop,
 } from "@/lib/crop-editor";
+import { rotateImageBytes } from "@/lib/rotate";
 import {
     maxAspectRatioCrop,
     viewportTargetAspectRatio,
@@ -33,6 +33,7 @@ import { mimeTypeForFile } from "@/lib/media-kind";
 import { useLibraryStore } from "@/stores/library-store";
 import { useUIStore } from "@/stores/ui-store";
 import type { EnteFile } from "ente-media/file";
+import { errorMessage } from "@/lib/format";
 
 const CROP_WORKSPACE_INSET_PX = 16;
 
@@ -232,7 +233,7 @@ export function CropEditorOverlay({
             setImageReady(false);
             setCrop(undefined);
             setCompletedCrop(undefined);
-            void bakeRotation(workingBytes, "image/jpeg", degrees)
+            void rotateImageBytes(workingBytes, "image/jpeg", degrees)
                 .then((rotated) => {
                     if (!mountedRef.current) {
                         return;
@@ -241,9 +242,7 @@ export function CropEditorOverlay({
                 })
                 .catch((rotateError: unknown) => {
                     setError(
-                        rotateError instanceof Error ?
-                            rotateError.message :
-                            "Could not rotate image",
+                        errorMessage(rotateError, "Could not rotate image"),
                     );
                     setImageReady(true);
                 })
@@ -277,9 +276,7 @@ export function CropEditorOverlay({
             .catch((saveError: unknown) => {
                 setSaving(false);
                 setError(
-                    saveError instanceof Error ?
-                        saveError.message :
-                        "Could not save crop",
+                    errorMessage(saveError, "Could not save crop"),
                 );
             });
     }, [

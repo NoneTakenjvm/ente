@@ -21,10 +21,10 @@ export interface MarqueePoint {
 export const MARQUEE_ARM_THRESHOLD_PX = 12;
 
 /** Viewport inset where holding the pointer triggers auto-scroll. */
-export const MARQUEE_EDGE_ZONE_PX = 48;
+const MARQUEE_EDGE_ZONE_PX = 48;
 
 /** Max auto-scroll speed at the extreme edge (px per frame at 60fps-ish). */
-export const MARQUEE_EDGE_MAX_SPEED_PX = 28;
+const MARQUEE_EDGE_MAX_SPEED_PX = 28;
 
 /** Axis-aligned rect from two content-space points. */
 export const normalizeRect = (
@@ -110,7 +110,7 @@ export const contentRectToViewport = (
 });
 
 /** True when two axis-aligned rects share positive area (not just an edge). */
-export const rectsOverlap = (
+const rectsOverlap = (
     a: MarqueeRect,
     b: MarqueeRect,
 ): boolean =>
@@ -118,36 +118,6 @@ export const rectsOverlap = (
     a.x + a.width > b.x &&
     a.y < b.y + b.height &&
     a.y + a.height > b.y;
-
-/**
- * Ids whose layout boxes intersect a content-space marquee.
- * Layout `y` values are content coordinates (no scrollTop adjustment).
- */
-export const keysInContentMarquee = <T extends string | number>(
-    items: ReadonlyArray<{
-        key: T;
-        x: number;
-        y: number;
-        width: number;
-        height: number;
-    }>,
-    rect: MarqueeRect,
-): T[] => {
-    const keys: T[] = [];
-    for (const item of items) {
-        if (
-            rectsOverlap(rect, {
-                x: item.x,
-                y: item.y,
-                width: item.width,
-                height: item.height,
-            })
-        ) {
-            keys.push(item.key);
-        }
-    }
-    return keys;
-};
 
 /**
  * Grid-layout file/item ids intersecting a content-space marquee.

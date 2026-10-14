@@ -1,25 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EnteFile } from "ente-media/file";
 import { sortFilesByUploadedAt } from "@/lib/uploaded-at-sort";
-
-const stubFile = (overrides: Partial<EnteFile>): EnteFile =>
-    ({
-        id: 1,
-        collectionID: 1,
-        ownerID: 1,
-        updationTime: 0,
-        encryptedKey: "key",
-        keyDecryptionNonce: "nonce",
-        metadata: {
-            creationTime: 0,
-            modificationTime: 0,
-            title: "file",
-            fileType: 1,
-            hash: "hash",
-        },
-        isDeleted: false,
-        ...overrides,
-    }) as EnteFile;
+import { stubFile } from "@/test-utils/fixtures";
 
 const withUploadedAt = (id: number, uploadedAt: number): EnteFile =>
     stubFile({

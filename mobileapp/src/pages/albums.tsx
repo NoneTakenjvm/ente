@@ -12,7 +12,6 @@ import { AlbumListCard } from "@/components/albums/AlbumListCard";
 import { AppShell } from "@/components/AppShell";
 import { FilteredMediaView } from "@/components/FilteredMediaView";
 import { PageLoader } from "@/components/PageLoader";
-import { GalleryToolsMenu } from "@/components/GalleryToolsMenu";
 import { SelectionActionFooter } from "@/components/SelectionActionFooter";
 import { StampToolFooter } from "@/components/StampToolFooter";
 import { CropToolFooter } from "@/components/CropToolFooter";
@@ -412,7 +411,6 @@ export default function AlbumsPage(): JSX.Element {
                         >
                             Select all
                         </Button>
-                        <GalleryToolsMenu />
                         <Button
                             type="button"
                             variant={gallerySortBy === "edited" ? "secondary" : "outline"}

@@ -657,11 +657,3 @@ export const findKitModeInGroup = (
     }
     return null;
 };
-
-/**
- * Whether the kit is currently an include unit in the given group/root.
- */
-export const kitIsIncluded = (
-    group: TagFilterGroup,
-    presetId: string,
-): boolean => findKitModeInGroup(group, presetId) === "include";

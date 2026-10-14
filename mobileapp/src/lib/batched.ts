@@ -1,12 +1,6 @@
-const defaultBatchSize = 1000;
+import { batch } from "ente-utils/array";
 
-const batch = <T>(items: T[], size: number): T[][] => {
-    const result: T[][] = [];
-    for (let i = 0; i < items.length; i += size) {
-        result.push(items.slice(i, i + size));
-    }
-    return result;
-};
+const defaultBatchSize = 1000;
 
 /**
  * Run {@link op} on fixed-size sequential batches (Ente default: 1000).

@@ -1,7 +1,6 @@
 /// <reference lib="webworker" />
 
 import {
-    areCropMatches,
     areCropMatchesGrids,
     colorHashFromImageData,
     decodeLuminanceGrid,
@@ -14,8 +13,6 @@ import type { Stage1ClipOptions } from "@/lib/similarity-stage1-core";
 import type {
     CropCheckBatchMessage,
     CropCheckBatchResult,
-    CropCheckMessage,
-    CropCheckResult,
     PhashWorkerInbound,
     PhashWorkerRequest,
     PhashWorkerResponse,
@@ -24,6 +21,7 @@ import type {
     Stage1ProgressMessage,
     Stage1ResultMessage,
 } from "@/workers/phash-worker-types";
+import { errorMessage } from "@/lib/format";
 
 const abortedStage1Ids = new Set<number>();
 
@@ -81,7 +79,7 @@ const handleStage1 = async (message: Stage1Message): Promise<void> => {
         const result: Stage1ResultMessage = {
             kind: "stage1-result",
             id: message.id,
-            error: error instanceof Error ? error.message : "Stage-1 failed",
+            error: errorMessage(error, "Stage-1 failed"),
         };
         self.postMessage(result);
     }
@@ -100,25 +98,6 @@ self.onmessage = async (
 
     if (message.kind === "stage1") {
         await handleStage1(message);
-        return;
-    }
-
-    // Crop verification: pure string decode + template match, off the UI thread.
-    if (message.kind === "crop-check") {
-        const { id, aColor, aGrid, bColor, bGrid } = message as CropCheckMessage;
-        try {
-            const match = areCropMatches(aColor, aGrid, bColor, bGrid);
-            const response: CropCheckResult = { kind: "crop-check", id, match };
-            self.postMessage(response);
-        } catch (error: unknown) {
-            const response: CropCheckResult = {
-                kind: "crop-check",
-                id,
-                match: false,
-                error: error instanceof Error ? error.message : "Crop check failed",
-            };
-            self.postMessage(response);
-        }
         return;
     }
 
@@ -160,7 +139,7 @@ self.onmessage = async (
                 id: batch.id,
                 matches: batch.pairs.map(() => false),
                 error:
-                    error instanceof Error ? error.message : "Crop batch failed",
+                    errorMessage(error, "Crop batch failed"),
             };
             self.postMessage(response);
         }
@@ -212,7 +191,7 @@ self.onmessage = async (
         const response: PhashWorkerResponse = {
             id,
             fileId,
-            error: error instanceof Error ? error.message : "Hash failed",
+            error: errorMessage(error, "Hash failed"),
         };
         self.postMessage(response);
     }

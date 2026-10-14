@@ -17,6 +17,7 @@ import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 import { sortFilesByUpload } from "@/lib/sort-files";
 import { useLibraryStore } from "@/stores/library-store";
 import type { EnteFile } from "ente-media/file";
+import { errorMessage, plural } from "@/lib/format";
 
 interface ManageArchivedPanelProps {
     files: EnteFile[];
@@ -86,9 +87,7 @@ export function ManageArchivedPanel({
             })
             .catch((unarchiveError: unknown) => {
                 setError(
-                    unarchiveError instanceof Error ?
-                        unarchiveError.message :
-                        "Could not unarchive",
+                    errorMessage(unarchiveError, "Could not unarchive"),
                 );
             })
             .finally(() => {
@@ -112,8 +111,7 @@ export function ManageArchivedPanel({
     return (
         <div className="flex min-h-0 flex-1 flex-col gap-3">
             <p className="shrink-0 px-4 pt-3 text-xs text-muted-foreground">
-                {archivedFiles.length} archived image
-                {archivedFiles.length === 1 ? "" : "s"}
+                {plural(archivedFiles.length, "archived image")}
             </p>
             {error ? (
                 <Alert variant="destructive" className="mx-4 shrink-0">

@@ -1,9 +1,5 @@
 import type { CollectionFileChange } from "@/core/api/files";
-import {
-    loadEncryptedFavoriteMembership,
-    saveEncryptedFavoriteMembership,
-} from "@/db/kv";
-import { getSessionCacheKey } from "@/lib/cache-key";
+import { loadKv, saveKv } from "@/db/kv";
 
 /**
  * Server-oracle set of file IDs in the user's Favourites collection.
@@ -24,10 +20,7 @@ let persistChain: Promise<void> = Promise.resolve();
 let hydrateInFlight: Promise<void> | undefined;
 
 const flushMembershipToDisk = async (): Promise<void> => {
-    await saveEncryptedFavoriteMembership(
-        [...membershipIds],
-        getSessionCacheKey(),
-    );
+    await saveKv("favoriteMembership", [...membershipIds]);
 };
 
 const persistMembership = (): Promise<void> => {
@@ -54,9 +47,7 @@ export const hydrateFavoriteMembership = async (): Promise<void> => {
         return hydrateInFlight;
     }
     hydrateInFlight = (async () => {
-        const persisted = await loadEncryptedFavoriteMembership(
-            getSessionCacheKey(),
-        );
+        const persisted = validMembershipIds(await loadKv("favoriteMembership"));
         membershipIds.clear();
         if (persisted === undefined) {
             needsFullSync = true;
@@ -103,13 +94,6 @@ export const resetFavoriteMembershipForFullSync = (): void => {
     membershipIds.clear();
     needsFullSync = true;
     ready = false;
-};
-
-/**
- * Begin a full Favourites membership rebuild (clears set; caller applies diffs).
- */
-export const beginFavoriteMembershipFullSync = (): void => {
-    resetFavoriteMembershipForFullSync();
 };
 
 /**
@@ -236,4 +220,15 @@ export const clearFavoriteMembership = (): void => {
     needsFullSync = true;
     hydrateInFlight = undefined;
     persistChain = Promise.resolve();
+};
+
+/** Persisted ids when every entry is a finite number; otherwise `undefined`. */
+const validMembershipIds = (decoded: unknown): number[] | undefined => {
+    if (!Array.isArray(decoded)) {
+        return undefined;
+    }
+    const ids = decoded.filter(
+        (id): id is number => typeof id === "number" && Number.isFinite(id),
+    );
+    return ids.length === decoded.length ? ids : undefined;
 };

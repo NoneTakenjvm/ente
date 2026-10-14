@@ -2,17 +2,11 @@
  * Playwright unit-style checks that do not need a logged-in Ente session:
  * crop CSS hitbox rules, site wipe helpers via page.evaluate.
  *
- *   npx tsx --tsconfig scripts/tsconfig.json scripts/e2e-local-helpers.ts
+ *   npm run test:e2e:local
  */
-import { chromium } from "playwright";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-
-const assert = (condition: boolean, message: string): void => {
-    if (!condition) {
-        throw new Error(message);
-    }
-};
+import { assert, launch } from "./e2e/lib";
 
 const main = async (): Promise<void> => {
     const cssPath = resolve("src/styles/globals.css");
@@ -24,8 +18,7 @@ const main = async (): Promise<void> => {
     assert(css.includes("44px"), "Expected 44px touch target for crop handles");
     console.log("OK: crop handle CSS present");
 
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+    const { browser, page } = await launch();
     // Real http origin so localStorage is available (blocked on about:blank).
     await page.goto("https://example.com", { waitUntil: "domcontentloaded" });
     // Use a string script to avoid tsx injecting __name into the browser context.

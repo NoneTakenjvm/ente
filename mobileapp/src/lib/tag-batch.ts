@@ -1,4 +1,3 @@
-import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
 import {
     enqueueTagOutboxEntries,
@@ -16,7 +15,6 @@ import {
     tagsForFile,
     type TagMutator,
 } from "@/lib/tag-writes";
-import type { HttpClient } from "@/core/api/http";
 
 export interface BatchTagResult {
     succeeded: number;
@@ -39,11 +37,8 @@ const intendedTagEntries = (
  * Used by Manage rename/delete/merge where the UI waits on completion.
  */
 const runBatchTagUpdate = async (
-    _http: HttpClient,
     files: EnteFile[],
-    _collections: Collection[],
     mutator: TagMutator,
-    _onFileVerified?: (file: EnteFile) => Promise<void>,
     onProgress?: (completed: number, total: number) => void,
 ): Promise<BatchTagResult> => {
     const targetIds = new Set(files.map((file) => file.id));
@@ -70,62 +65,44 @@ const runBatchTagUpdate = async (
 };
 
 export const renameTagOnFiles = async (
-    http: HttpClient,
     files: EnteFile[],
-    collections: Collection[],
     oldName: string,
     newName: string,
-    onFileVerified?: (file: EnteFile) => Promise<void>,
     onProgress?: (completed: number, total: number) => void,
 ): Promise<BatchTagResult> => {
     const mutator: TagMutator = (tags) =>
         replaceTagName(tags, oldName, newName);
     return runBatchTagUpdate(
-        http,
         files,
-        collections,
         mutator,
-        onFileVerified,
         onProgress,
     );
 };
 
 export const deleteTagOnFiles = async (
-    http: HttpClient,
     files: EnteFile[],
-    collections: Collection[],
     tagName: string,
-    onFileVerified?: (file: EnteFile) => Promise<void>,
     onProgress?: (completed: number, total: number) => void,
 ): Promise<BatchTagResult> => {
     const mutator: TagMutator = (tags) => removeTagNames(tags, tagName);
     return runBatchTagUpdate(
-        http,
         files,
-        collections,
         mutator,
-        onFileVerified,
         onProgress,
     );
 };
 
 export const mergeTagsOnFiles = async (
-    http: HttpClient,
     files: EnteFile[],
-    collections: Collection[],
     sourceNames: string[],
     targetName: string,
-    onFileVerified?: (file: EnteFile) => Promise<void>,
     onProgress?: (completed: number, total: number) => void,
 ): Promise<BatchTagResult> => {
     const mutator: TagMutator = (tags) =>
         mergeTagNames(tags, sourceNames, targetName);
     return runBatchTagUpdate(
-        http,
         files,
-        collections,
         mutator,
-        onFileVerified,
         onProgress,
     );
 };
@@ -137,11 +114,8 @@ export const mergeTagsOnFiles = async (
  * Failures surface later via the outbox runner toasts.
  */
 export const applyTagMutatorOnFiles = async (
-    _http: HttpClient,
     files: EnteFile[],
-    _collections: Collection[],
     mutator: TagMutator,
-    _onFileVerified?: (file: EnteFile) => Promise<void>,
     onProgress?: (completed: number, total: number) => void,
 ): Promise<BatchTagResult> => {
     if (!files.length) {

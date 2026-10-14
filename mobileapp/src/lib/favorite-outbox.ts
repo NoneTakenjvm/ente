@@ -1,11 +1,6 @@
 import type { EnteFile } from "ente-media/file";
 import type { Collection } from "ente-media/collection";
-import {
-    loadEncryptedFavoriteOutbox,
-    saveEncryptedFavoriteOutbox,
-    type PersistedFavoriteOutboxEntry,
-} from "@/db/kv";
-import { getSessionCacheKey } from "@/lib/cache-key";
+import { loadKv, saveKv, type PersistedFavoriteOutboxEntry } from "@/db/kv";
 import {
     deriveFavoriteFileIDs,
     hashAndTypeKey,
@@ -40,7 +35,7 @@ const toPersisted = (
 
 const flushFavoriteOutboxToDisk = async (): Promise<void> => {
     const entries = [...outboxByKey.values()].map(toPersisted);
-    await saveEncryptedFavoriteOutbox(entries, getSessionCacheKey());
+    await saveKv("favoriteOutbox", entries);
 };
 
 const persistFavoriteOutbox = (): Promise<void> => {
@@ -64,7 +59,7 @@ export const hydrateFavoriteOutbox = async (): Promise<void> => {
         return favoriteOutboxHydrateInFlight;
     }
     favoriteOutboxHydrateInFlight = (async () => {
-        const persisted = await loadEncryptedFavoriteOutbox(getSessionCacheKey());
+        const persisted = await loadKv("favoriteOutbox");
         outboxByKey.clear();
         for (const entry of persisted ?? []) {
             outboxByKey.set(favoriteOutboxEntryKey(entry), entry);
@@ -118,7 +113,7 @@ export const upsertFavoriteOutboxEntry = async (
     await persistFavoriteOutbox();
 };
 
-export const removeFavoriteOutboxEntries = async (
+const removeFavoriteOutboxEntries = async (
     keys: string[],
 ): Promise<void> => {
     if (!keys.length) {

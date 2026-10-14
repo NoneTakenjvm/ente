@@ -42,14 +42,6 @@ export const canAutoCrop = (file: EnteFile): boolean =>
     canCrop(file) && !extractTags(file).includes(AUTO_CROPPED_TAG);
 
 /**
- * Derive the upload title for a cropped copy of the source file.
- */
-export const croppedUploadTitle = (sourceFile: EnteFile): string => {
-    const baseName = fileFileName(sourceFile).replace(/\.[^.]+$/u, "");
-    return `${baseName}-cropped.jpg`;
-};
-
-/**
  * Merge source organizer tags and ensure the cropped tag is present.
  *
  * Manual crop strips `auto-cropped` so the file matches the manual-crop filter

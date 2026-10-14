@@ -8,21 +8,19 @@ import {
     clipDistanceToScore,
     collectConfirmedClipEdges,
     embeddingCosineDistance,
-    findClipTopNeighbours,
+    scanClipNeighbourRow,
     shouldConfirmClipEdge,
+    type ClipNeighbour,
 } from "@/lib/similarity-clip";
 import {
     clusterFromFileEdges,
-    runStage1ClusteringSync,
+    runStage1Clustering,
+    type Stage1ClipOptions,
+    type Stage1Cluster,
     type Stage1FileEdge,
     type Stage1Item,
 } from "@/lib/similarity-stage1-core";
-
-const toEmb = (values: number[]): Float32Array => Float32Array.from(values);
-const embMap = (
-    entries: Array<[number, number[]]>,
-): Map<number, Float32Array> =>
-    new Map(entries.map(([id, v]) => [id, toEmb(v)]));
+import { embMap } from "@/test-utils/fixtures";
 
 const unit = (value: number, dim = 4): number[] => {
     const v = new Array(dim).fill(0);
@@ -79,15 +77,46 @@ describe("shouldConfirmClipEdge", () => {
     });
 });
 
-describe("findClipTopNeighbours + confirm", () => {
+/** Top-K lists via the same per-row scan the async Stage-1 pass uses. */
+const topNeighbours = (
+    vectors: readonly number[][],
+    topK: number,
+): ClipNeighbour[][] => {
+    const topByIndex: ClipNeighbour[][] = vectors.map(() => []);
+    for (let row = 0; row < vectors.length; row++) {
+        scanClipNeighbourRow(
+            vectors,
+            row,
+            topByIndex,
+            topK,
+            CLIP_SCORE_COLLECT_MAX,
+        );
+    }
+    return topByIndex;
+};
+
+/** Production Stage-1 (what the phash worker runs), clusters only. */
+const clusterStage1 = async (
+    items: Stage1Item[],
+    threshold: number,
+    clip?: Stage1ClipOptions,
+): Promise<Stage1Cluster[]> =>
+    (
+        await runStage1Clustering(
+            items,
+            threshold,
+            () => {},
+            undefined,
+            undefined,
+            clip,
+        )
+    ).clusters;
+
+describe("scanClipNeighbourRow + confirm", () => {
     it("links near neighbours and skips far ones", () => {
         const [a, b] = nearPair();
         const far = [0, 1];
-        const top = findClipTopNeighbours(
-            [a, b, far],
-            3,
-            CLIP_SCORE_COLLECT_MAX,
-        );
+        const top = topNeighbours([a, b, far], 3);
         const edges = collectConfirmedClipEdges(top);
         expect(edges.some((e) => e.left === 0 && e.right === 1)).toBe(true);
         expect(edges.some((e) => e.left === 0 && e.right === 2)).toBe(false);
@@ -98,7 +127,7 @@ describe("findClipTopNeighbours + confirm", () => {
         const a = [1, 0];
         const b = [0.99, Math.sqrt(1 - 0.99 ** 2)];
         const c = [0.985, Math.sqrt(1 - 0.985 ** 2)];
-        const top = findClipTopNeighbours([a, b, c], 3, CLIP_SCORE_COLLECT_MAX);
+        const top = topNeighbours([a, b, c], 3);
         expect(top[0]![0]?.other).toBe(1);
         expect(top[1]![0]?.other).toBe(2);
         const edges = collectConfirmedClipEdges(top);
@@ -107,39 +136,39 @@ describe("findClipTopNeighbours + confirm", () => {
     });
 });
 
-describe("runStage1ClusteringSync CLIP-first", () => {
+describe("runStage1Clustering CLIP-first", () => {
     const items: Stage1Item[] = [
         { fileId: 1, hashes: ["aaaaaaaaaaaaaaaa"] },
         { fileId: 2, hashes: ["bbbbbbbbbbbbbbbb"] },
         { fileId: 3, hashes: ["cccccccccccccccc"] },
     ];
 
-    it("groups CLIP-near files even when hashes differ", () => {
+    it("groups CLIP-near files even when hashes differ", async () => {
         const [a, b] = nearPair();
         const embeddings = embMap([
             [1, a],
             [2, b],
             [3, [0, 1]],
         ]);
-        const clusters = runStage1ClusteringSync(items, CLIP_SCORE_SLIDER_MAX, {
+        const clusters = await clusterStage1(items, CLIP_SCORE_SLIDER_MAX, {
             embeddings,
         });
         expect(clusters).toHaveLength(1);
         expect(clusters[0]!.fileIds.sort()).toEqual([1, 2]);
     });
 
-    it("does not group orthogonal embeddings", () => {
+    it("does not group orthogonal embeddings", async () => {
         const embeddings = embMap([
             [1, [1, 0]],
             [2, [0, 1]],
         ]);
-        const clusters = runStage1ClusteringSync(items.slice(0, 2), 12, {
+        const clusters = await clusterStage1(items.slice(0, 2), 12, {
             embeddings,
         });
         expect(clusters).toEqual([]);
     });
 
-    it("groups near-identical hashes even when CLIP disagrees", () => {
+    it("groups near-identical hashes even when CLIP disagrees", async () => {
         const twins: Stage1Item[] = [
             { fileId: 1, hashes: ["aaaaaaaaaaaaaaaa"] },
             { fileId: 2, hashes: ["aaaaaaaaaaaaaaab"] },
@@ -148,7 +177,7 @@ describe("runStage1ClusteringSync CLIP-first", () => {
             [1, [1, 0, 0, 0]],
             [2, [0, 1, 0, 0]],
         ]);
-        const clusters = runStage1ClusteringSync(twins, CLIP_SCORE_SLIDER_MIN, {
+        const clusters = await clusterStage1(twins, CLIP_SCORE_SLIDER_MIN, {
             embeddings,
         });
         expect(clusters).toHaveLength(1);
@@ -179,13 +208,13 @@ describe("clusterFromFileEdges CLIP scores", () => {
     });
 });
 
-describe("runStage1ClusteringSync without CLIP", () => {
-    it("still groups identical hashes", () => {
+describe("runStage1Clustering without CLIP", () => {
+    it("still groups identical hashes", async () => {
         const items: Stage1Item[] = [
             { fileId: 1, hashes: ["aaaaaaaaaaaaaaaa"] },
             { fileId: 2, hashes: ["aaaaaaaaaaaaaaaa"] },
         ];
-        const clusters = runStage1ClusteringSync(items, 8);
+        const clusters = await clusterStage1(items, 8);
         expect(clusters).toHaveLength(1);
         expect(clusters[0]!.fileIds.sort()).toEqual([1, 2]);
     });

@@ -1,7 +1,7 @@
 import { applyPendingShuffleSubstitutions } from "@/lib/shuffle-file-substitutions";
 
 /** Seeded PRNG (mulberry32). */
-const createRng = (seed: number): (() => number) => {
+export const createRng = (seed: number): (() => number) => {
     let state = seed >>> 0;
     return (): number => {
         state += 0x6D2B79F5;
@@ -12,7 +12,8 @@ const createRng = (seed: number): (() => number) => {
     };
 };
 
-const shuffleInPlace = <T>(items: T[], rng: () => number): T[] => {
+/** Fisher–Yates shuffle of `items` using `rng`; returns `items`. */
+export const shuffleInPlace = <T>(items: T[], rng: () => number): T[] => {
     for (let i = items.length - 1; i > 0; i--) {
         const j = Math.floor(rng() * (i + 1));
         [items[i], items[j]] = [items[j], items[i]];

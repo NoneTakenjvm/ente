@@ -4,7 +4,6 @@ import {
     maxAspectRatioCrop,
     sortFilesByViewportFit,
     viewportBlankFraction,
-    viewportCropFraction,
     viewportTargetAspectRatio,
 } from "@/lib/viewport-fit";
 
@@ -60,7 +59,6 @@ describe("viewport-fit", () => {
 
     it("viewportBlankFraction is 0 for a perfect match", () => {
         expect(viewportBlankFraction(9 / 16, 9 / 16)).toBe(0);
-        expect(viewportCropFraction(9 / 16, 9 / 16)).toBe(0);
     });
 
     it("viewportBlankFraction grows with aspect mismatch", () => {

@@ -3,7 +3,6 @@ import {
     useEffect,
     useRef,
     useSyncExternalStore,
-    type MutableRefObject,
 } from "react";
 
 export interface VisualViewportSheetLayout {
@@ -16,36 +15,33 @@ const INACTIVE_LAYOUT: VisualViewportSheetLayout = {
     heightPx: 0,
 };
 
-const readLayout: (heightRatio: number) => VisualViewportSheetLayout = (
+const readLayout = (
     heightRatio: number,
 ): VisualViewportSheetLayout => {
-    const vv: VisualViewport | null = window.visualViewport;
+    const vv = window.visualViewport;
     if (!vv) {
-        const height: number = window.innerHeight;
-        const heightPx: number = Math.round(height * heightRatio);
+        const height = window.innerHeight;
+        const heightPx = Math.round(height * heightRatio);
         return { bottomInset: 0, heightPx };
     }
-    const heightPx: number = Math.round(vv.height * heightRatio);
-    const bottomInset: number = Math.max(
+    const heightPx = Math.round(vv.height * heightRatio);
+    const bottomInset = Math.max(
         0,
         window.innerHeight - vv.offsetTop - vv.height,
     );
     return { bottomInset, heightPx };
 };
 
-const emptySubscribe: () => () => void = (): (() => void) => (): void => {};
+const emptySubscribe = (): (() => void) => (): void => {};
 
 export type VisualViewportSheetSyncResult = VisualViewportSheetLayout & {
     syncLayout: () => void;
 };
 
-const isStaleViewportOffset: (
-    vv: VisualViewport,
-    maxVisualHeight: number,
-) => boolean = (vv: VisualViewport, maxVisualHeight: number): boolean =>
+const isStaleViewportOffset = (vv: VisualViewport, maxVisualHeight: number): boolean =>
     vv.offsetTop > 0 && vv.height >= maxVisualHeight - 4;
 
-const resetStaleViewportScroll: () => void = (): void => {
+const resetStaleViewportScroll = (): void => {
     window.scrollTo(0, 0);
 };
 
@@ -54,16 +50,12 @@ const resetStaleViewportScroll: () => void = (): void => {
  * height and keyboard inset. Avoids `top` positioning (jumps during the iOS
  * keyboard animation) and avoids `dvh` (lags behind the keyboard on iOS).
  */
-export const useVisualViewportSheetLayout: (
-    active: boolean,
-    heightRatio: number,
-) => VisualViewportSheetSyncResult = (
+export const useVisualViewportSheetLayout = (
     active: boolean,
     heightRatio: number,
 ): VisualViewportSheetSyncResult => {
-    const cacheRef: MutableRefObject<VisualViewportSheetLayout> =
-        useRef<VisualViewportSheetLayout>(INACTIVE_LAYOUT);
-    const maxHeightRef: MutableRefObject<number> = useRef<number>(0);
+    const cacheRef = useRef(INACTIVE_LAYOUT);
+    const maxHeightRef = useRef(0);
 
     useEffect((): void => {
         if (!active) {
@@ -71,8 +63,8 @@ export const useVisualViewportSheetLayout: (
         }
     }, [active]);
 
-    const resetStaleViewportIfNeeded: () => void = useCallback((): void => {
-        const vv: VisualViewport | null = window.visualViewport;
+    const resetStaleViewportIfNeeded = useCallback((): void => {
+        const vv = window.visualViewport;
         if (!vv || !active) {
             return;
         }
@@ -82,12 +74,12 @@ export const useVisualViewportSheetLayout: (
         }
     }, [active]);
 
-    const getSnapshot: () => VisualViewportSheetLayout = useCallback((): VisualViewportSheetLayout => {
+    const getSnapshot = useCallback((): VisualViewportSheetLayout => {
         if (!active) {
             return INACTIVE_LAYOUT;
         }
-        const next: VisualViewportSheetLayout = readLayout(heightRatio);
-        const cached: VisualViewportSheetLayout = cacheRef.current;
+        const next = readLayout(heightRatio);
+        const cached = cacheRef.current;
         if (
             cached.bottomInset === next.bottomInset &&
             cached.heightPx === next.heightPx
@@ -98,11 +90,11 @@ export const useVisualViewportSheetLayout: (
         return next;
     }, [active, heightRatio]);
 
-    const subscribeViewport: (onChange: () => void) => () => void =
+    const subscribeViewport =
         useCallback(
             (onChange: () => void): (() => void) => {
-                const vv: VisualViewport | null = window.visualViewport;
-                const handler: () => void = (): void => {
+                const vv = window.visualViewport;
+                const handler = (): void => {
                     resetStaleViewportIfNeeded();
                     onChange();
                 };
@@ -118,13 +110,13 @@ export const useVisualViewportSheetLayout: (
             [resetStaleViewportIfNeeded],
         );
 
-    const layout: VisualViewportSheetLayout = useSyncExternalStore(
+    const layout = useSyncExternalStore(
         active ? subscribeViewport : emptySubscribe,
         getSnapshot,
         (): VisualViewportSheetLayout => INACTIVE_LAYOUT,
     );
 
-    const syncLayout: () => void = useCallback((): void => {
+    const syncLayout = useCallback((): void => {
         resetStaleViewportIfNeeded();
         window.dispatchEvent(new Event("resize"));
         window.visualViewport?.dispatchEvent(new Event("resize"));

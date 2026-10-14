@@ -11,16 +11,7 @@ import { TagPickerSheet } from "@/components/TagPickerSheet";
 import { GalleryToolsMenu } from "@/components/GalleryToolsMenu";
 import { TagScopeFilterDropdown } from "@/components/TagScopeFilterDropdown";
 import { Button } from "@/components/ui/button";
-import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
     countFavoritesInCandidates,
     countFileKindsInCandidates,
@@ -50,6 +41,7 @@ import { useTagStore } from "@/stores/tag-store";
 import type { TagFilterTarget } from "@/stores/tag-store";
 import { useUIStore } from "@/stores/ui-store";
 import type { EnteFile } from "ente-media/file";
+import { errorMessage, plural } from "@/lib/format";
 
 interface TagFilterBarProps {
     matchCount: number;
@@ -360,7 +352,7 @@ export function TagFilterBar({
     const tagsButtonLabel =
         clauseCount === 0 ?
             "Tags" :
-            `${clauseCount} tag${clauseCount === 1 ? "" : "s"}`;
+            `${plural(clauseCount, "tag")}`;
 
     const hasQueryContent =
         clauseCount > 0 ||
@@ -391,9 +383,7 @@ export function TagFilterBar({
                 setPendingBulkTags([]);
             } catch (error) {
                 setBulkError(
-                    error instanceof Error ?
-                        error.message :
-                        "Could not tag matching photos",
+                    errorMessage(error, "Could not tag matching photos"),
                 );
             } finally {
                 setBulkBusy(false);
@@ -519,7 +509,7 @@ export function TagFilterBar({
                 {filterActive ? (
                     <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                         <span className="text-muted-foreground">
-                            {matchCount} photo{matchCount === 1 ? "" : "s"}
+                            {plural(matchCount, "photo")}
                             {" · "}
                             {describeTagFilter(tagFilter)}
                         </span>
@@ -588,9 +578,7 @@ export function TagFilterBar({
                             await bulkRemoveTags(matchingFileIds, [name]);
                         } catch (error) {
                             setBulkError(
-                                error instanceof Error ?
-                                    error.message :
-                                    "Could not remove tag",
+                                errorMessage(error, "Could not remove tag"),
                             );
                         } finally {
                             setBulkBusy(false);
@@ -601,44 +589,29 @@ export function TagFilterBar({
                 onTogglePinTag={togglePinnedTag}
             />
 
-            <AlertDialog
+            <ConfirmDialog
                 open={confirmBulkOpen}
-                onOpenChange={(open) => {
-                    if (!open && !bulkBusy) {
-                        setConfirmBulkOpen(false);
-                        setPendingBulkTags([]);
-                    }
+                title={`Tag ${matchCount} matching photos?`}
+                description={
+                    <>
+                        Apply{" "}
+                        <span className="font-medium text-foreground">
+                            {pendingBulkTags.join(", ")}
+                        </span>{" "}
+                        to every photo that matches the current filter. You can
+                        undo from the toast afterward.
+                    </>
+                }
+                confirmLabel="Tag all"
+                isWorking={bulkBusy}
+                onCancel={() => {
+                    setConfirmBulkOpen(false);
+                    setPendingBulkTags([]);
                 }}
-            >
-                <AlertDialogContent>
-                    <AlertDialogHeader>
-                        <AlertDialogTitle>
-                            Tag {matchCount} matching photos?
-                        </AlertDialogTitle>
-                        <AlertDialogDescription>
-                            Apply{" "}
-                            <span className="font-medium text-foreground">
-                                {pendingBulkTags.join(", ")}
-                            </span>{" "}
-                            to every photo that matches the current filter.
-                            You can undo from the toast afterward.
-                        </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                        <AlertDialogCancel disabled={bulkBusy}>
-                            Cancel
-                        </AlertDialogCancel>
-                        <AlertDialogAction
-                            disabled={bulkBusy}
-                            onClick={() => {
-                                void applyBulkTags(pendingBulkTags);
-                            }}
-                        >
-                            {bulkBusy ? "Working…" : "Tag all"}
-                        </AlertDialogAction>
-                    </AlertDialogFooter>
-                </AlertDialogContent>
-            </AlertDialog>
+                onConfirm={() => {
+                    void applyBulkTags(pendingBulkTags);
+                }}
+            />
         </>
     );
 }

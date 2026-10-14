@@ -4,6 +4,7 @@
  * Not available in Firefox/Safari or Node by default — returns `undefined`
  * there. Use for desktop Chrome debugging and optional mobile Chrome logging.
  */
+import { formatFileSize } from "@/lib/format";
 
 export interface JsHeapSnapshot {
     usedJsHeapBytes: number;
@@ -51,20 +52,6 @@ export const readJsHeapSnapshot = (): JsHeapSnapshot | undefined => {
     };
 };
 
-/** Format a byte count for logs (e.g. `42.5MB`). */
-export const formatBytesShort = (bytes: number): string => {
-    if (!Number.isFinite(bytes) || bytes < 0) {
-        return "?";
-    }
-    if (bytes < 1024) {
-        return `${Math.round(bytes)}B`;
-    }
-    if (bytes < 1024 * 1024) {
-        return `${(bytes / 1024).toFixed(1)}KB`;
-    }
-    return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
-};
-
 /**
  * Log a heap snapshot when Chromium exposes `performance.memory`.
  *
@@ -76,9 +63,9 @@ export const logJsHeap = (label: string): JsHeapSnapshot | undefined => {
         return undefined;
     }
     console.warn(
-        `[memory] ${label}: used=${formatBytesShort(snapshot.usedJsHeapBytes)} ` +
-            `total=${formatBytesShort(snapshot.totalJsHeapBytes)} ` +
-            `limit=${formatBytesShort(snapshot.jsHeapSizeLimitBytes)} ` +
+        `[memory] ${label}: used=${formatFileSize(snapshot.usedJsHeapBytes)} ` +
+            `total=${formatFileSize(snapshot.totalJsHeapBytes)} ` +
+            `limit=${formatFileSize(snapshot.jsHeapSizeLimitBytes)} ` +
             `(${Math.round(snapshot.usedRatio * 100)}%)`,
     );
     return snapshot;

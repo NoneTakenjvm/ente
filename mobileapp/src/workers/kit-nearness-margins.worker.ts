@@ -11,6 +11,7 @@ import {
     type KitWorkerRequest,
     type TagLogOddsModel,
 } from "@/lib/kit-nearness-margins";
+import { errorMessage } from "@/lib/format";
 
 type MarginsCache = {
     libraryKey: string;
@@ -91,9 +92,7 @@ self.onmessage = (event: MessageEvent<KitWorkerRequest>): void => {
         const response: KitMarginsWorkerResponse = {
             requestId: request.requestId,
             error:
-                error instanceof Error ?
-                    error.message :
-                    "Kit nearness margins failed",
+                errorMessage(error, "Kit nearness margins failed"),
         };
         self.postMessage(response);
     }

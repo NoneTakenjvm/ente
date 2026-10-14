@@ -10,7 +10,7 @@
 const FLUSH_EVERY = 32;
 
 /** Persist one flushed batch of `fileId -> lastAccess` (single transaction). */
-export type LruTouchWriter = (
+type LruTouchWriter = (
     batch: ReadonlyMap<number, number>,
 ) => Promise<void>;
 
