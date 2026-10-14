@@ -1,12 +1,16 @@
 import type { EnteFile } from "ente-media/file";
 
+interface DerivedReplaceWaiter {
+    resolve: (file: EnteFile) => void;
+    reject: (error: Error) => void;
+}
+
 interface PendingDerivedReplace {
     croppedBytes: Uint8Array;
     dimensions: { width: number; height: number };
-    waiters: Array<{
-        resolve: (file: EnteFile) => void;
-        reject: (error: Error) => void;
-    }>;
+    /** Options of the latest enqueue, which owns the final completion. */
+    options?: EnqueueDerivedReplaceOptions;
+    waiters: DerivedReplaceWaiter[];
 }
 
 const pendingByFileId = new Map<number, PendingDerivedReplace>();
@@ -35,6 +39,12 @@ export interface EnqueueDerivedReplaceOptions {
      * outbox cleanup cannot race a concurrent drain retry.
      */
     onCompleted?: (uploaded: EnteFile) => Promise<void>;
+    /**
+     * Runs when a save fails after an earlier save in the same drain already
+     * replaced the source with {@link lastUploaded}. The source id is gone, so
+     * the failed bytes must be re-keyed to it before their waiters reject.
+     */
+    onFailed?: (error: Error, lastUploaded: EnteFile) => Promise<void>;
 }
 
 /**
@@ -58,11 +68,12 @@ export const enqueueDerivedReplace = (
     new Promise((resolve, reject) => {
         let pending = pendingByFileId.get(fileId);
         if (!pending) {
-            pending = { croppedBytes, dimensions, waiters: [] };
+            pending = { croppedBytes, dimensions, options, waiters: [] };
             pendingByFileId.set(fileId, pending);
         } else {
             pending.croppedBytes = croppedBytes;
             pending.dimensions = dimensions;
+            pending.options = options;
         }
         pending.waiters.push({ resolve, reject });
         void drainDerivedReplaceQueue(fileId, save, options);
@@ -82,6 +93,8 @@ const drainDerivedReplaceQueue = async (
     let replaceFileId = initialReplaceFileId;
     /** Last successful upload in this drain — kept if a later coalesce save fails. */
     let lastUploaded: EnteFile | undefined;
+    /** Waiters whose bytes were part of a successful save in this drain. */
+    const savedWaiters = new Set<DerivedReplaceWaiter>();
     try {
         while (pendingByFileId.has(fileId)) {
             await yieldToCoalesce();
@@ -90,6 +103,7 @@ const drainDerivedReplaceQueue = async (
                 break;
             }
             const { croppedBytes, dimensions } = entry;
+            const waitersAtSaveStart = [...entry.waiters];
             try {
                 const uploaded = await save(
                     croppedBytes,
@@ -97,6 +111,9 @@ const drainDerivedReplaceQueue = async (
                     replaceFileId,
                 );
                 lastUploaded = uploaded;
+                for (const waiter of waitersAtSaveStart) {
+                    savedWaiters.add(waiter);
+                }
                 const stillPending = pendingByFileId.get(fileId);
                 if (
                     stillPending &&
@@ -109,6 +126,8 @@ const drainDerivedReplaceQueue = async (
                     continue;
                 }
                 const waiters = stillPending?.waiters ?? entry.waiters;
+                const completionOptions =
+                    stillPending?.options ?? entry.options ?? options;
                 pendingByFileId.delete(fileId);
                 // Let a same-tick enqueue land before we treat this as final.
                 await yieldToCoalesce();
@@ -119,7 +138,7 @@ const drainDerivedReplaceQueue = async (
                     continue;
                 }
                 try {
-                    await options?.onCompleted?.(uploaded);
+                    await completionOptions?.onCompleted?.(uploaded);
                 } catch (completeError) {
                     const err = toError(completeError);
                     for (const waiter of waiters) {
@@ -141,36 +160,37 @@ const drainDerivedReplaceQueue = async (
                 }
             } catch (error) {
                 const stillPending = pendingByFileId.get(fileId);
+                if (
+                    stillPending &&
+                    (stillPending.croppedBytes !== croppedBytes ||
+                        stillPending.dimensions !== dimensions)
+                ) {
+                    // Newer bytes arrived during the failed save and supersede it.
+                    continue;
+                }
                 const waiters = stillPending?.waiters ?? entry.waiters;
+                const failureOptions =
+                    stillPending?.options ?? entry.options ?? options;
                 pendingByFileId.delete(fileId);
-                if (lastUploaded) {
-                    // An earlier save already replaced the source. Keep that
-                    // file rather than rejecting into a stuck outbox on a
-                    // trashed id — unless newer bytes arrived meanwhile.
-                    try {
-                        await options?.onCompleted?.(lastUploaded);
-                    } catch (completeError) {
-                        const err = toError(completeError);
-                        for (const waiter of waiters) {
-                            waiter.reject(err);
-                        }
-                        return;
-                    }
-                    const revived = pendingByFileId.get(fileId);
-                    if (revived) {
-                        revived.waiters = [...waiters, ...revived.waiters];
-                        replaceFileId = lastUploaded.id;
-                        continue;
-                    }
-                    for (const waiter of waiters) {
-                        waiter.resolve(lastUploaded);
-                    }
-                    return;
-                }
                 const err = toError(error);
-                for (const waiter of waiters) {
-                    waiter.reject(err);
+                if (lastUploaded) {
+                    // An earlier save already replaced the source, so the failed
+                    // bytes need re-keying to that upload before they can retry.
+                    try {
+                        await failureOptions?.onFailed?.(err, lastUploaded);
+                    } catch {
+                        // Entry stays keyed to the replaced id; the outbox drain
+                        // drops it once that file is gone.
+                    }
                 }
+                for (const waiter of waiters) {
+                    if (lastUploaded && savedWaiters.has(waiter)) {
+                        waiter.resolve(lastUploaded);
+                    } else {
+                        waiter.reject(err);
+                    }
+                }
+                return;
             }
         }
     } finally {

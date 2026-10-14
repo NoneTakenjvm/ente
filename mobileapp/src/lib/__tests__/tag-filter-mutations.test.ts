@@ -146,6 +146,15 @@ describe("tag-filter-mutations", () => {
         expect(findClauseInGroup(filter.root, "vietnam")?.mode).toBe("exclude");
     });
 
+    it("setTagFilterModeOnFilter keeps untagged scope when removing a clause", () => {
+        let filter = {
+            ...emptyTagFilter(),
+            tagScope: "untagged" as const,
+        };
+        filter = setTagFilterModeOnFilter(filter, "selfie", null);
+        expect(filter.tagScope).toBe("untagged");
+    });
+
     it("setClauseModeOnFilter clears tagged scope when switching to include", () => {
         const clause = includeClause("selfie");
         let filter = {

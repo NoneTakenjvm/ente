@@ -559,7 +559,9 @@ export default function ManagePage(): JSX.Element {
         }
 
         jobAbort.current?.abort();
-        jobAbort.current = new AbortController();
+        const controller = new AbortController();
+        const { signal } = controller;
+        jobAbort.current = controller;
         jobPaused.current = false;
         setPhashJobError(undefined);
         setPhashJobStatus("running");
@@ -571,19 +573,25 @@ export default function ManagePage(): JSX.Element {
         void runPhashJob({
             files: candidates,
             entries: new Map(phashEntries),
-            signal: jobAbort.current.signal,
+            signal,
             shouldPause: () => jobPaused.current,
             onProgress: (current, total) => {
-                setPhashProgress(current, total);
+                if (!signal.aborted) {
+                    setPhashProgress(current, total);
+                }
             },
         })
             .then((entries) => {
+                // An aborted run returns partial entries; the pause handler
+                // already set the status and a newer run owns the state now.
+                if (signal.aborted) {
+                    return;
+                }
                 setPhashEntries(entries);
                 setPhashJobStatus("done");
             })
             .catch((jobError: unknown) => {
-                if (jobAbort.current?.signal.aborted) {
-                    setPhashJobStatus("paused");
+                if (signal.aborted) {
                     return;
                 }
                 setPhashJobStatus("error");

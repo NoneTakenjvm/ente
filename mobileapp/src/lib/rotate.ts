@@ -44,13 +44,16 @@ export const rotateImageBytes = async (
                         reject(new Error("Rotate encode failed"));
                         return;
                     }
-                    void jpegBlob.arrayBuffer().then((buffer) => {
-                        resolve({
-                            bytes: new Uint8Array(buffer),
-                            width: canvas.width,
-                            height: canvas.height,
-                        });
-                    });
+                    jpegBlob
+                        .arrayBuffer()
+                        .then((buffer) => {
+                            resolve({
+                                bytes: new Uint8Array(buffer),
+                                width: canvas.width,
+                                height: canvas.height,
+                            });
+                        })
+                        .catch(reject);
                 },
                 "image/jpeg",
                 0.92,

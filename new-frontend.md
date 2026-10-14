@@ -7,12 +7,22 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-10-14 |
-| **Last agent / session** | Review fixes: GPS kept on derived uploads, favourite revert, video thumbnails, "manually rotated" filter (`0.3.191`) |
+| **Last agent / session** | Second review round: outbox ack races, derived-replace queue, job pause/stop status, URL/token log leak, retry/abort hygiene (`0.3.192`) |
 | **Current milestone** | Post-M8 UX / upload performance |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
-| **Next recommended action** | Phone QA of `0.3.191`: compress 5+ videos (incl. a phone-recorded one) and confirm every copy has a thumbnail; crop/rotate a geotagged photo and confirm the location survives; filter by Manual rotate. Then QA of `0.3.190`: tag a file uploaded by the official app, then confirm its position under the "Uploaded At" sort does not move; crop/compress a photo and confirm the copy keeps the source's upload position. Then QA `0.3.189`: quick-rotate and quick-crop 20+ photos and Apply — progress should climb several at a time, all files end up rotated/cropped once, undo still works on a cropped photo, failed items stay pending for retry. Then QA the `0.3.188` perf items if not done yet. |
+| **Next recommended action** | Phone QA of `0.3.192`: pause, resume and stop a compress job and a phash job (status and progress must match, no stale "done"); compress then crop the same photo quickly and confirm one copy with the final edit and no orphaned outbox entry; fill the trash/archive selection and delete — selection must shrink. Then QA of `0.3.191`: compress 5+ videos (incl. a phone-recorded one) and confirm every copy has a thumbnail; crop/rotate a geotagged photo and confirm the location survives; filter by Manual rotate. Then QA of `0.3.190`: tag a file uploaded by the official app, then confirm its position under the "Uploaded At" sort does not move; crop/compress a photo and confirm the copy keeps the source's upload position. Then QA `0.3.189`: quick-rotate and quick-crop 20+ photos and Apply — progress should climb several at a time, all files end up rotated/cropped once, undo still works on a cropped photo, failed items stay pending for retry. Then QA the `0.3.188` perf items if not done yet. |
 
-**This session (local only — not pushed, `0.3.191`):**
+**This session (local only — not pushed, `0.3.192`):**
+1. **Outbox ack races** — favourite/visibility drains remove an entry only if it is unchanged since the save (`removeFavoriteOutboxEntriesIfUnchanged`, `removeVisibilityOutboxEntryIfUnchanged`); derived-replace entries carry a strictly increasing `enqueuedAt` token and are removed only if still current. Persist chains no longer wedge after one failed write.
+2. **Derived-replace queue** — the latest enqueue owns completion; a failed later save no longer resolves its waiters with the earlier upload (they reject, `onFailed` re-keys the entry and override to the upload that replaced the source). `moveFilesToTrash` clears derived-replace entries; `retryDerivedReplace` drops entries whose bytes are gone or whose file is trashed.
+3. **409 retry** — `updatePublicMetadata` refetches the remote public metadata and re-merges on version conflict (up to 4 attempts), which also covers the in-place upload path.
+4. **Job status** — compress and phash jobs capture their own controller; Stop/Resume/unmount no longer let a stale run set status or progress; pause mid-file aborts compression between stages (`signal` plumbed through `compressAndUploadMedia`); a file interrupted by pause is not recorded as a failure.
+5. **Selection** — trash/archive/filtered selections prune ids that left the library (derived, no effect).
+6. **Hygiene** — `urlForLog` strips query strings (presigned URL/token leak), upload-URL fetch retries on 5xx/network errors, ffmpeg load failure is no longer cached, portrait video scale filter uses a square long-edge fit with even sides, XHR upload/download abort is honoured.
+7. **Deferred (by decision)** — wrap key in localStorage design change; duplicate-on-lost-finalize, trash-before-commit orphans, drain early return, hydrate races, stale grid metadata after tag touch, ffmpeg.exec timeout, large main-thread copies, dead crypto worker, probe `<video>` disposal, GIF width/height.
+8. **Known limits** — a late enqueue keyed to the original id after the first replace completed still gets "File not found"; the active drain reuses the first enqueue's `save` closure; a missing but not-trashed file stays queued as a no-op.
+
+**Previous session (local only, `0.3.191`):**
 1. **Location kept on derived uploads** — crop/rotate/compress copies and in-place rotate/crop now carry `latitude`/`longitude` (`upload-image.ts`, `upload-compressed-media.ts`); they were dropped before.
 2. **Favourite batch revert** — `batchSetFavorite` reverts the optimistic UI if the outbox write fails.
 3. **Upload commit** — buffered uploads are de-duplicated against files a sync already pulled, and `reset()` clears the commit timer and buffer.

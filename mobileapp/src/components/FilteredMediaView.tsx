@@ -56,11 +56,8 @@ export function FilteredMediaView({
     );
 
     useEffect(() => {
-        if (selectionEnabled) {
-            return;
-        }
         pruneToVisible(visibleFileIds);
-    }, [pruneToVisible, selectionEnabled, visibleFileIds]);
+    }, [pruneToVisible, visibleFileIds]);
 
     const gridSelection = useMediaGridSelection({
         disabled: rotateBusy || cropBusy,

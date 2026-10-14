@@ -105,18 +105,20 @@ export const fetchUploadURLWithMetadata = async (
         contentMd5,
     }: { contentLength: number; contentMd5: string },
 ): Promise<ObjectUploadURL> => {
-    const response = await http.authFetch(
-        "/files/upload-url",
-        { ts: Date.now() },
-        {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                contentLength,
-                contentMD5: contentMd5,
-            }),
-        },
-    );
+    const response = await withUploadRetry(async () => {
+        return http.authFetch(
+            "/files/upload-url",
+            { ts: Date.now() },
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    contentLength,
+                    contentMD5: contentMd5,
+                }),
+            },
+        );
+    });
     return ObjectUploadURL.parse(await response.json());
 };
 
@@ -234,6 +236,10 @@ export const putFile = async (
         }
 
         await new Promise<void>((resolve, reject) => {
+            if (batchAbort?.signal.aborted) {
+                reject(new Error("Upload cancelled"));
+                return;
+            }
             const xhr = new XMLHttpRequest();
             xhr.open("PUT", uploadURL);
             for (const [key, value] of Object.entries(headers)) {

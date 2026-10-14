@@ -54,6 +54,8 @@ export interface CompressJobOptions {
             videoCrf: number;
             minSizeBytes?: number;
             maxLongEdge?: number;
+            /** Aborts compression between its stages when the job is paused or stopped. */
+            signal?: AbortSignal;
             onStage?: (
                 stage: "compress" | "upload",
                 ratio?: number,
@@ -193,12 +195,16 @@ export const runCompressJob = async (
             const download = prefetched ?? startDownload(index);
             prefetched = undefined;
             const bytes = await download;
+            if (options.signal.aborted || options.shouldPause()) {
+                break;
+            }
             prefetched = prefetchDownload(index + 1);
             const { finalize } = await options.compressFile(file.id, bytes, {
                 quality: options.quality,
                 videoCrf: options.videoCrf,
                 minSizeBytes: options.minSizeBytes,
                 maxLongEdge: options.maxLongEdge,
+                signal: options.signal,
                 onStage: report,
             });
             await previousUpload;
@@ -212,6 +218,10 @@ export const runCompressJob = async (
                 },
             );
         } catch (error: unknown) {
+            // A file interrupted by pause/stop is not a failure.
+            if (options.signal.aborted) {
+                break;
+            }
             recordFailure(file, report, error);
         }
     }

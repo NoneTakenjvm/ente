@@ -201,13 +201,16 @@ const encodeCroppedJpegWithRotation = async (
                             reject(new Error("JPEG encode failed"));
                             return;
                         }
-                        void jpegBlob.arrayBuffer().then((buffer) => {
-                            resolve({
-                                bytes: new Uint8Array(buffer),
-                                width: clamped.width,
-                                height: clamped.height,
-                            });
-                        });
+                        jpegBlob
+                            .arrayBuffer()
+                            .then((buffer) => {
+                                resolve({
+                                    bytes: new Uint8Array(buffer),
+                                    width: clamped.width,
+                                    height: clamped.height,
+                                });
+                            })
+                            .catch(reject);
                     },
                     "image/jpeg",
                     quality,
@@ -269,13 +272,16 @@ const encodeCroppedJpegMainThread = async (
                             reject(new Error("JPEG encode failed"));
                             return;
                         }
-                        void jpegBlob.arrayBuffer().then((buffer) => {
-                            resolve({
-                                bytes: new Uint8Array(buffer),
-                                width: clamped.width,
-                                height: clamped.height,
-                            });
-                        });
+                        jpegBlob
+                            .arrayBuffer()
+                            .then((buffer) => {
+                                resolve({
+                                    bytes: new Uint8Array(buffer),
+                                    width: clamped.width,
+                                    height: clamped.height,
+                                });
+                            })
+                            .catch(reject);
                     },
                     "image/jpeg",
                     quality,

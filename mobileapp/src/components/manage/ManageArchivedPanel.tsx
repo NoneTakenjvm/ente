@@ -29,7 +29,7 @@ export function ManageArchivedPanel({
     files,
 }: ManageArchivedPanelProps): JSX.Element {
     const setFileArchived = useLibraryStore((s) => s.setFileArchived);
-    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+    const [pickedIds, setPickedIds] = useState<Set<number>>(new Set());
     const [busy, setBusy] = useState<boolean>(false);
     const [error, setError] = useState<string | undefined>();
 
@@ -40,8 +40,17 @@ export function ManageArchivedPanel({
         return sortFilesByUpload(deduped);
     }, [files]);
 
+    // Ignore picked ids that were unarchived or synced away.
+    const selectedIds = useMemo(() => {
+        const visibleIds = new Set(archivedFiles.map((file) => file.id));
+        const visiblePicks = new Set(
+            [...pickedIds].filter((id) => visibleIds.has(id)),
+        );
+        return visiblePicks.size === pickedIds.size ? pickedIds : visiblePicks;
+    }, [archivedFiles, pickedIds]);
+
     const handleToggle = useCallback((file: EnteFile): void => {
-        setSelectedIds((current) => {
+        setPickedIds((current) => {
             const next = new Set(current);
             if (next.has(file.id)) {
                 next.delete(file.id);
@@ -73,7 +82,7 @@ export function ManageArchivedPanel({
             targets.map((file) => setFileArchived(file, false)),
         )
             .then(() => {
-                setSelectedIds(new Set());
+                setPickedIds(new Set());
             })
             .catch((unarchiveError: unknown) => {
                 setError(

@@ -1,6 +1,7 @@
 import {
     memo,
     useCallback,
+    useEffect,
     useMemo,
     useRef,
     useState,
@@ -146,8 +147,15 @@ export function ManageTagsPanel(): JSX.Element {
         [userTags, tagTypes, tagTypeByName, fileIdsByTag],
     );
 
+    useEffect(() => {
+        return (): void => {
+            tuneAbort.current?.abort();
+        };
+    }, []);
+
+    /** Run {@link task}, surface failures as the panel error, and return whether every item succeeded. */
     const runWithProgress = useCallback(
-        async (label: string, task: () => Promise<{ failed: number; errors: string[] }>): Promise<void> => {
+        async (label: string, task: () => Promise<{ failed: number; errors: string[] }>): Promise<boolean> => {
             setError(undefined);
             setProgress(`${label}…`);
             try {
@@ -156,13 +164,16 @@ export function ManageTagsPanel(): JSX.Element {
                     setError(
                         `${result.failed} failed. ${result.errors.slice(0, 3).join("; ")}`,
                     );
+                    return false;
                 }
+                return true;
             } catch (taskError) {
                 setError(
                     taskError instanceof Error ?
                         taskError.message :
                         "Operation failed",
                 );
+                return false;
             } finally {
                 setProgress(undefined);
             }
@@ -188,8 +199,10 @@ export function ManageTagsPanel(): JSX.Element {
         }
         void runWithProgress(`Renaming "${tag}"`, () => renameTag(tag, newName, (completed, total) => {
             setProgress(`Renaming… ${completed} / ${total}`);
-        })).then(() => {
-            setRenameTarget(undefined);
+        })).then((succeeded) => {
+            if (succeeded) {
+                setRenameTarget(undefined);
+            }
         });
     }, [renameTag, runWithProgress]);
 
@@ -244,9 +257,11 @@ export function ManageTagsPanel(): JSX.Element {
         }
         void runWithProgress(`Merging into "${target}"`, () => mergeTags(mergeSources, target, (completed, total) => {
             setProgress(`Merging… ${completed} / ${total}`);
-        })).then(() => {
-            setMergeSources([]);
-            setMergeTarget("");
+        })).then((succeeded) => {
+            if (succeeded) {
+                setMergeSources([]);
+                setMergeTarget("");
+            }
         });
     };
 
@@ -305,16 +320,6 @@ export function ManageTagsPanel(): JSX.Element {
             return;
         }
         void (async (): Promise<void> => {
-            if (!embeddingHydrated) {
-                await hydrateEmbeddings();
-            }
-            const embeddings = useEmbeddingIndexStore.getState().entries;
-            if (embeddings.size < 20) {
-                toast.message(
-                    "Run Manage → Settings → Scan CLIP embeddings before tuning",
-                );
-                return;
-            }
             tuneAbort.current?.abort();
             const abort = new AbortController();
             tuneAbort.current = abort;
@@ -326,6 +331,19 @@ export function ManageTagsPanel(): JSX.Element {
                 total: 1,
             });
             try {
+                if (!embeddingHydrated) {
+                    await hydrateEmbeddings();
+                }
+                const embeddings = useEmbeddingIndexStore.getState().entries;
+                if (embeddings.size < 20) {
+                    toast.message(
+                        "Run Manage → Settings → Scan CLIP embeddings before tuning",
+                    );
+                    return;
+                }
+                if (abort.signal.aborted) {
+                    return;
+                }
                 const result = await runKitNearnessTune({
                     libraryFiles: useLibraryStore.getState().allFiles,
                     kitTags: preset.tags,

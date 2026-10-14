@@ -10,6 +10,19 @@ const rateLimitHeaderPrefixes = [
     "x-rate-limit",
 ];
 
+/**
+ * Reduce a URL to origin + pathname for logs and errors. Query strings carry
+ * auth tokens (`?token=`) and presigned S3 signatures.
+ */
+export const urlForLog = (url: string): string => {
+    try {
+        const { origin, pathname } = new URL(url);
+        return `${origin}${pathname}`;
+    } catch {
+        return "(unparseable url)";
+    }
+};
+
 export class HttpClient {
     constructor(
         private readonly origin: string,
@@ -31,7 +44,8 @@ export class HttpClient {
         return url.toString();
     };
 
-    logRateLimitHeaders = (res: Response, label: string): void => {
+    logRateLimitHeaders = (res: Response, url: string): void => {
+        const label = urlForLog(url);
         const headers: Record<string, string> = {};
         for (const [key, value] of res.headers.entries()) {
             const lower = key.toLowerCase();
@@ -63,7 +77,7 @@ export class HttpClient {
     ensurePublicOk = (res: Response): void => {
         this.logRateLimitHeaders(res, res.url);
         if (!res.ok) {
-            throw new Error(`HTTP ${res.status} for ${res.url}`);
+            throw new Error(`HTTP ${res.status} for ${urlForLog(res.url)}`);
         }
     };
 

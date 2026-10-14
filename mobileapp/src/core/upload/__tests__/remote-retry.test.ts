@@ -4,6 +4,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HttpClient } from "@/core/api/http";
 import {
+    abortUploadBatch,
+    beginUploadAbort,
+    endUploadAbort,
+    fetchUploadURLWithMetadata,
     postEnteFile,
     putFile,
     type PostEnteFileRequest,
@@ -146,5 +150,41 @@ describe("withUploadRetry via putFile/postEnteFile", () => {
         const fileData = new Uint8Array([1, 2, 3]) as Uint8Array<ArrayBuffer>;
         await putFile(http, "https://upload/obj", fileData);
         expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("retries fetchUploadURLWithMetadata on 5xx then succeeds", async () => {
+        mockFetch
+            .mockResolvedValueOnce(response(null, 503))
+            .mockResolvedValueOnce(response({ objectKey: "obj", url: "u" }));
+
+        const minted = await fetchUploadURLWithMetadata(http, {
+            contentLength: 3,
+            contentMd5: "md5",
+        });
+
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+        expect(minted).toEqual({ objectKey: "obj", url: "u" });
+    });
+
+    it("rejects the progress (XHR) path without sending when cancelled", async () => {
+        const xhrConstructor = vi.fn();
+        vi.stubGlobal("XMLHttpRequest", xhrConstructor);
+        beginUploadAbort();
+        abortUploadBatch();
+
+        try {
+            const fileData = new Uint8Array([1]) as Uint8Array<ArrayBuffer>;
+            await expect(
+                putFile(http, "https://upload/obj", fileData, {
+                    onProgress: () => undefined,
+                }),
+            ).rejects.toThrow("Upload cancelled");
+            expect(xhrConstructor).not.toHaveBeenCalled();
+            expect(mockFetch).not.toHaveBeenCalled();
+        } finally {
+            endUploadAbort();
+            vi.unstubAllGlobals();
+            vi.stubGlobal("fetch", mockFetch);
+        }
     });
 });

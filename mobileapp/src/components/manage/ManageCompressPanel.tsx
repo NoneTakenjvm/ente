@@ -1,5 +1,6 @@
 import {
     useCallback,
+    useEffect,
     useMemo,
     useRef,
     useState,
@@ -125,7 +126,14 @@ export function ManageCompressPanel({
 
     const jobAbort = useRef<AbortController | undefined>(undefined);
     const jobPaused = useRef<boolean>(false);
-    const jobStopped = useRef<boolean>(false);
+
+    // Leaving the panel pauses the running job; its handlers mark it paused.
+    useEffect(() => {
+        return (): void => {
+            jobPaused.current = true;
+            jobAbort.current?.abort();
+        };
+    }, []);
 
     const libraryFileIds = useMemo(
         (): Set<number> => new Set(files.map((file) => file.id)),
@@ -303,9 +311,10 @@ export function ManageCompressPanel({
             return;
         }
 
-        jobStopped.current = false;
         jobAbort.current?.abort();
-        jobAbort.current = new AbortController();
+        const controller = new AbortController();
+        const { signal } = controller;
+        jobAbort.current = controller;
         jobPaused.current = false;
         setJobError(undefined);
         setResultMessage(undefined);
@@ -326,9 +335,12 @@ export function ManageCompressPanel({
             videoCrf: DEFAULT_VIDEO_CRF,
             minSizeBytes,
             maxLongEdge: VIDEO_COMPRESS_BATCH_MAX_LONG_EDGE,
-            signal: jobAbort.current.signal,
+            signal,
             shouldPause: () => jobPaused.current,
             onProgress: (update) => {
+                if (signal.aborted) {
+                    return;
+                }
                 setJobProgress({
                     current: update.current,
                     total: update.total,
@@ -351,10 +363,12 @@ export function ManageCompressPanel({
                 compressAndUploadMedia(fileId, bytes, options),
         })
             .then((result) => {
-                if (jobStopped.current) {
+                // Stop clears the ref and Resume replaces it, so a run that is
+                // no longer current must not touch the shared job state.
+                if (jobAbort.current !== controller) {
                     return;
                 }
-                if (jobAbort.current?.signal.aborted && jobPaused.current) {
+                if (signal.aborted) {
                     setJobStatus("paused");
                     return;
                 }
@@ -371,10 +385,10 @@ export function ManageCompressPanel({
                 setResultMessage(parts.join(" · "));
             })
             .catch((error: unknown) => {
-                if (jobStopped.current) {
+                if (jobAbort.current !== controller) {
                     return;
                 }
-                if (jobAbort.current?.signal.aborted && jobPaused.current) {
+                if (signal.aborted) {
                     setJobStatus("paused");
                     return;
                 }
@@ -418,9 +432,9 @@ export function ManageCompressPanel({
     };
 
     const handleStopJob = (): void => {
-        jobStopped.current = true;
         jobPaused.current = false;
         jobAbort.current?.abort();
+        jobAbort.current = undefined;
         resetJob();
     };
 

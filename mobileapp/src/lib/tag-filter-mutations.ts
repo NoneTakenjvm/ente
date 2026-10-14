@@ -56,6 +56,9 @@ const tagScopeAfterClauseChange = (
     if (!affectsPresence) {
         return tagScope;
     }
+    if (mode === null) {
+        return tagScope;
+    }
     if (tagScope === "untagged") {
         return "all";
     }

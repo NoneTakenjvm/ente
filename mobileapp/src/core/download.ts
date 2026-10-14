@@ -5,7 +5,7 @@ import {
 } from "ente-base/crypto/libsodium";
 import type { EnteFile } from "ente-media/file";
 import type { HttpClient } from "./api/http";
-import { isProductionEnteOrigin } from "./api/http";
+import { isProductionEnteOrigin, urlForLog } from "./api/http";
 import { requireAuth, type CoreSession } from "./session";
 
 export interface ServerCiphertext {
@@ -132,7 +132,7 @@ const fetchEncryptedBytes = async (
         http.ensureOk(res);
         return readResponseBytes(res, onProgress, knownTotal);
     }
-    throw new Error(`HTTP 429 for ${url}`);
+    throw new Error(`HTTP 429 for ${urlForLog(url)}`);
 };
 
 const thumbnailUrl = (

@@ -16,6 +16,7 @@ import { useLibraryStore } from "@/stores/library-store";
 import {
     hydrateDerivedReplaceOutbox,
     loadDerivedReplaceOutboxBytes,
+    removeDerivedReplaceOutboxEntries,
     type DerivedReplaceOutboxEntry,
 } from "@/lib/derived-replace-outbox";
 import type { FavoriteOutboxEntry } from "@/lib/favorite-outbox";
@@ -271,12 +272,7 @@ export const useLibraryBootstrap: (
                     const bytes: Uint8Array | undefined =
                         await loadDerivedReplaceOutboxBytes(entry.fileId);
                     if (!bytes) {
-                        const removeModule: {
-                            removeDerivedReplaceOutboxEntries: (
-                                fileIds: number[],
-                            ) => Promise<void>;
-                        } = await import("@/lib/derived-replace-outbox");
-                        await removeModule.removeDerivedReplaceOutboxEntries([
+                        await removeDerivedReplaceOutboxEntries([
                             entry.fileId,
                         ]);
                         return;
@@ -284,6 +280,17 @@ export const useLibraryBootstrap: (
                     const library: ReturnType<
                         typeof useLibraryStore.getState
                     > = useLibraryStore.getState();
+                    if (!library.getFileById(entry.fileId)) {
+                        // Trashed or already replaced: there is nothing left
+                        // to apply the edit to. A file that is merely not
+                        // loaded yet (not in trash) stays queued.
+                        if (await isFileIdInTrash(entry.fileId)) {
+                            await removeDerivedReplaceOutboxEntries([
+                                entry.fileId,
+                            ]);
+                        }
+                        return;
+                    }
                     if (entry.kind === "video-edit") {
                         const duration: number =
                             await probeVideoDurationSec(bytes, "video/mp4");

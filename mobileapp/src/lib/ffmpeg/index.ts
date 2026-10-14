@@ -53,7 +53,7 @@ const scheduleIdleTerminate = (): void => {
 const getFFmpeg = (): Promise<FFmpeg> => {
     clearIdleTerminate();
     if (!ffmpegPromise) {
-        ffmpegPromise = (async (): Promise<FFmpeg> => {
+        const loading = (async (): Promise<FFmpeg> => {
             const ffmpeg = new FFmpeg();
             await ffmpeg.load({
                 coreURL: `${CORE_BASE}ffmpeg-core.js`,
@@ -61,6 +61,13 @@ const getFFmpeg = (): Promise<FFmpeg> => {
             });
             return ffmpeg;
         })();
+        ffmpegPromise = loading;
+        // Drop a failed load so the next call retries instead of reusing it.
+        loading.catch(() => {
+            if (ffmpegPromise === loading) {
+                ffmpegPromise = undefined;
+            }
+        });
     }
     return ffmpegPromise;
 };

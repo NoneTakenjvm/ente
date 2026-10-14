@@ -44,9 +44,14 @@ import {
     remapTagOutboxFileId,
 } from "@/lib/tag-outbox";
 import { drainTagOutbox, flushTagOutboxNow, requestTagOutboxFlush } from "@/lib/tag-outbox-runner";
-import { enqueueDerivedReplace } from "@/lib/derived-replace-queue";
 import {
+    enqueueDerivedReplace,
+    type EnqueueDerivedReplaceOptions,
+} from "@/lib/derived-replace-queue";
+import {
+    remapDerivedReplaceOutboxFileId,
     removeDerivedReplaceOutboxEntries,
+    removeDerivedReplaceOutboxEntryIfCurrent,
     upsertDerivedReplaceOutboxEntry,
 } from "@/lib/derived-replace-outbox";
 import {
@@ -204,6 +209,8 @@ interface LibraryState {
             videoCrf?: number;
             minSizeBytes?: number;
             maxLongEdge?: number;
+            /** Aborts the compression between stages (pause / stop). */
+            signal?: AbortSignal;
             onStage?: (
                 stage: "compress" | "upload",
                 ratio?: number,
@@ -671,8 +678,43 @@ const remapOutboxesAfterReplace = async (
         remapFavoriteMembershipFileId(fromFileId, toFileId),
         remapVisibilityOutboxFileId(fromFileId, toFileId),
         remapTagOutboxFileId(fromFileId, toFileId),
-        removeDerivedReplaceOutboxEntries([fromFileId]),
     ]);
+};
+
+/**
+ * Queue options for a derived replace whose outbox entry was saved with
+ * {@link enqueuedAt}. Completion removes the entry only if no newer edit
+ * replaced it; a failed save after an earlier one moves the entry (and the
+ * local override) to the upload that replaced the source, so retry still
+ * finds a live file.
+ */
+const derivedReplaceQueueOptions = (
+    fileId: number,
+    enqueuedAt: number,
+): EnqueueDerivedReplaceOptions => {
+    let remapFromId = fileId;
+    return {
+        onCompleted: async (finalFile) => {
+            if (
+                await removeDerivedReplaceOutboxEntryIfCurrent(
+                    fileId,
+                    enqueuedAt,
+                )
+            ) {
+                clearLocalMediaOverride(fileId);
+            }
+            await remapOutboxesAfterReplace(remapFromId, finalFile.id);
+            remapFromId = finalFile.id;
+        },
+        onFailed: async (_error, lastUploaded) => {
+            await remapDerivedReplaceOutboxFileId(fileId, lastUploaded.id);
+            const override = getLocalMediaOverride(fileId);
+            if (override) {
+                setLocalMediaOverride(lastUploaded.id, override);
+            }
+            clearLocalMediaOverride(fileId);
+        },
+    };
 };
 
 /**
@@ -1381,6 +1423,8 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             videoCrf?: number;
             minSizeBytes?: number;
             maxLongEdge?: number;
+            /** Aborts the compression between stages (pause / stop). */
+            signal?: AbortSignal;
             onStage?: (
                 stage: "compress" | "upload",
                 ratio?: number,
@@ -1403,6 +1447,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             videoCrf: options?.videoCrf,
             minSizeBytes: options?.minSizeBytes,
             maxLongEdge: options?.maxLongEdge,
+            signal: options?.signal,
             onProgress: (ratio) => {
                 options?.onStage?.("compress", ratio);
             },
@@ -1470,7 +1515,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         }
 
         const finalize = (async (): Promise<EnteFile> => {
-            await upsertDerivedReplaceOutboxEntry(
+            const enqueuedAt = await upsertDerivedReplaceOutboxEntry(
                 fileId,
                 result.bytes,
                 result.width,
@@ -1478,7 +1523,6 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 "compress",
             );
 
-            let remapFromId = fileId;
             const uploaded = await enqueueDerivedReplace(
                 fileId,
                 result.bytes,
@@ -1518,16 +1562,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                         uploadedMedia,
                     );
                 },
-                {
-                    onCompleted: async (finalFile) => {
-                        clearLocalMediaOverride(fileId);
-                        await remapOutboxesAfterReplace(
-                            remapFromId,
-                            finalFile.id,
-                        );
-                        remapFromId = finalFile.id;
-                    },
-                },
+                derivedReplaceQueueOptions(fileId, enqueuedAt),
             );
             return uploaded;
         })();
@@ -1719,7 +1754,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 });
             }
 
-            await upsertDerivedReplaceOutboxEntry(
+            const enqueuedAt = await upsertDerivedReplaceOutboxEntry(
                 fileId,
                 croppedBytes,
                 dimensions.width,
@@ -1727,7 +1762,6 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 "crop",
             );
 
-            let remapFromId = fileId;
             const uploaded = await enqueueDerivedReplace(
                 fileId,
                 croppedBytes,
@@ -1747,16 +1781,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                         dims,
                     );
                 },
-                {
-                    onCompleted: async (finalFile) => {
-                        clearLocalMediaOverride(fileId);
-                        await remapOutboxesAfterReplace(
-                            remapFromId,
-                            finalFile.id,
-                        );
-                        remapFromId = finalFile.id;
-                    },
-                },
+                derivedReplaceQueueOptions(fileId, enqueuedAt),
             );
             return uploaded;
         })();
@@ -1819,7 +1844,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 });
             }
 
-            await upsertDerivedReplaceOutboxEntry(
+            const enqueuedAt = await upsertDerivedReplaceOutboxEntry(
                 fileId,
                 result.bytes,
                 result.width,
@@ -1827,7 +1852,6 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 "video-edit",
             );
 
-            let remapFromId = fileId;
             const uploaded = await enqueueDerivedReplace(
                 fileId,
                 result.bytes,
@@ -1848,16 +1872,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                         duration,
                     });
                 },
-                {
-                    onCompleted: async (finalFile) => {
-                        clearLocalMediaOverride(fileId);
-                        await remapOutboxesAfterReplace(
-                            remapFromId,
-                            finalFile.id,
-                        );
-                        remapFromId = finalFile.id;
-                    },
-                },
+                derivedReplaceQueueOptions(fileId, enqueuedAt),
             );
             return uploaded;
         })();
@@ -1965,6 +1980,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         );
         await removeTagOutboxEntries([...trashedIds]);
         await removeVisibilityOutboxEntries([...trashedIds]);
+        await removeDerivedReplaceOutboxEntries([...trashedIds]);
     },
 
     reinsertRestoredFiles: async (files: EnteFile[]): Promise<void> => {

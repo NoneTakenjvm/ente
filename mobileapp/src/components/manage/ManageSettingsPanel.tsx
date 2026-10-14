@@ -152,6 +152,18 @@ export function ManageSettingsPanel(): JSX.Element {
         setShowDevTools(isLocalDevToolsVisible());
     }, []);
 
+    // Job status is local state, so a job left running would be invisible on
+    // return and a second one could start alongside it.
+    useEffect(() => {
+        return (): void => {
+            clipPaused.current = true;
+            qualityPaused.current = true;
+            clipAbort.current?.abort();
+            qualityAbort.current?.abort();
+            tileAbort.current?.abort();
+        };
+    }, []);
+
     // Tile pilot coverage for the Developer card (local builds only).
     useEffect(() => {
         if (
@@ -227,7 +239,9 @@ export function ManageSettingsPanel(): JSX.Element {
             return;
         }
         clipAbort.current?.abort();
-        clipAbort.current = new AbortController();
+        const controller = new AbortController();
+        const { signal } = controller;
+        clipAbort.current = controller;
         clipPaused.current = false;
         clipSmokeToastShown.current = false;
         clipBatchFallbackToastShown.current = false;
@@ -249,9 +263,12 @@ export function ManageSettingsPanel(): JSX.Element {
             files: allFiles,
             userId,
             existing,
-            signal: clipAbort.current.signal,
+            signal,
             shouldPause: () => clipPaused.current,
             onProgress: (progress) => {
+                if (signal.aborted) {
+                    return;
+                }
                 if (progress.device) {
                     const mode =
                         progress.batchMode === "sequential" ?
@@ -297,12 +314,18 @@ export function ManageSettingsPanel(): JSX.Element {
                 }
             },
             onBatchPersisted: (entries) => {
-                setEmbeddingEntries(new Map(entries));
+                if (!signal.aborted) {
+                    setEmbeddingEntries(new Map(entries));
+                }
             },
         })
             .then((entries) => {
+                // A superseded run must not overwrite the newer run's state.
+                if (clipAbort.current !== controller) {
+                    return;
+                }
                 setEmbeddingEntries(entries);
-                if (clipAbort.current?.signal.aborted && clipPaused.current) {
+                if (signal.aborted) {
                     setClipJobStatus("paused");
                     return;
                 }
@@ -312,8 +335,11 @@ export function ManageSettingsPanel(): JSX.Element {
                 );
             })
             .catch((error: unknown) => {
-                if (clipAbort.current?.signal.aborted) {
-                    setClipJobStatus(clipPaused.current ? "paused" : "idle");
+                if (clipAbort.current !== controller) {
+                    return;
+                }
+                if (signal.aborted) {
+                    setClipJobStatus("paused");
                     return;
                 }
                 setClipJobStatus("error");
@@ -336,7 +362,9 @@ export function ManageSettingsPanel(): JSX.Element {
             return;
         }
         qualityAbort.current?.abort();
-        qualityAbort.current = new AbortController();
+        const controller = new AbortController();
+        const { signal } = controller;
+        qualityAbort.current = controller;
         qualityPaused.current = false;
         setQualityJobStatus("running");
         const candidates = imageFilesForPhash(allFiles, userId);
@@ -351,18 +379,20 @@ export function ManageSettingsPanel(): JSX.Element {
             files: allFiles,
             userId,
             entries: qualityEntries,
-            signal: qualityAbort.current.signal,
+            signal,
             shouldPause: () => qualityPaused.current,
             onProgress: (current, total) => {
-                setQualityProgress({ current, total });
+                if (!signal.aborted) {
+                    setQualityProgress({ current, total });
+                }
             },
         })
             .then((entries) => {
+                if (qualityAbort.current !== controller) {
+                    return;
+                }
                 setQualityEntries(entries);
-                if (
-                    qualityAbort.current?.signal.aborted &&
-                    qualityPaused.current
-                ) {
+                if (signal.aborted) {
                     setQualityJobStatus("paused");
                     return;
                 }
@@ -372,10 +402,11 @@ export function ManageSettingsPanel(): JSX.Element {
                 );
             })
             .catch((error: unknown) => {
-                if (qualityAbort.current?.signal.aborted) {
-                    setQualityJobStatus(
-                        qualityPaused.current ? "paused" : "idle",
-                    );
+                if (qualityAbort.current !== controller) {
+                    return;
+                }
+                if (signal.aborted) {
+                    setQualityJobStatus("paused");
                     return;
                 }
                 setQualityJobStatus("error");

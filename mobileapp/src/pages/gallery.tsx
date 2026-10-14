@@ -250,11 +250,8 @@ function GalleryMediaBody(): JSX.Element {
     const cropBusy = useSelectionStore((s) => s.cropBusy);
 
     useEffect(() => {
-        if (selectionEnabled) {
-            return;
-        }
         pruneToVisible(new Set(displayFiles.map((file) => file.id)));
-    }, [displayFiles, pruneToVisible, selectionEnabled]);
+    }, [displayFiles, pruneToVisible]);
 
     const selectionFilterRef = useRef(tagFilter);
     useEffect(() => {

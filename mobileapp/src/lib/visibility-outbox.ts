@@ -31,7 +31,11 @@ const flushVisibilityOutboxToDisk = async (): Promise<void> => {
 };
 
 const persistVisibilityOutbox = (): Promise<void> => {
-    persistChain = persistChain.then(() => flushVisibilityOutboxToDisk());
+    persistChain = persistChain
+        .then(() => flushVisibilityOutboxToDisk())
+        .catch((error: unknown) => {
+            console.warn("Visibility outbox persist failed", error);
+        });
     return persistChain;
 };
 
@@ -82,6 +86,22 @@ export const removeVisibilityOutboxEntries = async (
         outboxByFileId.delete(fileId);
     }
     await persistVisibilityOutbox();
+};
+
+/**
+ * Remove the entry for {@link sent}'s file only if it is still the entry that
+ * was sent, so a newer archive intent queued mid-flight survives the ack.
+ */
+export const removeVisibilityOutboxEntryIfUnchanged = async (
+    sent: VisibilityOutboxEntry,
+): Promise<void> => {
+    const current = outboxByFileId.get(sent.fileId);
+    if (
+        current?.visibility === sent.visibility &&
+        current.enqueuedAt === sent.enqueuedAt
+    ) {
+        await removeVisibilityOutboxEntries([sent.fileId]);
+    }
 };
 
 export const getVisibilityOutboxEntries = (): VisibilityOutboxEntry[] =>

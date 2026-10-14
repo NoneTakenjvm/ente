@@ -47,7 +47,11 @@ const flushToDisk = async (): Promise<void> => {
 };
 
 const persist = (): Promise<void> => {
-    persistChain = persistChain.then(() => flushToDisk());
+    persistChain = persistChain
+        .then(() => flushToDisk())
+        .catch((error: unknown) => {
+            console.warn("Derived replace outbox persist failed", error);
+        });
     return persistChain;
 };
 
@@ -96,25 +100,33 @@ export const ensureDerivedReplaceOutboxHydrated = async (): Promise<void> => {
 
 export const isDerivedReplaceOutboxHydrated = (): boolean => hydrated;
 
+/**
+ * Queue or replace the pending derived replacement for a file.
+ *
+ * @returns the entry's `enqueuedAt`, strictly increasing per file. Pass it to
+ * {@link removeDerivedReplaceOutboxEntryIfCurrent} so a finished save never
+ * removes a newer edit queued for the same file.
+ */
 export const upsertDerivedReplaceOutboxEntry = async (
     fileId: number,
     bytes: Uint8Array,
     width: number,
     height: number,
     kind: DerivedReplaceKind,
-): Promise<void> => {
+): Promise<number> => {
     if (!hydrated) {
         await hydrateDerivedReplaceOutbox();
     }
+    // Set the entry first so an older save finishing during the payload write
+    // sees a newer token and leaves this entry and payload alone.
+    const enqueuedAt = Math.max(
+        Date.now(),
+        (outboxByFileId.get(fileId)?.enqueuedAt ?? 0) + 1,
+    );
+    outboxByFileId.set(fileId, { fileId, width, height, kind, enqueuedAt });
     await putDerivedReplacePayload(fileId, bytes);
-    outboxByFileId.set(fileId, {
-        fileId,
-        width,
-        height,
-        kind,
-        enqueuedAt: Date.now(),
-    });
     await persist();
+    return enqueuedAt;
 };
 
 /**
@@ -134,6 +146,43 @@ export const removeDerivedReplaceOutboxEntries = async (
         outboxByFileId.delete(fileId);
         await deleteDerivedReplacePayload(fileId);
     }
+    await persist();
+};
+
+/**
+ * Remove the entry and payload for {@link fileId} unless a newer edit has
+ * replaced the entry saved with {@link enqueuedAt}.
+ *
+ * @returns false when a newer entry exists and nothing was removed.
+ */
+export const removeDerivedReplaceOutboxEntryIfCurrent = async (
+    fileId: number,
+    enqueuedAt: number,
+): Promise<boolean> => {
+    const current = outboxByFileId.get(fileId);
+    if (current && current.enqueuedAt !== enqueuedAt) {
+        return false;
+    }
+    await removeDerivedReplaceOutboxEntries([fileId]);
+    return true;
+};
+
+/**
+ * Re-key a pending entry and its payload after its source file was replaced.
+ */
+export const remapDerivedReplaceOutboxFileId = async (
+    fromFileId: number,
+    toFileId: number,
+): Promise<void> => {
+    const bytes = await getDerivedReplacePayload(fromFileId);
+    const entry = outboxByFileId.get(fromFileId);
+    if (!entry || !bytes) {
+        return;
+    }
+    await putDerivedReplacePayload(toFileId, bytes);
+    outboxByFileId.delete(fromFileId);
+    outboxByFileId.set(toFileId, { ...entry, fileId: toFileId });
+    await deleteDerivedReplacePayload(fromFileId);
     await persist();
 };
 

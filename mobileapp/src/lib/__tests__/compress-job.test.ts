@@ -78,4 +78,24 @@ describe("runCompressJob", () => {
             events.indexOf("compressed 1"),
         );
     });
+
+    it("stops without a failure when aborted during compression", async () => {
+        const controller = new AbortController();
+        const compressFile = vi.fn(async () => {
+            controller.abort();
+            throw new Error("aborted");
+        });
+
+        const result = await runCompressJob({
+            ...jobOptions,
+            signal: controller.signal,
+            onProgress: () => undefined,
+            downloadFile: vi.fn(async () => new Uint8Array([1])),
+            compressFile,
+        });
+
+        expect(compressFile).toHaveBeenCalledOnce();
+        expect(result.failed).toBe(0);
+        expect(result.completed).toBe(0);
+    });
 });

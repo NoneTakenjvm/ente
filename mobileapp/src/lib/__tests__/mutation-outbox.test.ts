@@ -164,4 +164,38 @@ describe("derived replace outbox", () => {
             9, 8, 7, 6,
         ]);
     });
+
+    it("keeps a newer entry when an older save removes late", async () => {
+        const {
+            hydrateDerivedReplaceOutbox,
+            upsertDerivedReplaceOutboxEntry,
+            removeDerivedReplaceOutboxEntryIfCurrent,
+            getDerivedReplaceOutboxEntries,
+            loadDerivedReplaceOutboxBytes,
+        } = await import("@/lib/derived-replace-outbox");
+
+        await hydrateDerivedReplaceOutbox();
+        const olderToken = await upsertDerivedReplaceOutboxEntry(
+            3,
+            new Uint8Array([1]),
+            10,
+            10,
+            "auto-crop",
+        );
+        await upsertDerivedReplaceOutboxEntry(
+            3,
+            new Uint8Array([2]),
+            20,
+            20,
+            "auto-crop",
+        );
+
+        expect(
+            await removeDerivedReplaceOutboxEntryIfCurrent(3, olderToken),
+        ).toBe(false);
+        expect(getDerivedReplaceOutboxEntries()).toMatchObject([
+            { fileId: 3, width: 20 },
+        ]);
+        expect([...(await loadDerivedReplaceOutboxBytes(3))!]).toEqual([2]);
+    });
 });

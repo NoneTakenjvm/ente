@@ -131,6 +131,25 @@ export const removeFavoriteOutboxEntries = async (
 };
 
 /**
+ * Remove each entry in {@link sent} only if it is still the entry that was
+ * sent, so a newer favourite intent queued mid-flight survives the ack.
+ */
+export const removeFavoriteOutboxEntriesIfUnchanged = async (
+    sent: FavoriteOutboxEntry[],
+): Promise<void> => {
+    const keys = sent
+        .filter((entry) => {
+            const current = outboxByKey.get(entryKey(entry));
+            return (
+                current?.isFavorite === entry.isFavorite &&
+                current.enqueuedAt === entry.enqueuedAt
+            );
+        })
+        .map(entryKey);
+    await removeFavoriteOutboxEntries(keys);
+};
+
+/**
  * Drop pending favourite intents for files that were moved to trash.
  */
 export const removeFavoriteOutboxForFileIds = async (

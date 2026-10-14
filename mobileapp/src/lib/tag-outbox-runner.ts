@@ -12,7 +12,7 @@ import { isDerivedReplaceInFlight } from "@/lib/derived-replace-queue";
 import {
     getFavoriteOutboxEntries,
     isFavoriteOutboxHydrated,
-    removeFavoriteOutboxEntries,
+    removeFavoriteOutboxEntriesIfUnchanged,
     type FavoriteOutboxEntry,
 } from "@/lib/favorite-outbox";
 import {
@@ -30,7 +30,7 @@ import { tagsEqual } from "@/lib/tag-writes";
 import {
     getVisibilityOutboxEntries,
     isVisibilityOutboxHydrated,
-    removeVisibilityOutboxEntries,
+    removeVisibilityOutboxEntryIfUnchanged,
     type VisibilityOutboxEntry,
 } from "@/lib/visibility-outbox";
 
@@ -243,13 +243,13 @@ const drainFavoriteEntriesOneByOne = async (
     }
     let acked = 0;
     let failures = 0;
-    const ackedKeys: string[] = [];
+    const ackedEntries: FavoriteOutboxEntry[] = [];
     await mapBatched(
         entries,
         async (entry) => {
             try {
                 await context.applyFavoriteMutation?.(entry);
-                ackedKeys.push(favoriteEntryKey(entry));
+                ackedEntries.push(entry);
                 acked += 1;
             } catch {
                 failures += 1;
@@ -257,9 +257,8 @@ const drainFavoriteEntriesOneByOne = async (
         },
         { concurrency: 2 },
     );
-    if (ackedKeys.length) {
-        await removeFavoriteOutboxEntries(ackedKeys);
-    }
+    // Entries re-queued while their request was in flight stay pending.
+    await removeFavoriteOutboxEntriesIfUnchanged(ackedEntries);
     return { acked, failures };
 };
 
@@ -294,11 +293,14 @@ const drainFavoriteEntries = async (
         if (context.applyFavoriteMutations) {
             try {
                 const { ackedKeys } = await context.applyFavoriteMutations(chunk);
+                const acked = new Set(ackedKeys);
                 if (ackedKeys.length) {
-                    await removeFavoriteOutboxEntries(ackedKeys);
+                    const ackedChunk = chunk.filter(
+                        (entry) => acked.has(favoriteEntryKey(entry)),
+                    );
+                    await removeFavoriteOutboxEntriesIfUnchanged(ackedChunk);
                     anySucceeded = true;
                 }
-                const acked = new Set(ackedKeys);
                 const remaining = chunk.filter(
                     (entry) => !acked.has(favoriteEntryKey(entry)),
                 );
@@ -368,7 +370,7 @@ const drainVisibilityEntries = async (
         async (entry) => {
             try {
                 await context.applyVisibilityMutation?.(entry);
-                await removeVisibilityOutboxEntries([entry.fileId]);
+                await removeVisibilityOutboxEntryIfUnchanged(entry);
             } catch {
                 // Keep entry for the next drain pass.
             }

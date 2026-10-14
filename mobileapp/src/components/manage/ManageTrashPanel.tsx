@@ -84,7 +84,7 @@ export function ManageTrashPanel(): JSX.Element {
     const deleteForever = useTrashStore((s) => s.deleteForever);
     const emptyTrash = useTrashStore((s) => s.emptyTrash);
 
-    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+    const [pickedIds, setPickedIds] = useState<Set<number>>(new Set());
     const [busy, setBusy] = useState<boolean>(false);
     const [actionError, setActionError] = useState<string | undefined>();
     const [confirm, setConfirm] = useState<PendingConfirm>(undefined);
@@ -130,8 +130,17 @@ export function ManageTrashPanel(): JSX.Element {
         [items],
     );
 
+    // Ignore picked ids that were restored, deleted or synced away.
+    const selectedIds = useMemo(() => {
+        const visibleIds = new Set(trashFiles.map((file) => file.id));
+        const visiblePicks = new Set(
+            [...pickedIds].filter((id) => visibleIds.has(id)),
+        );
+        return visiblePicks.size === pickedIds.size ? pickedIds : visiblePicks;
+    }, [pickedIds, trashFiles]);
+
     const handleToggle = useCallback((file: EnteFile): void => {
-        setSelectedIds((current) => {
+        setPickedIds((current) => {
             const next = new Set(current);
             if (next.has(file.id)) {
                 next.delete(file.id);
@@ -156,7 +165,7 @@ export function ManageTrashPanel(): JSX.Element {
         setActionError(undefined);
         try {
             await action();
-            setSelectedIds(new Set());
+            setPickedIds(new Set());
         } catch (error) {
             setActionError(
                 error instanceof Error ? error.message : "Trash action failed",

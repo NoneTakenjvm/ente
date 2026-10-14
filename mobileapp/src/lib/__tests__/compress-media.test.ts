@@ -69,6 +69,35 @@ describe("compressMediaBytes video", () => {
         expect(result.encoder).toBe("ffmpeg");
     });
 
+    it("caps both width and height in the ffmpeg scale filter", async () => {
+        await compressMediaBytes(videoFile(), new Uint8Array([9, 8, 7]), {
+            videoCrf: 28,
+            maxLongEdge: 1920,
+        });
+
+        const args = vi.mocked(runFFmpeg).mock.calls[0]![0];
+        const filter = args[args.indexOf("-vf") + 1];
+        expect(filter).toContain("min(1920,iw)");
+        expect(filter).toContain("min(1920,ih)");
+        expect(filter).toContain("force_original_aspect_ratio=decrease");
+    });
+
+    it("does not start ffmpeg once the signal is aborted", async () => {
+        const controller = new AbortController();
+        vi.mocked(encodeH264WebCodecs).mockImplementationOnce(async () => {
+            controller.abort();
+            throw new Error("WebCodecs VideoEncoder unavailable");
+        });
+
+        await expect(
+            compressMediaBytes(videoFile(), new Uint8Array([9, 8, 7]), {
+                videoCrf: 28,
+                signal: controller.signal,
+            }),
+        ).rejects.toThrow();
+        expect(runFFmpeg).not.toHaveBeenCalled();
+    });
+
     it("uses the WebCodecs output with audio and skips ffmpeg", async () => {
         vi.mocked(encodeH264WebCodecs).mockResolvedValueOnce({
             bytes: new Uint8Array([1, 2, 3]),

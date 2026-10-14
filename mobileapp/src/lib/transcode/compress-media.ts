@@ -35,6 +35,8 @@ export interface CompressMediaOptions {
      * (even dimensions). Used for faster previews / smaller outputs.
      */
     maxLongEdge?: number;
+    /** Checked between encoding stages; an aborted run rejects with its reason. */
+    signal?: AbortSignal;
     onProgress?: FFmpegProgressCallback;
 }
 
@@ -52,8 +54,9 @@ export const VIDEO_COMPRESS_BATCH_MAX_LONG_EDGE = 1920;
 const blobFromBytes = (bytes: Uint8Array, mimeType: string): Blob =>
     new Blob([Uint8Array.from(bytes)], { type: mimeType });
 
+/** Fit inside a square of `maxLongEdge` (either orientation), never upscale, even sides. */
 const evenScaleFilter = (maxLongEdge: number): string =>
-    `scale='trunc(min(${maxLongEdge}\\,iw)/2)*2':-2`;
+    `scale=w='min(${maxLongEdge},iw)':h='min(${maxLongEdge},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2`;
 
 const videoOutputSize = (
     file: EnteFile,
@@ -107,10 +110,28 @@ export const compressMediaBytes = async (
     bytes: Uint8Array,
     options: Partial<CompressMediaOptions> = {},
 ): Promise<CompressMediaResult> => {
-    const { quality, videoCrf, maxLongEdge, minSizeBytes = 0, onProgress } = {
+    const result = await encodeMediaBytes(file, bytes, options);
+    options.signal?.throwIfAborted();
+    return result;
+};
+
+const encodeMediaBytes = async (
+    file: EnteFile,
+    bytes: Uint8Array,
+    options: Partial<CompressMediaOptions>,
+): Promise<CompressMediaResult> => {
+    const {
+        quality,
+        videoCrf,
+        maxLongEdge,
+        minSizeBytes = 0,
+        signal,
+        onProgress,
+    } = {
         ...defaultOptions,
         ...options,
     };
+    signal?.throwIfAborted();
     const kind = mediaKindForFile(file);
     const mimeType = mimeTypeForFile(file);
 
@@ -137,6 +158,8 @@ export const compressMediaBytes = async (
                 audio: encoded.hasAudio ? "kept" : "none",
             };
         } catch {
+            // Don't start the slow ffmpeg fallback for a paused or stopped job.
+            signal?.throwIfAborted();
             const output = await compressVideoWithFfmpeg(
                 bytes,
                 mimeType,

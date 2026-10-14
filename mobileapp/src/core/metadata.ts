@@ -1,5 +1,6 @@
 import {
     createMagicMetadata,
+    decryptMagicMetadata,
     encryptMagicMetadata,
 } from "ente-media/magic-metadata";
 import type { EnteFile } from "ente-media/file";
@@ -8,7 +9,7 @@ import type {
     FilePublicMagicMetadataData,
     ItemVisibility,
 } from "ente-media/file-metadata";
-import { refetchFile } from "./api/files";
+import { getRemoteFile, refetchFile } from "./api/files";
 import type { HttpClient } from "./api/http";
 import { fileUploadSortTime } from "@/lib/sort-files";
 import { extractTags } from "@/lib/tags";
@@ -170,22 +171,48 @@ const putPrivateMetadata = async (
     };
 };
 
+const maxConflictAttempts = 4;
+
 /**
- * Merge updates into public magic metadata and PUT to remote.
+ * Merge updates into public magic metadata and PUT to remote, re-reading the
+ * remote public metadata and merging again on version conflict.
  */
 export const updatePublicMetadata = async (
     http: HttpClient,
     file: EnteFile,
     updates: Partial<FilePublicMagicMetadataData>,
 ): Promise<void> => {
-    const mergedData = {
-        ...file.pubMagicMetadata?.data,
-        ...withEditedAt(updates),
-    } as FilePublicMagicMetadataData;
-    await putPublicMetadata(http, file, mergedData);
+    for (let attempt = 0; attempt < maxConflictAttempts; attempt++) {
+        try {
+            const mergedData = {
+                ...file.pubMagicMetadata?.data,
+                ...withEditedAt(updates),
+            } as FilePublicMagicMetadataData;
+            await putPublicMetadata(http, file, mergedData);
+            return;
+        } catch (error) {
+            if (
+                !(error instanceof MetadataUpdateError) ||
+                error.status !== 409 ||
+                attempt === maxConflictAttempts - 1
+            ) {
+                throw error;
+            }
+            const { pubMagicMetadata } = await getRemoteFile(
+                http,
+                file.collectionID,
+                file.id,
+            );
+            if (pubMagicMetadata) {
+                file.pubMagicMetadata = (await decryptMagicMetadata(
+                    pubMagicMetadata,
+                    file.key,
+                )) as EnteFile["pubMagicMetadata"];
+            }
+        }
+    }
+    throw new Error(`Failed to update public metadata for file ${file.id}`);
 };
-
-const maxConflictAttempts = 4;
 
 /**
  * Set file visibility (archive / visible) via private magic metadata.

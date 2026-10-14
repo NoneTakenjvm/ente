@@ -86,14 +86,17 @@ describe("derived-replace-queue", () => {
         expect(order).toEqual(["completed", "resolved:99"]);
     });
 
-    it("keeps the last successful upload when a coalesce save fails", async () => {
+    it("resolves the saved waiter and rejects the failed one when a coalesce save fails", async () => {
         let saveCount = 0;
         let resolveFirst: ((file: EnteFile) => void) | undefined;
         const firstSave = new Promise<EnteFile>((resolve) => {
             resolveFirst = resolve;
         });
+        const firstCompleted = vi.fn(async () => undefined);
+        const secondCompleted = vi.fn(async () => undefined);
+        const secondFailed = vi.fn(async () => undefined);
 
-        const promise = enqueueDerivedReplace(
+        const first = enqueueDerivedReplace(
             7,
             new Uint8Array([1]),
             { width: 1, height: 1 },
@@ -105,21 +108,70 @@ describe("derived-replace-queue", () => {
                 }
                 throw new Error("second failed");
             },
+            { onCompleted: firstCompleted },
         );
 
         await vi.waitFor(() => expect(saveCount).toBe(1));
 
-        void enqueueDerivedReplace(
+        const second = enqueueDerivedReplace(
             7,
             new Uint8Array([2]),
             { width: 2, height: 2 },
             async () => {
                 throw new Error("should use same save from first enqueue");
             },
+            { onCompleted: secondCompleted, onFailed: secondFailed },
         );
+        const secondOutcome = expect(second).rejects.toThrow("second failed");
 
         resolveFirst?.(stubFile(70));
-        await expect(promise).resolves.toMatchObject({ id: 70 });
+        await expect(first).resolves.toMatchObject({ id: 70 });
+        await secondOutcome;
         expect(saveCount).toBe(2);
+        expect(firstCompleted).not.toHaveBeenCalled();
+        expect(secondCompleted).not.toHaveBeenCalled();
+        expect(secondFailed).toHaveBeenCalledWith(
+            expect.objectContaining({ message: "second failed" }),
+            expect.objectContaining({ id: 70 }),
+        );
+    });
+
+    it("completes with the latest enqueue's options", async () => {
+        let resolveFirst: ((file: EnteFile) => void) | undefined;
+        let saveCount = 0;
+        const save = async (): Promise<EnteFile> => {
+            saveCount += 1;
+            if (saveCount === 1) {
+                return new Promise<EnteFile>((resolve) => {
+                    resolveFirst = resolve;
+                });
+            }
+            return stubFile(90);
+        };
+        const firstCompleted = vi.fn(async () => undefined);
+        const secondCompleted = vi.fn(async () => undefined);
+
+        const first = enqueueDerivedReplace(
+            8,
+            new Uint8Array([1]),
+            { width: 1, height: 1 },
+            save,
+            { onCompleted: firstCompleted },
+        );
+        await vi.waitFor(() => expect(saveCount).toBe(1));
+        const second = enqueueDerivedReplace(
+            8,
+            new Uint8Array([2]),
+            { width: 2, height: 2 },
+            save,
+            { onCompleted: secondCompleted },
+        );
+
+        resolveFirst?.(stubFile(80));
+        await Promise.all([first, second]);
+        expect(firstCompleted).not.toHaveBeenCalled();
+        expect(secondCompleted).toHaveBeenCalledWith(
+            expect.objectContaining({ id: 90 }),
+        );
     });
 });
