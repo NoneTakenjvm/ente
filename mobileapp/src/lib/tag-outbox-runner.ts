@@ -34,6 +34,7 @@ import {
     removeVisibilityOutboxEntryIfUnchanged,
     type VisibilityOutboxEntry,
 } from "@/lib/visibility-outbox";
+import { registerReset } from "@/lib/session-lifecycle";
 
 const drainIntervalMs = 60_000;
 const flushDebounceMs = 400;
@@ -500,3 +501,5 @@ export const stopTagOutboxRunner = (): void => {
     runnerContext = undefined;
     drainChain = Promise.resolve(emptyDrainStats());
 };
+
+registerReset(stopTagOutboxRunner);

@@ -1,12 +1,10 @@
 import { encryptBox } from "ente-base/crypto/libsodium";
+import { splitByPredicate } from "ente-utils/array";
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
+import { metadataHash } from "ente-media/file-metadata";
 import { z } from "zod";
 import { batched } from "@/lib/batched";
-import {
-    hashAndTypeKey,
-    userOwnedEquivalentFilesByHashAndType,
-} from "@/lib/favorites";
 import { createRemoteCollection } from "./collections";
 import type { HttpClient } from "./http";
 import type { CoreSession } from "../session";
@@ -57,20 +55,36 @@ const groupFilesByCollectionID = (
     return groups;
 };
 
-const splitByPredicate = <T>(
-    items: T[],
-    predicate: (item: T) => boolean,
-): [T[], T[]] => {
-    const matched: T[] = [];
-    const rest: T[] = [];
-    for (const item of items) {
-        if (predicate(item)) {
-            matched.push(item);
-        } else {
-            rest.push(item);
-        }
+/**
+ * Composite key `${metadataHash}:${fileType}` for content-equivalent files.
+ */
+export const hashAndTypeKey = (file: EnteFile): string | undefined => {
+    const hash = metadataHash(file.metadata);
+    if (!hash) {
+        return undefined;
     }
-    return [matched, rest];
+    return `${hash}:${file.metadata.fileType}`;
+};
+
+/**
+ * Map user-owned files by hash/type key (first match wins).
+ */
+export const userOwnedEquivalentFilesByHashAndType = (
+    files: EnteFile[],
+    userId: number,
+): Map<string, EnteFile> => {
+    const equivalents = new Map<string, EnteFile>();
+    for (const file of files) {
+        if (file.ownerID !== userId) {
+            continue;
+        }
+        const key = hashAndTypeKey(file);
+        if (!key || equivalents.has(key)) {
+            continue;
+        }
+        equivalents.set(key, file);
+    }
+    return equivalents;
 };
 
 const fileIDsInCollection = (

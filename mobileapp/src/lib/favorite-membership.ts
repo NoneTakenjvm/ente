@@ -1,5 +1,7 @@
 import type { CollectionFileChange } from "@/core/api/files";
 import { loadKv, saveKv } from "@/db/kv";
+import { createCoalescedWriter } from "@/lib/outbox";
+import { registerFlush, registerReset } from "@/lib/session-lifecycle";
 
 /**
  * Server-oracle set of file IDs in the user's Favourites collection.
@@ -16,22 +18,14 @@ const membershipIds = new Set<number>();
 let hydrated = false;
 let ready = false;
 let needsFullSync = true;
-let persistChain: Promise<void> = Promise.resolve();
 let hydrateInFlight: Promise<void> | undefined;
 
-const flushMembershipToDisk = async (): Promise<void> => {
-    await saveKv("favoriteMembership", [...membershipIds]);
-};
+const writer = createCoalescedWriter(
+    () => saveKv("favoriteMembership", [...membershipIds]),
+    "Favourite membership",
+);
 
-const persistMembership = (): Promise<void> => {
-    persistChain = persistChain
-        .catch(() => undefined)
-        .then(() => flushMembershipToDisk())
-        .catch((error: unknown) => {
-            console.warn("Favourite membership persist failed", error);
-        });
-    return persistChain;
-};
+const persistMembership = writer.persist;
 
 /**
  * Load encrypted favourite membership from IndexedDB.
@@ -203,14 +197,8 @@ export const removeFavoriteMembershipForFileIds = async (
     }
 };
 
-/** Await pending membership encrypt to IDB (durable-flush / hide). */
-export const flushFavoriteMembershipPersist = (): Promise<void> => {
-    if (!hydrated) {
-        return ensureFavoriteMembershipHydrated().then(() =>
-            persistMembership());
-    }
-    return persistMembership();
-};
+/** Await pending membership encrypt to IDB (hide / logout). */
+export const flushFavoriteMembershipPersist = writer.flush;
 
 /** Wipe in-memory membership on logout; forces next full Favourites pull. */
 export const clearFavoriteMembership = (): void => {
@@ -219,8 +207,11 @@ export const clearFavoriteMembership = (): void => {
     ready = false;
     needsFullSync = true;
     hydrateInFlight = undefined;
-    persistChain = Promise.resolve();
+    writer.reset();
 };
+
+registerFlush(flushFavoriteMembershipPersist);
+registerReset(clearFavoriteMembership);
 
 /** Persisted ids when every entry is a finite number; otherwise `undefined`. */
 const validMembershipIds = (decoded: unknown): number[] | undefined => {

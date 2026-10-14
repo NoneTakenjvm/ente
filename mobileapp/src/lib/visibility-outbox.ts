@@ -1,6 +1,6 @@
 import type { EnteFile } from "ente-media/file";
 import { ItemVisibility, isArchivedFile } from "ente-media/file-metadata";
-import { loadKv, saveKv, type PersistedVisibilityOutboxEntry } from "@/db/kv";
+import { createOutbox } from "@/lib/outbox";
 
 export interface VisibilityOutboxEntry {
     fileId: number;
@@ -8,68 +8,24 @@ export interface VisibilityOutboxEntry {
     enqueuedAt: number;
 }
 
-const outboxByFileId = new Map<number, VisibilityOutboxEntry>();
-let hydrated = false;
-let persistChain: Promise<void> = Promise.resolve();
-
-const toPersisted = (
-    entry: VisibilityOutboxEntry,
-): PersistedVisibilityOutboxEntry => ({
-    fileId: entry.fileId,
-    visibility: entry.visibility,
-    enqueuedAt: entry.enqueuedAt,
+const outbox = createOutbox<VisibilityOutboxEntry, number>({
+    kvKey: "visibilityOutbox",
+    keyOf: (entry) => entry.fileId,
+    label: "Visibility outbox",
+    sameIntent: (current, sent) => current.visibility === sent.visibility,
 });
 
-const flushVisibilityOutboxToDisk = async (): Promise<void> => {
-    const entries = [...outboxByFileId.values()].map(toPersisted);
-    await saveKv("visibilityOutbox", entries);
-};
+export const hydrateVisibilityOutbox = outbox.hydrate;
 
-const persistVisibilityOutbox = (): Promise<void> => {
-    persistChain = persistChain
-        .then(() => flushVisibilityOutboxToDisk())
-        .catch((error: unknown) => {
-            console.warn("Visibility outbox persist failed", error);
-        });
-    return persistChain;
-};
+export const ensureVisibilityOutboxHydrated = outbox.hydrate;
 
-export const hydrateVisibilityOutbox = async (): Promise<void> => {
-    const persisted = await loadKv("visibilityOutbox");
-    outboxByFileId.clear();
-    for (const entry of persisted ?? []) {
-        outboxByFileId.set(entry.fileId, {
-            fileId: entry.fileId,
-            visibility: entry.visibility as ItemVisibility,
-            enqueuedAt: entry.enqueuedAt,
-        });
-    }
-    hydrated = true;
-};
+export const isVisibilityOutboxHydrated = outbox.isHydrated;
 
-export const ensureVisibilityOutboxHydrated = async (): Promise<void> => {
-    if (hydrated) {
-        return;
-    }
-    await hydrateVisibilityOutbox();
-};
-
-export const isVisibilityOutboxHydrated = (): boolean => hydrated;
-
-export const upsertVisibilityOutboxEntry = async (
+export const upsertVisibilityOutboxEntry = (
     fileId: number,
     visibility: ItemVisibility,
-): Promise<void> => {
-    if (!hydrated) {
-        await hydrateVisibilityOutbox();
-    }
-    outboxByFileId.set(fileId, {
-        fileId,
-        visibility,
-        enqueuedAt: Date.now(),
-    });
-    await persistVisibilityOutbox();
-};
+): Promise<void> =>
+    outbox.upsert([{ fileId, visibility, enqueuedAt: Date.now() }]);
 
 export const removeVisibilityOutboxEntries = async (
     fileIds: number[],
@@ -77,67 +33,49 @@ export const removeVisibilityOutboxEntries = async (
     if (!fileIds.length) {
         return;
     }
-    for (const fileId of fileIds) {
-        outboxByFileId.delete(fileId);
-    }
-    await persistVisibilityOutbox();
+    const idSet = new Set(fileIds);
+    await outbox.removeWhere((entry) => idSet.has(entry.fileId));
 };
 
 /**
- * Remove the entry for {@link sent}'s file only if it is still the entry that
- * was sent, so a newer archive intent queued mid-flight survives the ack.
+ * Remove the entry for `sent`'s file only if it is still the entry that was
+ * sent, so a newer archive intent queued mid-flight survives the ack.
  */
-export const removeVisibilityOutboxEntryIfUnchanged = async (
+export const removeVisibilityOutboxEntryIfUnchanged = (
     sent: VisibilityOutboxEntry,
-): Promise<void> => {
-    const current = outboxByFileId.get(sent.fileId);
-    if (
-        current?.visibility === sent.visibility &&
-        current.enqueuedAt === sent.enqueuedAt
-    ) {
-        await removeVisibilityOutboxEntries([sent.fileId]);
-    }
-};
+): Promise<void> => outbox.removeIfUnchanged([sent]);
 
-export const getVisibilityOutboxEntries = (): VisibilityOutboxEntry[] =>
-    [...outboxByFileId.values()];
+export const getVisibilityOutboxEntries = outbox.entries;
 
 /**
  * True when the file is archived on disk or via a pending visibility outbox entry.
  */
 export const isFileArchivedLocally = (file: EnteFile): boolean => {
-    const pending = outboxByFileId.get(file.id);
+    const pending = outbox.get(file.id);
     if (pending) {
         return pending.visibility === ItemVisibility.archived;
     }
     return isArchivedFile(file);
 };
 
-export const remapVisibilityOutboxFileId = async (
+export const remapVisibilityOutboxFileId = (
     fromFileId: number,
     toFileId: number,
-): Promise<void> => {
-    if (!hydrated) {
-        await hydrateVisibilityOutbox();
-    }
-    const existing = outboxByFileId.get(fromFileId);
-    if (!existing) {
-        return;
-    }
-    outboxByFileId.delete(fromFileId);
-    outboxByFileId.set(toFileId, { ...existing, fileId: toFileId });
-    await persistVisibilityOutbox();
-};
+): Promise<void> =>
+    outbox.remap(fromFileId, toFileId, (entry) => ({
+        ...entry,
+        fileId: toFileId,
+    }));
 
 export const reconcileVisibilityOutboxWithFiles = async (
     files: EnteFile[],
 ): Promise<void> => {
-    if (outboxByFileId.size === 0) {
+    if (outbox.size() === 0) {
         return;
     }
     const filesById = new Map(files.map((file) => [file.id, file]));
     const verifiedIds: number[] = [];
-    for (const entry of outboxByFileId.values()) {
+    for (const entry of outbox.entries()) {
         const file = filesById.get(entry.fileId);
         if (!file) {
             continue;
@@ -148,9 +86,7 @@ export const reconcileVisibilityOutboxWithFiles = async (
             verifiedIds.push(entry.fileId);
         }
     }
-    if (verifiedIds.length > 0) {
-        await removeVisibilityOutboxEntries(verifiedIds);
-    }
+    await removeVisibilityOutboxEntries(verifiedIds);
 };
 
 /**
@@ -158,7 +94,7 @@ export const reconcileVisibilityOutboxWithFiles = async (
  */
 export const applyOutboxVisibilityToFiles = (
     files: EnteFile[],
-    entries: Iterable<VisibilityOutboxEntry> = outboxByFileId.values(),
+    entries: Iterable<VisibilityOutboxEntry> = outbox.entries(),
 ): EnteFile[] => {
     const byFileId = new Map<number, VisibilityOutboxEntry>();
     for (const entry of entries) {
@@ -186,30 +122,9 @@ export const applyOutboxVisibilityToFiles = (
     });
 };
 
-export const clearVisibilityOutbox = (): void => {
-    outboxByFileId.clear();
-    hydrated = false;
-    persistChain = Promise.resolve();
-};
+export const clearVisibilityOutbox = outbox.clear;
 
 /**
  * Persist the in-memory visibility outbox to encrypted IDB.
  */
-export const flushVisibilityOutboxPersist = (): Promise<void> => {
-    if (!hydrated) {
-        return ensureVisibilityOutboxHydrated().then(() => persistVisibilityOutbox());
-    }
-    return persistVisibilityOutbox();
-};
-
-if (typeof window !== "undefined") {
-    const flushOnHide = (): void => {
-        void flushVisibilityOutboxPersist();
-    };
-    window.addEventListener("pagehide", flushOnHide);
-    document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "hidden") {
-            flushOnHide();
-        }
-    });
-}
+export const flushVisibilityOutboxPersist = outbox.flush;

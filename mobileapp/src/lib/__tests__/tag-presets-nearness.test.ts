@@ -4,7 +4,7 @@ import {
     nearnessFilterFromKitTags,
     stampTagsFromNearnessFilter,
 } from "@/lib/tag-presets";
-import { emptyTagFilter } from "@/lib/tags";
+import { emptyTagFilter } from "@/lib/tag-filter";
 import { setKitModeOnFilter, setTagFilterModeOnFilter } from "@/lib/tag-filter-mutations";
 
 describe("matchNearnessFilterToKitPreset", () => {

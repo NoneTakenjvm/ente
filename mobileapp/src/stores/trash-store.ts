@@ -12,6 +12,7 @@ import { fileCreationTime } from "ente-media/file-metadata";
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
 import { errorMessage } from "@/lib/format";
+import { registerReset } from "@/lib/session-lifecycle";
 
 const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -215,3 +216,7 @@ const createTrashStore: StateCreator<TrashState> = (set, get) => ({
 });
 
 export const useTrashStore = create<TrashState>(createTrashStore);
+
+registerReset(() => {
+    useTrashStore.getState().reset();
+});

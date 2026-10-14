@@ -1,14 +1,14 @@
 import { normalizeTagName } from "@/lib/tag-writes";
 import { setKitModeOnFilter } from "@/lib/tag-filter-mutations";
+import { extractUserTags } from "@/lib/tags";
 import {
     emptyTagFilter,
-    extractUserTags,
     isFlatTagFilterRoot,
     isTagFilterActive,
     isTagFilterClause,
     isTagFilterKit,
     type TagFilterSelection,
-} from "@/lib/tags";
+} from "@/lib/tag-filter";
 import { areAllTagsIncludedInKitNearness } from "@/lib/tag-types";
 import {
     parseKitNearnessTuneResult,

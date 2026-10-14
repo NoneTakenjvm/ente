@@ -5,6 +5,7 @@ import {
     hydrateEmbeddingIndex,
     type EmbeddingMap,
 } from "@/lib/kit-embedding";
+import { registerReset } from "@/lib/session-lifecycle";
 
 interface EmbeddingIndexState {
     entries: EmbeddingMap;
@@ -40,3 +41,7 @@ const createEmbeddingIndexStore: StateCreator<EmbeddingIndexState> = (
 export const useEmbeddingIndexStore = create<EmbeddingIndexState>(
     createEmbeddingIndexStore,
 );
+
+registerReset(() => {
+    useEmbeddingIndexStore.getState().reset();
+});

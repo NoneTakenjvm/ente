@@ -1,6 +1,6 @@
 import type { EnteFile } from "ente-media/file";
 import type { FilePublicMagicMetadataData } from "ente-media/file-metadata";
-import { loadKv, saveKv, type PersistedTagOutboxEntry } from "@/db/kv";
+import { createOutbox } from "@/lib/outbox";
 import { extractTags } from "@/lib/tags";
 import {
     fileWithOrganizerTags,
@@ -14,78 +14,40 @@ interface TagOutboxEntry {
     enqueuedAt: number;
 }
 
-const outboxByFileId = new Map<number, TagOutboxEntry>();
-let hydrated = false;
-let persistChain: Promise<void> = Promise.resolve();
-
-const toPersisted = (entry: TagOutboxEntry): PersistedTagOutboxEntry => ({
-    fileId: entry.fileId,
-    intendedTags: entry.intendedTags,
-    enqueuedAt: entry.enqueuedAt,
+const outbox = createOutbox<TagOutboxEntry, number>({
+    kvKey: "tagOutbox",
+    keyOf: (entry) => entry.fileId,
+    label: "Tag outbox",
 });
-
-const flushTagOutboxToDisk = async (): Promise<void> => {
-    const entries = [...outboxByFileId.values()].map(toPersisted);
-    await saveKv("tagOutbox", entries);
-};
-
-const persistTagOutbox = (): Promise<void> => {
-    persistChain = persistChain
-        .catch(() => undefined)
-        .then(() => flushTagOutboxToDisk())
-        .catch((error: unknown) => {
-            console.warn("Tag outbox persist failed", error);
-        });
-    return persistChain;
-};
 
 /**
  * Load the encrypted tag outbox from IndexedDB into memory.
  */
-let tagOutboxHydrateInFlight: Promise<void> | undefined;
-
-export const hydrateTagOutbox = async (): Promise<void> => {
-    if (hydrated) {
-        return;
-    }
-    if (tagOutboxHydrateInFlight) {
-        return tagOutboxHydrateInFlight;
-    }
-    tagOutboxHydrateInFlight = (async () => {
-        const persisted = await loadKv("tagOutbox");
-        outboxByFileId.clear();
-        for (const entry of persisted ?? []) {
-            outboxByFileId.set(entry.fileId, entry);
-        }
-        hydrated = true;
-    })().finally(() => {
-        tagOutboxHydrateInFlight = undefined;
-    });
-    return tagOutboxHydrateInFlight;
-};
+export const hydrateTagOutbox = outbox.hydrate;
 
 /**
  * Load the outbox from disk once per session without clearing in-memory entries.
  */
-export const ensureTagOutboxHydrated = async (): Promise<void> => {
-    if (hydrated) {
-        return;
-    }
-    await hydrateTagOutbox();
-};
+export const ensureTagOutboxHydrated = outbox.hydrate;
 
-export const isTagOutboxHydrated = (): boolean => hydrated;
+export const isTagOutboxHydrated = outbox.isHydrated;
 
 /**
  * Persist the in-memory outbox to encrypted IDB (page hide / before unload).
  *
  * Does not drain to the server — only makes pending intents survive a kill.
  */
-export const flushTagOutboxPersist = (): Promise<void> => {
-    if (!hydrated) {
-        return ensureTagOutboxHydrated().then(() => persistTagOutbox());
-    }
-    return persistTagOutbox();
+export const flushTagOutboxPersist = outbox.flush;
+
+const toOutboxEntries = (
+    entries: Array<{ fileId: number; intendedTags: string[] }>,
+): TagOutboxEntry[] => {
+    const enqueuedAt = Date.now();
+    return entries.map((entry) => ({
+        fileId: entry.fileId,
+        intendedTags: entry.intendedTags,
+        enqueuedAt,
+    }));
 };
 
 /**
@@ -97,18 +59,7 @@ export const upsertTagOutboxEntries = async (
     if (!entries.length) {
         return;
     }
-    if (!hydrated) {
-        await hydrateTagOutbox();
-    }
-    const enqueuedAt = Date.now();
-    for (const entry of entries) {
-        outboxByFileId.set(entry.fileId, {
-            fileId: entry.fileId,
-            intendedTags: entry.intendedTags,
-            enqueuedAt,
-        });
-    }
-    await persistTagOutbox();
+    await outbox.upsert(toOutboxEntries(entries));
 };
 
 /**
@@ -122,28 +73,11 @@ export const enqueueTagOutboxEntries = (
     if (!entries.length) {
         return;
     }
-    const apply = (): void => {
-        const enqueuedAt = Date.now();
-        for (const entry of entries) {
-            outboxByFileId.set(entry.fileId, {
-                fileId: entry.fileId,
-                intendedTags: entry.intendedTags,
-                enqueuedAt,
-            });
-        }
-        void persistTagOutbox();
-    };
-    if (hydrated) {
-        apply();
-        return;
-    }
-    // Use ensure (not hydrate) so a concurrent bootstrap hydrate cannot clear
-    // entries we are about to write after a second clear+reload race.
-    ensureTagOutboxHydrated()
-        .then(apply)
-        .catch((error: unknown) => {
-            console.warn("Tag outbox hydrate failed; intents not queued", error);
-        });
+    // Sets synchronously when already hydrated. Otherwise it waits on the
+    // shared hydrate, so a concurrent bootstrap cannot clear what we write.
+    outbox.upsert(toOutboxEntries(entries)).catch((error: unknown) => {
+        console.warn("Tag outbox hydrate failed; intents not queued", error);
+    });
 };
 
 /**
@@ -155,37 +89,25 @@ export const removeTagOutboxEntries = async (
     if (!fileIds.length) {
         return;
     }
-    for (const fileId of fileIds) {
-        outboxByFileId.delete(fileId);
-    }
-    await persistTagOutbox();
+    const idSet = new Set(fileIds);
+    await outbox.removeWhere((entry) => idSet.has(entry.fileId));
 };
 
-export const getTagOutboxEntries = (): TagOutboxEntry[] =>
-    [...outboxByFileId.values()];
+export const getTagOutboxEntries = outbox.entries;
 
-export const getTagOutboxEntry = (
-    fileId: number,
-): TagOutboxEntry | undefined => outboxByFileId.get(fileId);
+export const getTagOutboxEntry = outbox.get;
 
 /**
  * Remap a pending tag entry when a derived replace changes the file id.
  */
-export const remapTagOutboxFileId = async (
+export const remapTagOutboxFileId = (
     fromFileId: number,
     toFileId: number,
-): Promise<void> => {
-    if (!hydrated) {
-        await hydrateTagOutbox();
-    }
-    const existing = outboxByFileId.get(fromFileId);
-    if (!existing) {
-        return;
-    }
-    outboxByFileId.delete(fromFileId);
-    outboxByFileId.set(toFileId, { ...existing, fileId: toFileId });
-    await persistTagOutbox();
-};
+): Promise<void> =>
+    outbox.remap(fromFileId, toFileId, (entry) => ({
+        ...entry,
+        fileId: toFileId,
+    }));
 
 /**
  * Drop outbox entries whose pulled server metadata already matches intent.
@@ -193,12 +115,12 @@ export const remapTagOutboxFileId = async (
 export const reconcileTagOutboxWithFiles = async (
     files: EnteFile[],
 ): Promise<void> => {
-    if (outboxByFileId.size === 0) {
+    if (outbox.size() === 0) {
         return;
     }
     const filesById = new Map(files.map((file) => [file.id, file]));
     const verifiedIds: number[] = [];
-    for (const entry of outboxByFileId.values()) {
+    for (const entry of outbox.entries()) {
         const file = filesById.get(entry.fileId);
         if (
             file &&
@@ -207,9 +129,7 @@ export const reconcileTagOutboxWithFiles = async (
             verifiedIds.push(entry.fileId);
         }
     }
-    if (verifiedIds.length > 0) {
-        await removeTagOutboxEntries(verifiedIds);
-    }
+    await removeTagOutboxEntries(verifiedIds);
 };
 
 /**
@@ -217,7 +137,7 @@ export const reconcileTagOutboxWithFiles = async (
  */
 export const applyOutboxTagsToFiles = (
     files: EnteFile[],
-    entries: Iterable<TagOutboxEntry> = outboxByFileId.values(),
+    entries: Iterable<TagOutboxEntry> = outbox.entries(),
 ): EnteFile[] => {
     const byFileId = new Map<number, TagOutboxEntry>();
     for (const entry of entries) {
@@ -279,7 +199,7 @@ export const mergeAheadOrganizerTags = (
     const liveById = new Map(live.map((file) => [file.id, file]));
     let changed = false;
     const merged = pulled.map((file) => {
-        if (outboxByFileId.has(file.id)) {
+        if (outbox.get(file.id)) {
             return file;
         }
         const local = liveById.get(file.id);
@@ -298,21 +218,4 @@ export const mergeAheadOrganizerTags = (
     return changed ? merged : pulled;
 };
 
-export const clearTagOutbox = (): void => {
-    outboxByFileId.clear();
-    hydrated = false;
-    tagOutboxHydrateInFlight = undefined;
-    persistChain = Promise.resolve();
-};
-
-if (typeof window !== "undefined") {
-    const flushOnHide = (): void => {
-        void flushTagOutboxPersist();
-    };
-    window.addEventListener("pagehide", flushOnHide);
-    document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "hidden") {
-            flushOnHide();
-        }
-    });
-}
+export const clearTagOutbox = outbox.clear;

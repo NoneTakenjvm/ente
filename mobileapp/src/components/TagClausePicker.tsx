@@ -24,6 +24,7 @@ import {
     findKitModeInGroup,
     type KitFilterInput,
 } from "@/lib/tag-filter-mutations";
+import { tagFileCount } from "@/lib/tags";
 import {
     findClauseInGroup,
     findClauseModeForTag,
@@ -31,12 +32,11 @@ import {
     GROUPED_TAG_FILTER_DROPDOWN_HINT,
     isFlatTagFilterRoot,
     isReservedTag,
-    tagFileCount,
     type TagFilterGroup,
     type TagFilterJoin,
     type TagFilterMode,
     type TagFilterSelection,
-} from "@/lib/tags";
+} from "@/lib/tag-filter";
 import { cn } from "@/lib/utils";
 import { useLibraryStore } from "@/stores/library-store";
 import { useTagSpeedStore } from "@/stores/tag-speed-store";

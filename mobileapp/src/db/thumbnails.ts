@@ -1,220 +1,30 @@
-import { fromB64, toB64 } from "ente-base/crypto";
 import { isGalleryScrolling } from "@/lib/gallery-scroll-activity";
-import { LruTouchCoalescer } from "./lru-touch";
-import {
-    getOrganizerDB,
-    hasOrganizerDB,
-    type ThumbnailRecord,
-} from "./index";
+import { createLruBlobStore } from "./blob-store";
+import type { ThumbnailRecord } from "./index";
 
 export interface ServerCiphertext {
     encryptedData: Uint8Array;
     decryptionHeader: string;
 }
 
-/** Soft cap on total encrypted thumbnail bytes kept in IndexedDB. */
-const DISK_BUDGET_BYTES = 400 * 1024 * 1024;
-
-/**
- * Eviction frees space down to this level, not just enough for one row, so
- * bulk fetches (hash / CLIP jobs) scan the store once per ~80 MB of new
- * thumbnails instead of on every put.
- */
-const EVICTION_TARGET_BYTES = 320 * 1024 * 1024;
-
-/** Skip scheduling a touch when the row was touched this recently. */
-const TOUCH_MIN_INTERVAL_MS = 5 * 60 * 1000;
-
-/**
- * Running total of thumbnail store bytes for this page session.
- * Seeded via cursor metadata only — never loading every ciphertext into one
- * JS array (that kept multi-GB heaps).
- */
-let cachedDiskBytes: number | undefined;
-
-/** One in-flight size seed so concurrent puts do not each scan the store. */
-let seedDiskBytesPromise: Promise<number> | undefined;
-
-/** Serialize eviction so concurrent puts cannot each scan the whole store. */
-let evictionChain: Promise<void> = Promise.resolve();
-
-type ThumbnailLruMeta = {
-    fileId: number;
-    byteSize: number;
-    lastAccess: number;
-};
-
-const thumbnailTouches = new LruTouchCoalescer(async (batch) => {
-    if (!hasOrganizerDB()) {
-        return;
-    }
-    const db = await getOrganizerDB();
-    const tx = db.transaction("thumbnails", "readwrite");
-    for (const [fileId, lastAccess] of batch) {
-        const record = await tx.store.get(fileId);
-        if (!record) {
-            continue;
-        }
-        await tx.store.put({
-            ...record,
-            lastAccess,
-        });
-    }
-    await tx.done;
+const thumbnailStore = createLruBlobStore<ThumbnailRecord>({
+    storeName: "thumbnails",
+    budgetBytes: 400 * 1024 * 1024,
+    // Bulk fetches (hash / CLIP jobs) scan the store once per ~80 MB.
+    targetBytes: 320 * 1024 * 1024,
+    touchMinIntervalMs: 5 * 60 * 1000,
+    suppressTouch: isGalleryScrolling,
 });
 
-/**
- * Cursor-scan LRU scalars only. Each ciphertext is eligible for GC after the
- * step that copies byteSize/lastAccess — unlike a full-store materialize,
- * nothing holds all encryptedData strings at once.
- */
-const collectThumbnailLruMeta = async (
-    db: Awaited<ReturnType<typeof getOrganizerDB>>,
-    excludeFileId?: number,
-): Promise<{ metas: ThumbnailLruMeta[]; usedBytes: number }> => {
-    const metas: ThumbnailLruMeta[] = [];
-    let usedBytes = 0;
-    const tx = db.transaction("thumbnails", "readonly");
-    let cursor = await tx.store.openCursor();
-    while (cursor) {
-        const record = cursor.value;
-        if (excludeFileId === undefined || record.fileId !== excludeFileId) {
-            metas.push({
-                fileId: record.fileId,
-                byteSize: record.byteSize,
-                lastAccess: thumbnailTouches.overlay(
-                    record.fileId,
-                    record.lastAccess,
-                ),
-            });
-            usedBytes += record.byteSize;
-        }
-        cursor = await cursor.continue();
-    }
-    await tx.done;
-    return { metas, usedBytes };
-};
-
-const ensureDiskBytes = async (
-    db: Awaited<ReturnType<typeof getOrganizerDB>>,
-): Promise<number> => {
-    if (cachedDiskBytes !== undefined) {
-        return cachedDiskBytes;
-    }
-    if (!seedDiskBytesPromise) {
-        seedDiskBytesPromise = collectThumbnailLruMeta(db)
-            .then(({ usedBytes }) => {
-                cachedDiskBytes = usedBytes;
-                return usedBytes;
-            })
-            .finally(() => {
-                seedDiskBytesPromise = undefined;
-            });
-    }
-    return seedDiskBytesPromise;
-};
-
-const adjustDiskBytes = (delta: number): void => {
-    if (cachedDiskBytes === undefined) {
-        return;
-    }
-    cachedDiskBytes = Math.max(0, cachedDiskBytes + delta);
-};
-
-/**
- * Make room for {@link incomingBytes}: when the store would exceed the disk
- * budget, delete oldest entries until it fits {@link EVICTION_TARGET_BYTES}.
- * Only metadata is ranked in memory. Returns the bytes used excluding
- * {@link excludeFileId}, whose current row is {@link excludedBytes} long.
- */
-const evictUntilFit = async (
-    db: Awaited<ReturnType<typeof getOrganizerDB>>,
-    excludedBytes: number,
-    incomingBytes: number,
-    excludeFileId?: number,
-): Promise<number> => {
-    const run = async (): Promise<number> => {
-        // Concurrent puts queue here together; the first eviction usually
-        // makes room for the rest without another scan.
-        if (cachedDiskBytes !== undefined) {
-            const usedBytes = cachedDiskBytes - excludedBytes;
-            if (usedBytes + incomingBytes <= DISK_BUDGET_BYTES) {
-                return usedBytes;
-            }
-        }
-        const { metas, usedBytes: scanned } = await collectThumbnailLruMeta(
-            db,
-            excludeFileId,
-        );
-        let remaining = scanned;
-        if (remaining + incomingBytes > DISK_BUDGET_BYTES) {
-            metas.sort((a, b) => a.lastAccess - b.lastAccess);
-            const tx = db.transaction("thumbnails", "readwrite");
-            for (const entry of metas) {
-                if (remaining + incomingBytes <= EVICTION_TARGET_BYTES) {
-                    break;
-                }
-                await tx.store.delete(entry.fileId);
-                thumbnailTouches.forget(entry.fileId);
-                remaining -= entry.byteSize;
-            }
-            await tx.done;
-        }
-        // Excludes `excludeFileId`; caller adds the new row size after put.
-        cachedDiskBytes = remaining;
-        return remaining;
-    };
-
-    const next = evictionChain.then(run, run);
-    evictionChain = next.then(
-        () => undefined,
-        () => undefined,
-    );
-    return next;
-};
-
-export const hasThumbnailCiphertext = async (
-    fileId: number,
-): Promise<boolean> => {
-    if (!hasOrganizerDB()) {
-        return false;
-    }
-    const db = await getOrganizerDB();
-    const record: ThumbnailRecord | undefined = await db.get(
-        "thumbnails",
-        fileId,
-    );
-    return record !== undefined;
-};
+export const hasThumbnailCiphertext = (fileId: number): Promise<boolean> =>
+    thumbnailStore.has(fileId);
 
 export const getThumbnailCiphertext = async (
     fileId: number,
 ): Promise<ServerCiphertext | undefined> => {
-    if (!hasOrganizerDB()) {
-        return undefined;
-    }
-    const db = await getOrganizerDB();
-    const record: ThumbnailRecord | undefined = await db.get(
-        "thumbnails",
-        fileId,
-    );
-    if (!record) {
-        return undefined;
-    }
-
-    const now = Date.now();
-    const effectiveAccess = thumbnailTouches.overlay(
-        fileId,
-        record.lastAccess,
-    );
-    const needsTouch =
-        !isGalleryScrolling() && now - effectiveAccess >= TOUCH_MIN_INTERVAL_MS;
-    if (needsTouch) {
-        thumbnailTouches.note(fileId, now);
-    }
-
-    return {
-        encryptedData: await fromB64(record.encryptedData),
+    const record = await thumbnailStore.get(fileId);
+    return record && {
+        encryptedData: new Uint8Array(record.encryptedData),
         decryptionHeader: record.decryptionHeader,
     };
 };
@@ -223,62 +33,13 @@ export const putThumbnailCiphertext = async (
     fileId: number,
     ciphertext: ServerCiphertext,
 ): Promise<void> => {
-    if (!hasOrganizerDB()) {
-        return;
-    }
-    const byteSize = ciphertext.encryptedData.byteLength;
-    if (byteSize <= 0) {
-        return;
-    }
-
-    try {
-        const db = await getOrganizerDB();
-        const previous = await db.get("thumbnails", fileId);
-        const previousSize = previous?.byteSize ?? 0;
-        let usedBytes = (await ensureDiskBytes(db)) - previousSize;
-
-        if (usedBytes + byteSize > DISK_BUDGET_BYTES) {
-            usedBytes = await evictUntilFit(db, previousSize, byteSize, fileId);
-        }
-
-        if (usedBytes + byteSize > DISK_BUDGET_BYTES) {
-            return;
-        }
-
-        await db.put("thumbnails", {
-            fileId,
-            encryptedData: await toB64(ciphertext.encryptedData),
-            decryptionHeader: ciphertext.decryptionHeader,
-            byteSize,
-            lastAccess: Date.now(),
-        });
-        thumbnailTouches.forget(fileId);
-        cachedDiskBytes = usedBytes + byteSize;
-    } catch {
-        // Quota or transient IDB failures — gallery still has network path.
-        cachedDiskBytes = undefined;
-    }
+    await thumbnailStore.put({
+        fileId,
+        encryptedData: ciphertext.encryptedData.slice().buffer,
+        decryptionHeader: ciphertext.decryptionHeader,
+        byteSize: ciphertext.encryptedData.byteLength,
+    });
 };
 
-export const deleteThumbnailCiphertext = async (
-    fileId: number,
-): Promise<void> => {
-    if (!hasOrganizerDB()) {
-        return;
-    }
-    try {
-        const db = await getOrganizerDB();
-        const previous = await db.get("thumbnails", fileId);
-        await db.delete("thumbnails", fileId);
-        thumbnailTouches.forget(fileId);
-        if (previous) {
-            adjustDiskBytes(-previous.byteSize);
-        }
-    } catch {
-        cachedDiskBytes = undefined;
-    }
-};
-
-/** Flush coalesced LRU lastAccess writes (pagehide / durable flush). */
-export const flushThumbnailLruTouches = (): Promise<void> =>
-    thumbnailTouches.flush();
+export const deleteThumbnailCiphertext = (fileId: number): Promise<void> =>
+    thumbnailStore.delete(fileId);

@@ -1,3 +1,4 @@
+import { registerReset } from "@/lib/session-lifecycle";
 /**
  * Local-only edit history: the previous bytes for the most recent crop/rotate
  * (or mass auto-crop) replace on this client, so the user can revert once.
@@ -67,3 +68,5 @@ export const clearAllEditHistory = (): void => {
 
 export const hasEditHistory = (fileId: number): boolean =>
     historyByFileId.has(fileId);
+
+registerReset(clearAllEditHistory);

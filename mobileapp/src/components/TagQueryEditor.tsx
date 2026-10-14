@@ -21,7 +21,7 @@ import {
     type TagFilterNode,
     type TagFilterSelection,
     type TagScope,
-} from "@/lib/tags";
+} from "@/lib/tag-filter";
 import { cn } from "@/lib/utils";
 
 const isTagFilterJoin = (value: unknown): value is TagFilterJoin =>

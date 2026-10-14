@@ -15,6 +15,7 @@ import {
     type TagPreset,
 } from "@/lib/tag-presets";
 import type { KitNearnessTuneResult } from "@/lib/kit-nearness-embedding-genome";
+import { registerReset } from "@/lib/session-lifecycle";
 
 const MAX_RECENT_TAGS = 12;
 const MAX_PINNED_TAGS = 16;
@@ -189,3 +190,7 @@ export const useTagSpeedStore = create<TagSpeedState>((set, get) => ({
         set(initialState);
     },
 }));
+
+registerReset(() => {
+    useTagSpeedStore.getState().reset();
+});

@@ -3,6 +3,7 @@ import type { StateCreator } from "zustand";
 import type { PhashEntry } from "@/lib/crop-match";
 import { hasSessionCacheKey } from "@/lib/cache-key";
 import { hydratePhashIndex } from "@/lib/similarity-job";
+import { registerReset } from "@/lib/session-lifecycle";
 
 interface PhashIndexState {
     entries: Map<number, PhashEntry>;
@@ -34,3 +35,7 @@ const createPhashIndexStore: StateCreator<PhashIndexState> = (set) => ({
 });
 
 export const usePhashIndexStore = create<PhashIndexState>(createPhashIndexStore);
+
+registerReset(() => {
+    usePhashIndexStore.getState().reset();
+});

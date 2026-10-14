@@ -4,9 +4,6 @@ import {
     isTagFilterGroup,
     isTagFilterKit,
     newTagFilterNodeId,
-    type CroppedScope,
-    type FavoritesScope,
-    type RotatedScope,
     type TagFilterClauseNode,
     type TagFilterGroup,
     type TagFilterJoin,
@@ -15,8 +12,7 @@ import {
     type TagFilterNode,
     type TagFilterSelection,
     type TagScope,
-    type MediaScope,
-} from "@/lib/tags";
+} from "@/lib/tag-filter";
 
 /** Identity of a kit when adding it as one filter unit. */
 export interface KitFilterInput {
@@ -282,37 +278,14 @@ export const setTagFilterScope = (
             filter.root,
 });
 
-export const setTagFilterFavoritesScope = (
+/**
+ * Set the favourites, media, crop or rotate scopes in one step. Use
+ * {@link setTagFilterScope} for the tag scope, which also prunes clauses.
+ */
+export const setTagFilterScopes = (
     filter: TagFilterSelection,
-    favoritesScope: FavoritesScope,
-): TagFilterSelection => ({
-    ...filter,
-    favoritesScope,
-});
-
-export const setTagFilterMediaScope = (
-    filter: TagFilterSelection,
-    mediaScope: MediaScope,
-): TagFilterSelection => ({
-    ...filter,
-    mediaScope,
-});
-
-export const setTagFilterCroppedScope = (
-    filter: TagFilterSelection,
-    croppedScope: CroppedScope,
-): TagFilterSelection => ({
-    ...filter,
-    croppedScope,
-});
-
-export const setTagFilterRotatedScope = (
-    filter: TagFilterSelection,
-    rotatedScope: RotatedScope,
-): TagFilterSelection => ({
-    ...filter,
-    rotatedScope,
-});
+    patch: Partial<Omit<TagFilterSelection, "tagScope" | "root">>,
+): TagFilterSelection => ({ ...filter, ...patch });
 
 export const setTagFilterModeOnFilter = (
     filter: TagFilterSelection,

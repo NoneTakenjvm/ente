@@ -46,7 +46,7 @@ import {
     isTagFilterActive,
     patchFilteredFilesForTagTouch,
     type TagFilterSelection,
-} from "@/lib/tags";
+} from "@/lib/tag-filter";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
 import { useQualityIndexStore } from "@/stores/quality-index-store";

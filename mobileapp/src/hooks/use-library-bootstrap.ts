@@ -19,6 +19,7 @@ import {
 } from "@/lib/favorite-membership";
 import { startTagOutboxRunner } from "@/lib/tag-outbox-runner";
 import { probeVideoDurationSec } from "@/lib/video-edit";
+import { registerReset } from "@/lib/session-lifecycle";
 
 const isFileIdInTrash = async (fileId: number): Promise<boolean> => {
     const { useTrashStore } = await import("@/stores/trash-store");
@@ -335,3 +336,5 @@ export const useLibraryBootstrap = (
     }, [bootstrapFromCache, syncRemote]);
     return initialLoadDone;
 };
+
+registerReset(resetLibraryBootstrap);

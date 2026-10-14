@@ -5,10 +5,13 @@ import {
 } from "ente-base/crypto/libsodium";
 import type { EnteFile } from "ente-media/file";
 import type { HttpClient } from "./api/http";
-import { isProductionEnteOrigin, urlForLog } from "./api/http";
+import {
+    isProductionEnteOrigin,
+    isTransientError,
+    retryWithBackoff,
+} from "./api/http";
 import { requireAuth, type CoreSession } from "./session";
 import { mergeUint8Arrays } from "ente-utils/array";
-import { wait } from "ente-utils/promise";
 
 export interface ServerCiphertext {
     encryptedData: Uint8Array;
@@ -26,22 +29,6 @@ interface BytesProgress {
 }
 
 export type BytesProgressCallback = (progress: BytesProgress) => void;
-
-const retryAfterMs = (res: Response): number => {
-    const header = res.headers.get("Retry-After");
-    if (!header) {
-        return 1000;
-    }
-    const seconds = Number(header);
-    if (Number.isFinite(seconds) && seconds > 0) {
-        return seconds * 1000;
-    }
-    const dateMs = Date.parse(header);
-    if (Number.isFinite(dateMs)) {
-        return Math.max(0, dateMs - Date.now());
-    }
-    return 1000;
-};
 
 /**
  * Read a fetch {@link Response} body into a single buffer, optionally reporting
@@ -105,15 +92,11 @@ const readResponseBytes = async (
     return mergeUint8Arrays(chunks);
 };
 
-/** Backoff before retry {@link attempt} after a 5xx or network failure. */
-const transientRetryDelayMs = (attempt: number): number =>
-    500 * 3 ** (attempt - 1);
-
 /**
  * Fetch encrypted bytes, retrying 429, 5xx, and network failures up to
  * {@link maxAttempts} times. Other 4xx responses and aborts fail immediately.
  */
-const fetchEncryptedBytes = async (
+const fetchEncryptedBytes = (
     http: HttpClient,
     session: CoreSession,
     url: string,
@@ -121,38 +104,20 @@ const fetchEncryptedBytes = async (
     onProgress?: BytesProgressCallback,
     knownTotal?: number,
     signal?: AbortSignal,
-): Promise<Uint8Array> => {
-    let attempt = 0;
-    while (attempt < maxAttempts) {
-        attempt += 1;
-        const canRetry = attempt < maxAttempts;
-        let res: Response;
-        try {
-            res = await fetch(url, { headers: http.authHeaders(), signal });
-        } catch (error: unknown) {
-            // Network failures surface as a TypeError; aborts are rethrown.
-            if (!(error instanceof TypeError) || !canRetry) {
-                throw error;
-            }
-            await wait(transientRetryDelayMs(attempt));
-            signal?.throwIfAborted();
-            continue;
-        }
-        if (canRetry && (res.status === 429 || res.status >= 500)) {
-            http.logRateLimitHeaders(res, url);
-            const delayMs =
-                res.status === 429 ?
-                    retryAfterMs(res) * attempt :
-                    transientRetryDelayMs(attempt);
-            await wait(delayMs);
-            signal?.throwIfAborted();
-            continue;
-        }
-        http.ensureOk(res);
-        return readResponseBytes(res, onProgress, knownTotal);
-    }
-    throw new Error(`HTTP 429 for ${urlForLog(url)}`);
-};
+): Promise<Uint8Array> =>
+    retryWithBackoff(
+        async () => {
+            const res = await fetch(url, { headers: http.authHeaders(), signal });
+            http.ensureOk(res);
+            return readResponseBytes(res, onProgress, knownTotal);
+        },
+        {
+            attempts: maxAttempts,
+            isRetryable: isTransientError,
+            baseDelayMs: 500,
+            signal,
+        },
+    );
 
 const thumbnailUrl = (
     http: HttpClient,

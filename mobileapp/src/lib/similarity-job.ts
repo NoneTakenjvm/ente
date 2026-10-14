@@ -29,6 +29,7 @@ import type {
     PhashWorkerResponse,
     Stage1Message,
 } from "@/workers/phash-worker-types";
+import { registerReset } from "@/lib/session-lifecycle";
 
 export interface PhashJobOptions {
     /** Every file the index should cover; entries for other ids are dropped. */
@@ -620,3 +621,5 @@ const packStage1Embeddings = (
     });
     return { vectors, fileIds, dims };
 };
+
+registerReset(terminatePhashWorker);

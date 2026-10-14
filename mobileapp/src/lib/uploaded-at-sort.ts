@@ -1,5 +1,5 @@
 import type { EnteFile } from "ente-media/file";
-import { fileUploadSortTime } from "@/lib/sort-files";
+import { fileUploadSortTime } from "@/core/metadata";
 
 /** Gallery reorder by upload time (session-only). */
 export type UploadedAtSort = "none" | "newest" | "oldest";

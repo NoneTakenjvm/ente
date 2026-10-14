@@ -17,19 +17,15 @@ import { dedupeFilesById } from "@/lib/sync/merge-files";
 import { sortFilesByUpload } from "@/lib/sort-files";
 import {
     countFavoritesInCandidates,
-    countManuallyCroppedInCandidates,
-    countNotFavoritesInCandidates,
-    countNotManuallyCroppedInCandidates,
-    countPhotosInCandidates,
+    countFileKindsInCandidates,
     countTaggedInCandidates,
     countUntaggedInCandidates,
-    countVideosInCandidates,
     describeTagFilter,
     emptyTagFilter,
     filterFilesByTags,
     GROUPED_TAG_FILTER_DROPDOWN_HINT,
     isFlatTagFilterRoot,
-} from "@/lib/tags";
+} from "@/lib/tag-filter";
 import { useAlbumStore } from "@/stores/album-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
@@ -136,28 +132,10 @@ export function AlbumEditorPanel({
         [favoriteFileIds, libraryFileIds],
     );
 
-    const notFavoritesCount = useMemo(
-        () => countNotFavoritesInCandidates(libraryFileIds, favoriteFileIds),
-        [favoriteFileIds, libraryFileIds],
-    );
+    const notFavoritesCount = libraryFileIds.size - favoritesCount;
 
-    const photoCount = useMemo(
-        () => countPhotosInCandidates(libraryFileIds, libraryFiles),
-        [libraryFileIds, libraryFiles],
-    );
-
-    const videoCount = useMemo(
-        () => countVideosInCandidates(libraryFileIds, libraryFiles),
-        [libraryFileIds, libraryFiles],
-    );
-
-    const croppedCount = useMemo(
-        () => countManuallyCroppedInCandidates(libraryFileIds, libraryFiles),
-        [libraryFileIds, libraryFiles],
-    );
-
-    const notCroppedCount = useMemo(
-        () => countNotManuallyCroppedInCandidates(libraryFileIds, libraryFiles),
+    const { photos, videos, cropped, notCropped } = useMemo(
+        () => countFileKindsInCandidates(libraryFileIds, libraryFiles),
         [libraryFileIds, libraryFiles],
     );
 
@@ -254,10 +232,10 @@ export function AlbumEditorPanel({
                     untaggedCount={untaggedCount}
                     favoritesCount={favoritesCount}
                     notFavoritesCount={notFavoritesCount}
-                    photoCount={photoCount}
-                    videoCount={videoCount}
-                    croppedCount={croppedCount}
-                    notCroppedCount={notCroppedCount}
+                    photoCount={photos}
+                    videoCount={videos}
+                    croppedCount={cropped}
+                    notCroppedCount={notCropped}
                 />
             </div>
 

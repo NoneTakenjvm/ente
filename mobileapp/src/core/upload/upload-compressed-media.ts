@@ -25,7 +25,7 @@ import { ensureInteger } from "ente-utils/ensure";
 import type { HttpClient } from "../api/http";
 import { extractVideoFrameJpeg } from "@/lib/ffmpeg";
 import type { CompressMediaResult } from "@/lib/transcode/compress-media";
-import { fileUploadSortTime } from "@/lib/sort-files";
+import { fileUploadSortTime } from "../metadata";
 import { generateImageThumbnail } from "./thumbnail";
 import {
     postEnteFile,

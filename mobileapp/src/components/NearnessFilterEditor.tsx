@@ -7,7 +7,7 @@ import {
     GROUPED_TAG_FILTER_DROPDOWN_HINT,
     describeTagFilter,
     isFlatTagFilterRoot,
-} from "@/lib/tags";
+} from "@/lib/tag-filter";
 
 interface NearnessFilterEditorProps {
     draft: TagFilterDraft;

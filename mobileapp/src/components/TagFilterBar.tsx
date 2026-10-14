@@ -21,7 +21,7 @@ import {
     isFlatTagFilterRoot,
     isTagFilterActive,
     type TagFilterSelection,
-} from "@/lib/tags";
+} from "@/lib/tag-filter";
 import { bulkAddTags, bulkRemoveTags } from "@/lib/tag-bulk-actions";
 import { countKitPresence, type KitPresenceEstimate } from "@/lib/kit-nearness-margins";
 import { estimateKitPresenceInWorker } from "@/lib/kit-nearness-margins-job";

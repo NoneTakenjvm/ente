@@ -5,10 +5,7 @@ import {
     setClauseModeOnFilter,
     setKitInGroupOnFilter,
     setKitModeOnFilter,
-    setTagFilterFavoritesScope,
-    setTagFilterMediaScope,
-    setTagFilterCroppedScope,
-    setTagFilterRotatedScope,
+    setTagFilterScopes,
     setTagFilterGroupOp,
     setTagFilterModeOnFilter,
     setTagFilterScope,
@@ -26,7 +23,7 @@ import {
     type TagFilterMode,
     type TagFilterSelection,
     type TagScope,
-} from "@/lib/tags";
+} from "@/lib/tag-filter";
 import type { TagQueryEditorActions } from "@/components/TagQueryEditor";
 import { useTagStore } from "@/stores/tag-store";
 
@@ -67,7 +64,7 @@ export const useTagFilterDraft = (
     const setFavoritesScope = useCallback(
         (favoritesScope: FavoritesScope): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
-                setTagFilterFavoritesScope(current, favoritesScope));
+                setTagFilterScopes(current, { favoritesScope }));
         },
         [],
     );
@@ -75,7 +72,7 @@ export const useTagFilterDraft = (
     const setMediaScope = useCallback(
         (mediaScope: MediaScope): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
-                setTagFilterMediaScope(current, mediaScope));
+                setTagFilterScopes(current, { mediaScope }));
         },
         [],
     );
@@ -83,7 +80,7 @@ export const useTagFilterDraft = (
     const setCroppedScope = useCallback(
         (croppedScope: CroppedScope): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
-                setTagFilterCroppedScope(current, croppedScope));
+                setTagFilterScopes(current, { croppedScope }));
         },
         [],
     );
@@ -91,7 +88,7 @@ export const useTagFilterDraft = (
     const setRotatedScope = useCallback(
         (rotatedScope: RotatedScope): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
-                setTagFilterRotatedScope(current, rotatedScope));
+                setTagFilterScopes(current, { rotatedScope }));
         },
         [],
     );

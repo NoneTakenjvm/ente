@@ -28,7 +28,7 @@ import { confirmDiscardPendingCrops } from "@/lib/crop-draft";
 import { confirmDiscardPendingRotations } from "@/lib/rotate-draft";
 import { cn } from "@/lib/utils";
 import { stampTagsFromNearnessFilter } from "@/lib/tag-presets";
-import { isTagFilterActive } from "@/lib/tags";
+import { isTagFilterActive } from "@/lib/tag-filter";
 import { useSelectionStore } from "@/stores/selection-store";
 import type { TagFilterTarget } from "@/stores/tag-store";
 import { useTagSpeedStore } from "@/stores/tag-speed-store";

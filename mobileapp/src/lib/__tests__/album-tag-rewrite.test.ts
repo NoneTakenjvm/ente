@@ -6,7 +6,7 @@ import {
     emptyTagFilter,
     newTagFilterNodeId,
     type TagFilterKitNode,
-} from "@/lib/tags";
+} from "@/lib/tag-filter";
 import { andRoot, includeClause } from "@/test-utils/fixtures";
 
 const kitNode = (tags: string[]): TagFilterKitNode => ({

@@ -1,21 +1,13 @@
 import {
     emptyTagFilter,
-    isTagFilterClause,
-    isTagFilterKit,
+    isTagFilterGroup,
     newTagFilterNodeId,
     type TagFilterClauseNode,
     type TagFilterGroup,
-    type TagFilterJoin,
     type TagFilterKitNode,
-    type TagFilterMode,
     type TagFilterNode,
     type TagFilterSelection,
-    type TagScope,
-    type FavoritesScope,
-    type MediaScope,
-    type CroppedScope,
-    type RotatedScope,
-} from "@/lib/tags";
+} from "@/lib/tag-filter";
 
 /** A saved smart album backed by a tag query. */
 export interface QueryAlbum {
@@ -30,59 +22,31 @@ export interface PersistedQueryAlbums {
     albums: QueryAlbum[];
 }
 
-export type PersistedTagFilterClause = {
-    kind: "clause";
-    tag: string;
-    mode: TagFilterMode;
-};
+/** A filter node as stored: same shape minus the ephemeral `id`. */
+type Persisted<T> = T extends unknown ? Omit<T, "id"> : never;
 
-export type PersistedTagFilterKit = {
-    kind: "kit";
-    presetId: string;
-    name: string;
-    tags: string[];
-    mode: TagFilterMode;
-};
-
-export type PersistedTagFilterGroup = {
-    kind: "group";
-    op: TagFilterJoin;
+export type PersistedTagFilterGroup = Persisted<Omit<TagFilterGroup, "children">> & {
     children: PersistedTagFilterNode[];
 };
 
 export type PersistedTagFilterNode =
-    PersistedTagFilterClause |
-    PersistedTagFilterKit |
+    Persisted<TagFilterClauseNode> |
+    Persisted<TagFilterKitNode> |
     PersistedTagFilterGroup;
 
-export interface PersistedTagFilterSelection {
-    tagScope: TagScope;
-    favoritesScope: FavoritesScope;
-    mediaScope: MediaScope;
-    croppedScope: CroppedScope;
-    rotatedScope: RotatedScope;
+export type PersistedTagFilterSelection = Omit<TagFilterSelection, "root"> & {
     root: PersistedTagFilterGroup;
-}
-
-const serializeNode = (node: TagFilterNode): PersistedTagFilterNode => {
-    if (isTagFilterClause(node)) {
-        return { kind: "clause", tag: node.tag, mode: node.mode };
-    }
-    if (isTagFilterKit(node)) {
-        return {
-            kind: "kit",
-            presetId: node.presetId,
-            name: node.name,
-            tags: [...node.tags],
-            mode: node.mode,
-        };
-    }
-    return {
-        kind: "group",
-        op: node.op,
-        children: node.children.map(serializeNode),
-    };
 };
+
+const withoutId = <T extends { id: string }>({
+    id: _id,
+    ...rest
+}: T): Persisted<T> => rest as Persisted<T>;
+
+const serializeNode = (node: TagFilterNode): PersistedTagFilterNode =>
+    isTagFilterGroup(node) ?
+        { ...withoutId(node), children: node.children.map(serializeNode) } :
+        withoutId(node);
 
 /**
  * Strip ephemeral node ids for organizer config persistence.
@@ -90,46 +54,18 @@ const serializeNode = (node: TagFilterNode): PersistedTagFilterNode => {
 export const serializeTagFilter = (
     filter: TagFilterSelection,
 ): PersistedTagFilterSelection => ({
-    tagScope: filter.tagScope,
-    favoritesScope: filter.favoritesScope,
-    mediaScope: filter.mediaScope,
-    croppedScope: filter.croppedScope,
-    rotatedScope: filter.rotatedScope,
+    ...filter,
     root: serializeNode(filter.root) as PersistedTagFilterGroup,
 });
 
-const hydrateClause = (
-    clause: PersistedTagFilterClause,
-): TagFilterClauseNode => ({
-    kind: "clause",
-    id: newTagFilterNodeId(),
-    tag: clause.tag,
-    mode: clause.mode,
-});
-
-const hydrateKit = (kit: PersistedTagFilterKit): TagFilterKitNode => ({
-    kind: "kit",
-    id: newTagFilterNodeId(),
-    presetId: kit.presetId,
-    name: kit.name,
-    tags: [...kit.tags],
-    mode: kit.mode,
-});
-
-const hydrateNode = (node: PersistedTagFilterNode): TagFilterNode => {
-    if (node.kind === "clause") {
-        return hydrateClause(node);
-    }
-    if (node.kind === "kit") {
-        return hydrateKit(node);
-    }
-    return {
-        kind: "group",
-        id: newTagFilterNodeId(),
-        op: node.op,
-        children: node.children.map(hydrateNode),
-    };
-};
+const hydrateNode = (node: PersistedTagFilterNode): TagFilterNode =>
+    node.kind === "group" ?
+        {
+            ...node,
+            id: newTagFilterNodeId(),
+            children: node.children.map(hydrateNode),
+        } :
+        { ...node, id: newTagFilterNodeId() };
 
 /**
  * Restore a persisted query into an in-memory filter tree with fresh node ids.
@@ -137,8 +73,7 @@ const hydrateNode = (node: PersistedTagFilterNode): TagFilterNode => {
 export const hydrateTagFilter = (
     persisted: PersistedTagFilterSelection,
 ): TagFilterSelection => ({
-    tagScope: persisted.tagScope,
-    favoritesScope: persisted.favoritesScope,
+    ...persisted,
     mediaScope: persisted.mediaScope ?? "all",
     croppedScope: persisted.croppedScope ?? "all",
     rotatedScope: persisted.rotatedScope ?? "all",

@@ -11,6 +11,8 @@ import {
     saveEncryptedFiles,
 } from "@/db/kv";
 import { initSessionCacheKey, getSessionCacheKey } from "@/lib/cache-key";
+import { createDebouncedPersist } from "@/lib/debounced-persist";
+import { registerFlush, registerReset } from "@/lib/session-lifecycle";
 import { pullCollections } from "@/lib/sync/pull-collections";
 import { pullFiles } from "@/lib/sync/pull-files";
 import { clearAllSyncCursors } from "@/db/cursors";
@@ -311,18 +313,13 @@ const withFilesAddedDuringPull = (
  */
 const ENCRYPTED_FILES_SAVE_DEBOUNCE_MS = 1500;
 
-let encryptedFilesSaveTimer: ReturnType<typeof setTimeout> | undefined;
-let encryptedFilesSaveGetter: (() => EnteFile[]) | undefined;
-let encryptedFilesPersistChain: Promise<void> = Promise.resolve();
+const encryptedFilesSaver = createDebouncedPersist(
+    (getAllFiles: () => EnteFile[]) =>
+        saveEncryptedFiles(getAllFiles(), getSessionCacheKey()),
+    ENCRYPTED_FILES_SAVE_DEBOUNCE_MS,
+);
 
-const enqueueEncryptedFilesPersist = (
-    getAllFiles: () => EnteFile[],
-): Promise<void> => {
-    encryptedFilesPersistChain = encryptedFilesPersistChain
-        .catch(() => undefined)
-        .then(() => saveEncryptedFiles(getAllFiles(), getSessionCacheKey()));
-    return encryptedFilesPersistChain;
-};
+registerFlush(encryptedFilesSaver.flush);
 
 const scheduleSaveEncryptedFiles = (
     getAllFiles: () => EnteFile[],
@@ -331,33 +328,7 @@ const scheduleSaveEncryptedFiles = (
     if (dirtyFileIds) {
         markLibraryCacheFilesDirty(dirtyFileIds);
     }
-    encryptedFilesSaveGetter = getAllFiles;
-    if (encryptedFilesSaveTimer !== undefined) {
-        clearTimeout(encryptedFilesSaveTimer);
-    }
-    encryptedFilesSaveTimer = setTimeout(() => {
-        encryptedFilesSaveTimer = undefined;
-        const getter = encryptedFilesSaveGetter;
-        encryptedFilesSaveGetter = undefined;
-        if (!getter) {
-            return;
-        }
-        void enqueueEncryptedFilesPersist(getter);
-    }, ENCRYPTED_FILES_SAVE_DEBOUNCE_MS);
-};
-
-/** Flush any pending debounced library encrypt immediately (logout / hide). */
-const flushScheduledEncryptedFilesSave = (): Promise<void> => {
-    if (encryptedFilesSaveTimer !== undefined) {
-        clearTimeout(encryptedFilesSaveTimer);
-        encryptedFilesSaveTimer = undefined;
-    }
-    const getter = encryptedFilesSaveGetter;
-    encryptedFilesSaveGetter = undefined;
-    if (!getter) {
-        return encryptedFilesPersistChain;
-    }
-    return enqueueEncryptedFilesPersist(getter);
+    encryptedFilesSaver.schedule(getAllFiles);
 };
 
 /**
@@ -1920,8 +1891,8 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
 
     reset: (): void => {
         // Prefer flush over cancel — callers that need durability await
-        // flushAllDurableState before reset (logout/lock).
-        void flushScheduledEncryptedFilesSave();
+        // flushAll before reset (logout/lock).
+        void encryptedFilesSaver.flush();
         // Uploads still waiting to commit belong to the session being closed.
         clearTimeout(uploadedFilesCommitTimer);
         uploadedFilesCommitTimer = undefined;
@@ -1933,18 +1904,6 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
 
 export const useLibraryStore = create<LibraryState>(createLibraryStore);
 
-/** Flush debounced encrypted library cache (page hide / before unload). */
-export const flushLibraryCachePersist = (): Promise<void> =>
-    flushScheduledEncryptedFilesSave();
-
-if (typeof window !== "undefined") {
-    const flushOnHide = (): void => {
-        void flushScheduledEncryptedFilesSave();
-    };
-    window.addEventListener("pagehide", flushOnHide);
-    document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "hidden") {
-            flushOnHide();
-        }
-    });
-}
+registerReset(() => {
+    useLibraryStore.getState().reset();
+});

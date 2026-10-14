@@ -2,6 +2,8 @@ import { create } from "zustand";
 import type { StateCreator } from "zustand";
 import type { PersistedTagIndex } from "@/db/kv";
 import { saveKv } from "@/db/kv";
+import { createDebouncedPersist } from "@/lib/debounced-persist";
+import { registerFlush, registerReset } from "@/lib/session-lifecycle";
 import { enqueueOrganizerConfigPatch } from "@/lib/organizer-config-save-queue";
 import {
     configFromPersisted,
@@ -12,14 +14,16 @@ import {
 } from "@/lib/tag-types";
 import {
     buildTagIndex,
-    emptyTagFilter,
     extractUserTags,
     isSystemTag,
+    tagIndexToMaps,
+} from "@/lib/tags";
+import {
+    emptyTagFilter,
     isTagFilterActive,
     isTagFilterGroup,
     isReservedTag,
     newTagFilterNodeId,
-    tagIndexToMaps,
     type TagFilterGroup,
     type TagFilterJoin,
     type TagFilterMode,
@@ -30,7 +34,7 @@ import {
     type RotatedScope,
     type FavoritesScope,
     type MediaScope,
-} from "@/lib/tags";
+} from "@/lib/tag-filter";
 import { normalizeTagName } from "@/lib/tag-writes";
 import {
     removeTagFromTree,
@@ -212,29 +216,32 @@ const indexFromMaps = (
 
 const TAG_INDEX_SAVE_DEBOUNCE_MS = 1500;
 
-let tagIndexSaveTimer: ReturnType<typeof setTimeout> | undefined;
-let tagIndexPersistChain: Promise<void> = Promise.resolve();
-/** Latest index maps; serialized only when the debounced flush runs. */
-let pendingTagIndexMaps: {
+interface TagIndexSnapshot {
     tags: string[];
     fileIdsByTag: Map<string, Set<number>>;
-} | undefined;
+}
 
-const enqueueTagIndexPersist = (index: PersistedTagIndex): Promise<void> => {
-    tagIndexPersistChain = tagIndexPersistChain
-        .then(() => saveKv("tagIndex", index))
-        .catch((error: unknown) => {
+/** Latest snapshot wins; it is serialized only when the write runs. */
+const tagIndexSaver = createDebouncedPersist(
+    async ({ tags, fileIdsByTag }: TagIndexSnapshot): Promise<void> => {
+        try {
+            await saveKv("tagIndex", indexFromMaps(tags, fileIdsByTag));
+        } catch (error) {
             console.warn("Tag index persist failed", error);
-        });
-    return tagIndexPersistChain;
-};
+        }
+    },
+    TAG_INDEX_SAVE_DEBOUNCE_MS,
+);
+
+registerFlush(tagIndexSaver.flush);
 
 /** Immediate encrypt+IDB write (rebuild / structural renames). */
 const persistCurrentIndexNow = (
     tags: string[],
     fileIdsByTag: Map<string, Set<number>>,
 ): void => {
-    void enqueueTagIndexPersist(indexFromMaps(tags, fileIdsByTag));
+    tagIndexSaver.schedule({ tags, fileIdsByTag });
+    void tagIndexSaver.flush();
 };
 
 /**
@@ -245,44 +252,7 @@ const schedulePersistCurrentIndex = (
     tags: string[],
     fileIdsByTag: Map<string, Set<number>>,
 ): void => {
-    pendingTagIndexMaps = { tags, fileIdsByTag };
-    if (tagIndexSaveTimer !== undefined) {
-        clearTimeout(tagIndexSaveTimer);
-    }
-    tagIndexSaveTimer = setTimeout(() => {
-        tagIndexSaveTimer = undefined;
-        const pending = pendingTagIndexMaps;
-        pendingTagIndexMaps = undefined;
-        if (!pending) {
-            return;
-        }
-        void enqueueTagIndexPersist(
-            indexFromMaps(pending.tags, pending.fileIdsByTag),
-        );
-    }, TAG_INDEX_SAVE_DEBOUNCE_MS);
-};
-
-const flushScheduledTagIndexSave = (): Promise<void> => {
-    if (tagIndexSaveTimer !== undefined) {
-        clearTimeout(tagIndexSaveTimer);
-        tagIndexSaveTimer = undefined;
-    }
-    const pending = pendingTagIndexMaps;
-    pendingTagIndexMaps = undefined;
-    if (!pending) {
-        return tagIndexPersistChain;
-    }
-    return enqueueTagIndexPersist(
-        indexFromMaps(pending.tags, pending.fileIdsByTag),
-    );
-};
-
-const cancelScheduledTagIndexSave = (): void => {
-    if (tagIndexSaveTimer !== undefined) {
-        clearTimeout(tagIndexSaveTimer);
-        tagIndexSaveTimer = undefined;
-    }
-    pendingTagIndexMaps = undefined;
+    tagIndexSaver.schedule({ tags, fileIdsByTag });
 };
 
 /**
@@ -1391,7 +1361,7 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
     },
 
     reset: (): void => {
-        cancelScheduledTagIndexSave();
+        tagIndexSaver.cancel();
         set({
             ...initialTagState,
             tagTypes: [DEFAULT_TAG_TYPE],
@@ -1405,18 +1375,6 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
 
 export const useTagStore = create<TagState>(createTagStore);
 
-/** Flush debounced tag-index encrypt (page hide / before unload). */
-export const flushTagIndexPersist = (): Promise<void> =>
-    flushScheduledTagIndexSave();
-
-if (typeof window !== "undefined") {
-    const flushOnHide = (): void => {
-        void flushScheduledTagIndexSave();
-    };
-    window.addEventListener("pagehide", flushOnHide);
-    document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "hidden") {
-            flushOnHide();
-        }
-    });
-}
+registerReset(() => {
+    useTagStore.getState().reset();
+});

@@ -1,6 +1,6 @@
 # mobileapp simplification plan
 
-**Status:** Phases 0–1 implemented locally (APP_VERSION 0.3.195, uncommitted); Phase 2 onward not started. Written 2026-10-14 against `ntphotos` @ `81946e8e48` (APP_VERSION 0.3.194).
+**Status:** Phases 0–1 committed (`f41698ef32`, APP_VERSION 0.3.195). Phase 2 in progress: §4.1/3.6/3.7, §4.4/4.8, §4.3 and §4.5 done (0.3.196); §4.7 and the remaining §4 findings next. Written 2026-10-14 against `ntphotos` @ `81946e8e48` (APP_VERSION 0.3.194).
 
 **Purpose:** make `mobileapp/` smaller and easier to change safely, without changing what the app does. The work covers:
 - removing duplicated mechanisms
@@ -205,11 +205,11 @@ Each phase leaves the app shippable. Phases 0–1 are mostly independent PRs tha
 - [x] §4.2 Typed kv.
 
 ### Phase 2: Data-layer mechanisms (medium risk, crypto-adjacent; run the full test suite)
-- [ ] §4.1 + §3.6 + §3.7 `createOutbox`, `createDebouncedPersist`, `session-lifecycle` registries (Reconciliation 5).
-- [ ] §4.4 + §4.8 `HTTPError`, `retryWithBackoff`, the two-layer tag write, `putMetadata` / `encryptPubMagic`, and the core→lib layering fix (D3).
-- [ ] §4.3 `createLruBlobStore`, with thumbnails stored as ArrayBuffer (dbVersion bump).
+- [x] §4.1 + §3.6 + §3.7 `createOutbox`, `createDebouncedPersist`, `session-lifecycle` registries (Reconciliation 5).
+- [x] §4.4 + §4.8 `HTTPError`, `retryWithBackoff`, the two-layer tag write, `putMetadata` / `encryptPubMagic`, and the core→lib layering fix (D3).
+- [x] §4.3 `createLruBlobStore`, with thumbnails stored as ArrayBuffer (dbVersion bump).
 - [ ] §4.7 + §3.3c `outbox-runner`, delete tag-batch, `queueTagMutation` (Reconciliation 6), and move the runner context out of the bootstrap hook.
-- [ ] §4.5 `SCOPES` table, the tag-filter `ctx` and single-pass counts; split tags.ts into tags.ts and tag-filter.ts.
+- [x] §4.5 `SCOPES` table, the tag-filter `ctx` and single-pass counts; split tags.ts into tags.ts and tag-filter.ts.
 - [ ] Remaining §4 findings: sequential→parallel IDB work, favourite derive, pull-files batching, and view-sessions aggregates.
 
 ### Phase 3: Stores and jobs (medium risk)

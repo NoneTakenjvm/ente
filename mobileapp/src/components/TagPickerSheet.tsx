@@ -33,7 +33,8 @@ import {
     type TagPreset,
 } from "@/lib/tag-presets";
 import { normalizeTagName } from "@/lib/tag-writes";
-import { isReservedTag, tagFileCount } from "@/lib/tags";
+import { tagFileCount } from "@/lib/tags";
+import { isReservedTag } from "@/lib/tag-filter";
 import { cn } from "@/lib/utils";
 import { useCoarsePointer } from "@/hooks/use-coarse-pointer";
 import { useVisualViewportSheetLayout } from "@/hooks/use-visual-viewport-sheet-layout";

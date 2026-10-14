@@ -7,8 +7,9 @@ import {
 import {
     emptyTagFilter,
     newTagFilterNodeId,
+    type TagFilterNode,
     type TagFilterSelection,
-} from "@/lib/tags";
+} from "@/lib/tag-filter";
 
 describe("serializeTagFilter / hydrateTagFilter", () => {
     it("round-trips an empty filter", () => {
@@ -144,5 +145,73 @@ describe("createQueryAlbum", () => {
         expect(album.name).toBe("Summer");
         expect(album.query.tagScope).toBe("all");
         expect(album.id).toMatch(/^album-/);
+    });
+
+    it("serializes to the same persisted shape as the field-by-field serializer", () => {
+        const legacySerializeNode = (node: TagFilterNode): unknown => {
+            if (node.kind === "clause") {
+                return { kind: "clause", tag: node.tag, mode: node.mode };
+            }
+            if (node.kind === "kit") {
+                return {
+                    kind: "kit",
+                    presetId: node.presetId,
+                    name: node.name,
+                    tags: [...node.tags],
+                    mode: node.mode,
+                };
+            }
+            return {
+                kind: "group",
+                op: node.op,
+                children: node.children.map(legacySerializeNode),
+            };
+        };
+        const filter: TagFilterSelection = {
+            tagScope: "tagged",
+            favoritesScope: "not-favorites",
+            mediaScope: "video",
+            croppedScope: "not-cropped",
+            rotatedScope: "rotated",
+            root: {
+                kind: "group",
+                id: newTagFilterNodeId(),
+                op: "and",
+                children: [
+                    {
+                        kind: "clause",
+                        id: newTagFilterNodeId(),
+                        tag: "beach",
+                        mode: "exclude",
+                    },
+                    {
+                        kind: "group",
+                        id: newTagFilterNodeId(),
+                        op: "only",
+                        children: [
+                            {
+                                kind: "kit",
+                                id: newTagFilterNodeId(),
+                                presetId: "k1",
+                                name: "Beach",
+                                tags: ["sand", "sea"],
+                                mode: "include",
+                            },
+                        ],
+                    },
+                ],
+            },
+        };
+        const legacy = {
+            tagScope: filter.tagScope,
+            favoritesScope: filter.favoritesScope,
+            mediaScope: filter.mediaScope,
+            croppedScope: filter.croppedScope,
+            rotatedScope: filter.rotatedScope,
+            root: legacySerializeNode(filter.root),
+        };
+        expect(JSON.stringify(serializeTagFilter(filter))).toBe(
+            JSON.stringify(legacy),
+        );
     });
 });

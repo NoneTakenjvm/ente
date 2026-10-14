@@ -1,6 +1,6 @@
 import { deleteDB, openDB, type IDBPDatabase } from "idb";
 
-const dbVersion = 9;
+const dbVersion = 10;
 
 export type KvKey =
     | "collections" |
@@ -25,7 +25,7 @@ interface KvRecord {
 
 export interface ThumbnailRecord {
     fileId: number;
-    encryptedData: string;
+    encryptedData: ArrayBuffer;
     decryptionHeader: string;
     /** Ciphertext byte length. */
     byteSize: number;
@@ -178,6 +178,10 @@ const openOrganizerDB = (userId: number): Promise<IDBPDatabase<OrganizerDB>> =>
                 void transaction.objectStore("meta").delete("file-shards-meta");
                 void transaction.objectStore("thumbnails").clear();
                 void transaction.objectStore("fileCiphertexts").clear();
+            }
+            // v10 stores thumbnail ciphertext as ArrayBuffer, not base64.
+            if (oldVersion > 0 && oldVersion < 10) {
+                void transaction.objectStore("thumbnails").clear();
             }
         },
     });

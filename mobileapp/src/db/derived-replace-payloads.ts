@@ -1,5 +1,5 @@
-import { decryptBlobBytes, encryptBlobBytes, toB64 } from "ente-base/crypto";
 import { getSessionCacheKey } from "@/lib/cache-key";
+import { unwrapBytes, wrapBytes } from "./blob-store";
 import {
     getOrganizerDB,
     hasOrganizerDB,
@@ -17,12 +17,11 @@ export const putDerivedReplacePayload = async (
     if (!hasOrganizerDB()) {
         return;
     }
-    const wrapped = await encryptBlobBytes(bytes, getSessionCacheKey());
+    const wrapped = await wrapBytes(bytes, getSessionCacheKey());
     const db = await getOrganizerDB();
     const record: DerivedReplacePayloadRecord = {
         fileId,
-        encryptedData: wrapped.encryptedData.slice().buffer,
-        decryptionHeader: await toB64(wrapped.decryptionHeader),
+        ...wrapped,
         byteSize: bytes.byteLength,
     };
     await db.put("derivedReplacePayloads", record);
@@ -50,13 +49,7 @@ export const getDerivedReplacePayload = async (
         return undefined;
     }
     try {
-        return await decryptBlobBytes(
-            {
-                encryptedData: new Uint8Array(record.encryptedData),
-                decryptionHeader: record.decryptionHeader,
-            },
-            cacheKey,
-        );
+        return await unwrapBytes(record, cacheKey);
     } catch {
         await db.delete("derivedReplacePayloads", fileId);
         return undefined;

@@ -3,16 +3,14 @@ import type { EnteFile } from "ente-media/file";
 import {
     addOrCopyToCollection,
     addToCollection,
+    hashAndTypeKey,
     removeFromOwnCollection,
+    userOwnedEquivalentFilesByHashAndType,
     type CollectionFilesContext,
 } from "./collection-files";
 import { createRemoteCollection } from "./collections";
 import type { HttpClient } from "./http";
-import {
-    findUserFavoritesCollection,
-    hashAndTypeKey,
-    userOwnedEquivalentFilesByHashAndType,
-} from "@/lib/favorites";
+import { findUserFavoritesCollection } from "@/lib/favorites";
 import type { CoreSession } from "../session";
 
 const favoritesCollectionName = "Favorites";

@@ -9,124 +9,94 @@ describe("durable-flush", () => {
         vi.restoreAllMocks();
     });
 
-    it("hasPendingDurableOutbox is false when all outboxes are empty", async () => {
+    const mockOutboxes = (tagEntries: unknown[]): void => {
         vi.doMock("@/lib/tag-outbox", () => ({
-            flushTagOutboxPersist: vi.fn(async () => undefined),
-            getTagOutboxEntries: () => [],
+            getTagOutboxEntries: () => tagEntries,
         }));
         vi.doMock("@/lib/favorite-outbox", () => ({
-            flushFavoriteOutboxPersist: vi.fn(async () => undefined),
             getFavoriteOutboxEntries: () => [],
         }));
-        vi.doMock("@/lib/favorite-membership", () => ({
-            flushFavoriteMembershipPersist: vi.fn(async () => undefined),
-        }));
         vi.doMock("@/lib/visibility-outbox", () => ({
-            flushVisibilityOutboxPersist: vi.fn(async () => undefined),
             getVisibilityOutboxEntries: () => [],
         }));
         vi.doMock("@/lib/derived-replace-outbox", () => ({
-            flushDerivedReplaceOutboxPersist: vi.fn(async () => undefined),
             getDerivedReplaceOutboxEntries: () => [],
         }));
         vi.doMock("@/lib/organizer-config-save-queue", () => ({
-            flushOrganizerConfigQueueIfReady: vi.fn(async () => undefined),
             hasPendingOrganizerConfigPatch: () => false,
         }));
+    };
 
+    it("hasPendingDurableOutbox is false when all outboxes are empty", async () => {
+        mockOutboxes([]);
         const { hasPendingDurableOutbox } = await import("@/lib/durable-flush");
         expect(hasPendingDurableOutbox()).toBe(false);
     });
 
     it("hasPendingDurableOutbox is true when any outbox has entries", async () => {
-        vi.doMock("@/lib/tag-outbox", () => ({
-            flushTagOutboxPersist: vi.fn(async () => undefined),
-            getTagOutboxEntries: () => [{ fileId: 1, intendedTags: ["a"], enqueuedAt: 1 }],
-        }));
-        vi.doMock("@/lib/favorite-outbox", () => ({
-            flushFavoriteOutboxPersist: vi.fn(async () => undefined),
-            getFavoriteOutboxEntries: () => [],
-        }));
-        vi.doMock("@/lib/favorite-membership", () => ({
-            flushFavoriteMembershipPersist: vi.fn(async () => undefined),
-        }));
-        vi.doMock("@/lib/visibility-outbox", () => ({
-            flushVisibilityOutboxPersist: vi.fn(async () => undefined),
-            getVisibilityOutboxEntries: () => [],
-        }));
-        vi.doMock("@/lib/derived-replace-outbox", () => ({
-            flushDerivedReplaceOutboxPersist: vi.fn(async () => undefined),
-            getDerivedReplaceOutboxEntries: () => [],
-        }));
-        vi.doMock("@/lib/organizer-config-save-queue", () => ({
-            flushOrganizerConfigQueueIfReady: vi.fn(async () => undefined),
-            hasPendingOrganizerConfigPatch: () => false,
-        }));
-
+        mockOutboxes([{ fileId: 1, intendedTags: ["a"], enqueuedAt: 1 }]);
         const { hasPendingDurableOutbox } = await import("@/lib/durable-flush");
         expect(hasPendingDurableOutbox()).toBe(true);
     });
+});
 
-    it("flushAllDurableState awaits outboxes then library cache", async () => {
-        const flushTag = vi.fn(async () => undefined);
-        const flushFavorite = vi.fn(async () => undefined);
-        const flushMembership = vi.fn(async () => undefined);
-        const flushVisibility = vi.fn(async () => undefined);
-        const flushDerived = vi.fn(async () => undefined);
-        const flushOrganizer = vi.fn(async () => undefined);
-        const flushLibrary = vi.fn(async () => undefined);
-        const flushTagIndex = vi.fn(async () => undefined);
+describe("session-lifecycle", () => {
+    beforeEach(() => {
+        vi.resetModules();
+    });
 
-        vi.doMock("@/lib/tag-outbox", () => ({
-            flushTagOutboxPersist: flushTag,
-            getTagOutboxEntries: () => [],
-        }));
-        vi.doMock("@/lib/favorite-outbox", () => ({
-            flushFavoriteOutboxPersist: flushFavorite,
-            getFavoriteOutboxEntries: () => [],
-        }));
-        vi.doMock("@/lib/favorite-membership", () => ({
-            flushFavoriteMembershipPersist: flushMembership,
-        }));
-        vi.doMock("@/lib/visibility-outbox", () => ({
-            flushVisibilityOutboxPersist: flushVisibility,
-            getVisibilityOutboxEntries: () => [],
-        }));
-        vi.doMock("@/lib/derived-replace-outbox", () => ({
-            flushDerivedReplaceOutboxPersist: flushDerived,
-            getDerivedReplaceOutboxEntries: () => [],
-        }));
-        vi.doMock("@/lib/organizer-config-save-queue", () => ({
-            flushOrganizerConfigQueueIfReady: flushOrganizer,
-            hasPendingOrganizerConfigPatch: () => false,
-        }));
-        vi.doMock("@/stores/library-store", () => ({
-            flushLibraryCachePersist: flushLibrary,
-        }));
-        vi.doMock("@/stores/tag-store", () => ({
-            flushTagIndexPersist: flushTagIndex,
-        }));
-        vi.doMock("@/db/thumbnails", () => ({
-            flushThumbnailLruTouches: vi.fn(async () => undefined),
-        }));
-        vi.doMock("@/db/file-ciphertexts", () => ({
-            flushFileCiphertextLruTouches: vi.fn(async () => undefined),
-        }));
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it("flushAll runs every registered flush even when one fails", async () => {
         vi.doMock("@/lib/cache-key", () => ({
             hasSessionCacheKey: () => true,
         }));
+        const { registerFlush, flushAll } = await import(
+            "@/lib/session-lifecycle"
+        );
+        const failing = vi.fn(async () => {
+            throw new Error("boom");
+        });
+        const passing = vi.fn(async () => undefined);
+        registerFlush(failing);
+        registerFlush(passing);
 
-        const { flushAllDurableState } = await import("@/lib/durable-flush");
-        await flushAllDurableState();
+        await expect(flushAll()).rejects.toThrow("boom");
+        expect(failing).toHaveBeenCalledOnce();
+        expect(passing).toHaveBeenCalledOnce();
+    });
 
-        expect(flushTag).toHaveBeenCalledOnce();
-        expect(flushFavorite).toHaveBeenCalledOnce();
-        expect(flushMembership).toHaveBeenCalledOnce();
-        expect(flushVisibility).toHaveBeenCalledOnce();
-        expect(flushDerived).toHaveBeenCalledOnce();
-        expect(flushOrganizer).toHaveBeenCalledOnce();
-        expect(flushLibrary).toHaveBeenCalledOnce();
-        expect(flushTagIndex).toHaveBeenCalledOnce();
+    it("flushAll no-ops without a session cache key", async () => {
+        vi.doMock("@/lib/cache-key", () => ({
+            hasSessionCacheKey: () => false,
+        }));
+        const { registerFlush, flushAll } = await import(
+            "@/lib/session-lifecycle"
+        );
+        const flush = vi.fn(async () => undefined);
+        registerFlush(flush);
+
+        await flushAll();
+        expect(flush).not.toHaveBeenCalled();
+    });
+
+    it("runSessionResets runs every reset even when one throws", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { registerReset, runSessionResets } = await import(
+            "@/lib/session-lifecycle"
+        );
+        const throwing = vi.fn(() => {
+            throw new Error("boom");
+        });
+        const other = vi.fn();
+        registerReset(throwing);
+        registerReset(other);
+
+        runSessionResets();
+        expect(throwing).toHaveBeenCalledOnce();
+        expect(other).toHaveBeenCalledOnce();
     });
 });
 

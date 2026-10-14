@@ -1,7 +1,7 @@
 import { RemoteEnteFile } from "ente-media/file";
 import { z } from "zod";
 import type { HttpClient } from "../api/http";
-import { wait } from "ente-utils/promise";
+import { isTransientError, retryWithBackoff } from "../api/http";
 
 const ObjectUploadURL = z.object({
     objectKey: z.string(),
@@ -123,28 +123,10 @@ export const fetchUploadURLWithMetadata = async (
     return ObjectUploadURL.parse(await response.json());
 };
 
-const retryableStatus = (status: number): boolean =>
-    status === 429 || status >= 500;
-
-const isRetryableError = (error: unknown): boolean => {
-    if (error instanceof DOMException && error.name === "AbortError") {
-        return false;
-    }
-    const message = error instanceof Error ? error.message : String(error);
-    if (/upload cancelled|upload timed out/i.test(message)) {
-        return false;
-    }
-    // A network-level failure (TypeError from fetch), or a retryable status
-    // wrapped by ensureOk's `HTTP <status>` message.
-    if (error instanceof TypeError) {
-        return true;
-    }
-    if (/failed to fetch|network|load failed/i.test(message)) {
-        return true;
-    }
-    const statusMatch = /^HTTP (\d{3})/.exec(message);
-    return statusMatch ? retryableStatus(Number(statusMatch[1]!)) : false;
-};
+/** Transient failures, except our own request timeout (also a `TypeError`). */
+const isRetryableUploadError = (error: unknown): boolean =>
+    !(error instanceof TypeError && error.message === "Upload timed out") &&
+    isTransientError(error);
 
 /**
  * Retry {@link request} on transient failures (5xx, 429, network errors) with
@@ -155,26 +137,15 @@ const isRetryableError = (error: unknown): boolean => {
  * finalize is idempotent on the server (it reuses an existing file with the
  * same object keys). Errors are only thrown once retries are exhausted.
  */
-export const withUploadRetry = async <T>(
+export const withUploadRetry = <T>(
     request: () => Promise<T>,
     maxAttempts = 7,
-): Promise<T> => {
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        try {
-            return await request();
-        } catch (error) {
-            lastError = error;
-            if (!isRetryableError(error) || attempt >= maxAttempts) {
-                throw error;
-            }
-            // Waits 1s, 2s, 4s, then 8s for the rest: about 31s in total.
-            const delayMs = Math.min(8_000, 1_000 * 2 ** (attempt - 1));
-            await wait(delayMs);
-        }
-    }
-    throw lastError;
-};
+): Promise<T> =>
+    // Waits 1s, 2s, 4s, then 8s for the rest: about 31s in total.
+    retryWithBackoff(request, {
+        attempts: maxAttempts,
+        isRetryable: isRetryableUploadError,
+    });
 
 const mapAbortError = (error: unknown): never => {
     if (
@@ -273,6 +244,8 @@ export const putFile = async (
                     status: xhr.status,
                     statusText: xhr.statusText,
                 });
+                // A constructed Response has no url, which HTTPError needs.
+                Object.defineProperty(res, "url", { value: uploadURL });
                 try {
                     http.ensureOk(res);
                     onProgress(size, size);

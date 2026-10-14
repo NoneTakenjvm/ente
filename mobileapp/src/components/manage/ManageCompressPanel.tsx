@@ -57,7 +57,7 @@ import {
     GROUPED_TAG_FILTER_DROPDOWN_HINT,
     isFlatTagFilterRoot,
     isTagFilterActive,
-} from "@/lib/tags";
+} from "@/lib/tag-filter";
 import { VIDEO_COMPRESS_BATCH_MAX_LONG_EDGE } from "@/lib/transcode/compress-media";
 import { useCompressJobStore } from "@/stores/ui-store";
 import { useFavoritesStore } from "@/stores/favorites-store";

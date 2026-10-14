@@ -1,8 +1,10 @@
 import { create, type StateCreator } from "zustand";
 import { loadKv, saveKv } from "@/db/kv";
 import { hasSessionCacheKey } from "@/lib/cache-key";
+import { createDebouncedPersist } from "@/lib/debounced-persist";
 import { isLocalDevToolsEnabled } from "@/lib/dev-flags";
 import { enqueueOrganizerConfigPatch } from "@/lib/organizer-config-save-queue";
+import { registerFlush, registerReset } from "@/lib/session-lifecycle";
 import {
     beginViewOnSession,
     cloudViewSessionsEqual,
@@ -51,24 +53,16 @@ interface ViewSessionsState {
 }
 
 let openView: OpenViewState | undefined;
-let saveTimer: ReturnType<typeof setTimeout> | undefined;
-let persistChain: Promise<void> = Promise.resolve();
-let pendingLocal: CloudViewSessionsPayload | undefined;
-
-const enqueueLocalPersist = (
+const writeLocalViewSessions = async (
     payload: CloudViewSessionsPayload,
 ): Promise<void> => {
     if (!hasSessionCacheKey()) {
-        return Promise.resolve();
+        return;
     }
-    persistChain = persistChain
-        .catch(() => undefined)
-        .then(() =>
-            saveKv("viewSessions", {
-                sessions: payload.sessions,
-                tombstones: payload.tombstones,
-            }));
-    return persistChain;
+    await saveKv("viewSessions", {
+        sessions: payload.sessions,
+        tombstones: payload.tombstones,
+    });
 };
 
 const enqueueCloudPersist = (payload: CloudViewSessionsPayload): void => {
@@ -80,39 +74,40 @@ const enqueueCloudPersist = (payload: CloudViewSessionsPayload): void => {
     });
 };
 
+const viewSessionsSaver = createDebouncedPersist(
+    ({
+        payload,
+        pushToCloud,
+    }: {
+        payload: CloudViewSessionsPayload;
+        pushToCloud: boolean;
+    }): Promise<void> => {
+        if (pushToCloud) {
+            enqueueCloudPersist(payload);
+        }
+        return writeLocalViewSessions(payload);
+    },
+    VIEW_SESSIONS_SAVE_DEBOUNCE_MS,
+);
+
+registerFlush(viewSessionsSaver.flush);
+
 const schedulePersist = (
     sessions: ViewSession[],
     tombstones: ViewSessionTombstone[],
 ): void => {
-    const payload = packCloudViewSessions(sessions, tombstones);
-    pendingLocal = payload;
-    if (saveTimer !== undefined) {
-        clearTimeout(saveTimer);
-    }
-    saveTimer = setTimeout(() => {
-        saveTimer = undefined;
-        const pending = pendingLocal;
-        pendingLocal = undefined;
-        if (!pending) {
-            return;
-        }
-        void enqueueLocalPersist(pending);
-        enqueueCloudPersist(pending);
-    }, VIEW_SESSIONS_SAVE_DEBOUNCE_MS);
+    viewSessionsSaver.schedule({
+        payload: packCloudViewSessions(sessions, tombstones),
+        pushToCloud: true,
+    });
 };
 
-const flushPersist = (): Promise<void> => {
-    if (saveTimer !== undefined) {
-        clearTimeout(saveTimer);
-        saveTimer = undefined;
-    }
-    const pending = pendingLocal;
-    pendingLocal = undefined;
-    if (!pending) {
-        return persistChain;
-    }
-    enqueueCloudPersist(pending);
-    return enqueueLocalPersist(pending);
+const persistNow = (
+    payload: CloudViewSessionsPayload,
+    pushToCloud: boolean,
+): void => {
+    viewSessionsSaver.schedule({ payload, pushToCloud });
+    void viewSessionsSaver.flush();
 };
 
 const upsertActiveIntoList = (
@@ -198,10 +193,7 @@ const createViewSessionsStore: StateCreator<ViewSessionsState> = (
             activeSession: nextActive,
             isHydrated: true,
         });
-        void enqueueLocalPersist(merged);
-        if (!cloudViewSessionsEqual(merged, cloudNormalized)) {
-            enqueueCloudPersist(merged);
-        }
+        persistNow(merged, !cloudViewSessionsEqual(merged, cloudNormalized));
         get().ensureActiveSession(Date.now());
     },
 
@@ -337,19 +329,14 @@ const createViewSessionsStore: StateCreator<ViewSessionsState> = (
             activeSession: undefined,
         });
         openView = undefined;
-        void enqueueLocalPersist(packed);
-        enqueueCloudPersist(packed);
+        persistNow(packed, true);
     },
 
     getSessionsForTest: (): ViewSession[] => get().sessions,
 
     reset: (): void => {
         openView = undefined;
-        pendingLocal = undefined;
-        if (saveTimer !== undefined) {
-            clearTimeout(saveTimer);
-            saveTimer = undefined;
-        }
+        viewSessionsSaver.cancel();
         set({
             sessions: [],
             tombstones: [],
@@ -362,6 +349,10 @@ const createViewSessionsStore: StateCreator<ViewSessionsState> = (
 export const useViewSessionsStore = create<ViewSessionsState>(
     createViewSessionsStore,
 );
+
+registerReset(() => {
+    useViewSessionsStore.getState().reset();
+});
 
 const installDevTestHook = (): void => {
     if (!isLocalDevToolsEnabled || typeof window === "undefined") {
@@ -396,10 +387,8 @@ installDevTestHook();
 
 if (typeof document !== "undefined") {
     document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "hidden") {
-            void flushPersist();
-            return;
+        if (document.visibilityState === "visible") {
+            useViewSessionsStore.getState().ensureActiveSession(Date.now());
         }
-        useViewSessionsStore.getState().ensureActiveSession(Date.now());
     });
 }

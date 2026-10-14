@@ -1,6 +1,6 @@
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
-import { metadataHash } from "ente-media/file-metadata";
+import { hashAndTypeKey } from "@/core/api/collection-files";
 import {
     getFavoriteMembershipIds,
     isFavoriteMembershipReady,
@@ -13,38 +13,6 @@ export interface UnsyncedFavoriteUpdate {
     fileHashAndTypeKey?: string;
     isFavorite: boolean;
 }
-
-/**
- * Composite key `${metadataHash}:${fileType}` for content-equivalent files.
- */
-export const hashAndTypeKey = (file: EnteFile): string | undefined => {
-    const hash = metadataHash(file.metadata);
-    if (!hash) {
-        return undefined;
-    }
-    return `${hash}:${file.metadata.fileType}`;
-};
-
-/**
- * Map user-owned files by hash/type key (first match wins).
- */
-export const userOwnedEquivalentFilesByHashAndType = (
-    files: EnteFile[],
-    userId: number,
-): Map<string, EnteFile> => {
-    const equivalents = new Map<string, EnteFile>();
-    for (const file of files) {
-        if (file.ownerID !== userId) {
-            continue;
-        }
-        const key = hashAndTypeKey(file);
-        if (!key || equivalents.has(key)) {
-            continue;
-        }
-        equivalents.set(key, file);
-    }
-    return equivalents;
-};
 
 /**
  * Return the user's own favourites collection, if present.

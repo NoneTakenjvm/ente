@@ -19,7 +19,7 @@ import {
     newTagFilterNodeId,
     type TagFilterClauseNode,
     type TagFilterGroup,
-} from "@/lib/tags";
+} from "@/lib/tag-filter";
 import { andRoot, includeClause } from "@/test-utils/fixtures";
 
 const presenceOff = new Map([["junk", false]]);

@@ -4,7 +4,7 @@ import {
     type PersistedTagFilterNode,
     type QueryAlbum,
 } from "@/lib/query-albums";
-import type { TagFilterGroup } from "@/lib/tags";
+import type { TagFilterGroup } from "@/lib/tag-filter";
 
 const persistedNodeUsesTags = (
     node: PersistedTagFilterNode,

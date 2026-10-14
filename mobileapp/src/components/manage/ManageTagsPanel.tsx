@@ -54,7 +54,7 @@ import {
     type TagKitSuggestion,
 } from "@/lib/tag-presets";
 import { normalizeTagName } from "@/lib/tag-writes";
-import { isReservedTag } from "@/lib/tags";
+import { isReservedTag } from "@/lib/tag-filter";
 import {
     runKitNearnessTune,
     type KitNearnessTuneProgress,

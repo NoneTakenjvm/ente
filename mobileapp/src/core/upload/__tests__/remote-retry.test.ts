@@ -2,6 +2,7 @@
  * @vitest-environment happy-dom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { HTTPError } from "ente-base/http";
 import type { HttpClient } from "@/core/api/http";
 import {
     abortUploadBatch,
@@ -21,11 +22,11 @@ const http = {
     apiOrigin: (): string => "https://api.example.test",
     ensureOk: (res: Response): void => {
         if (!res.ok) {
-            throw new Error(`HTTP ${res.status} for ${res.url}`);
+            throw new HTTPError(res);
         }
     },
     // Mirror the real HttpClient.authFetch: resolve the pre-signed fetch, then
-    // surface non-2xx as an `HTTP <status>` error so retries can key off it.
+    // surface non-2xx as an `HTTPError` so retries can key off it.
     authFetch: async (
         _path: string,
         _params?: Record<string, string>,
@@ -76,11 +77,15 @@ const postRequest: PostEnteFileRequest = {
     metadata: { encryptedData: "md", decryptionHeader: "hd" },
 };
 
-const response = (body: unknown, status = 200): Response =>
-    new Response(JSON.stringify(body), {
+const response = (body: unknown, status = 200): Response => {
+    const res = new Response(JSON.stringify(body), {
         status,
         headers: { "Content-Type": "application/json" },
     });
+    // A constructed Response has no url, which HTTPError needs.
+    Object.defineProperty(res, "url", { value: "https://api.example.test/x" });
+    return res;
+};
 
 afterEach(() => {
     vi.useRealTimers();

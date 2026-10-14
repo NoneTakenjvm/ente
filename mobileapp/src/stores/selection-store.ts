@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { NormalizedCropRect, PendingCrop } from "@/lib/crop-draft";
 import type { RotationDegrees } from "@/lib/rotate";
 import { nextPendingRotation } from "@/lib/rotate-draft";
+import { registerReset } from "@/lib/session-lifecycle";
 
 /** How the stamp tool picks what to apply: a whole kit, or individual tags. */
 export type StampPickMode = "kit" | "tag";
@@ -349,3 +350,7 @@ export const selectedIdSet = (ids: number[]): Set<number> => {
     }
     return idSet;
 };
+
+registerReset(() => {
+    useSelectionStore.getState().reset();
+});

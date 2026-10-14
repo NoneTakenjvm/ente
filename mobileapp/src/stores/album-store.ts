@@ -8,7 +8,8 @@ import {
     type QueryAlbum,
 } from "@/lib/query-albums";
 import { rewriteQueryAlbumTags } from "@/lib/album-tag-rewrite";
-import type { TagFilterGroup, TagFilterSelection } from "@/lib/tags";
+import type { TagFilterGroup, TagFilterSelection } from "@/lib/tag-filter";
+import { registerReset } from "@/lib/session-lifecycle";
 
 interface AlbumState {
     albums: QueryAlbum[];
@@ -124,3 +125,7 @@ const createAlbumStore: StateCreator<AlbumState> = (set, get) => ({
 });
 
 export const useAlbumStore = create<AlbumState>(createAlbumStore);
+
+registerReset(() => {
+    useAlbumStore.getState().reset();
+});

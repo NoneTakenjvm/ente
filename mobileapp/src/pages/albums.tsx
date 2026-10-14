@@ -32,10 +32,7 @@ import { useRequireSession } from "@/hooks/use-require-session";
 import { resolveAlbumCoverFile } from "@/lib/album-cover";
 import { queryAlbumFilter } from "@/lib/query-albums";
 import { dedupeFilesById } from "@/lib/sync/merge-files";
-import {
-    filterFilesByTags,
-    isTagFilterActive,
-} from "@/lib/tags";
+import { filterFilesByTags, isTagFilterActive } from "@/lib/tag-filter";
 import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 import {
     sortFilesByEdit,

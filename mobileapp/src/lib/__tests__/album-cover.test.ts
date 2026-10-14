@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { resolveAlbumCoverFile, validCoverFileIdForMatches } from "@/lib/album-cover";
 import type { QueryAlbum } from "@/lib/query-albums";
 import { serializeTagFilter } from "@/lib/query-albums";
-import { emptyTagFilter } from "@/lib/tags";
+import { emptyTagFilter } from "@/lib/tag-filter";
 import { bareFile } from "@/test-utils/fixtures";
 
 const album = (coverFileId?: number): QueryAlbum => ({

@@ -9,7 +9,7 @@ import type {
     TagFilterMode,
     TagFilterSelection,
     TagScope,
-} from "@/lib/tags";
+} from "@/lib/tag-filter";
 import {
     type TagFilterTarget,
     useTagStore,

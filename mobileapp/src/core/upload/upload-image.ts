@@ -27,8 +27,7 @@ import {
     putEnteFileUpdate,
     type PostEnteFileRequest,
 } from "./remote";
-import { updatePublicMetadata } from "../metadata";
-import { fileUploadSortTime } from "@/lib/sort-files";
+import { fileUploadSortTime, updatePublicMetadata } from "../metadata";
 import { buildOrganizerUpdate } from "@/lib/tag-writes";
 
 interface UploadJpegOptions {

@@ -4,7 +4,7 @@ import {
     newTagFilterNodeId,
     type TagFilterClauseNode,
     type TagFilterGroup,
-} from "@/lib/tags";
+} from "@/lib/tag-filter";
 
 /** A minimal {@link EnteFile}; `overrides` replace top-level fields wholesale. */
 export const stubFile = (overrides: Partial<EnteFile> = {}): EnteFile =>

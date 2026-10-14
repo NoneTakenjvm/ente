@@ -22,12 +22,12 @@ import type {
     RotatedScope,
     TagFilterSelection,
     TagScope,
-} from "@/lib/tags";
+} from "@/lib/tag-filter";
 import {
     describeTagFilter,
     emptyTagFilter,
     isTagFilterActive,
-} from "@/lib/tags";
+} from "@/lib/tag-filter";
 import type { ViewportFitSort } from "@/lib/viewport-fit";
 import type { ImageQualitySort } from "@/lib/image-quality";
 import type { ImageSizeSort } from "@/lib/image-size-sort";

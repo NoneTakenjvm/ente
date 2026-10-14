@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { EnteFile } from "ente-media/file";
 import {
     fileEditSortTime,
-    fileUploadSortTime,
     remapSortedFilesIfSameIds,
     sortFilesByEdit,
     sortFilesByUpload,
 } from "@/lib/sort-files";
+import { fileUploadSortTime } from "@/core/metadata";
 import { stubFile } from "@/test-utils/fixtures";
 
 describe("fileUploadSortTime", () => {

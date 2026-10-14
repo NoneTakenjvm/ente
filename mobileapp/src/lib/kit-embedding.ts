@@ -1,3 +1,4 @@
+import { registerReset } from "@/lib/session-lifecycle";
 /**
  * On-device CLIP image embeddings for kit nearness ranking.
  *
@@ -732,3 +733,5 @@ export const terminateKitEmbeddingWorker = (): void => {
     batchFallbackReason = undefined;
     webGpuSkipReason = undefined;
 };
+
+registerReset(terminateKitEmbeddingWorker);

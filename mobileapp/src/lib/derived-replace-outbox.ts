@@ -1,9 +1,10 @@
-import { loadKv, saveKv, type PersistedDerivedReplaceOutboxEntry } from "@/db/kv";
+import type { PersistedDerivedReplaceOutboxEntry } from "@/db/kv";
 import {
     deleteDerivedReplacePayload,
     getDerivedReplacePayload,
     putDerivedReplacePayload,
 } from "@/db/derived-replace-payloads";
+import { createOutbox } from "@/lib/outbox";
 
 export type DerivedReplaceKind =
     | "crop" |
@@ -20,9 +21,7 @@ export interface DerivedReplaceOutboxEntry {
     enqueuedAt: number;
 }
 
-const outboxByFileId = new Map<number, DerivedReplaceOutboxEntry>();
-let hydrated = false;
-let persistChain: Promise<void> = Promise.resolve();
+let migratedLegacy = false;
 
 const base64ToBytes = (base64: string): Uint8Array => {
     const binary = atob(base64);
@@ -33,27 +32,15 @@ const base64ToBytes = (base64: string): Uint8Array => {
     return bytes;
 };
 
-const flushToDisk = async (): Promise<void> => {
-    const entries: PersistedDerivedReplaceOutboxEntry[] = [
-        ...outboxByFileId.values(),
-    ];
-    await saveKv("derivedReplaceOutbox", entries);
-};
-
-const persist = (): Promise<void> => {
-    persistChain = persistChain
-        .then(() => flushToDisk())
-        .catch((error: unknown) => {
-            console.warn("Derived replace outbox persist failed", error);
-        });
-    return persistChain;
-};
-
-export const hydrateDerivedReplaceOutbox = async (): Promise<void> => {
-    const persisted = await loadKv("derivedReplaceOutbox");
-    outboxByFileId.clear();
-    let migratedLegacy = false;
-    for (const entry of persisted ?? []) {
+/**
+ * Move legacy inline `bytesBase64` payloads into the payload store and drop
+ * the field. An entry whose payload cannot be moved is dropped.
+ */
+const normalizePersistedEntries = async (
+    persisted: DerivedReplaceOutboxEntry[],
+): Promise<DerivedReplaceOutboxEntry[]> => {
+    const entries: DerivedReplaceOutboxEntry[] = [];
+    for (const entry of persisted as PersistedDerivedReplaceOutboxEntry[]) {
         const legacyBase64 =
             "bytesBase64" in entry && typeof entry.bytesBase64 === "string" ?
                 entry.bytesBase64 :
@@ -69,7 +56,7 @@ export const hydrateDerivedReplaceOutbox = async (): Promise<void> => {
                 continue;
             }
         }
-        outboxByFileId.set(entry.fileId, {
+        entries.push({
             fileId: entry.fileId,
             width: entry.width,
             height: entry.height,
@@ -77,20 +64,25 @@ export const hydrateDerivedReplaceOutbox = async (): Promise<void> => {
             enqueuedAt: entry.enqueuedAt,
         });
     }
-    hydrated = true;
+    return entries;
+};
+
+const outbox = createOutbox<DerivedReplaceOutboxEntry, number>({
+    kvKey: "derivedReplaceOutbox",
+    keyOf: (entry) => entry.fileId,
+    label: "Derived replace outbox",
+    normalize: normalizePersistedEntries,
+});
+
+export const hydrateDerivedReplaceOutbox = async (): Promise<void> => {
+    await outbox.hydrate();
     if (migratedLegacy) {
-        await persist();
+        migratedLegacy = false;
+        await outbox.persist();
     }
 };
 
-const ensureDerivedReplaceOutboxHydrated = async (): Promise<void> => {
-    if (hydrated) {
-        return;
-    }
-    await hydrateDerivedReplaceOutbox();
-};
-
-export const isDerivedReplaceOutboxHydrated = (): boolean => hydrated;
+export const isDerivedReplaceOutboxHydrated = outbox.isHydrated;
 
 /**
  * Queue or replace the pending derived replacement for a file.
@@ -106,18 +98,16 @@ export const upsertDerivedReplaceOutboxEntry = async (
     height: number,
     kind: DerivedReplaceKind,
 ): Promise<number> => {
-    if (!hydrated) {
-        await hydrateDerivedReplaceOutbox();
-    }
+    await hydrateDerivedReplaceOutbox();
     // Set the entry first so an older save finishing during the payload write
     // sees a newer token and leaves this entry and payload alone.
     const enqueuedAt = Math.max(
         Date.now(),
-        (outboxByFileId.get(fileId)?.enqueuedAt ?? 0) + 1,
+        (outbox.get(fileId)?.enqueuedAt ?? 0) + 1,
     );
-    outboxByFileId.set(fileId, { fileId, width, height, kind, enqueuedAt });
+    outbox.put({ fileId, width, height, kind, enqueuedAt });
     await putDerivedReplacePayload(fileId, bytes);
-    await persist();
+    await outbox.persist();
     return enqueuedAt;
 };
 
@@ -134,16 +124,16 @@ export const removeDerivedReplaceOutboxEntries = async (
     if (!fileIds.length) {
         return;
     }
+    const idSet = new Set(fileIds);
+    await outbox.removeWhere((entry) => idSet.has(entry.fileId));
     for (const fileId of fileIds) {
-        outboxByFileId.delete(fileId);
         await deleteDerivedReplacePayload(fileId);
     }
-    await persist();
 };
 
 /**
- * Remove the entry and payload for {@link fileId} unless a newer edit has
- * replaced the entry saved with {@link enqueuedAt}.
+ * Remove the entry and payload for `fileId` unless a newer edit has
+ * replaced the entry saved with `enqueuedAt`.
  *
  * @returns false when a newer entry exists and nothing was removed.
  */
@@ -151,7 +141,7 @@ export const removeDerivedReplaceOutboxEntryIfCurrent = async (
     fileId: number,
     enqueuedAt: number,
 ): Promise<boolean> => {
-    const current = outboxByFileId.get(fileId);
+    const current = outbox.get(fileId);
     if (current && current.enqueuedAt !== enqueuedAt) {
         return false;
     }
@@ -167,29 +157,23 @@ export const remapDerivedReplaceOutboxFileId = async (
     toFileId: number,
 ): Promise<void> => {
     const bytes = await getDerivedReplacePayload(fromFileId);
-    const entry = outboxByFileId.get(fromFileId);
-    if (!entry || !bytes) {
+    if (!outbox.get(fromFileId) || !bytes) {
         return;
     }
     await putDerivedReplacePayload(toFileId, bytes);
-    outboxByFileId.delete(fromFileId);
-    outboxByFileId.set(toFileId, { ...entry, fileId: toFileId });
+    await outbox.remap(fromFileId, toFileId, (entry) => ({
+        ...entry,
+        fileId: toFileId,
+    }));
     await deleteDerivedReplacePayload(fromFileId);
-    await persist();
 };
 
-export const getDerivedReplaceOutboxEntries = (): DerivedReplaceOutboxEntry[] =>
-    [...outboxByFileId.values()];
+export const getDerivedReplaceOutboxEntries = outbox.entries;
 
 /**
  * Persist the in-memory derived-replace outbox meta to encrypted IDB.
  */
-export const flushDerivedReplaceOutboxPersist = (): Promise<void> => {
-    if (!hydrated) {
-        return ensureDerivedReplaceOutboxHydrated().then(() => persist());
-    }
-    return persist();
-};
+export const flushDerivedReplaceOutboxPersist = outbox.flush;
 
 /**
  * Drop the in-memory outbox on lock/logout.
@@ -198,20 +182,4 @@ export const flushDerivedReplaceOutboxPersist = (): Promise<void> => {
  * encrypted payload rows and persisted metadata stay on disk so a queued edit
  * is retried after unlock. Panic deletes the whole organizer DB instead.
  */
-export const clearDerivedReplaceOutbox = (): void => {
-    outboxByFileId.clear();
-    hydrated = false;
-    persistChain = Promise.resolve();
-};
-
-if (typeof window !== "undefined") {
-    const flushOnHide = (): void => {
-        void flushDerivedReplaceOutboxPersist();
-    };
-    window.addEventListener("pagehide", flushOnHide);
-    document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "hidden") {
-            flushOnHide();
-        }
-    });
-}
+export const clearDerivedReplaceOutbox = outbox.clear;

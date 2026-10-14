@@ -3,6 +3,7 @@ import { isOrganizerConfigBootstrapped } from "@/core/organizer-config";
 import type { OrganizerAppConfig } from "@/lib/organizer-config";
 import { mergeCloudViewSessions } from "@/lib/view-sessions";
 import { wait } from "ente-utils/promise";
+import { registerFlush, registerReset } from "@/lib/session-lifecycle";
 
 let pendingPatch: Partial<OrganizerAppConfig> = {};
 let flushing = false;
@@ -101,3 +102,14 @@ export const resetOrganizerConfigSaveQueue = (): void => {
     pendingPatch = {};
     flushing = false;
 };
+
+/** Longest a flush waits on the organizer config PUT (logout and lock await it). */
+const ORGANIZER_FLUSH_WAIT_MS = 5_000;
+
+registerFlush(() =>
+    Promise.race([
+        flushOrganizerConfigQueueIfReady(),
+        new Promise<void>((resolve) =>
+            setTimeout(resolve, ORGANIZER_FLUSH_WAIT_MS)),
+    ]));
+registerReset(resetOrganizerConfigSaveQueue);

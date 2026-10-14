@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { StateCreator } from "zustand";
 import { hasSessionCacheKey } from "@/lib/cache-key";
 import { hydrateQualityIndex } from "@/lib/image-quality-job";
+import { registerReset } from "@/lib/session-lifecycle";
 
 interface QualityIndexState {
     entries: Map<number, number>;
@@ -35,3 +36,7 @@ const createQualityIndexStore: StateCreator<QualityIndexState> = (set) => ({
 export const useQualityIndexStore = create<QualityIndexState>(
     createQualityIndexStore,
 );
+
+registerReset(() => {
+    useQualityIndexStore.getState().reset();
+});

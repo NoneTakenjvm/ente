@@ -1,5 +1,6 @@
 import type { FilePublicMagicMetadataData } from "ente-media/file-metadata";
 import type { EnteFile } from "ente-media/file";
+import { pubMagicVersionForPut } from "@/core/metadata";
 import { extractTags, type OrganizerTagMetadata } from "@/lib/tags";
 export type TagMutator = (currentTags: string[]) => string[];
 
@@ -132,9 +133,7 @@ export const fileWithOrganizerTags = (
     return {
         ...file,
         pubMagicMetadata: {
-            version: file.pubMagicMetadata?.version && file.pubMagicMetadata.version > 0 ?
-                file.pubMagicMetadata.version :
-                1,
+            version: pubMagicVersionForPut(file) ?? 1,
             count: file.pubMagicMetadata?.count ?? 0,
             data: mergedData as FilePublicMagicMetadataData,
         },

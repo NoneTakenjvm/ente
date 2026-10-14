@@ -1,13 +1,13 @@
 import type { EnteFile } from "ente-media/file";
 import type { Collection } from "ente-media/collection";
-import { loadKv, saveKv, type PersistedFavoriteOutboxEntry } from "@/db/kv";
+import { hashAndTypeKey } from "@/core/api/collection-files";
 import {
     deriveFavoriteFileIDs,
-    hashAndTypeKey,
     isFileFavorited,
     type UnsyncedFavoriteUpdate,
     type UnsyncedFavoriteUpdateKey,
 } from "@/lib/favorites";
+import { createOutbox } from "@/lib/outbox";
 
 export interface FavoriteOutboxEntry {
     fileId: number;
@@ -16,79 +16,29 @@ export interface FavoriteOutboxEntry {
     enqueuedAt: number;
 }
 
-const outboxByKey = new Map<string, FavoriteOutboxEntry>();
-let hydrated = false;
-let persistChain: Promise<void> = Promise.resolve();
-let favoriteOutboxHydrateInFlight: Promise<void> | undefined;
-
 export const favoriteOutboxEntryKey = (entry: FavoriteOutboxEntry): string =>
     entry.fileHashAndTypeKey ?? String(entry.fileId);
 
-const toPersisted = (
-    entry: FavoriteOutboxEntry,
-): PersistedFavoriteOutboxEntry => ({
-    fileId: entry.fileId,
-    isFavorite: entry.isFavorite,
-    fileHashAndTypeKey: entry.fileHashAndTypeKey,
-    enqueuedAt: entry.enqueuedAt,
+const outbox = createOutbox<FavoriteOutboxEntry, string>({
+    kvKey: "favoriteOutbox",
+    keyOf: favoriteOutboxEntryKey,
+    label: "Favourite outbox",
+    sameIntent: (current, sent) => current.isFavorite === sent.isFavorite,
 });
-
-const flushFavoriteOutboxToDisk = async (): Promise<void> => {
-    const entries = [...outboxByKey.values()].map(toPersisted);
-    await saveKv("favoriteOutbox", entries);
-};
-
-const persistFavoriteOutbox = (): Promise<void> => {
-    persistChain = persistChain
-        .catch(() => undefined)
-        .then(() => flushFavoriteOutboxToDisk())
-        .catch((error: unknown) => {
-            console.warn("Favourite outbox persist failed", error);
-        });
-    return persistChain;
-};
 
 /**
  * Load the encrypted favourite outbox from IndexedDB into memory.
  */
-export const hydrateFavoriteOutbox = async (): Promise<void> => {
-    if (hydrated) {
-        return;
-    }
-    if (favoriteOutboxHydrateInFlight) {
-        return favoriteOutboxHydrateInFlight;
-    }
-    favoriteOutboxHydrateInFlight = (async () => {
-        const persisted = await loadKv("favoriteOutbox");
-        outboxByKey.clear();
-        for (const entry of persisted ?? []) {
-            outboxByKey.set(favoriteOutboxEntryKey(entry), entry);
-        }
-        hydrated = true;
-    })().finally(() => {
-        favoriteOutboxHydrateInFlight = undefined;
-    });
-    return favoriteOutboxHydrateInFlight;
-};
+export const hydrateFavoriteOutbox = outbox.hydrate;
 
-export const ensureFavoriteOutboxHydrated = async (): Promise<void> => {
-    if (hydrated) {
-        return;
-    }
-    await hydrateFavoriteOutbox();
-};
+export const ensureFavoriteOutboxHydrated = outbox.hydrate;
 
-export const isFavoriteOutboxHydrated = (): boolean => hydrated;
+export const isFavoriteOutboxHydrated = outbox.isHydrated;
 
 /**
  * Persist the in-memory outbox to encrypted IDB (page hide / before unload).
  */
-export const flushFavoriteOutboxPersist = (): Promise<void> => {
-    if (!hydrated) {
-        return ensureFavoriteOutboxHydrated().then(() => persistFavoriteOutbox());
-    }
-    return persistFavoriteOutbox();
-};
+export const flushFavoriteOutboxPersist = outbox.flush;
 
 /**
  * Queue or replace a pending favourite mutation for a file.
@@ -98,51 +48,23 @@ export const upsertFavoriteOutboxEntry = async (
     userId: number,
     isFavorite: boolean,
 ): Promise<void> => {
-    if (!hydrated) {
-        await ensureFavoriteOutboxHydrated();
-    }
     const fileHashAndTypeKey =
         file.ownerID !== userId ? hashAndTypeKey(file) : undefined;
-    const entry: FavoriteOutboxEntry = {
-        fileId: file.id,
-        isFavorite,
-        fileHashAndTypeKey: fileHashAndTypeKey ?? undefined,
-        enqueuedAt: Date.now(),
-    };
-    outboxByKey.set(favoriteOutboxEntryKey(entry), entry);
-    await persistFavoriteOutbox();
-};
-
-const removeFavoriteOutboxEntries = async (
-    keys: string[],
-): Promise<void> => {
-    if (!keys.length) {
-        return;
-    }
-    for (const key of keys) {
-        outboxByKey.delete(key);
-    }
-    await persistFavoriteOutbox();
+    await outbox.upsert([
+        {
+            fileId: file.id,
+            isFavorite,
+            fileHashAndTypeKey: fileHashAndTypeKey ?? undefined,
+            enqueuedAt: Date.now(),
+        },
+    ]);
 };
 
 /**
- * Remove each entry in {@link sent} only if it is still the entry that was
- * sent, so a newer favourite intent queued mid-flight survives the ack.
+ * Remove each entry in `sent` only if it is still the entry that was sent, so
+ * a newer favourite intent queued mid-flight survives the ack.
  */
-export const removeFavoriteOutboxEntriesIfUnchanged = async (
-    sent: FavoriteOutboxEntry[],
-): Promise<void> => {
-    const keys = sent
-        .filter((entry) => {
-            const current = outboxByKey.get(favoriteOutboxEntryKey(entry));
-            return (
-                current?.isFavorite === entry.isFavorite &&
-                current.enqueuedAt === entry.enqueuedAt
-            );
-        })
-        .map(favoriteOutboxEntryKey);
-    await removeFavoriteOutboxEntries(keys);
-};
+export const removeFavoriteOutboxEntriesIfUnchanged = outbox.removeIfUnchanged;
 
 /**
  * Drop pending favourite intents for files that were moved to trash.
@@ -154,17 +76,10 @@ export const removeFavoriteOutboxForFileIds = async (
         return;
     }
     const idSet = new Set(fileIds);
-    const keys: string[] = [];
-    for (const [key, entry] of outboxByKey) {
-        if (idSet.has(entry.fileId)) {
-            keys.push(key);
-        }
-    }
-    await removeFavoriteOutboxEntries(keys);
+    await outbox.removeWhere((entry) => idSet.has(entry.fileId));
 };
 
-export const getFavoriteOutboxEntries = (): FavoriteOutboxEntry[] =>
-    [...outboxByKey.values()];
+export const getFavoriteOutboxEntries = outbox.entries;
 
 /**
  * Pending favourite intents as unsynced store updates (for overlay after sync).
@@ -177,7 +92,7 @@ export const unsyncedUpdatesFromFavoriteOutbox = (): Map<
         UnsyncedFavoriteUpdateKey,
         UnsyncedFavoriteUpdate
     >();
-    for (const entry of outboxByKey.values()) {
+    for (const entry of outbox.entries()) {
         const key = entry.fileHashAndTypeKey ?? entry.fileId;
         updates.set(key, {
             fileID: entry.fileId,
@@ -191,24 +106,14 @@ export const unsyncedUpdatesFromFavoriteOutbox = (): Map<
 /**
  * Remap a pending favourite entry when a derived replace changes the file id.
  */
-export const remapFavoriteOutboxFileId = async (
+export const remapFavoriteOutboxFileId = (
     fromFileId: number,
     toFileId: number,
-): Promise<void> => {
-    if (!hydrated) {
-        await hydrateFavoriteOutbox();
-    }
-    const existing = outboxByKey.get(String(fromFileId));
-    if (!existing) {
-        return;
-    }
-    outboxByKey.delete(String(fromFileId));
-    outboxByKey.set(String(toFileId), {
-        ...existing,
+): Promise<void> =>
+    outbox.remap(String(fromFileId), String(toFileId), (entry) => ({
+        ...entry,
         fileId: toFileId,
-    });
-    await persistFavoriteOutbox();
-};
+    }));
 
 /**
  * Drop outbox entries whose synced library already matches intent.
@@ -218,7 +123,7 @@ export const reconcileFavoriteOutboxWithLibrary = async (
     collections: Collection[],
     files: EnteFile[],
 ): Promise<void> => {
-    if (outboxByKey.size === 0) {
+    if (outbox.size() === 0) {
         return;
     }
     const { favoriteFileIds } = deriveFavoriteFileIDs(
@@ -227,8 +132,8 @@ export const reconcileFavoriteOutboxWithLibrary = async (
         files,
     );
     const filesById = new Map(files.map((file) => [file.id, file]));
-    const verifiedKeys: string[] = [];
-    for (const [key, entry] of outboxByKey) {
+    const verifiedKeys = new Set<string>();
+    for (const entry of outbox.entries()) {
         const file = filesById.get(entry.fileId);
         if (!file) {
             continue;
@@ -241,30 +146,11 @@ export const reconcileFavoriteOutboxWithLibrary = async (
         );
         const matchesId = favoriteFileIds.has(entry.fileId) === entry.isFavorite;
         if (isFavorite === entry.isFavorite || matchesId) {
-            verifiedKeys.push(key);
+            verifiedKeys.add(favoriteOutboxEntryKey(entry));
         }
     }
-    if (verifiedKeys.length > 0) {
-        await removeFavoriteOutboxEntries(verifiedKeys);
-    }
+    await outbox.removeWhere((entry) =>
+        verifiedKeys.has(favoriteOutboxEntryKey(entry)));
 };
 
-export const clearFavoriteOutbox = (): void => {
-    outboxByKey.clear();
-    hydrated = false;
-    favoriteOutboxHydrateInFlight = undefined;
-    persistChain = Promise.resolve();
-};
-
-if (typeof window !== "undefined") {
-    const flushOnHide = (): void => {
-        void flushFavoriteOutboxPersist();
-    };
-    window.addEventListener("pagehide", flushOnHide);
-    document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "hidden") {
-            flushOnHide();
-        }
-    });
-    // Tab-close warn for any outbox: installDurableFlushListeners in durable-flush.ts.
-}
+export const clearFavoriteOutbox = outbox.clear;

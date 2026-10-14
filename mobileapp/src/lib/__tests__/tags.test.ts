@@ -2,23 +2,25 @@ import { describe, expect, it } from "vitest";
 import type { EnteFile } from "ente-media/file";
 import {
     buildTagIndex,
+    extractTags,
+    extractUserTags,
+    isSystemTag,
+    tagIndexToMaps,
+} from "@/lib/tags";
+import {
     createEmptyTagFilterRoot,
     describeTagFilter,
     emptyTagFilter,
-    extractTags,
-    extractUserTags,
     filterFilesByTags,
     patchFilteredFilesForTagTouch,
     countFileKindsInCandidates,
     countTaggedInCandidates,
     countUntaggedInCandidates,
-    isSystemTag,
     newTagFilterNodeId,
-    tagIndexToMaps,
     type TagFilterClauseNode,
     type TagFilterGroup,
     type TagFilterSelection,
-} from "@/lib/tags";
+} from "@/lib/tag-filter";
 import { andRoot, fileWithTags, includeClause } from "@/test-utils/fixtures";
 
 const excludeClause = (tag: string): TagFilterClauseNode => ({

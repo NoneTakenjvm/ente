@@ -75,12 +75,8 @@ import {
     takeSessionVideoUrl,
     transferSessionVideoUrl,
 } from "@/lib/video-media-cache";
-import {
-    extractTags,
-    extractUserTags,
-    isReservedTag,
-    isSystemTag,
-} from "@/lib/tags";
+import { extractTags, extractUserTags, isSystemTag } from "@/lib/tags";
+import { isReservedTag } from "@/lib/tag-filter";
 import { addTagNames, applyTagMutator, normalizeTagName, removeTagNames, tagsEqual } from "@/lib/tag-writes";
 import { enqueueTagOutboxEntries } from "@/lib/tag-outbox";
 import { requestTagOutboxFlush } from "@/lib/tag-outbox-runner";

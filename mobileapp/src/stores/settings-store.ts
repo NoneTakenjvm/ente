@@ -9,6 +9,7 @@ import {
 import type { OrganizerAppConfig } from "@/lib/organizer-config";
 import { enqueueOrganizerConfigPatch } from "@/lib/organizer-config-save-queue";
 import { useVideoPlaybackStore } from "@/stores/video-playback-store";
+import { registerReset } from "@/lib/session-lifecycle";
 
 interface SettingsState extends PersistedAppSettings {
     hydrateFromOrganizerConfig: (config: OrganizerAppConfig | undefined) => void;
@@ -44,3 +45,7 @@ const createSettingsStore: StateCreator<SettingsState> = (set, get) => ({
 });
 
 export const useSettingsStore = create<SettingsState>(createSettingsStore);
+
+registerReset(() => {
+    useSettingsStore.getState().reset();
+});

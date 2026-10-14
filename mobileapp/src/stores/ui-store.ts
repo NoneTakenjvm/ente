@@ -5,12 +5,13 @@ import type { ImageQualitySort } from "@/lib/image-quality";
 import type { ImageSizeSort } from "@/lib/image-size-sort";
 import type { RelativeSort } from "@/lib/relative-sort";
 import type { TagFilterFitSort } from "@/lib/tag-filter-fit-sort";
-import type { TagFilterSelection } from "@/lib/tags";
+import type { TagFilterSelection } from "@/lib/tag-filter";
 import type { UploadedAtSort } from "@/lib/uploaded-at-sort";
 import {
     deviceViewerSize,
     type ViewportFitSort,
 } from "@/lib/viewport-fit";
+import { registerReset } from "@/lib/session-lifecycle";
 
 export type MediaViewOrder = "default" | "shuffled";
 
@@ -503,4 +504,14 @@ export const useUIStore = create<UIState>((set) => {
             });
         },
     };
+});
+
+registerReset(() => {
+    usePhashJobStore.getState().reset();
+    useCompressJobStore.getState().reset();
+    useUploadJobStore.getState().reset();
+    useUIStore.setState({
+        ...clearOrderings(useUIStore.getState()),
+        dedupDryRun: false,
+    });
 });

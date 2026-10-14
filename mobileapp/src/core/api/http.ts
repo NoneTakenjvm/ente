@@ -1,3 +1,5 @@
+import { HTTPError } from "ente-base/http";
+import { wait } from "ente-utils/promise";
 import type { CoreSession } from "../session";
 import { authHeadersFor, publicHeaders } from "../session";
 import { notifyUnauthorized } from "@/lib/session-invalidation";
@@ -20,6 +22,77 @@ export const urlForLog = (url: string): string => {
         return `${origin}${pathname}`;
     } catch {
         return "(unparseable url)";
+    }
+};
+
+/** Longest we honour a server `Retry-After` for. */
+const maxRetryAfterMs = 60_000;
+
+/** The `Retry-After` delay carried by an {@link HTTPError}, if it has one. */
+const retryAfterMs = (error: unknown): number | undefined => {
+    const header =
+        error instanceof HTTPError ? error.res.headers.get("Retry-After") : null;
+    if (!header) {
+        return undefined;
+    }
+    const seconds = Number(header);
+    const delayMs = Number.isFinite(seconds) ?
+        seconds * 1000 :
+        Date.parse(header) - Date.now();
+    return Number.isFinite(delayMs) && delayMs >= 0 ?
+        Math.min(delayMs, maxRetryAfterMs) :
+        undefined;
+};
+
+/**
+ * True for failures worth retrying: network errors (fetch rejects with a
+ * `TypeError`), HTTP 429 and HTTP 5xx. Aborts and other 4xx (including 409)
+ * are not transient.
+ */
+export const isTransientError = (error: unknown): boolean =>
+    error instanceof TypeError ||
+    (error instanceof HTTPError &&
+        (error.res.status === 429 || error.res.status >= 500));
+
+interface RetryOptions {
+    /** Total tries, including the first. */
+    attempts: number;
+    isRetryable: (error: unknown) => boolean;
+    /** Delay before the first retry; doubles each retry. Defaults to 1s. */
+    baseDelayMs?: number;
+    /** Cap on the doubling delay. Defaults to 8s. */
+    maxDelayMs?: number;
+    /** Checked after each wait so a pending retry stops on abort. */
+    signal?: AbortSignal;
+}
+
+/**
+ * Run {@link op}, retrying retryable failures with exponential backoff. A
+ * server `Retry-After` on the failure overrides the computed delay.
+ */
+export const retryWithBackoff = async <T>(
+    op: () => Promise<T>,
+    {
+        attempts,
+        isRetryable,
+        baseDelayMs = 1000,
+        maxDelayMs = 8000,
+        signal,
+    }: RetryOptions,
+): Promise<T> => {
+    for (let attempt = 1; ; attempt++) {
+        try {
+            return await op();
+        } catch (error) {
+            if (attempt >= attempts || !isRetryable(error)) {
+                throw error;
+            }
+            await wait(
+                retryAfterMs(error) ??
+                    Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1)),
+            );
+            signal?.throwIfAborted();
+        }
     }
 };
 
@@ -77,7 +150,7 @@ export class HttpClient {
     ensurePublicOk = (res: Response): void => {
         this.logRateLimitHeaders(res, res.url);
         if (!res.ok) {
-            throw new Error(`HTTP ${res.status} for ${urlForLog(res.url)}`);
+            throw new HTTPError(res);
         }
     };
 

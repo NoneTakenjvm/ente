@@ -1,3 +1,4 @@
+import { registerReset } from "@/lib/session-lifecycle";
 /**
  * Main-thread side of the learned kit nearness margins: draw the training
  * sample and candidate matrices from the library, hand them to
@@ -431,3 +432,5 @@ const hasEnoughTagExamples = (labels: Uint8Array): boolean => {
         labels.length - positives >= KIT_MARGIN_MIN_EXAMPLES
     );
 };
+
+registerReset(terminateKitMarginsWorker);

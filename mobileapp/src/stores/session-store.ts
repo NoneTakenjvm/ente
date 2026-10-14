@@ -21,7 +21,7 @@ import {
 import { wipeSiteStorage } from "@/lib/site-wipe";
 import { clearThumbnailCache } from "@/lib/thumbnail-cache";
 import { clearVideoSessionCache } from "@/lib/video-media-cache";
-import { flushAllDurableState } from "@/lib/durable-flush";
+import { flushAll, runSessionResets } from "@/lib/session-lifecycle";
 import {
     resetUnauthorizedGate,
     setUnauthorizedHandler,
@@ -45,98 +45,13 @@ interface SessionState {
     panic: () => Promise<void>;
 }
 
-const resetDependentStores = (): void => {
-    void import("@/lib/similarity-job").then(({ terminatePhashWorker }) => {
-        terminatePhashWorker();
-    });
-    void import("@/lib/kit-embedding").then(({ terminateKitEmbeddingWorker }) => {
-        terminateKitEmbeddingWorker();
-    });
-    void import("@/lib/kit-nearness-margins-job").then(
-        ({ terminateKitMarginsWorker }) => {
-            terminateKitMarginsWorker();
-        },
-    );
-    void import("@/lib/organizer-config-save-queue").then(
-        ({ resetOrganizerConfigSaveQueue }) => {
-            resetOrganizerConfigSaveQueue();
-        },
-    );
-    void import("@/lib/tag-outbox-runner").then(({ stopTagOutboxRunner }) => {
-        stopTagOutboxRunner();
-    });
-    void import("@/hooks/use-library-bootstrap").then(
-        ({ resetLibraryBootstrap }) => {
-            resetLibraryBootstrap();
-        },
-    );
-    void import("@/lib/tag-outbox").then(({ clearTagOutbox }) => {
-        clearTagOutbox();
-    });
-    void import("@/lib/favorite-outbox").then(({ clearFavoriteOutbox }) => {
-        clearFavoriteOutbox();
-    });
-    void import("@/lib/favorite-membership").then(
-        ({ clearFavoriteMembership }) => {
-            clearFavoriteMembership();
-        },
-    );
-    void import("@/lib/visibility-outbox").then(({ clearVisibilityOutbox }) => {
-        clearVisibilityOutbox();
-    });
-    void import("@/lib/derived-replace-outbox").then(
-        ({ clearDerivedReplaceOutbox }) => {
-            clearDerivedReplaceOutbox();
-        },
-    );
-    void import("@/lib/edit-history").then(({ clearAllEditHistory }) => {
-        clearAllEditHistory();
-    });
-    void import("./library-store").then(({ useLibraryStore }) => {
-        useLibraryStore.getState().reset();
-    });
-    void import("./trash-store").then(({ useTrashStore }) => {
-        useTrashStore.getState().reset();
-    });
-    void import("./tag-store").then(({ useTagStore }) => {
-        useTagStore.getState().reset();
-    });
-    void import("./tag-speed-store").then(({ useTagSpeedStore }) => {
-        useTagSpeedStore.getState().reset();
-    });
-    void import("./album-store").then(({ useAlbumStore }) => {
-        useAlbumStore.getState().reset();
-    });
-    void import("./selection-store").then(({ useSelectionStore }) => {
-        useSelectionStore.getState().reset();
-    });
-    void import("./settings-store").then(({ useSettingsStore }) => {
-        useSettingsStore.getState().reset();
-    });
-    void import("./phash-index-store").then(({ usePhashIndexStore }) => {
-        usePhashIndexStore.getState().reset();
-    });
-    void import("./quality-index-store").then(({ useQualityIndexStore }) => {
-        useQualityIndexStore.getState().reset();
-    });
-    void import("./embedding-index-store").then(({ useEmbeddingIndexStore }) => {
-        useEmbeddingIndexStore.getState().reset();
-    });
-    void import("./ui-store").then(({ useCompressJobStore, usePhashJobStore, useUploadJobStore, useUIStore }) => {
-        usePhashJobStore.getState().reset();
-        useCompressJobStore.getState().reset();
-        useUploadJobStore.getState().reset();
-        useUIStore.getState().setDedupDryRun(false);
-    });
-};
-
 const clearMemoryState = (): void => {
     getEnteCore().logout();
     clearSessionCacheKey();
     clearThumbnailCache();
     clearVideoSessionCache();
     clearAllLocalMediaOverrides();
-    resetDependentStores();
+    runSessionResets();
 };
 
 const clearLocalState = (): void => {
@@ -208,7 +123,7 @@ const createSessionStore: StateCreator<SessionState> = (set) => ({
 
     logout: async (): Promise<void> => {
         try {
-            await flushAllDurableState();
+            await flushAll();
         } catch {
             // Best-effort — still clear local session.
         }
@@ -224,7 +139,7 @@ const createSessionStore: StateCreator<SessionState> = (set) => ({
             return;
         }
         try {
-            await flushAllDurableState();
+            await flushAll();
         } catch {
             // Best-effort.
         }

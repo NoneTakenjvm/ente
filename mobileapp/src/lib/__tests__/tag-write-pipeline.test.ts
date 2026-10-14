@@ -1,146 +1,114 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import type { EnteFile } from "ente-media/file";
+import { HTTPError } from "ente-base/http";
 import { fileWithOrganizerTags } from "@/lib/tag-writes";
+import { writeAndVerifyTagsBatch } from "@/lib/tag-write-pipeline";
 
-const { updateFileTags, putFilesTags, refetchFile } = vi.hoisted(() => ({
-    updateFileTags: vi.fn(),
-    putFilesTags: vi.fn(),
-    refetchFile: vi.fn(),
+const { mergePublicMetadata, putFilesPublicMetadata } = vi.hoisted(() => ({
+    mergePublicMetadata: vi.fn(),
+    putFilesPublicMetadata: vi.fn(),
 }));
 
 vi.mock("@/core/metadata", () => ({
-    MetadataUpdateError: class MetadataUpdateError extends Error {
-        constructor(
-            message: string,
-            readonly status: number,
-            readonly retryAfterMs?: number,
-        ) {
-            super(message);
-            this.name = "MetadataUpdateError";
-        }
-    },
     getPublicMetadata: (file: EnteFile) => file.pubMagicMetadata?.data ?? {},
-    updateFileTags,
-    putFilesTags,
-}));
-
-vi.mock("@/core/api/files", () => ({
-    refetchFile,
+    pubMagicVersionForPut: (file: EnteFile) =>
+        file.pubMagicMetadata?.version || undefined,
+    mergePublicMetadata,
+    putFilesPublicMetadata,
 }));
 
 const stubFile = (id: number, tags: string[]): EnteFile =>
     fileWithOrganizerTags({ id, key: `key-${id}` } as EnteFile, tags);
 
-describe("writeAndVerifyTags", () => {
-    beforeEach(() => {
-        vi.clearAllMocks();
-    });
+const httpError = (status: number): HTTPError =>
+    new HTTPError({
+        status,
+        statusText: "",
+        url: "https://api.example.test/files/public-magic-metadata",
+        headers: new Headers(),
+    } as Response);
 
-    it("returns verified when refetched tags match intent", async () => {
-        const { writeAndVerifyTags } = await import("@/lib/tag-write-pipeline");
-        const file = stubFile(1, []);
-        const verified = stubFile(1, ["new"]);
-
-        updateFileTags.mockResolvedValue(undefined);
-        refetchFile.mockResolvedValue(verified);
-
-        const result = await writeAndVerifyTags(
-            {} as never,
-            file,
-            "collection-key",
-            ["new"],
-        );
-
-        expect(result.status).toBe("verified");
-        expect(result.file).toBe(verified);
-        expect(updateFileTags).toHaveBeenCalledTimes(1);
-        expect(refetchFile).toHaveBeenCalledTimes(1);
-    });
-
-    it("retries once then returns pending when verification keeps failing", async () => {
-        const { writeAndVerifyTags } = await import("@/lib/tag-write-pipeline");
-        const file = stubFile(1, []);
-        const stale = stubFile(1, []);
-
-        updateFileTags.mockResolvedValue(undefined);
-        refetchFile.mockResolvedValue(stale);
-
-        const result = await writeAndVerifyTags(
-            {} as never,
-            file,
-            "collection-key",
-            ["new"],
-        );
-
-        expect(result.status).toBe("pending");
-        expect(updateFileTags).toHaveBeenCalledTimes(2);
-        expect(refetchFile).toHaveBeenCalledTimes(3);
-    });
+const item = (file: EnteFile, intendedTags: string[]) => ({
+    file,
+    collectionKey: "k",
+    intendedTags,
 });
 
 describe("writeAndVerifyTagsBatch", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        vi.useFakeTimers();
     });
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    const run = async (items: ReturnType<typeof item>[]) => {
+        const result = writeAndVerifyTagsBatch({} as never, items);
+        await vi.runAllTimersAsync();
+        return result;
+    };
 
     it("PUTs all files in one batch and marks them verified", async () => {
-        const { writeAndVerifyTagsBatch } = await import(
-            "@/lib/tag-write-pipeline"
-        );
-        const files = [stubFile(1, []), stubFile(2, [])];
         const updated = [stubFile(1, ["a"]), stubFile(2, ["b"])];
-        putFilesTags.mockResolvedValue(updated);
+        putFilesPublicMetadata.mockResolvedValue(updated);
 
-        const result = await writeAndVerifyTagsBatch(
-            {} as never,
-            [
-                {
-                    file: files[0]!,
-                    collectionKey: "k",
-                    intendedTags: ["a"],
-                },
-                {
-                    file: files[1]!,
-                    collectionKey: "k",
-                    intendedTags: ["b"],
-                },
-            ],
-        );
+        const result = await run([
+            item(stubFile(1, []), ["a"]),
+            item(stubFile(2, []), ["b"]),
+        ]);
 
-        expect(putFilesTags).toHaveBeenCalledTimes(1);
-        expect(updateFileTags).not.toHaveBeenCalled();
-        expect(result.verified).toHaveLength(2);
+        expect(putFilesPublicMetadata).toHaveBeenCalledTimes(1);
+        expect(mergePublicMetadata).not.toHaveBeenCalled();
+        expect(result.verified).toEqual(updated);
         expect(result.pending).toHaveLength(0);
     });
 
-    it("falls back to per-file writes on batch version conflict", async () => {
-        const { writeAndVerifyTagsBatch } = await import(
-            "@/lib/tag-write-pipeline"
-        );
-        const { MetadataUpdateError } = await import("@/core/metadata");
-        const file = stubFile(1, []);
-        const verified = stubFile(1, ["a"]);
+    it("retries a transient batch failure without falling back", async () => {
+        putFilesPublicMetadata
+            .mockRejectedValueOnce(httpError(503))
+            .mockResolvedValueOnce([stubFile(1, ["a"])]);
 
-        putFilesTags.mockRejectedValue(
-            new MetadataUpdateError("conflict", 409),
-        );
-        updateFileTags.mockResolvedValue(undefined);
-        refetchFile.mockResolvedValue(verified);
+        const result = await run([item(stubFile(1, []), ["a"])]);
 
-        const result = await writeAndVerifyTagsBatch(
-            {} as never,
-            [
-                {
-                    file,
-                    collectionKey: "k",
-                    intendedTags: ["a"],
-                },
-            ],
-        );
-
-        expect(putFilesTags).toHaveBeenCalled();
-        expect(updateFileTags).toHaveBeenCalled();
+        expect(putFilesPublicMetadata).toHaveBeenCalledTimes(2);
+        expect(mergePublicMetadata).not.toHaveBeenCalled();
         expect(result.verified).toHaveLength(1);
+    });
+
+    it("marks the chunk pending when transient failures persist", async () => {
+        putFilesPublicMetadata.mockRejectedValue(httpError(500));
+
+        const result = await run([item(stubFile(1, []), ["a"])]);
+
+        expect(putFilesPublicMetadata).toHaveBeenCalledTimes(3);
+        expect(mergePublicMetadata).not.toHaveBeenCalled();
+        expect(result.verified).toHaveLength(0);
+        expect(result.pending).toHaveLength(1);
+    });
+
+    it("falls back to per-file writes on batch version conflict without retrying the batch", async () => {
+        const file = stubFile(1, []);
+        putFilesPublicMetadata.mockRejectedValue(httpError(409));
+        mergePublicMetadata.mockResolvedValue(file);
+
+        const result = await run([item(file, ["a"])]);
+
+        expect(putFilesPublicMetadata).toHaveBeenCalledTimes(1);
+        expect(mergePublicMetadata).toHaveBeenCalledTimes(1);
+        expect(result.verified).toEqual([file]);
         expect(result.pending).toHaveLength(0);
+    });
+
+    it("marks a file pending when its per-file write fails", async () => {
+        const file = stubFile(1, []);
+        putFilesPublicMetadata.mockRejectedValue(httpError(409));
+        mergePublicMetadata.mockRejectedValue(httpError(409));
+
+        const result = await run([item(file, ["a"])]);
+
+        expect(mergePublicMetadata).toHaveBeenCalledTimes(1);
+        expect(result.verified).toHaveLength(0);
+        expect(result.pending).toEqual([file]);
     });
 });
