@@ -7,12 +7,22 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-10-14 |
-| **Last agent / session** | Upload-time metadata consistency + "Uploaded At" sort (`0.3.190`) |
+| **Last agent / session** | Review fixes: GPS kept on derived uploads, favourite revert, video thumbnails, "manually rotated" filter (`0.3.191`) |
 | **Current milestone** | Post-M8 UX / upload performance |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
-| **Next recommended action** | Phone QA of `0.3.190`: tag a file uploaded by the official app, then confirm its position under the "Uploaded At" sort does not move; crop/compress a photo and confirm the copy keeps the source's upload position. Then QA `0.3.189`: quick-rotate and quick-crop 20+ photos and Apply — progress should climb several at a time, all files end up rotated/cropped once, undo still works on a cropped photo, failed items stay pending for retry. Then QA the `0.3.188` perf items if not done yet. |
+| **Next recommended action** | Phone QA of `0.3.191`: compress 5+ videos (incl. a phone-recorded one) and confirm every copy has a thumbnail; crop/rotate a geotagged photo and confirm the location survives; filter by Manual rotate. Then QA of `0.3.190`: tag a file uploaded by the official app, then confirm its position under the "Uploaded At" sort does not move; crop/compress a photo and confirm the copy keeps the source's upload position. Then QA `0.3.189`: quick-rotate and quick-crop 20+ photos and Apply — progress should climb several at a time, all files end up rotated/cropped once, undo still works on a cropped photo, failed items stay pending for retry. Then QA the `0.3.188` perf items if not done yet. |
 
-**This session (local only — not pushed, `0.3.190`):**
+**This session (local only — not pushed, `0.3.191`):**
+1. **Location kept on derived uploads** — crop/rotate/compress copies and in-place rotate/crop now carry `latitude`/`longitude` (`upload-image.ts`, `upload-compressed-media.ts`); they were dropped before.
+2. **Favourite batch revert** — `batchSetFavorite` reverts the optimistic UI if the outbox write fails.
+3. **Upload commit** — buffered uploads are de-duplicated against files a sync already pulled, and `reset()` clears the commit timer and buffer.
+4. **Sort tiebreak** — equal sort times fall back to newest id so order is stable across syncs.
+5. **Thumbnail cache** — `clearThumbnailCache` no longer zeroes `inFlight` (started loads still finish).
+6. **Video thumbnails after compress** — the canvas poster-frame path waits for a decoded frame (`preload=auto`, `loadeddata`) and rejects an all-black frame so the ffmpeg fallback runs.
+7. **"Manual rotate" filter** — `rotatedScope` mirrors `croppedScope` end to end (store, presets, saved queries, dropdown); matches the `rotated` system tag, which only the rotate tool stamps (a crop made while rotated is not tagged). No count badges on its radios.
+8. **Not done** — outbox ack race, derived-replace queue, persist chains, pause/resume "done" status bugs, 409 retry for the in-place metadata write after upload.
+
+**Previous session (local only, `0.3.190`):**
 1. **`uploadedAt` is stamped on first write** — `putPublicMetadata` and `prepareFilesTagMetadata` (`core/metadata.ts`) freeze `uploadedAt` from `fileUploadSortTime` when a file has none, so official-app uploads stop drifting with `updationTime` once touched here.
 2. **Derived uploads carry history** — crop/compress/rotate-as-new keep the source's `uploadedAt`, `editedTime` and `editedName`; in-place rotate re-stamps `uploadedAt` too. Fresh uploads use `modificationTime = creationTime` (was upload-now).
 3. **"Updated At" sort → "Uploaded At"** — `lib/uploaded-at-sort.ts` sorts by `fileUploadSortTime`; store/filter-bar/dropdown/pipeline identifiers renamed to `uploadedAt…`.

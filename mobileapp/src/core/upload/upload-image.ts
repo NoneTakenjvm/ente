@@ -35,6 +35,9 @@ export interface UploadJpegOptions {
     title: string;
     creationTime: number;
     modificationTime: number;
+    /** Capture location, carried over from a derived reupload's source. */
+    latitude?: number;
+    longitude?: number;
     width: number;
     height: number;
     organizerTags?: string[];
@@ -56,13 +59,15 @@ const buildMetadata = (
     hash: string,
     options: Pick<
         UploadJpegOptions,
-        "title" | "creationTime" | "modificationTime"
+        "title" | "creationTime" | "modificationTime" | "latitude" | "longitude"
     >,
 ): FileMetadata => ({
     fileType: FileType.image,
     title: options.title,
     creationTime: ensureInteger(options.creationTime),
     modificationTime: ensureInteger(options.modificationTime),
+    ...(options.latitude !== undefined && { latitude: options.latitude }),
+    ...(options.longitude !== undefined && { longitude: options.longitude }),
     hash,
 });
 
@@ -177,6 +182,8 @@ export const uploadDerivedImage = async (
         title: options.title,
         creationTime: sourceFile.metadata.creationTime,
         modificationTime: Date.now() * 1000,
+        latitude: sourceFile.metadata.latitude,
+        longitude: sourceFile.metadata.longitude,
         width: dimensions.width,
         height: dimensions.height,
         organizerTags: options.organizerTags,
@@ -263,7 +270,8 @@ export interface UpdateImageInPlaceOptions {
 /**
  * Replace an owned file's bytes and thumbnail in place (same file id + key).
  *
- * Updates immutable encrypted metadata (hash / title / modificationTime), then
+ * Updates immutable encrypted metadata (hash / title / modificationTime, keeping
+ * the capture location), then
  * merges dimensions + organizer tags into existing public magic metadata so
  * captions and other fields are preserved.
  */
@@ -283,6 +291,8 @@ export const updateImageBytesInPlace = async (
             title: options.title,
             creationTime: sourceFile.metadata.creationTime,
             modificationTime: Date.now() * 1000,
+            latitude: sourceFile.metadata.latitude,
+            longitude: sourceFile.metadata.longitude,
         });
     const { fileObjectKey, thumbnailObjectKey, thumbnailDecryptionHeader } =
         await putImageAndThumbnail(
@@ -393,7 +403,7 @@ const encryptImageAndThumbnail = async (
     fileKey: BytesOrB64,
     metadataOptions: Pick<
         UploadJpegOptions,
-        "title" | "creationTime" | "modificationTime"
+        "title" | "creationTime" | "modificationTime" | "latitude" | "longitude"
     >,
 ) => {
     const [encryptedFile, thumbnail] = await Promise.all([

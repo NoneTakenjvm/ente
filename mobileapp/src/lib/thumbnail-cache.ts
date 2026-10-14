@@ -519,5 +519,5 @@ export const clearThumbnailCache = (): void => {
     lowQueue.length = 0;
     pendingReady.length = 0;
     applyFrameScheduled = false;
-    inFlight = 0;
+    // inFlight is left alone: loads already started still call finishTask.
 };

@@ -196,7 +196,8 @@ const extractVideoFrameViaCanvas = async (
         const video = document.createElement("video");
         video.muted = true;
         video.playsInline = true;
-        video.preload = "metadata";
+        // "metadata" leaves some browsers with no decoded frame to draw.
+        video.preload = "auto";
         video.src = url;
         await withTimeout(
             new Promise<void>((resolve, reject) => {
@@ -226,11 +227,17 @@ const extractVideoFrameViaCanvas = async (
                 "Timed out seeking video frame",
             );
         }
-        try {
-            await video.play();
-            video.pause();
-        } catch {
-            // Muted inline play may be blocked; seeked frame is often enough.
+        // Drawing before a frame is decoded yields a blank canvas, not an error.
+        if (video.readyState < 2) {
+            await withTimeout(
+                new Promise<void>((resolve, reject) => {
+                    video.onloadeddata = () => resolve();
+                    video.onerror = () =>
+                        reject(new Error("Video frame decode failed"));
+                }),
+                20_000,
+                "Timed out decoding video frame",
+            );
         }
         const scale = Math.min(
             1,
@@ -244,6 +251,19 @@ const extractVideoFrameViaCanvas = async (
             throw new Error("Canvas unavailable");
         }
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        // An all-black frame means the decoder gave us nothing; let the caller
+        // fall back to ffmpeg.
+        const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+        let hasContent = false;
+        for (let i = 0; i < data.length; i += 4 * 17) {
+            if (data[i]! > 8 || data[i + 1]! > 8 || data[i + 2]! > 8) {
+                hasContent = true;
+                break;
+            }
+        }
+        if (!hasContent) {
+            throw new Error("Video frame is blank");
+        }
         const jpegBlob = await new Promise<Blob>((resolve, reject) => {
             canvas.toBlob(
                 (blob) => {

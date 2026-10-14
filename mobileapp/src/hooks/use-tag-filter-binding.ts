@@ -4,6 +4,7 @@ import type {
     CroppedScope,
     FavoritesScope,
     MediaScope,
+    RotatedScope,
     TagFilterJoin,
     TagFilterMode,
     TagFilterSelection,
@@ -20,6 +21,7 @@ export interface TagFilterBinding {
     setFavoritesScope: (favoritesScope: FavoritesScope) => void;
     setMediaScope: (mediaScope: MediaScope) => void;
     setCroppedScope: (croppedScope: CroppedScope) => void;
+    setRotatedScope: (rotatedScope: RotatedScope) => void;
     setTagFilterMode: (tag: string, mode: TagFilterMode | null) => void;
     setClauseMode: (clauseId: string, mode: TagFilterMode) => void;
     setClauseInGroup: (
@@ -52,6 +54,7 @@ export function useTagFilterBinding(
     const setFavoritesScopeStore = useTagStore((s) => s.setFavoritesScope);
     const setMediaScopeStore = useTagStore((s) => s.setMediaScope);
     const setCroppedScopeStore = useTagStore((s) => s.setCroppedScope);
+    const setRotatedScopeStore = useTagStore((s) => s.setRotatedScope);
     const setTagFilterModeStore = useTagStore((s) => s.setTagFilterMode);
     const setClauseModeStore = useTagStore((s) => s.setClauseMode);
     const setClauseInGroupStore = useTagStore((s) => s.setClauseInGroup);
@@ -86,6 +89,12 @@ export function useTagFilterBinding(
             setCroppedScopeStore(croppedScope, target);
         },
         [setCroppedScopeStore, target],
+    );
+    const setRotatedScope = useCallback(
+        (rotatedScope: RotatedScope): void => {
+            setRotatedScopeStore(rotatedScope, target);
+        },
+        [setRotatedScopeStore, target],
     );
     const setTagFilterMode = useCallback(
         (tag: string, mode: TagFilterMode | null): void => {
@@ -160,6 +169,7 @@ export function useTagFilterBinding(
             setFavoritesScope,
             setMediaScope,
             setCroppedScope,
+            setRotatedScope,
             setTagFilterMode,
             setClauseMode,
             setClauseInGroup,
@@ -178,6 +188,7 @@ export function useTagFilterBinding(
             setClauseInGroup,
             setClauseMode,
             setCroppedScope,
+            setRotatedScope,
             setFavoritesScope,
             setGroupOp,
             setKitInGroup,

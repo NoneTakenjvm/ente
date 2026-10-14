@@ -87,6 +87,7 @@ export function TagFilterBar({
         setFavoritesScope,
         setMediaScope,
         setCroppedScope,
+        setRotatedScope,
         setTagFilterMode,
         setKitMode,
         setGroupOp,
@@ -383,7 +384,8 @@ export function TagFilterBar({
         tagFilter.tagScope !== "all" ||
         tagFilter.favoritesScope !== "all" ||
         tagFilter.mediaScope !== "all" ||
-        tagFilter.croppedScope !== "all";
+        tagFilter.croppedScope !== "all" ||
+        tagFilter.rotatedScope !== "all";
 
     const handleSelectAllMatching = useCallback((): void => {
         if (!matchingFileIds.length) {
@@ -462,6 +464,8 @@ export function TagFilterBar({
                         onMediaScopeChange={setMediaScope}
                         croppedScope={tagFilter.croppedScope}
                         onCroppedScopeChange={setCroppedScope}
+                        rotatedScope={tagFilter.rotatedScope}
+                        onRotatedScopeChange={setRotatedScope}
                         viewportFitSort={viewportFitSort}
                         onViewportFitSortChange={setViewportFitSort}
                         uploadedAtSort={uploadedAtSort}

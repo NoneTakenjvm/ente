@@ -6,6 +6,7 @@ import {
     newTagFilterNodeId,
     type CroppedScope,
     type FavoritesScope,
+    type RotatedScope,
     type TagFilterClauseNode,
     type TagFilterGroup,
     type TagFilterJoin,
@@ -306,6 +307,14 @@ export const setTagFilterCroppedScope = (
 ): TagFilterSelection => ({
     ...filter,
     croppedScope,
+});
+
+export const setTagFilterRotatedScope = (
+    filter: TagFilterSelection,
+    rotatedScope: RotatedScope,
+): TagFilterSelection => ({
+    ...filter,
+    rotatedScope,
 });
 
 export const setTagFilterModeOnFilter = (

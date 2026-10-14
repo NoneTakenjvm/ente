@@ -8,6 +8,7 @@ import {
     setTagFilterFavoritesScope,
     setTagFilterMediaScope,
     setTagFilterCroppedScope,
+    setTagFilterRotatedScope,
     setTagFilterGroupOp,
     setTagFilterModeOnFilter,
     setTagFilterScope,
@@ -20,6 +21,7 @@ import {
     type CroppedScope,
     type FavoritesScope,
     type MediaScope,
+    type RotatedScope,
     type TagFilterJoin,
     type TagFilterMode,
     type TagFilterSelection,
@@ -87,6 +89,14 @@ export const useTagFilterDraft: (
         (croppedScope: CroppedScope): void => {
             setFilter((current: TagFilterSelection): TagFilterSelection =>
                 setTagFilterCroppedScope(current, croppedScope));
+        },
+        [],
+    );
+
+    const setRotatedScope: (rotatedScope: RotatedScope) => void = useCallback(
+        (rotatedScope: RotatedScope): void => {
+            setFilter((current: TagFilterSelection): TagFilterSelection =>
+                setTagFilterRotatedScope(current, rotatedScope));
         },
         [],
     );
@@ -215,6 +225,7 @@ export const useTagFilterDraft: (
             setFavoritesScope,
             setMediaScope,
             setCroppedScope,
+            setRotatedScope,
             setGroupOp,
             wrapInGroup,
             ungroup,
@@ -230,6 +241,7 @@ export const useTagFilterDraft: (
             setFavoritesScope,
             setMediaScope,
             setCroppedScope,
+            setRotatedScope,
             setGroupOp,
             wrapInGroup,
             ungroup,

@@ -58,7 +58,7 @@ export const fileUpdateSortTime = (file: EnteFile): number => {
 const sortFilesNewestFirst = (
     files: EnteFile[],
     key: (file: EnteFile) => number,
-): EnteFile[] => [...files].sort((a, b) => key(b) - key(a));
+): EnteFile[] => [...files].sort((a, b) => key(b) - key(a) || b.id - a.id);
 
 /**
  * Keep {@link previous} order when {@link nextVisible} is the same id set

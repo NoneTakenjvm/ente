@@ -14,6 +14,7 @@ import {
     type FavoritesScope,
     type MediaScope,
     type CroppedScope,
+    type RotatedScope,
 } from "@/lib/tags";
 
 /** A saved smart album backed by a tag query. */
@@ -59,6 +60,7 @@ export interface PersistedTagFilterSelection {
     favoritesScope: FavoritesScope;
     mediaScope: MediaScope;
     croppedScope: CroppedScope;
+    rotatedScope: RotatedScope;
     root: PersistedTagFilterGroup;
 }
 
@@ -92,6 +94,7 @@ export const serializeTagFilter = (
     favoritesScope: filter.favoritesScope,
     mediaScope: filter.mediaScope,
     croppedScope: filter.croppedScope,
+    rotatedScope: filter.rotatedScope,
     root: serializeNode(filter.root) as PersistedTagFilterGroup,
 });
 
@@ -138,6 +141,7 @@ export const hydrateTagFilter = (
     favoritesScope: persisted.favoritesScope,
     mediaScope: persisted.mediaScope ?? "all",
     croppedScope: persisted.croppedScope ?? "all",
+    rotatedScope: persisted.rotatedScope ?? "all",
     root: hydrateNode(persisted.root) as TagFilterGroup,
 });
 

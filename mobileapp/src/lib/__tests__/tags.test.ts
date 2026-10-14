@@ -272,6 +272,7 @@ describe("tags", () => {
                 favoritesScope: "all",
                 mediaScope: "all",
                 croppedScope: "all",
+                rotatedScope: "all",
                 root: createEmptyTagFilterRoot(),
             },
             fileIdsByTag,
@@ -299,6 +300,7 @@ describe("tags", () => {
                 favoritesScope: "all",
                 mediaScope: "all",
                 croppedScope: "all",
+                rotatedScope: "all",
                 root: createEmptyTagFilterRoot(),
             },
             fileIdsByTag,
@@ -311,6 +313,7 @@ describe("tags", () => {
                 favoritesScope: "all",
                 mediaScope: "all",
                 croppedScope: "all",
+                rotatedScope: "all",
                 root: createEmptyTagFilterRoot(),
             },
             fileIdsByTag,
@@ -339,6 +342,7 @@ describe("tags", () => {
                     favoritesScope: "all",
                     mediaScope: "all",
                     croppedScope: "all",
+                    rotatedScope: "all",
                     root: createEmptyTagFilterRoot(),
                 },
                 fileIdsByTag,
@@ -362,6 +366,7 @@ describe("tags", () => {
                 favoritesScope: "all",
                 mediaScope: "all",
                 croppedScope: "all",
+                rotatedScope: "all",
                 root: createEmptyTagFilterRoot(),
             },
             fileIdsByTag,
@@ -386,6 +391,7 @@ describe("tags", () => {
                 favoritesScope: "all",
                 mediaScope: "all",
                 croppedScope: "all",
+                rotatedScope: "all",
                 root: createEmptyTagFilterRoot(),
             },
             fileIdsByTag,
@@ -399,6 +405,7 @@ describe("tags", () => {
                 favoritesScope: "all",
                 mediaScope: "all",
                 croppedScope: "all",
+                rotatedScope: "all",
                 root: createEmptyTagFilterRoot(),
             },
             fileIdsByTag,
@@ -478,6 +485,7 @@ describe("tags", () => {
                     favoritesScope: "all",
                     mediaScope: "all",
                     croppedScope: "all",
+                    rotatedScope: "all",
                     root: createEmptyTagFilterRoot(),
                 },
                 fileIdsByTag,
@@ -501,6 +509,7 @@ describe("tags", () => {
                 favoritesScope: "favorites",
                 mediaScope: "all",
                 croppedScope: "all",
+                rotatedScope: "all",
                 root: createEmptyTagFilterRoot(),
             },
             fileIdsByTag,
@@ -524,6 +533,7 @@ describe("tags", () => {
                 favoritesScope: "not-favorites",
                 mediaScope: "all",
                 croppedScope: "all",
+                rotatedScope: "all",
                 root: createEmptyTagFilterRoot(),
             },
             fileIdsByTag,
@@ -548,6 +558,7 @@ describe("tags", () => {
                 favoritesScope: "all",
                 mediaScope: "all",
                 croppedScope: "cropped",
+                rotatedScope: "all",
                 root: createEmptyTagFilterRoot(),
             },
             fileIdsByTag,
@@ -561,11 +572,49 @@ describe("tags", () => {
                 favoritesScope: "all",
                 mediaScope: "all",
                 croppedScope: "not-cropped",
+                rotatedScope: "all",
                 root: createEmptyTagFilterRoot(),
             },
             fileIdsByTag,
         );
         expect(notCropped.map((file) => file.id)).toEqual([2, 3, 4]);
+    });
+
+    it("filterFilesByTags supports manually-rotated scope", () => {
+        const files = [
+            fileWithTags(1, ["selfie", "rotated"]),
+            fileWithTags(2, ["vietnam"]),
+            fileWithTags(3, ["plain"]),
+        ];
+        const index = buildTagIndex(files);
+        const { fileIdsByTag } = tagIndexToMaps(index);
+        const rotated = filterFilesByTags(
+            files,
+            {
+                tagScope: "all",
+                favoritesScope: "all",
+                mediaScope: "all",
+                croppedScope: "all",
+                rotatedScope: "rotated",
+                root: createEmptyTagFilterRoot(),
+            },
+            fileIdsByTag,
+        );
+        expect(rotated.map((file) => file.id)).toEqual([1]);
+
+        const notRotated = filterFilesByTags(
+            files,
+            {
+                tagScope: "all",
+                favoritesScope: "all",
+                mediaScope: "all",
+                croppedScope: "all",
+                rotatedScope: "not-rotated",
+                root: createEmptyTagFilterRoot(),
+            },
+            fileIdsByTag,
+        );
+        expect(notRotated.map((file) => file.id)).toEqual([2, 3]);
     });
 
     it("filterFilesByTags distinguishes grouped (A AND B) OR C from A AND (B OR C)", () => {
@@ -614,6 +663,7 @@ describe("tags", () => {
                 favoritesScope: "favorites",
                 mediaScope: "all",
                 croppedScope: "cropped",
+                rotatedScope: "all",
                 root: andRoot(includeClause("selfie"), excludeClause("vietnam")),
             }),
         ).toBe(

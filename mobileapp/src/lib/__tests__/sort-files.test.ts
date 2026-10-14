@@ -215,3 +215,16 @@ describe("moveFilesToFrontByUpdate", () => {
         ).toEqual([3, 1, 2]);
     });
 });
+
+describe("sortFilesNewestFirst tiebreak", () => {
+    it("orders equal upload times by newest id first", () => {
+        const withUploadedAt = (id: number): EnteFile => stubFile({
+            id,
+            pubMagicMetadata: { version: 1, count: 1, data: { uploadedAt: 100 } },
+        });
+        const files = [withUploadedAt(1), withUploadedAt(3), withUploadedAt(2)];
+        const ids = (list: EnteFile[]) => list.map((file) => file.id);
+        expect(ids(sortFilesByUpload(files))).toEqual([3, 2, 1]);
+        expect(ids(sortFilesByUpload([...files].reverse()))).toEqual([3, 2, 1]);
+    });
+});

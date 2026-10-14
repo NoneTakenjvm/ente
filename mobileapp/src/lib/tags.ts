@@ -40,6 +40,12 @@ export const MANUALLY_CROPPED_FILTER = "manually-cropped";
 /** Gallery filter for files that were not manually cropped. */
 export const NOT_MANUALLY_CROPPED_FILTER = "not-manually-cropped";
 
+/** Gallery filter for files manually rotated in this app. */
+export const MANUALLY_ROTATED_FILTER = "manually-rotated";
+
+/** Gallery filter for files that were not manually rotated. */
+export const NOT_MANUALLY_ROTATED_FILTER = "not-manually-rotated";
+
 export type TagFilterMode = "include" | "exclude";
 
 /** How sibling clauses combine. `only` = exact user-tag set (includes only). */
@@ -53,6 +59,9 @@ export type MediaScope = "all" | "photo" | "video";
 
 /** Manual crop presence: user crop (not auto-crop) vs everything else. */
 export type CroppedScope = "all" | "cropped" | "not-cropped";
+
+/** Manual rotate presence: files rotated in this app vs everything else. */
+export type RotatedScope = "all" | "rotated" | "not-rotated";
 
 export interface TagFilterClauseNode {
     kind: "clause";
@@ -88,6 +97,7 @@ export interface TagFilterSelection {
     favoritesScope: FavoritesScope;
     mediaScope: MediaScope;
     croppedScope: CroppedScope;
+    rotatedScope: RotatedScope;
     root: TagFilterGroup;
 }
 
@@ -121,6 +131,7 @@ export const emptyTagFilter = (): TagFilterSelection => ({
     favoritesScope: "all",
     mediaScope: "all",
     croppedScope: "all",
+    rotatedScope: "all",
     root: createEmptyTagFilterRoot(),
 });
 
@@ -225,6 +236,7 @@ export const isTagFilterActive = (filter: TagFilterSelection): boolean =>
     filter.favoritesScope !== "all" ||
     filter.mediaScope !== "all" ||
     filter.croppedScope !== "all" ||
+    filter.rotatedScope !== "all" ||
     countTagFilterClauses(filter.root) > 0;
 
 const describeClauseNode = (clause: TagFilterClauseNode): string =>
@@ -310,6 +322,11 @@ export const describeTagFilter = (filter: TagFilterSelection): string => {
     } else if (filter.croppedScope === "not-cropped") {
         parts.push(NOT_MANUALLY_CROPPED_FILTER);
     }
+    if (filter.rotatedScope === "rotated") {
+        parts.push(MANUALLY_ROTATED_FILTER);
+    } else if (filter.rotatedScope === "not-rotated") {
+        parts.push(NOT_MANUALLY_ROTATED_FILTER);
+    }
     const expr = describeGroupNode(filter.root);
     if (expr) {
         parts.push(expr);
@@ -342,7 +359,9 @@ export const isReservedTag = (tag: string): boolean =>
     tag === PHOTO_FILTER ||
     tag === VIDEO_FILTER ||
     tag === MANUALLY_CROPPED_FILTER ||
-    tag === NOT_MANUALLY_CROPPED_FILTER;
+    tag === NOT_MANUALLY_CROPPED_FILTER ||
+    tag === MANUALLY_ROTATED_FILTER ||
+    tag === NOT_MANUALLY_ROTATED_FILTER;
 
 /**
  * Read organizer tags from public magic metadata (`_organizer_v1.tags`).
@@ -368,6 +387,12 @@ export const isManuallyCroppedFile = (file: EnteFile): boolean => {
     const tags = extractTags(file);
     return tags.includes("cropped") && !tags.includes("auto-cropped");
 };
+
+/**
+ * Return true when the file was rotated in this app (stamps the `rotated` tag).
+ */
+export const isManuallyRotatedFile = (file: EnteFile): boolean =>
+    extractTags(file).includes("rotated");
 
 /**
  * User-visible organizer tags (excludes internal system tags).
@@ -865,6 +890,27 @@ const applyCroppedScope = (
     return next;
 };
 
+const applyRotatedScope = (
+    matchingIds: Set<number>,
+    files: EnteFile[],
+    rotatedScope: RotatedScope,
+): Set<number> => {
+    if (rotatedScope === "all") {
+        return matchingIds;
+    }
+    const next = new Set<number>();
+    const wantRotated = rotatedScope === "rotated";
+    for (const file of files) {
+        if (!matchingIds.has(file.id)) {
+            continue;
+        }
+        if (isManuallyRotatedFile(file) === wantRotated) {
+            next.add(file.id);
+        }
+    }
+    return next;
+};
+
 const resolveMatchingIds = (
     files: EnteFile[],
     candidateIds: Set<number>,
@@ -893,6 +939,7 @@ const resolveMatchingIds = (
 
     matchingIds = applyMediaScope(matchingIds, files, filter.mediaScope);
     matchingIds = applyCroppedScope(matchingIds, files, filter.croppedScope);
+    matchingIds = applyRotatedScope(matchingIds, files, filter.rotatedScope);
 
     if (matchingIds.size === 0) {
         return matchingIds;
@@ -923,6 +970,7 @@ const isFlatIncludeAndFilter = (filter: TagFilterSelection): boolean => {
         filter.favoritesScope !== "all" ||
         filter.mediaScope !== "all" ||
         filter.croppedScope !== "all" ||
+        filter.rotatedScope !== "all" ||
         filter.root.op !== "and" ||
         filter.root.children.length === 0
     ) {

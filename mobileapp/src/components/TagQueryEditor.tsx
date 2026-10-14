@@ -14,6 +14,7 @@ import {
     type CroppedScope,
     type FavoritesScope,
     type MediaScope,
+    type RotatedScope,
     type TagFilterGroup,
     type TagFilterJoin,
     type TagFilterMode,
@@ -31,6 +32,7 @@ export interface TagQueryEditorActions {
     setFavoritesScope: (scope: FavoritesScope) => void;
     setMediaScope: (scope: MediaScope) => void;
     setCroppedScope: (scope: CroppedScope) => void;
+    setRotatedScope: (scope: RotatedScope) => void;
     setGroupOp: (groupId: string, op: TagFilterJoin) => void;
     wrapInGroup: (nodeIds: string[], op: TagFilterJoin) => void;
     ungroup: (groupId: string) => void;
@@ -492,6 +494,8 @@ export function TagQueryEditor({
                     onMediaScopeChange={actions.setMediaScope}
                     croppedScope={filter.croppedScope}
                     onCroppedScopeChange={actions.setCroppedScope}
+                    rotatedScope={filter.rotatedScope}
+                    onRotatedScopeChange={actions.setRotatedScope}
                 />
             </div>
 

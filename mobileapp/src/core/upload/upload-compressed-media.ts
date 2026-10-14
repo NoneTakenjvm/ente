@@ -50,6 +50,8 @@ const buildMetadata = async (
     title,
     creationTime: sourceFile.metadata.creationTime,
     modificationTime: ensureInteger(Date.now() * 1000),
+    latitude: sourceFile.metadata.latitude,
+    longitude: sourceFile.metadata.longitude,
     hash: await computeContentHash(bytes),
     duration,
 });

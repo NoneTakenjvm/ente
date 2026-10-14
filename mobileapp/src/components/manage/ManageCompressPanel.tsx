@@ -473,7 +473,8 @@ export function ManageCompressPanel({
         filter.tagScope !== "all" ||
         filter.favoritesScope !== "all" ||
         filter.mediaScope !== "all" ||
-        filter.croppedScope !== "all";
+        filter.croppedScope !== "all" ||
+        filter.rotatedScope !== "all";
 
     const encoderHint =
         jobProgress.encoder === "webcodecs" ?
@@ -505,6 +506,8 @@ export function ManageCompressPanel({
                         onMediaScopeChange={actions.setMediaScope}
                         croppedScope={filter.croppedScope}
                         onCroppedScopeChange={actions.setCroppedScope}
+                        rotatedScope={filter.rotatedScope}
+                        onRotatedScopeChange={actions.setRotatedScope}
                     />
                     <TagClausePicker
                         filter={filter}

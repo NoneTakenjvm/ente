@@ -491,9 +491,16 @@ const appendUploadedFile = (
     pendingUploadedFiles.push(uploaded);
     uploadedFilesCommitTimer ??= setTimeout(() => {
         uploadedFilesCommitTimer = undefined;
-        const uploadedFiles = pendingUploadedFiles;
+        const { allFiles, fileIndexById } = get();
+        // A sync pass may already have pulled a file uploaded in this window.
+        const uploadedFiles = pendingUploadedFiles.filter(
+            (file) => !fileIndexById.has(file.id),
+        );
         pendingUploadedFiles = [];
-        const nextFiles = [...get().allFiles, ...uploadedFiles];
+        if (!uploadedFiles.length) {
+            return;
+        }
+        const nextFiles = [...allFiles, ...uploadedFiles];
         commitAllFiles(set, get, nextFiles);
         useTagStore.getState().applyLibraryFilesChange({
             removedFileIds: [],
@@ -2064,9 +2071,22 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
 
         void Promise.all(
             files.map((file) =>
-                upsertFavoriteOutboxEntry(file, userId, isFavorite).finally(() => {
-                    favoritesStore.removePending(file.id);
-                })),
+                upsertFavoriteOutboxEntry(file, userId, isFavorite)
+                    .catch(() => {
+                        favoritesStore.revertOptimisticFavorite(
+                            file,
+                            userId,
+                            !isFavorite,
+                            collections,
+                            allFiles,
+                        );
+                        console.warn(
+                            "Favourite outbox persist failed; reverted UI",
+                        );
+                    })
+                    .finally(() => {
+                        favoritesStore.removePending(file.id);
+                    })),
         ).then(() => flushTagOutboxNow());
     },
 
@@ -2108,6 +2128,10 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         // Prefer flush over cancel — callers that need durability await
         // flushAllDurableState before reset (logout/lock).
         void flushScheduledEncryptedFilesSave();
+        // Uploads still waiting to commit belong to the session being closed.
+        clearTimeout(uploadedFilesCommitTimer);
+        uploadedFilesCommitTimer = undefined;
+        pendingUploadedFiles = [];
         useFavoritesStore.getState().reset();
         set(initialState);
     },

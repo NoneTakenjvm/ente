@@ -112,7 +112,8 @@ export const matchNearnessFilterToKitPreset = (
         filter.tagScope !== "all" ||
         filter.favoritesScope !== "all" ||
         filter.mediaScope !== "all" ||
-        filter.croppedScope !== "all"
+        filter.croppedScope !== "all" ||
+        filter.rotatedScope !== "all"
     ) {
         return undefined;
     }

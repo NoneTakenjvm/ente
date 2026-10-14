@@ -30,6 +30,7 @@ import {
     type TagFilterSelection,
     type TagScope,
     type CroppedScope,
+    type RotatedScope,
     type FavoritesScope,
     type MediaScope,
 } from "@/lib/tags";
@@ -79,6 +80,7 @@ interface TagState {
     ) => void;
     setMediaScope: (mediaScope: MediaScope, target?: TagFilterTarget) => void;
     setCroppedScope: (croppedScope: CroppedScope, target?: TagFilterTarget) => void;
+    setRotatedScope: (rotatedScope: RotatedScope, target?: TagFilterTarget) => void;
     setTagFilterMode: (
         tag: string,
         mode: TagFilterMode | null,
@@ -786,6 +788,19 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             patchFilterForTarget(target, {
                 ...tagFilter,
                 croppedScope,
+            }),
+        );
+    },
+
+    setRotatedScope: (
+        rotatedScope: RotatedScope,
+        target: TagFilterTarget = "gallery",
+    ): void => {
+        const tagFilter = filterForTarget(get(), target);
+        set(
+            patchFilterForTarget(target, {
+                ...tagFilter,
+                rotatedScope,
             }),
         );
     },
