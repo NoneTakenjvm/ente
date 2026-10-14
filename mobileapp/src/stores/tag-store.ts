@@ -195,6 +195,15 @@ const patchFilterForTarget = (
         { tagFilter: filter } :
         { albumViewFilter: filter };
 
+const updateTagFilter = (
+    set: (partial: Partial<TagState>) => void,
+    get: () => TagState,
+    target: TagFilterTarget,
+    update: (filter: TagFilterSelection) => TagFilterSelection,
+): void => {
+    set(patchFilterForTarget(target, update(filterForTarget(get(), target))));
+};
+
 const indexFromMaps = (
     tags: string[],
     fileIdsByTag: Map<string, Set<number>>,
@@ -426,6 +435,40 @@ const dropRegisteredTagsWithFiles = (
 };
 
 /**
+ * Publish an incrementally edited index: refresh the tag list when keys
+ * changed, retire registered names that now have files, and schedule the
+ * debounced persist.
+ */
+const commitIncrementalIndex = (
+    set: (partial: Partial<TagState>) => void,
+    get: () => TagState,
+    fileIdsByTag: Map<string, Set<number>>,
+    tagKeysChanged: boolean,
+    touchedTagNames: string[],
+    lastTagTouchFileIds: number[] | undefined,
+): void => {
+    const tagList = tagKeysChanged ?
+        [...fileIdsByTag.keys()].sort() :
+        get().tags;
+    const registeredTagNames = dropRegisteredTagsWithFiles(
+        get().registeredTagNames,
+        fileIdsByTag,
+        touchedTagNames,
+    );
+    if (registeredTagNames.length !== get().registeredTagNames.length) {
+        persistRegisteredTags(registeredTagNames);
+    }
+    set({
+        tags: tagList,
+        fileIdsByTag,
+        registeredTagNames,
+        tagIndexRevision: get().tagIndexRevision + 1,
+        lastTagTouchFileIds,
+    });
+    schedulePersistCurrentIndex(tagList, fileIdsByTag);
+};
+
+/**
  * Drop many file ids from every tag bucket in one pass over the index.
  *
  * Only buckets that contain one of `fileIds` are cloned (once each); emptied
@@ -440,7 +483,7 @@ const removeFilesFromIndex = (
 ): boolean => {
     let tagKeysChanged = false;
     if (fileIds.size === 0) {
-        return tagKeysChanged;
+        return false;
     }
     for (const [tag, ids] of fileIdsByTag) {
         let next: Set<number> | undefined;
@@ -690,68 +733,52 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
     },
 
     setTagScope: (scope: TagScope, target: TagFilterTarget = "gallery"): void => {
-        set(
-            patchFilterForTarget(
-                target,
-                setTagFilterScope(
-                    filterForTarget(get(), target),
-                    scope,
-                    get().includeInEffectsPresenceByName,
-                ),
-            ),
-        );
+        updateTagFilter(set, get, target, (tagFilter) =>
+            setTagFilterScope(
+                tagFilter,
+                scope,
+                get().includeInEffectsPresenceByName,
+            ));
     },
 
     setFavoritesScope: (
         favoritesScope: FavoritesScope,
         target: TagFilterTarget = "gallery",
     ): void => {
-        const tagFilter = filterForTarget(get(), target);
-        set(
-            patchFilterForTarget(target, {
-                ...tagFilter,
-                favoritesScope,
-            }),
-        );
+        updateTagFilter(set, get, target, (tagFilter) => ({
+            ...tagFilter,
+            favoritesScope,
+        }));
     },
 
     setMediaScope: (
         mediaScope: MediaScope,
         target: TagFilterTarget = "gallery",
     ): void => {
-        const tagFilter = filterForTarget(get(), target);
-        set(
-            patchFilterForTarget(target, {
-                ...tagFilter,
-                mediaScope,
-            }),
-        );
+        updateTagFilter(set, get, target, (tagFilter) => ({
+            ...tagFilter,
+            mediaScope,
+        }));
     },
 
     setCroppedScope: (
         croppedScope: CroppedScope,
         target: TagFilterTarget = "gallery",
     ): void => {
-        const tagFilter = filterForTarget(get(), target);
-        set(
-            patchFilterForTarget(target, {
-                ...tagFilter,
-                croppedScope,
-            }),
-        );
+        updateTagFilter(set, get, target, (tagFilter) => ({
+            ...tagFilter,
+            croppedScope,
+        }));
     },
 
     setRotatedScope: (
         rotatedScope: RotatedScope,
         target: TagFilterTarget = "gallery",
     ): void => {
-        const tagFilter = filterForTarget(get(), target);
-        set(
-            patchFilterForTarget(target, {
-                ...tagFilter,
-                rotatedScope,
-            }),
-        );
+        updateTagFilter(set, get, target, (tagFilter) => ({
+            ...tagFilter,
+            rotatedScope,
+        }));
     },
 
     setTagFilterMode: (
@@ -759,17 +786,13 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         mode: TagFilterMode | null,
         target: TagFilterTarget = "gallery",
     ): void => {
-        set(
-            patchFilterForTarget(
-                target,
-                setTagFilterModeOnFilter(
-                    filterForTarget(get(), target),
-                    tag,
-                    mode,
-                    get().includeInEffectsPresenceByName,
-                ),
-            ),
-        );
+        updateTagFilter(set, get, target, (tagFilter) =>
+            setTagFilterModeOnFilter(
+                tagFilter,
+                tag,
+                mode,
+                get().includeInEffectsPresenceByName,
+            ));
     },
 
     setClauseMode: (
@@ -777,17 +800,13 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         mode: TagFilterMode,
         target: TagFilterTarget = "gallery",
     ): void => {
-        set(
-            patchFilterForTarget(
-                target,
-                setClauseModeOnFilter(
-                    filterForTarget(get(), target),
-                    clauseId,
-                    mode,
-                    get().includeInEffectsPresenceByName,
-                ),
-            ),
-        );
+        updateTagFilter(set, get, target, (tagFilter) =>
+            setClauseModeOnFilter(
+                tagFilter,
+                clauseId,
+                mode,
+                get().includeInEffectsPresenceByName,
+            ));
     },
 
     setClauseInGroup: (
@@ -796,18 +815,14 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         mode: TagFilterMode | null,
         target: TagFilterTarget = "gallery",
     ): void => {
-        set(
-            patchFilterForTarget(
-                target,
-                setClauseInGroupOnFilter(
-                    filterForTarget(get(), target),
-                    groupId,
-                    tag,
-                    mode,
-                    get().includeInEffectsPresenceByName,
-                ),
-            ),
-        );
+        updateTagFilter(set, get, target, (tagFilter) =>
+            setClauseInGroupOnFilter(
+                tagFilter,
+                groupId,
+                tag,
+                mode,
+                get().includeInEffectsPresenceByName,
+            ));
     },
 
     setKitMode: (
@@ -815,17 +830,13 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         mode: TagFilterMode | null,
         target: TagFilterTarget = "gallery",
     ): void => {
-        set(
-            patchFilterForTarget(
-                target,
-                setKitModeOnFilter(
-                    filterForTarget(get(), target),
-                    kit,
-                    mode,
-                    get().includeInEffectsPresenceByName,
-                ),
-            ),
-        );
+        updateTagFilter(set, get, target, (tagFilter) =>
+            setKitModeOnFilter(
+                tagFilter,
+                kit,
+                mode,
+                get().includeInEffectsPresenceByName,
+            ));
     },
 
     setKitInGroup: (
@@ -834,18 +845,14 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         mode: TagFilterMode | null,
         target: TagFilterTarget = "gallery",
     ): void => {
-        set(
-            patchFilterForTarget(
-                target,
-                setKitInGroupOnFilter(
-                    filterForTarget(get(), target),
-                    groupId,
-                    kit,
-                    mode,
-                    get().includeInEffectsPresenceByName,
-                ),
-            ),
-        );
+        updateTagFilter(set, get, target, (tagFilter) =>
+            setKitInGroupOnFilter(
+                tagFilter,
+                groupId,
+                kit,
+                mode,
+                get().includeInEffectsPresenceByName,
+            ));
     },
 
     setGroupOp: (
@@ -853,13 +860,10 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         op: TagFilterJoin,
         target: TagFilterTarget = "gallery",
     ): void => {
-        const tagFilter = filterForTarget(get(), target);
-        set(
-            patchFilterForTarget(target, {
-                ...tagFilter,
-                root: updateGroupOp(tagFilter.root, groupId, op),
-            }),
-        );
+        updateTagFilter(set, get, target, (tagFilter) => ({
+            ...tagFilter,
+            root: updateGroupOp(tagFilter.root, groupId, op),
+        }));
     },
 
     wrapInGroup: (
@@ -896,29 +900,23 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
     },
 
     ungroup: (groupId: string, target: TagFilterTarget = "gallery"): void => {
-        const tagFilter = filterForTarget(get(), target);
-        if (tagFilter.root.id === groupId) {
+        if (filterForTarget(get(), target).root.id === groupId) {
             return;
         }
-        set(
-            patchFilterForTarget(target, {
-                ...tagFilter,
-                root: ungroupNode(tagFilter.root, groupId),
-            }),
-        );
+        updateTagFilter(set, get, target, (tagFilter) => ({
+            ...tagFilter,
+            root: ungroupNode(tagFilter.root, groupId),
+        }));
     },
 
     removeNode: (nodeId: string, target: TagFilterTarget = "gallery"): void => {
-        const tagFilter = filterForTarget(get(), target);
-        if (tagFilter.root.id === nodeId) {
+        if (filterForTarget(get(), target).root.id === nodeId) {
             return;
         }
-        set(
-            patchFilterForTarget(target, {
-                ...tagFilter,
-                root: removeNodeFromTree(tagFilter.root, nodeId),
-            }),
-        );
+        updateTagFilter(set, get, target, (tagFilter) => ({
+            ...tagFilter,
+            root: removeNodeFromTree(tagFilter.root, nodeId),
+        }));
     },
 
     clearFilters: (target: TagFilterTarget = "gallery"): void => {
@@ -1060,7 +1058,8 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         }
         const fileIdsByTag = new Map(get().fileIdsByTag);
         const ownedTags = new Set<string>();
-        const touchedTagNames: string[] = [];
+        const touchedTagNames = updates.flatMap(({ tags }) =>
+            tags.filter((tag) => !isSystemTag(tag)));
         let tagKeysChanged = false;
 
         const canUseIncremental = updates.every(
@@ -1069,9 +1068,6 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
 
         if (canUseIncremental) {
             for (const { fileId, tags, previousTags } of updates) {
-                touchedTagNames.push(
-                    ...tags.filter((tag) => !isSystemTag(tag)),
-                );
                 if (applyIncrementalFileTags(
                     fileIdsByTag,
                     ownedTags,
@@ -1083,14 +1079,11 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
                 }
             }
         } else {
-            const touchedFileIds = new Set<number>();
-            for (const { fileId, tags } of updates) {
-                touchedFileIds.add(fileId);
-                touchedTagNames.push(
-                    ...tags.filter((tag) => !isSystemTag(tag)),
-                );
-            }
-            removeFilesFromIndex(fileIdsByTag, ownedTags, touchedFileIds);
+            removeFilesFromIndex(
+                fileIdsByTag,
+                ownedTags,
+                new Set(updates.map((update) => update.fileId)),
+            );
             for (const { fileId, tags } of updates) {
                 for (const tag of tags) {
                     if (isSystemTag(tag)) {
@@ -1106,25 +1099,14 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             tagKeysChanged = true;
         }
 
-        const tagList = tagKeysChanged ?
-            [...fileIdsByTag.keys()].sort() :
-            get().tags;
-        const registeredTagNames = dropRegisteredTagsWithFiles(
-            get().registeredTagNames,
+        commitIncrementalIndex(
+            set,
+            get,
             fileIdsByTag,
+            tagKeysChanged,
             touchedTagNames,
+            updates.map((update) => update.fileId),
         );
-        if (registeredTagNames.length !== get().registeredTagNames.length) {
-            persistRegisteredTags(registeredTagNames);
-        }
-        set({
-            tags: tagList,
-            fileIdsByTag,
-            registeredTagNames,
-            tagIndexRevision: get().tagIndexRevision + 1,
-            lastTagTouchFileIds: updates.map((update) => update.fileId),
-        });
-        schedulePersistCurrentIndex(tagList, fileIdsByTag);
     },
 
     applyLibraryFilesChange: ({
@@ -1161,25 +1143,14 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             return;
         }
 
-        const tagList = tagKeysChanged ?
-            [...fileIdsByTag.keys()].sort() :
-            get().tags;
-        const registeredTagNames = dropRegisteredTagsWithFiles(
-            get().registeredTagNames,
+        commitIncrementalIndex(
+            set,
+            get,
             fileIdsByTag,
+            tagKeysChanged,
             touchedTagNames,
+            undefined,
         );
-        if (registeredTagNames.length !== get().registeredTagNames.length) {
-            persistRegisteredTags(registeredTagNames);
-        }
-        set({
-            tags: tagList,
-            fileIdsByTag,
-            registeredTagNames,
-            tagIndexRevision: get().tagIndexRevision + 1,
-            lastTagTouchFileIds: undefined,
-        });
-        schedulePersistCurrentIndex(tagList, fileIdsByTag);
     },
 
     applyTagRename: (oldName: string, newName: string): void => {
@@ -1207,13 +1178,9 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
             get().includeInKitNearnessByName,
         );
         const oldInclude = includeInKitNearnessByName.get(oldName);
-        if (oldInclude) {
-            includeInKitNearnessByName.delete(oldName);
-            if (!includeInKitNearnessByName.has(newName)) {
-                includeInKitNearnessByName.set(newName, true);
-            }
-        } else {
-            includeInKitNearnessByName.delete(oldName);
+        includeInKitNearnessByName.delete(oldName);
+        if (oldInclude && !includeInKitNearnessByName.has(newName)) {
+            includeInKitNearnessByName.set(newName, true);
         }
         const includeInEffectsPresenceByName = new Map(
             get().includeInEffectsPresenceByName,

@@ -107,10 +107,6 @@ export const removeVisibilityOutboxEntryIfUnchanged = async (
 export const getVisibilityOutboxEntries = (): VisibilityOutboxEntry[] =>
     [...outboxByFileId.values()];
 
-export const getVisibilityOutboxEntry = (
-    fileId: number,
-): VisibilityOutboxEntry | undefined => outboxByFileId.get(fileId);
-
 /**
  * True when the file is archived on disk or via a pending visibility outbox entry.
  */

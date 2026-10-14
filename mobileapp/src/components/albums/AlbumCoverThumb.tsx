@@ -15,11 +15,12 @@ interface AlbumCoverThumbProps {
     onClick?: () => void;
 }
 
-export function AlbumCoverThumb({
-    file,
-    className,
-    onClick,
-}: AlbumCoverThumbProps): JSX.Element {
+/**
+ * Subscribe to a file's cached thumbnail and request it when not yet loaded.
+ */
+export function useThumbnailEntry(
+    file: EnteFile | undefined,
+): ReturnType<typeof getThumbnailEntry> {
     const entry = useSyncExternalStore(
         (listener) => subscribeThumbnail(file?.id ?? -1, listener),
         () => getThumbnailEntry(file?.id ?? -1),
@@ -31,6 +32,16 @@ export function AlbumCoverThumb({
             requestThumbnail(file);
         }
     }, [entry.status, file]);
+
+    return entry;
+}
+
+export function AlbumCoverThumb({
+    file,
+    className,
+    onClick,
+}: AlbumCoverThumbProps): JSX.Element {
+    const entry = useThumbnailEntry(file);
 
     const content =
         file && entry.status === "ready" && entry.url ? (

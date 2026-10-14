@@ -64,9 +64,6 @@ export function StampToolFooter(): JSX.Element | null {
     const [expanded, setExpanded] = useState(false);
 
     const rankedKits = useMemo((): RankedKit[] => {
-        if (!presets.length) {
-            return [];
-        }
         const scored = presets.map((preset) => ({
             preset,
             count: countFilesMatchingKit(allFiles, preset.tags),
@@ -80,12 +77,11 @@ export function StampToolFooter(): JSX.Element | null {
         return scored;
     }, [allFiles, presets]);
 
-    const activeKit = useMemo((): TagPreset | undefined => {
-        if (!stampTags.length) {
-            return undefined;
-        }
-        return presets.find((preset) => tagsMatchPreset(stampTags, preset));
-    }, [presets, stampTags]);
+    const activeKit = useMemo(
+        (): TagPreset | undefined =>
+            presets.find((preset) => tagsMatchPreset(stampTags, preset)),
+        [presets, stampTags],
+    );
 
     const activeKitKey = activeKit?.id ?? null;
     const kitListExpanded =

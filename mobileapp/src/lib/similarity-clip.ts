@@ -51,9 +51,6 @@ export const embeddingCosineDistance = (
 export const clipDistanceToScore = (distance: number): number =>
     Math.max(0, Math.round(distance * 100));
 
-/** Slider score back to cosine distance (for labels / docs). */
-export const clipScoreToDistance = (score: number): number => score / 100;
-
 /** Clamp a threshold into the Similar CLIP slider range. */
 export const clampClipScoreThreshold = (score: number): number =>
     Math.min(

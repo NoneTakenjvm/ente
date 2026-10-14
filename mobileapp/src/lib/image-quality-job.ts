@@ -27,11 +27,6 @@ export interface ImageQualityJobOptions {
     signal?: AbortSignal;
 }
 
-const emptyIndex = (): PersistedQualityIndex => ({
-    version: QUALITY_INDEX_VERSION,
-    entries: {},
-});
-
 const indexFromMap = (entries: Map<number, number>): PersistedQualityIndex => ({
     version: QUALITY_INDEX_VERSION,
     entries: Object.fromEntries(entries.entries()),
@@ -159,10 +154,6 @@ export const hydrateQualityIndex = async (): Promise<Map<number, number>> => {
         }
     }
     return entries;
-};
-
-export const clearPersistedQualityIndex = async (): Promise<void> => {
-    await saveEncryptedQualityIndex(emptyIndex(), getSessionCacheKey());
 };
 
 /** Write the index every N scores so progress survives interruption. */
@@ -298,13 +289,4 @@ export const runImageQualityJob = async (
 
     await persistIndex(entries);
     return entries;
-};
-
-export const terminateImageQualityWorker = (): void => {
-    workers?.forEach((worker) => {
-        rejectPendingScores(worker, new Error("Quality worker terminated"));
-        worker.terminate();
-    });
-    workers = undefined;
-    workerRoundRobin = 0;
 };

@@ -53,6 +53,13 @@ type OptionsSectionId =
     "relative" |
     "nearness";
 
+interface RadioOption<T extends string> {
+    value: T;
+    label: string;
+    /** Shown beside the label when set. */
+    count?: number;
+}
+
 /**
  * Collapsible Options block (Sort or Filter). Stays open while its choice is
  * active; otherwise the title toggles the body.
@@ -90,6 +97,163 @@ function OptionsSection({
             </button>
             {open ? children : null}
         </DropdownMenuGroup>
+    );
+}
+
+/** An {@link OptionsSection} holding one radio group; `children` follow it. */
+function RadioOptionsSection<T extends string>({
+    title,
+    open,
+    onToggle,
+    value,
+    options,
+    onChange,
+    children,
+}: {
+    title: string;
+    open: boolean;
+    onToggle: () => void;
+    value: T | "";
+    options: readonly RadioOption<T>[];
+    onChange: (value: T) => void;
+    children?: ReactNode;
+}): JSX.Element {
+    return (
+        <OptionsSection title={title} open={open} onToggle={onToggle}>
+            <DropdownMenuRadioGroup
+                value={value}
+                onValueChange={(next) => {
+                    const option = options.find(
+                        (candidate) => candidate.value === next,
+                    );
+                    if (option) {
+                        onChange(option.value);
+                    }
+                }}
+            >
+                {options.map((option) => (
+                    <DropdownMenuRadioItem
+                        key={option.value}
+                        value={option.value}
+                        closeOnClick
+                    >
+                        {option.count === undefined ? (
+                            option.label
+                        ) : (
+                            <span className="flex w-full items-center justify-between gap-2">
+                                {option.label}
+                                <span className="text-xs tabular-nums text-muted-foreground">
+                                    {option.count}
+                                </span>
+                            </span>
+                        )}
+                    </DropdownMenuRadioItem>
+                ))}
+            </DropdownMenuRadioGroup>
+            {children}
+        </OptionsSection>
+    );
+}
+
+/** Sort / Filter tab button with an "has active choice" dot. */
+function OptionsTab({
+    label,
+    selected,
+    active,
+    onClick,
+}: {
+    label: string;
+    selected: boolean;
+    active: boolean;
+    onClick: () => void;
+}): JSX.Element {
+    return (
+        <button
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            className={cn(
+                "inline-flex h-7 items-center justify-center gap-1.5 rounded-md px-1.5 text-xs font-medium transition-colors",
+                selected ?
+                    "bg-background text-foreground shadow-sm" :
+                    "text-foreground/60 hover:text-foreground",
+            )}
+            onClick={onClick}
+        >
+            {label}
+            {active ? (
+                <span className="size-1.5 rounded-full bg-foreground" />
+            ) : null}
+        </button>
+    );
+}
+
+/** Reapply / Change / Off row shown while a nearness entry is active. */
+function NearnessActions({
+    onReapply,
+    onChange,
+    onOff,
+}: {
+    onReapply?: () => void;
+    onChange: () => void;
+    onOff: () => void;
+}): JSX.Element {
+    return (
+        <div className="flex flex-wrap gap-1.5 px-1">
+            <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => onReapply?.()}
+                disabled={onReapply === undefined}
+            >
+                Reapply
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={onChange}>
+                Change
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={onOff}>
+                Off
+            </Button>
+        </div>
+    );
+}
+
+function ViewportSizeInput({
+    axis,
+    value,
+    onChange,
+    onCommit,
+    ariaLabel,
+}: {
+    axis: string;
+    value: string;
+    onChange: (value: string) => void;
+    onCommit: () => void;
+    ariaLabel: string;
+}): JSX.Element {
+    return (
+        <label className="flex min-w-0 flex-1 items-center gap-1 text-xs text-muted-foreground">
+            <span className="shrink-0">{axis}</span>
+            <Input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                step={1}
+                value={value}
+                onChange={(event) => onChange(event.target.value)}
+                onBlur={onCommit}
+                onKeyDown={(event) => {
+                    event.stopPropagation();
+                    if (event.key === "Enter") {
+                        event.currentTarget.blur();
+                    }
+                }}
+                onClick={(event) => event.stopPropagation()}
+                className="h-7 px-1.5 text-xs tabular-nums"
+                aria-label={ariaLabel}
+            />
+        </label>
     );
 }
 
@@ -183,39 +347,6 @@ interface TagScopeFilterDropdownProps {
     kitLikenessRivalPenalty?: boolean;
     onKitLikenessRivalPenaltyChange?: (enabled: boolean) => void;
 }
-
-const isTagScope = (value: unknown): value is TagScope =>
-    value === "all" || value === "tagged" || value === "untagged";
-
-const isFavoritesScope = (value: unknown): value is FavoritesScope =>
-    value === "all" || value === "favorites" || value === "not-favorites";
-
-const isMediaScope = (value: unknown): value is MediaScope =>
-    value === "all" || value === "photo" || value === "video";
-
-const isCroppedScope = (value: unknown): value is CroppedScope =>
-    value === "all" || value === "cropped" || value === "not-cropped";
-
-const isRotatedScope = (value: unknown): value is RotatedScope =>
-    value === "all" || value === "rotated" || value === "not-rotated";
-
-const isViewportFitSort = (value: unknown): value is ViewportFitSort =>
-    value === "none" || value === "best" || value === "worst";
-
-const isUploadedAtSort = (value: unknown): value is UploadedAtSort =>
-    value === "none" || value === "newest" || value === "oldest";
-
-const isImageSizeSort = (value: unknown): value is ImageSizeSort =>
-    value === "none" || value === "largest" || value === "smallest";
-
-const isImageQualitySort = (value: unknown): value is ImageQualitySort =>
-    value === "none" || value === "worst" || value === "best";
-
-const isTagFilterFitSort = (value: unknown): value is TagFilterFitSort =>
-    value === "none" || value === "best" || value === "worst";
-
-const isRelativeSort = (value: unknown): value is RelativeSort =>
-    value === "none" || value === "closest" || value === "furthest";
 
 export function TagScopeFilterDropdown({
     taggedCount,
@@ -360,28 +491,27 @@ export function TagScopeFilterDropdown({
     >(() => new Set());
     const nearnessDraft = useTagFilterDraft(emptyTagFilter());
 
-    const isOptionsSectionOpen = (
+    /** Open/toggle props for a section; `forceOpen` pins it open while active. */
+    const sectionState = (
         id: OptionsSectionId,
         forceOpen: boolean,
-    ): boolean => forceOpen || manualOpenSections.has(id);
-
-    const toggleOptionsSection = (
-        id: OptionsSectionId,
-        forceOpen: boolean,
-    ): void => {
-        if (forceOpen) {
-            return;
-        }
-        setManualOpenSections((prev) => {
-            const next = new Set(prev);
-            if (next.has(id)) {
-                next.delete(id);
-            } else {
-                next.add(id);
+    ): { open: boolean; onToggle: () => void } => ({
+        open: forceOpen || manualOpenSections.has(id),
+        onToggle: () => {
+            if (forceOpen) {
+                return;
             }
-            return next;
-        });
-    };
+            setManualOpenSections((prev) => {
+                const next = new Set(prev);
+                if (next.has(id)) {
+                    next.delete(id);
+                } else {
+                    next.add(id);
+                }
+                return next;
+            });
+        },
+    });
 
     const selectedKit = useMemo((): TagPreset | undefined => {
         if (!kitLikenessActive || !kitLikenessPresetId) {
@@ -443,19 +573,20 @@ export function TagScopeFilterDropdown({
         setKitQuery("");
     };
 
-    const closeNearnessEditor = (): void => {
+    const openKitPicker = (): void => {
         setNearnessEditorOpen(false);
+        setKitPickerOpen(true);
     };
 
     const commitNearnessDraft = (): void => {
         if (!onNearnessFilterChange) {
             return;
         }
-        if (isTagFilterActive(nearnessDraft.filter)) {
-            onNearnessFilterChange(nearnessDraft.filter);
-        } else {
-            onNearnessFilterChange(undefined);
-        }
+        onNearnessFilterChange(
+            isTagFilterActive(nearnessDraft.filter) ?
+                nearnessDraft.filter :
+                undefined,
+        );
         setNearnessEditorOpen(false);
     };
 
@@ -483,45 +614,12 @@ export function TagScopeFilterDropdown({
 
     const optionsActive = filterActive || sortActive;
 
-    const handleScopeChange = (value: TagScope): void => {
-        if (onTagScopeChange) {
-            onTagScopeChange(value);
-        } else {
-            setTagScope(value);
-        }
-    };
-
-    const handleFavoritesScopeChange = (value: FavoritesScope): void => {
-        if (onFavoritesScopeChange) {
-            onFavoritesScopeChange(value);
-        } else {
-            setFavoritesScope(value);
-        }
-    };
-
-    const handleMediaScopeChange = (value: MediaScope): void => {
-        if (onMediaScopeChange) {
-            onMediaScopeChange(value);
-        } else {
-            setMediaScope(value);
-        }
-    };
-
-    const handleCroppedScopeChange = (value: CroppedScope): void => {
-        if (onCroppedScopeChange) {
-            onCroppedScopeChange(value);
-        } else {
-            setCroppedScope(value);
-        }
-    };
-
-    const handleRotatedScopeChange = (value: RotatedScope): void => {
-        if (onRotatedScopeChange) {
-            onRotatedScopeChange(value);
-        } else {
-            setRotatedScope(value);
-        }
-    };
+    const handleScopeChange = onTagScopeChange ?? setTagScope;
+    const handleFavoritesScopeChange =
+        onFavoritesScopeChange ?? setFavoritesScope;
+    const handleMediaScopeChange = onMediaScopeChange ?? setMediaScope;
+    const handleCroppedScopeChange = onCroppedScopeChange ?? setCroppedScope;
+    const handleRotatedScopeChange = onRotatedScopeChange ?? setRotatedScope;
 
     const filterPanel = (
         <>
@@ -545,195 +643,85 @@ export function TagScopeFilterDropdown({
                 </Button>
             </div>
             <DropdownMenuSeparator />
-            <OptionsSection
+            <RadioOptionsSection<TagScope>
                 title="Tag presence"
-                open={isOptionsSectionOpen(
-                    "tagPresence",
-                    tagScope !== "all",
-                )}
-                onToggle={() =>
-                    toggleOptionsSection("tagPresence", tagScope !== "all")
-                }
-            >
-                <DropdownMenuRadioGroup
-                    value={tagScope}
-                    onValueChange={(value) => {
-                        if (isTagScope(value)) {
-                            handleScopeChange(value);
-                        }
-                    }}
-                >
-                    <DropdownMenuRadioItem value="all" closeOnClick>
-                        All
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="tagged" closeOnClick>
-                        <span className="flex w-full items-center justify-between gap-2">
-                            Any tag
-                            <span className="text-xs tabular-nums text-muted-foreground">
-                                {taggedCount}
-                            </span>
-                        </span>
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="untagged" closeOnClick>
-                        <span className="flex w-full items-center justify-between gap-2">
-                            No tag
-                            <span className="text-xs tabular-nums text-muted-foreground">
-                                {untaggedCount}
-                            </span>
-                        </span>
-                    </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-            </OptionsSection>
+                {...sectionState("tagPresence", tagScope !== "all")}
+                value={tagScope}
+                onChange={handleScopeChange}
+                options={[
+                    { value: "all", label: "All" },
+                    { value: "tagged", label: "Any tag", count: taggedCount },
+                    {
+                        value: "untagged",
+                        label: "No tag",
+                        count: untaggedCount,
+                    },
+                ]}
+            />
             <DropdownMenuSeparator />
-            <OptionsSection
+            <RadioOptionsSection<FavoritesScope>
                 title="Favourites"
-                open={isOptionsSectionOpen(
-                    "favourites",
-                    favoritesScope !== "all",
-                )}
-                onToggle={() =>
-                    toggleOptionsSection(
-                        "favourites",
-                        favoritesScope !== "all",
-                    )
-                }
-            >
-                <DropdownMenuRadioGroup
-                    value={favoritesScope}
-                    onValueChange={(value) => {
-                        if (isFavoritesScope(value)) {
-                            handleFavoritesScopeChange(value);
-                        }
-                    }}
-                >
-                    <DropdownMenuRadioItem value="all" closeOnClick>
-                        All
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="favorites" closeOnClick>
-                        <span className="flex w-full items-center justify-between gap-2">
-                            Favourite
-                            <span className="text-xs tabular-nums text-muted-foreground">
-                                {favoritesCount}
-                            </span>
-                        </span>
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="not-favorites" closeOnClick>
-                        <span className="flex w-full items-center justify-between gap-2">
-                            Not favourite
-                            <span className="text-xs tabular-nums text-muted-foreground">
-                                {notFavoritesCount}
-                            </span>
-                        </span>
-                    </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-            </OptionsSection>
+                {...sectionState("favourites", favoritesScope !== "all")}
+                value={favoritesScope}
+                onChange={handleFavoritesScopeChange}
+                options={[
+                    { value: "all", label: "All" },
+                    {
+                        value: "favorites",
+                        label: "Favourite",
+                        count: favoritesCount,
+                    },
+                    {
+                        value: "not-favorites",
+                        label: "Not favourite",
+                        count: notFavoritesCount,
+                    },
+                ]}
+            />
             <DropdownMenuSeparator />
-            <OptionsSection
+            <RadioOptionsSection<CroppedScope>
                 title="Manual crop"
-                open={isOptionsSectionOpen(
-                    "manualCrop",
-                    croppedScope !== "all",
-                )}
-                onToggle={() =>
-                    toggleOptionsSection("manualCrop", croppedScope !== "all")
-                }
-            >
-                <DropdownMenuRadioGroup
-                    value={croppedScope}
-                    onValueChange={(value) => {
-                        if (isCroppedScope(value)) {
-                            handleCroppedScopeChange(value);
-                        }
-                    }}
-                >
-                    <DropdownMenuRadioItem value="all" closeOnClick>
-                        All
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="cropped" closeOnClick>
-                        <span className="flex w-full items-center justify-between gap-2">
-                            Cropped
-                            <span className="text-xs tabular-nums text-muted-foreground">
-                                {croppedCount}
-                            </span>
-                        </span>
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="not-cropped" closeOnClick>
-                        <span className="flex w-full items-center justify-between gap-2">
-                            Not cropped
-                            <span className="text-xs tabular-nums text-muted-foreground">
-                                {notCroppedCount}
-                            </span>
-                        </span>
-                    </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-            </OptionsSection>
+                {...sectionState("manualCrop", croppedScope !== "all")}
+                value={croppedScope}
+                onChange={handleCroppedScopeChange}
+                options={[
+                    { value: "all", label: "All" },
+                    {
+                        value: "cropped",
+                        label: "Cropped",
+                        count: croppedCount,
+                    },
+                    {
+                        value: "not-cropped",
+                        label: "Not cropped",
+                        count: notCroppedCount,
+                    },
+                ]}
+            />
             <DropdownMenuSeparator />
-            <OptionsSection
+            <RadioOptionsSection<RotatedScope>
                 title="Manual rotate"
-                open={isOptionsSectionOpen(
-                    "manualRotate",
-                    rotatedScope !== "all",
-                )}
-                onToggle={() =>
-                    toggleOptionsSection("manualRotate", rotatedScope !== "all")
-                }
-            >
-                <DropdownMenuRadioGroup
-                    value={rotatedScope}
-                    onValueChange={(value) => {
-                        if (isRotatedScope(value)) {
-                            handleRotatedScopeChange(value);
-                        }
-                    }}
-                >
-                    <DropdownMenuRadioItem value="all" closeOnClick>
-                        All
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="rotated" closeOnClick>
-                        Rotated
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="not-rotated" closeOnClick>
-                        Not rotated
-                    </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-            </OptionsSection>
+                {...sectionState("manualRotate", rotatedScope !== "all")}
+                value={rotatedScope}
+                onChange={handleRotatedScopeChange}
+                options={[
+                    { value: "all", label: "All" },
+                    { value: "rotated", label: "Rotated" },
+                    { value: "not-rotated", label: "Not rotated" },
+                ]}
+            />
             <DropdownMenuSeparator />
-            <OptionsSection
+            <RadioOptionsSection<MediaScope>
                 title="Media type"
-                open={isOptionsSectionOpen("mediaType", mediaScope !== "all")}
-                onToggle={() =>
-                    toggleOptionsSection("mediaType", mediaScope !== "all")
-                }
-            >
-                <DropdownMenuRadioGroup
-                    value={mediaScope}
-                    onValueChange={(value) => {
-                        if (isMediaScope(value)) {
-                            handleMediaScopeChange(value);
-                        }
-                    }}
-                >
-                    <DropdownMenuRadioItem value="all" closeOnClick>
-                        All
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="photo" closeOnClick>
-                        <span className="flex w-full items-center justify-between gap-2">
-                            Photo
-                            <span className="text-xs tabular-nums text-muted-foreground">
-                                {photoCount}
-                            </span>
-                        </span>
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="video" closeOnClick>
-                        <span className="flex w-full items-center justify-between gap-2">
-                            Video
-                            <span className="text-xs tabular-nums text-muted-foreground">
-                                {videoCount}
-                            </span>
-                        </span>
-                    </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-            </OptionsSection>
+                {...sectionState("mediaType", mediaScope !== "all")}
+                value={mediaScope}
+                onChange={handleMediaScopeChange}
+                options={[
+                    { value: "all", label: "All" },
+                    { value: "photo", label: "Photo", count: photoCount },
+                    { value: "video", label: "Video", count: videoCount },
+                ]}
+            />
         </>
     );
 
@@ -756,7 +744,7 @@ export function TagScopeFilterDropdown({
                         croppedCount={croppedCount}
                         notCroppedCount={notCroppedCount}
                         onDone={commitNearnessDraft}
-                        onBack={closeNearnessEditor}
+                        onBack={() => setNearnessEditorOpen(false)}
                     />
                 ) : kitPickerOpen && showKitLikeness ? (
                     <>
@@ -847,38 +835,13 @@ export function TagScopeFilterDropdown({
                         <p className="truncate px-1.5 text-sm font-medium">
                             {kitLabel(selectedKit)}
                         </p>
-                        <div className="flex flex-wrap gap-1.5 px-1">
-                            <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => onNearnessReapply?.()}
-                                disabled={onNearnessReapply === undefined}
-                            >
-                                Reapply
-                            </Button>
-                            <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                    setNearnessEditorOpen(false);
-                                    setKitPickerOpen(true);
-                                }}
-                            >
-                                Change
-                            </Button>
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() =>
-                                    onKitLikenessPresetIdChange?.(undefined)
-                                }
-                            >
-                                Off
-                            </Button>
-                        </div>
+                        <NearnessActions
+                            onReapply={onNearnessReapply}
+                            onChange={openKitPicker}
+                            onOff={() =>
+                                onKitLikenessPresetIdChange?.(undefined)
+                            }
+                        />
                         {onKitLikenessRivalPenaltyChange ? (
                             <label className="flex items-center gap-2 px-1.5 pt-0.5 text-xs text-muted-foreground">
                                 <Switch
@@ -899,35 +862,11 @@ export function TagScopeFilterDropdown({
                         <p className="max-h-16 overflow-auto px-1.5 text-sm font-medium break-words">
                             {describeTagFilter(nearnessFilter)}
                         </p>
-                        <div className="flex flex-wrap gap-1.5 px-1">
-                            <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => onNearnessReapply?.()}
-                                disabled={onNearnessReapply === undefined}
-                            >
-                                Reapply
-                            </Button>
-                            <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={openNearnessEditor}
-                            >
-                                Change
-                            </Button>
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() =>
-                                    onNearnessFilterChange?.(undefined)
-                                }
-                            >
-                                Off
-                            </Button>
-                        </div>
+                        <NearnessActions
+                            onReapply={onNearnessReapply}
+                            onChange={openNearnessEditor}
+                            onOff={() => onNearnessFilterChange?.(undefined)}
+                        />
                     </>
                 ) : (
                     <div className="flex flex-wrap gap-1.5 px-1">
@@ -936,10 +875,7 @@ export function TagScopeFilterDropdown({
                                 type="button"
                                 variant="outline"
                                 size="sm"
-                                onClick={() => {
-                                    setNearnessEditorOpen(false);
-                                    setKitPickerOpen(true);
-                                }}
+                                onClick={openKitPicker}
                             >
                                 Choose kit
                             </Button>
@@ -958,6 +894,155 @@ export function TagScopeFilterDropdown({
                 )}
             </div>
         ) : null;
+
+    const sortSections: JSX.Element[] = [];
+    if (showUploadedAt) {
+        sortSections.push(
+            <RadioOptionsSection<UploadedAtSort>
+                key="uploadedAt"
+                title="Uploaded At"
+                {...sectionState("uploadedAt", uploadedSort !== "none")}
+                value={uploadedSort === "none" ? "" : uploadedSort}
+                onChange={onUploadedAtSortChange}
+                options={[
+                    { value: "newest", label: "Newest" },
+                    { value: "oldest", label: "Oldest" },
+                ]}
+            />,
+        );
+    }
+    if (showViewportFit) {
+        sortSections.push(
+            <RadioOptionsSection<ViewportFitSort>
+                key="viewportFit"
+                title="Viewport fit"
+                {...sectionState("viewportFit", fitSort !== "none")}
+                value={fitSort === "none" ? "" : fitSort}
+                onChange={onViewportFitSortChange}
+                options={[
+                    { value: "best", label: "Best Fit" },
+                    { value: "worst", label: "Worst Fit" },
+                ]}
+            >
+                <div className="mt-2 flex flex-col gap-1.5 px-2 pb-1">
+                    <div className="flex items-center gap-1.5">
+                        <ViewportSizeInput
+                            axis="W"
+                            value={viewportWidthDraft}
+                            onChange={setViewportWidthDraft}
+                            onCommit={commitViewportWidth}
+                            ariaLabel="Target viewport width"
+                        />
+                        <ViewportSizeInput
+                            axis="H"
+                            value={viewportHeightDraft}
+                            onChange={setViewportHeightDraft}
+                            onCommit={commitViewportHeight}
+                            ariaLabel="Target viewport height"
+                        />
+                    </div>
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 justify-start px-1 text-xs text-muted-foreground"
+                        onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            handleUseDeviceViewport();
+                        }}
+                    >
+                        Use device
+                    </Button>
+                </div>
+            </RadioOptionsSection>,
+        );
+    }
+    if (showImageSize) {
+        sortSections.push(
+            <RadioOptionsSection<ImageSizeSort>
+                key="imageSize"
+                title="Image size"
+                {...sectionState("imageSize", sizeSort !== "none")}
+                value={sizeSort === "none" ? "" : sizeSort}
+                onChange={onImageSizeSortChange}
+                options={[
+                    { value: "largest", label: "Largest" },
+                    { value: "smallest", label: "Smallest" },
+                ]}
+            />,
+        );
+    }
+    if (showImageQuality) {
+        sortSections.push(
+            <RadioOptionsSection<ImageQualitySort>
+                key="imageQuality"
+                title="Image quality"
+                {...sectionState("imageQuality", qualitySort !== "none")}
+                value={qualitySort === "none" ? "" : qualitySort}
+                onChange={onImageQualitySortChange}
+                options={[
+                    { value: "worst", label: "Worst" },
+                    { value: "best", label: "Best" },
+                ]}
+            />,
+        );
+    }
+    if (showTagFilterFit) {
+        sortSections.push(
+            <RadioOptionsSection<TagFilterFitSort>
+                key="tagFilterFit"
+                title="Tag filter fit"
+                {...sectionState("tagFilterFit", tagFitSort !== "none")}
+                value={tagFitSort === "none" ? "" : tagFitSort}
+                onChange={onTagFilterFitSortChange}
+                options={[
+                    { value: "best", label: "Best fit" },
+                    { value: "worst", label: "Worst fit" },
+                ]}
+            />,
+        );
+    }
+    if (showRelative) {
+        sortSections.push(
+            <RadioOptionsSection<RelativeSort>
+                key="relative"
+                title="Relative"
+                {...sectionState("relative", relSort !== "none")}
+                value={relSort === "none" ? "" : relSort}
+                onChange={onRelativeSortChange}
+                options={[
+                    { value: "closest", label: "Closest" },
+                    { value: "furthest", label: "Furthest" },
+                ]}
+            >
+                {relSort !== "none" && onRelativeReapply ? (
+                    <div className="px-2 pb-1">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="w-full"
+                            onClick={onRelativeReapply}
+                        >
+                            New start
+                        </Button>
+                    </div>
+                ) : null}
+            </RadioOptionsSection>,
+        );
+    }
+    if (showNearness || showKitLikeness) {
+        sortSections.push(
+            <OptionsSection
+                key="nearness"
+                title="Nearness"
+                {...sectionState("nearness", nearnessSectionActive)}
+            >
+                {nearnessPanel}
+            </OptionsSection>,
+        );
+    }
 
     const sortPanel = (
         <>
@@ -986,290 +1071,13 @@ export function TagScopeFilterDropdown({
                 </Button>
             </div>
             <DropdownMenuSeparator />
-            {showUploadedAt ? (
-                <OptionsSection
-                    title="Uploaded At"
-                    open={isOptionsSectionOpen(
-                        "uploadedAt",
-                        uploadedSort !== "none",
-                    )}
-                    onToggle={() =>
-                        toggleOptionsSection("uploadedAt", uploadedSort !== "none")
-                    }
-                >
-                    <DropdownMenuRadioGroup
-                        value={uploadedSort === "none" ? "" : uploadedSort}
-                        onValueChange={(value) => {
-                            if (isUploadedAtSort(value)) {
-                                onUploadedAtSortChange(value);
-                            }
-                        }}
-                    >
-                        <DropdownMenuRadioItem value="newest" closeOnClick>
-                            Newest
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="oldest" closeOnClick>
-                            Oldest
-                        </DropdownMenuRadioItem>
-                    </DropdownMenuRadioGroup>
-                </OptionsSection>
-            ) : null}
-            {showUploadedAt && showViewportFit ? <DropdownMenuSeparator /> : null}
-            {showViewportFit ? (
-                <OptionsSection
-                    title="Viewport fit"
-                    open={isOptionsSectionOpen("viewportFit", fitSort !== "none")}
-                    onToggle={() =>
-                        toggleOptionsSection("viewportFit", fitSort !== "none")
-                    }
-                >
-                    <DropdownMenuRadioGroup
-                        value={fitSort === "none" ? "" : fitSort}
-                        onValueChange={(value) => {
-                            if (isViewportFitSort(value)) {
-                                onViewportFitSortChange(value);
-                            }
-                        }}
-                    >
-                        <DropdownMenuRadioItem value="best" closeOnClick>
-                            Best Fit
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="worst" closeOnClick>
-                            Worst Fit
-                        </DropdownMenuRadioItem>
-                    </DropdownMenuRadioGroup>
-                    <div className="mt-2 flex flex-col gap-1.5 px-2 pb-1">
-                        <div className="flex items-center gap-1.5">
-                            <label className="flex min-w-0 flex-1 items-center gap-1 text-xs text-muted-foreground">
-                                <span className="shrink-0">W</span>
-                                <Input
-                                    type="number"
-                                    inputMode="numeric"
-                                    min={1}
-                                    step={1}
-                                    value={viewportWidthDraft}
-                                    onChange={(event) =>
-                                        setViewportWidthDraft(event.target.value)
-                                    }
-                                    onBlur={commitViewportWidth}
-                                    onKeyDown={(event) => {
-                                        event.stopPropagation();
-                                        if (event.key === "Enter") {
-                                            event.currentTarget.blur();
-                                        }
-                                    }}
-                                    onClick={(event) => event.stopPropagation()}
-                                    className="h-7 px-1.5 text-xs tabular-nums"
-                                    aria-label="Target viewport width"
-                                />
-                            </label>
-                            <label className="flex min-w-0 flex-1 items-center gap-1 text-xs text-muted-foreground">
-                                <span className="shrink-0">H</span>
-                                <Input
-                                    type="number"
-                                    inputMode="numeric"
-                                    min={1}
-                                    step={1}
-                                    value={viewportHeightDraft}
-                                    onChange={(event) =>
-                                        setViewportHeightDraft(event.target.value)
-                                    }
-                                    onBlur={commitViewportHeight}
-                                    onKeyDown={(event) => {
-                                        event.stopPropagation();
-                                        if (event.key === "Enter") {
-                                            event.currentTarget.blur();
-                                        }
-                                    }}
-                                    onClick={(event) => event.stopPropagation()}
-                                    className="h-7 px-1.5 text-xs tabular-nums"
-                                    aria-label="Target viewport height"
-                                />
-                            </label>
-                        </div>
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 justify-start px-1 text-xs text-muted-foreground"
-                            onClick={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                handleUseDeviceViewport();
-                            }}
-                        >
-                            Use device
-                        </Button>
-                    </div>
-                </OptionsSection>
-            ) : null}
-            {(showUploadedAt || showViewportFit) && showImageSize ?
-                <DropdownMenuSeparator /> :
-                null}
-            {showImageSize ? (
-                <OptionsSection
-                    title="Image size"
-                    open={isOptionsSectionOpen("imageSize", sizeSort !== "none")}
-                    onToggle={() =>
-                        toggleOptionsSection("imageSize", sizeSort !== "none")
-                    }
-                >
-                    <DropdownMenuRadioGroup
-                        value={sizeSort === "none" ? "" : sizeSort}
-                        onValueChange={(value) => {
-                            if (isImageSizeSort(value)) {
-                                onImageSizeSortChange(value);
-                            }
-                        }}
-                    >
-                        <DropdownMenuRadioItem value="largest" closeOnClick>
-                            Largest
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="smallest" closeOnClick>
-                            Smallest
-                        </DropdownMenuRadioItem>
-                    </DropdownMenuRadioGroup>
-                </OptionsSection>
-            ) : null}
-            {(showUploadedAt || showViewportFit || showImageSize) &&
-            showImageQuality ?
-                <DropdownMenuSeparator /> :
-                null}
-            {showImageQuality ? (
-                <OptionsSection
-                    title="Image quality"
-                    open={isOptionsSectionOpen(
-                        "imageQuality",
-                        qualitySort !== "none",
-                    )}
-                    onToggle={() =>
-                        toggleOptionsSection(
-                            "imageQuality",
-                            qualitySort !== "none",
-                        )
-                    }
-                >
-                    <DropdownMenuRadioGroup
-                        value={qualitySort === "none" ? "" : qualitySort}
-                        onValueChange={(value) => {
-                            if (isImageQualitySort(value)) {
-                                onImageQualitySortChange?.(value);
-                            }
-                        }}
-                    >
-                        <DropdownMenuRadioItem value="worst" closeOnClick>
-                            Worst
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="best" closeOnClick>
-                            Best
-                        </DropdownMenuRadioItem>
-                    </DropdownMenuRadioGroup>
-                </OptionsSection>
-            ) : null}
-            {(showUploadedAt ||
-                showViewportFit ||
-                showImageSize ||
-                showImageQuality) &&
-            showTagFilterFit ?
-                <DropdownMenuSeparator /> :
-                null}
-            {showTagFilterFit ? (
-                <OptionsSection
-                    title="Tag filter fit"
-                    open={isOptionsSectionOpen(
-                        "tagFilterFit",
-                        tagFitSort !== "none",
-                    )}
-                    onToggle={() =>
-                        toggleOptionsSection(
-                            "tagFilterFit",
-                            tagFitSort !== "none",
-                        )
-                    }
-                >
-                    <DropdownMenuRadioGroup
-                        value={tagFitSort === "none" ? "" : tagFitSort}
-                        onValueChange={(value) => {
-                            if (isTagFilterFitSort(value)) {
-                                onTagFilterFitSortChange?.(value);
-                            }
-                        }}
-                    >
-                        <DropdownMenuRadioItem value="best" closeOnClick>
-                            Best fit
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="worst" closeOnClick>
-                            Worst fit
-                        </DropdownMenuRadioItem>
-                    </DropdownMenuRadioGroup>
-                </OptionsSection>
-            ) : null}
-            {(showUploadedAt ||
-                showViewportFit ||
-                showImageSize ||
-                showImageQuality ||
-                showTagFilterFit) &&
-            showRelative ?
-                <DropdownMenuSeparator /> :
-                null}
-            {showRelative ? (
-                <OptionsSection
-                    title="Relative"
-                    open={isOptionsSectionOpen("relative", relSort !== "none")}
-                    onToggle={() =>
-                        toggleOptionsSection("relative", relSort !== "none")
-                    }
-                >
-                    <DropdownMenuRadioGroup
-                        value={relSort === "none" ? "" : relSort}
-                        onValueChange={(value) => {
-                            if (isRelativeSort(value)) {
-                                onRelativeSortChange?.(value);
-                            }
-                        }}
-                    >
-                        <DropdownMenuRadioItem value="closest" closeOnClick>
-                            Closest
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="furthest" closeOnClick>
-                            Furthest
-                        </DropdownMenuRadioItem>
-                    </DropdownMenuRadioGroup>
-                    {relSort !== "none" && onRelativeReapply ? (
-                        <div className="px-2 pb-1">
-                            <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="w-full"
-                                onClick={onRelativeReapply}
-                            >
-                                New start
-                            </Button>
-                        </div>
-                    ) : null}
-                </OptionsSection>
-            ) : null}
-            {(showUploadedAt ||
-                showViewportFit ||
-                showImageSize ||
-                showImageQuality ||
-                showTagFilterFit ||
-                showRelative) &&
-            (showNearness || showKitLikeness) ?
-                <DropdownMenuSeparator /> :
-                null}
-            {showNearness || showKitLikeness ? (
-                <OptionsSection
-                    title="Nearness"
-                    open={isOptionsSectionOpen("nearness", nearnessSectionActive)}
-                    onToggle={() =>
-                        toggleOptionsSection("nearness", nearnessSectionActive)
-                    }
-                >
-                    {nearnessPanel}
-                </OptionsSection>
-            ) : null}
+            {sortSections.flatMap((section, index) =>
+                index === 0 ?
+                    [section] :
+                    [
+                        <DropdownMenuSeparator key={`separator-${section.key}`} />,
+                        section,
+                    ])}
         </>
     );
 
@@ -1322,44 +1130,22 @@ export function TagScopeFilterDropdown({
                             role="tablist"
                             aria-label="Options section"
                         >
-                            <button
-                                type="button"
-                                role="tab"
-                                aria-selected={optionsTab === "sort"}
-                                className={cn(
-                                    "inline-flex h-7 items-center justify-center gap-1.5 rounded-md px-1.5 text-xs font-medium transition-colors",
-                                    optionsTab === "sort" ?
-                                        "bg-background text-foreground shadow-sm" :
-                                        "text-foreground/60 hover:text-foreground",
-                                )}
+                            <OptionsTab
+                                label="Sort"
+                                selected={optionsTab === "sort"}
+                                active={sortActive}
                                 onClick={() => setOptionsTab("sort")}
-                            >
-                                Sort
-                                {sortActive ? (
-                                    <span className="size-1.5 rounded-full bg-foreground" />
-                                ) : null}
-                            </button>
-                            <button
-                                type="button"
-                                role="tab"
-                                aria-selected={optionsTab === "filter"}
-                                className={cn(
-                                    "inline-flex h-7 items-center justify-center gap-1.5 rounded-md px-1.5 text-xs font-medium transition-colors",
-                                    optionsTab === "filter" ?
-                                        "bg-background text-foreground shadow-sm" :
-                                        "text-foreground/60 hover:text-foreground",
-                                )}
+                            />
+                            <OptionsTab
+                                label="Filter"
+                                selected={optionsTab === "filter"}
+                                active={filterActive}
                                 onClick={() => {
                                     setOptionsTab("filter");
                                     setNearnessEditorOpen(false);
                                     closeKitPicker();
                                 }}
-                            >
-                                Filter
-                                {filterActive ? (
-                                    <span className="size-1.5 rounded-full bg-foreground" />
-                                ) : null}
-                            </button>
+                            />
                         </div>
                         {optionsTab === "sort" ? sortPanel : filterPanel}
                     </div>

@@ -62,6 +62,7 @@ import {
     isEnteVideoFile,
     mediaKindForFile,
     mimeTypeForFile,
+    type MediaKind,
 } from "@/lib/media-kind";
 import { blobFromUint8Array } from "@/lib/bytes-blob";
 import { toRenderableImageBlob } from "@/lib/renderable-image";
@@ -182,15 +183,12 @@ const formatDownloadBytes = (bytes: number): string => {
  */
 function MediaDownloadIndicator({
     kind,
-    progress,
-    bytesLoaded,
-    bytesTotal,
+    media,
 }: {
     kind: "video" | "photo";
-    progress?: number;
-    bytesLoaded?: number;
-    bytesTotal?: number;
+    media?: SlideMedia;
 }): JSX.Element {
+    const { progress, bytesLoaded, bytesTotal } = media ?? {};
     const label =
         kind === "video" ? "Downloading video..." : "Downloading photo...";
     const sizeLabel =
@@ -316,6 +314,61 @@ const releaseVideoElement = (video: HTMLVideoElement): void => {
 };
 
 /**
+ * Hand a video's blob URL to the session cache, or revoke the URL of any
+ * other slide.
+ */
+const retainOrRevokeMediaUrl = (
+    slideFile: EnteFile | undefined,
+    fileId: number,
+    url: string,
+    knownSize: number | undefined,
+): void => {
+    if (slideFile?.metadata.fileType === FileType.video) {
+        retainSessionVideoUrl(
+            fileId,
+            url,
+            knownSize ?? slideFile.info?.fileSize ?? 0,
+        );
+    } else {
+        URL.revokeObjectURL(url);
+    }
+};
+
+const errorMessage = (error: unknown, fallback: string): string =>
+    error instanceof Error ? error.message : fallback;
+
+const isZoomableKind = (kind: MediaKind | null): boolean =>
+    kind === "image" || kind === "gif" || kind === "video";
+
+const withoutSlideMedia = (
+    current: Map<number, SlideMedia>,
+    fileId: number,
+): Map<number, SlideMedia> => {
+    if (!current.has(fileId)) {
+        return current;
+    }
+    const next = new Map(current);
+    next.delete(fileId);
+    return next;
+};
+
+/** Cached gallery thumbnail for {@link fileId}; idle when `undefined`. */
+const useThumbnailEntry = (
+    fileId: number | undefined,
+): ReturnType<typeof getThumbnailEntry> =>
+    useSyncExternalStore(
+        useCallback(
+            (listener: () => void): (() => void) =>
+                fileId === undefined ?
+                    (): void => {} :
+                    subscribeThumbnail(fileId, listener),
+            [fileId],
+        ),
+        () => getThumbnailEntry(fileId ?? 0),
+        () => getThumbnailEntry(0),
+    );
+
+/**
  * Show the cached gallery thumbnail while a video slide decrypts/downloads.
  */
 function VideoSlidePoster({
@@ -325,11 +378,7 @@ function VideoSlidePoster({
     file: EnteFile;
     children?: ReactNode;
 }): JSX.Element {
-    const thumb = useSyncExternalStore(
-        (listener) => subscribeThumbnail(file.id, listener),
-        () => getThumbnailEntry(file.id),
-        () => getThumbnailEntry(0),
-    );
+    const thumb = useThumbnailEntry(file.id);
 
     useEffect((): void => {
         requestThumbnail(file);
@@ -573,8 +622,7 @@ export const PhotoViewer = memo(function PhotoViewer({
         file !== undefined &&
         !isEnteVideoFile(file) &&
         hasClipEmbedding;
-    const zoomEnabled =
-        mediaKind === "image" || mediaKind === "gif" || mediaKind === "video";
+    const zoomEnabled = isZoomableKind(mediaKind);
     const chromePaused =
         cropMode ||
         showDeleteConfirm ||
@@ -602,19 +650,7 @@ export const PhotoViewer = memo(function PhotoViewer({
     const videoMuted = useVideoPlaybackStore((s) => s.muted);
     const videoAutoPlay = useSettingsStore((s) => s.videoAutoPlay);
     const videoLoop = useSettingsStore((s) => s.videoLoop);
-    const activeVideoThumb = useSyncExternalStore(
-        (listener) => {
-            if (file?.metadata.fileType !== FileType.video) {
-                return (): void => {};
-            }
-            return subscribeThumbnail(file.id, listener);
-        },
-        () =>
-            file?.metadata.fileType === FileType.video ?
-                getThumbnailEntry(file.id) :
-                getThumbnailEntry(0),
-        () => getThumbnailEntry(0),
-    );
+    const activeVideoThumb = useThumbnailEntry(isVideo ? file?.id : undefined);
     const tags = displayFile ? extractUserTags(displayFile) : [];
     const displayTags = stagedTags ?? tags;
     const activeSlideMedia = file ? mediaByFileId.get(file.id) : undefined;
@@ -630,12 +666,10 @@ export const PhotoViewer = memo(function PhotoViewer({
         }
         const fileId = file.id;
         const timer = window.setTimeout(() => {
-            if (!viewerActiveRef.current) {
-                return;
-            }
-            const still =
-                sessionFilesRef.current[currentIndexRef.current]?.id === fileId;
-            if (!still) {
+            if (
+                !viewerActiveRef.current ||
+                sessionFilesRef.current[currentIndexRef.current]?.id !== fileId
+            ) {
                 return;
             }
             useViewSessionsStore.getState().beginView(fileId);
@@ -645,12 +679,6 @@ export const PhotoViewer = memo(function PhotoViewer({
             useViewSessionsStore.getState().endView(fileId);
         };
     }, [activeSlideMedia?.status, cropMode, file]);
-
-    useEffect((): void => {
-        if (file?.metadata.fileType === FileType.video) {
-            requestThumbnail(file);
-        }
-    }, [file]);
 
     useEffect((): void => {
         setVideoScrubbing(false);
@@ -790,15 +818,10 @@ export const PhotoViewer = memo(function PhotoViewer({
         const loadersByFileId = mediaLoadersRef.current;
         const unsettledLoaders = unsettledLoadersRef.current;
         const failedIds = failedIdsRef.current;
-        const keepIndices = preloadSlideIndices(currentIndex, sessionFiles);
-        const keepIds = new Set<number>();
-        const keepFiles: EnteFile[] = [];
-
-        for (const index of keepIndices) {
-            const slideFile = sessionFiles[index];
-            keepIds.add(slideFile.id);
-            keepFiles.push(slideFile);
-        }
+        const keepFiles = preloadSlideIndices(currentIndex, sessionFiles).map(
+            (index) => sessionFiles[index],
+        );
+        const keepIds = new Set(keepFiles.map((slideFile) => slideFile.id));
 
         const releaseLoader = (loader: SlideLoader): void => {
             unsettledLoaders.delete(loader);
@@ -985,16 +1008,17 @@ export const PhotoViewer = memo(function PhotoViewer({
         };
 
         for (const slideFile of keepFiles) {
-            if (slideFile.metadata.fileType === FileType.video) {
+            const isVideoSlide = slideFile.metadata.fileType === FileType.video;
+            if (isVideoSlide) {
                 requestThumbnail(slideFile);
             }
 
             const mediaOverride = getLocalMediaOverride(slideFile.id);
             if (mediaOverride) {
-                if (mediaUrlsRef.current.has(slideFile.id)) {
-                    continue;
-                }
-                if (loadingIds.has(slideFile.id)) {
+                if (
+                    mediaUrlsRef.current.has(slideFile.id) ||
+                    loadingIds.has(slideFile.id)
+                ) {
                     continue;
                 }
                 loadingIds.add(slideFile.id);
@@ -1009,7 +1033,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                 void (async (): Promise<void> => {
                     try {
                         const blob =
-                            slideFile.metadata.fileType === FileType.video ?
+                            isVideoSlide ?
                                 blobFromUint8Array(
                                     mediaOverride,
                                     mimeTypeForFile(slideFile),
@@ -1031,7 +1055,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                             URL.revokeObjectURL(previousUrl);
                         }
                         mediaUrlsRef.current.set(slideFile.id, url);
-                        if (slideFile.metadata.fileType === FileType.video) {
+                        if (isVideoSlide) {
                             mediaByteSizesRef.current.set(
                                 slideFile.id,
                                 blob.size,
@@ -1055,7 +1079,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                 continue;
             }
 
-            if (slideFile.metadata.fileType === FileType.video) {
+            if (isVideoSlide) {
                 const sessionHit = takeSessionVideoUrl(slideFile.id);
                 if (sessionHit) {
                     mediaUrlsRef.current.set(slideFile.id, sessionHit.url);
@@ -1084,23 +1108,8 @@ export const PhotoViewer = memo(function PhotoViewer({
             );
             const knownSize = mediaByteSizesRef.current.get(fileId);
             mediaByteSizesRef.current.delete(fileId);
-            if (leftFile?.metadata.fileType === FileType.video) {
-                retainSessionVideoUrl(
-                    fileId,
-                    url,
-                    knownSize ?? leftFile.info?.fileSize ?? 0,
-                );
-            } else {
-                URL.revokeObjectURL(url);
-            }
-            setMediaByFileId((current) => {
-                if (!current.has(fileId)) {
-                    return current;
-                }
-                const next = new Map(current);
-                next.delete(fileId);
-                return next;
-            });
+            retainOrRevokeMediaUrl(leftFile, fileId, url, knownSize);
+            setMediaByFileId((current) => withoutSlideMedia(current, fileId));
         }
     }, [currentIndex, retryKey, sessionFiles, setSlideMedia]);
 
@@ -1124,16 +1133,12 @@ export const PhotoViewer = memo(function PhotoViewer({
                 const leftFile = sessionFilesRef.current.find(
                     (entry) => entry.id === fileId,
                 );
-                const knownSize = sizes.get(fileId);
-                if (leftFile?.metadata.fileType === FileType.video) {
-                    retainSessionVideoUrl(
-                        fileId,
-                        url,
-                        knownSize ?? leftFile.info?.fileSize ?? 0,
-                    );
-                } else {
-                    URL.revokeObjectURL(url);
-                }
+                retainOrRevokeMediaUrl(
+                    leftFile,
+                    fileId,
+                    url,
+                    sizes.get(fileId),
+                );
             }
             urls.clear();
             sizes.clear();
@@ -1282,47 +1287,50 @@ export const PhotoViewer = memo(function PhotoViewer({
         void video.play().catch(() => undefined);
     }, [currentIndex, isVideo, activeSlideMedia?.url, videoAutoPlay]);
 
+    const cancelSlideLoader = useCallback((fileId: number): void => {
+        const activeLoader = mediaLoadersRef.current.get(fileId);
+        if (activeLoader) {
+            cancelLoader(activeLoader, unsettledLoadersRef.current);
+            mediaLoadersRef.current.delete(fileId);
+        }
+    }, []);
+
+    /** Forget and revoke a slide's blob URL; returns whether one was held. */
+    const discardSlideUrl = useCallback((fileId: number): boolean => {
+        const url = mediaUrlsRef.current.get(fileId);
+        mediaUrlsRef.current.delete(fileId);
+        mediaByteSizesRef.current.delete(fileId);
+        if (!url) {
+            return false;
+        }
+        URL.revokeObjectURL(url);
+        return true;
+    }, []);
+
     const handleRetry = useCallback((): void => {
         if (!file) {
             return;
         }
-        const activeLoader = mediaLoadersRef.current.get(file.id);
-        if (activeLoader) {
-            cancelLoader(activeLoader, unsettledLoadersRef.current);
-            mediaLoadersRef.current.delete(file.id);
-        }
-        const url = mediaUrlsRef.current.get(file.id);
-        mediaUrlsRef.current.delete(file.id);
-        mediaByteSizesRef.current.delete(file.id);
+        cancelSlideLoader(file.id);
         invalidateVideoCache(file.id);
-        if (url) {
-            URL.revokeObjectURL(url);
-        }
+        discardSlideUrl(file.id);
         loadingIdsRef.current.delete(file.id);
         failedIdsRef.current.delete(file.id);
         brokenReloadIdsRef.current.delete(file.id);
         setSlideMedia(file.id, { status: "idle" });
         setRetryKey((k) => k + 1);
-    }, [file, setSlideMedia]);
+    }, [cancelSlideLoader, discardSlideUrl, file, setSlideMedia]);
 
     /**
      * Blob URL revoked under us (e.g. session LRU) — drop it and reload.
      */
     const handleBrokenSlideMedia = useCallback(
         (fileId: number): void => {
-            const activeLoader = mediaLoadersRef.current.get(fileId);
-            if (activeLoader) {
-                cancelLoader(activeLoader, unsettledLoadersRef.current);
-                mediaLoadersRef.current.delete(fileId);
-            }
-            const url = mediaUrlsRef.current.get(fileId);
-            if (!url) {
+            cancelSlideLoader(fileId);
+            if (!discardSlideUrl(fileId)) {
                 return;
             }
-            mediaUrlsRef.current.delete(fileId);
-            mediaByteSizesRef.current.delete(fileId);
             loadingIdsRef.current.delete(fileId);
-            URL.revokeObjectURL(url);
             // A second error on freshly loaded bytes means the browser cannot
             // decode this file; show the error instead of reloading forever.
             if (brokenReloadIdsRef.current.has(fileId)) {
@@ -1334,7 +1342,7 @@ export const PhotoViewer = memo(function PhotoViewer({
             setSlideMedia(fileId, { status: "idle" });
             setRetryKey((key) => key + 1);
         },
-        [setSlideMedia],
+        [cancelSlideLoader, discardSlideUrl, setSlideMedia],
     );
 
     const finishCarouselDrag = useCallback((mode?: CarouselDragMode): void => {
@@ -1640,17 +1648,24 @@ export const PhotoViewer = memo(function PhotoViewer({
         zoomScale,
     ]);
 
+    const replaceSessionFile = useCallback(
+        (fileId: number, replacement: EnteFile): void => {
+            setSessionFiles((current) => current.map((entry) => (
+                entry.id === fileId ? replacement : entry
+            )));
+        },
+        [],
+    );
+
     const syncSessionFile = useCallback(
         (fileId: number): void => {
             const updated = useLibraryStore.getState().getFileById(fileId);
             if (updated) {
-                setSessionFiles((current) => current.map((entry) => (
-                    entry.id === fileId ? updated : entry
-                )));
+                replaceSessionFile(fileId, updated);
                 notifyFileUpdated(updated);
             }
         },
-        [notifyFileUpdated],
+        [notifyFileUpdated, replaceSessionFile],
     );
 
     const beginTagDraft = useCallback((): void => {
@@ -1712,11 +1727,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                     })
                     .catch((error: unknown) => {
                         syncSessionFile(fileId);
-                        setTagError(
-                            error instanceof Error ?
-                                error.message :
-                                "Could not save tags",
-                        );
+                        setTagError(errorMessage(error, "Could not save tags"));
                     })
                     .finally(() => {
                         setTagSaveBusy(false);
@@ -1774,9 +1785,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                 mediaByteSizesRef.current.set(uploaded.id, byteSize);
             }
             transferSessionVideoUrl(sourceId, uploaded.id);
-            setSessionFiles((current) => current.map((entry) => (
-                entry.id === sourceId ? uploaded : entry
-            )));
+            replaceSessionFile(sourceId, uploaded);
             setMediaByFileId((current) => {
                 const media = current.get(sourceId);
                 if (!media) {
@@ -1791,7 +1800,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                 notifyFileUpdated(uploaded);
             }
         },
-        [notifyFileUpdated, sessionFiles],
+        [notifyFileUpdated, replaceSessionFile, sessionFiles],
     );
 
     const handleEditSaved = useCallback(
@@ -1815,9 +1824,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                 mediaByteSizesRef.current.set(sourceId, result.bytes.byteLength);
             }
             setSlideMedia(sourceId, { status: "ready", url });
-            setSessionFiles((current) => current.map((entry) => (
-                entry.id === sourceId ? result.optimisticFile : entry
-            )));
+            replaceSessionFile(sourceId, result.optimisticFile);
             notifyFileUpdated(result.optimisticFile);
             clearPointers();
             resetZoom();
@@ -1834,34 +1841,25 @@ export const PhotoViewer = memo(function PhotoViewer({
                     const stillViewingSource =
                         sessionFiles[currentIndexRef.current]?.id === sourceId;
                     if (reverted) {
-                        setSessionFiles((current) => current.map((entry) => (
-                            entry.id === sourceId ? reverted : entry
-                        )));
+                        replaceSessionFile(sourceId, reverted);
                         if (stillViewingSource) {
                             notifyFileUpdated(reverted);
                         }
                     }
-                    const staleUrl = mediaUrlsRef.current.get(sourceId);
-                    mediaUrlsRef.current.delete(sourceId);
-                    mediaByteSizesRef.current.delete(sourceId);
+                    discardSlideUrl(sourceId);
                     forgetSessionVideoUrl(sourceId);
-                    if (staleUrl) {
-                        URL.revokeObjectURL(staleUrl);
-                    }
                     setSlideMedia(sourceId, { status: "loading" });
                     setRetryKey((current) => current + 1);
-                    toast.error(
-                        error instanceof Error ?
-                            error.message :
-                            "Could not save edits",
-                    );
+                    toast.error(errorMessage(error, "Could not save edits"));
                 });
         },
         [
             clearPointers,
+            discardSlideUrl,
             file,
             handleDerivedFileFinalized,
             notifyFileUpdated,
+            replaceSessionFile,
             resetZoom,
             sessionFiles,
             setSlideMedia,
@@ -1878,9 +1876,7 @@ export const PhotoViewer = memo(function PhotoViewer({
         void setFileFavorite(file, !isFavorite)
             .catch((error: unknown) => {
                 setFavoriteError(
-                    error instanceof Error ?
-                        error.message :
-                        "Could not update favourite",
+                    errorMessage(error, "Could not update favourite"),
                 );
             })
             .finally(() => {
@@ -1896,11 +1892,7 @@ export const PhotoViewer = memo(function PhotoViewer({
         setArchiveBusy(true);
         void setFileArchived(file, !isArchived)
             .catch((error: unknown) => {
-                toast.error(
-                    error instanceof Error ?
-                        error.message :
-                        "Could not update archive",
-                );
+                toast.error(errorMessage(error, "Could not update archive"));
             })
             .finally(() => {
                 setArchiveBusy(false);
@@ -1943,9 +1935,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                 if (previousUrl) {
                     URL.revokeObjectURL(previousUrl);
                 }
-                setSessionFiles((current) => current.map((entry) => (
-                    entry.id === sourceId ? result.optimisticFile : entry
-                )));
+                replaceSessionFile(sourceId, result.optimisticFile);
                 notifyFileUpdated(result.optimisticFile);
 
                 await result.finalize.then((uploaded) => {
@@ -1956,23 +1946,13 @@ export const PhotoViewer = memo(function PhotoViewer({
                     (entry) => entry.id === sourceId,
                 );
                 if (reverted) {
-                    setSessionFiles((current) => current.map((entry) => (
-                        entry.id === sourceId ? reverted : entry
-                    )));
+                    replaceSessionFile(sourceId, reverted);
                     notifyFileUpdated(reverted);
                 }
-                const staleUrl = mediaUrlsRef.current.get(sourceId);
-                if (staleUrl) {
-                    URL.revokeObjectURL(staleUrl);
-                    mediaUrlsRef.current.delete(sourceId);
-                }
+                discardSlideUrl(sourceId);
                 setSlideMedia(sourceId, { status: "loading" });
                 setRetryKey((current) => current + 1);
-                toast.error(
-                    error instanceof Error ?
-                        error.message :
-                        "Could not revert edit",
-                );
+                toast.error(errorMessage(error, "Could not revert edit"));
             } finally {
                 setRevertBusy(false);
             }
@@ -1994,21 +1974,10 @@ export const PhotoViewer = memo(function PhotoViewer({
                 }
                 setShowDeleteConfirm(false);
 
-                const staleUrl = mediaUrlsRef.current.get(deletedId);
-                mediaUrlsRef.current.delete(deletedId);
-                mediaByteSizesRef.current.delete(deletedId);
+                discardSlideUrl(deletedId);
                 invalidateVideoCache(deletedId);
-                if (staleUrl) {
-                    URL.revokeObjectURL(staleUrl);
-                }
-                setMediaByFileId((current) => {
-                    if (!current.has(deletedId)) {
-                        return current;
-                    }
-                    const next = new Map(current);
-                    next.delete(deletedId);
-                    return next;
-                });
+                setMediaByFileId((current) =>
+                    withoutSlideMedia(current, deletedId));
 
                 const current = sessionFilesRef.current;
                 const deletedAt = current.findIndex(
@@ -2017,10 +1986,6 @@ export const PhotoViewer = memo(function PhotoViewer({
                 const remaining = current.filter(
                     (entry) => entry.id !== deletedId,
                 );
-                if (remaining.length === 0) {
-                    onClose();
-                    return;
-                }
                 const indexBasis =
                     deletedAt >= 0 ? deletedAt : deletedIndex;
                 const nextIndex = Math.min(
@@ -2039,9 +2004,7 @@ export const PhotoViewer = memo(function PhotoViewer({
             })
             .catch((error: unknown) => {
                 setDeleteError(
-                    error instanceof Error ?
-                        error.message :
-                        "Could not move item to trash",
+                    errorMessage(error, "Could not move item to trash"),
                 );
             })
             .finally(() => {
@@ -2053,6 +2016,7 @@ export const PhotoViewer = memo(function PhotoViewer({
         return <></>;
     }
 
+    const chromeShown = chromeVisible && !cropMode;
     const slideOffsets = [-1, 0, 1] as const;
     const trackTranslatePx =
         viewportWidth > 0 ?
@@ -2075,25 +2039,34 @@ export const PhotoViewer = memo(function PhotoViewer({
             undefined;
         const isVideo =
             slideFile?.metadata.fileType === FileType.video;
-        const slideZoomEnabled =
-            slideFile ?
-                (() => {
-                    const kind = mediaKindForFile(slideFile);
-                    return (
-                        kind === "image" || kind === "gif" || kind === "video"
-                    );
-                })() :
-                false;
+        const zoomProps =
+            isActive && slideFile && isZoomableKind(mediaKindForFile(slideFile)) ?
+                {
+                    style: pinchZoom.transformStyle,
+                    onPointerDown: handleZoomPointerDown,
+                    onPointerMove: pinchZoom.onPointerMove,
+                    onPointerUp: handleZoomPointerUp,
+                    onPointerCancel: handleZoomPointerUp,
+                    ref: pinchZoom.wheelTargetRef,
+                } :
+                undefined;
+        const registerActiveMedia = (
+            media: HTMLImageElement | HTMLVideoElement | null,
+        ): void => {
+            if (isActive && viewportRef.current && media) {
+                pinchLayoutRef.current = {
+                    container: viewportRef.current,
+                    image: media,
+                };
+                updatePanBounds(viewportRef.current, media);
+            }
+        };
 
         return (
             <div
                 key={slideIndex}
                 className="relative h-full shrink-0"
-                style={
-                    viewportWidth > 0 ?
-                        { width: viewportWidth } :
-                        { width: "100%" }
-                }
+                style={{ width: viewportWidth > 0 ? viewportWidth : "100%" }}
             >
                 {!slideFile ? null : slideMedia?.status === "error" ? (
                     isActive ? (
@@ -2111,14 +2084,12 @@ export const PhotoViewer = memo(function PhotoViewer({
                         </div>
                     ) : null
                 ) : slideMedia?.status === "loading" || !slideMedia?.url ? (
-                    isVideo && slideFile ? (
+                    isVideo ? (
                         <VideoSlidePoster file={slideFile}>
                             {isActive ? (
                                 <MediaDownloadIndicator
                                     kind="video"
-                                    progress={slideMedia?.progress}
-                                    bytesLoaded={slideMedia?.bytesLoaded}
-                                    bytesTotal={slideMedia?.bytesTotal}
+                                    media={slideMedia}
                                 />
                             ) : null}
                         </VideoSlidePoster>
@@ -2126,47 +2097,13 @@ export const PhotoViewer = memo(function PhotoViewer({
                         <div className="absolute inset-0 flex items-center justify-center">
                             <MediaDownloadIndicator
                                 kind="photo"
-                                progress={slideMedia?.progress}
-                                bytesLoaded={slideMedia?.bytesLoaded}
-                                bytesTotal={slideMedia?.bytesTotal}
+                                media={slideMedia}
                             />
                         </div>
                     ) : null
                 ) : isVideo ? (
-                    <div
-                        className="absolute inset-0"
-                        style={
-                            isActive && slideZoomEnabled ?
-                                pinchZoom.transformStyle :
-                                undefined
-                        }
-                        onPointerDown={
-                            isActive && slideZoomEnabled ?
-                                handleZoomPointerDown :
-                                undefined
-                        }
-                        onPointerMove={
-                            isActive && slideZoomEnabled ?
-                                pinchZoom.onPointerMove :
-                                undefined
-                        }
-                        onPointerUp={
-                            isActive && slideZoomEnabled ?
-                                handleZoomPointerUp :
-                                undefined
-                        }
-                        onPointerCancel={
-                            isActive && slideZoomEnabled ?
-                                handleZoomPointerUp :
-                                undefined
-                        }
-                        ref={
-                            isActive && slideZoomEnabled ?
-                                pinchZoom.wheelTargetRef :
-                                undefined
-                        }
-                    >
-                        <VideoSlidePoster file={slideFile!} />
+                    <div className="absolute inset-0" {...zoomProps}>
+                        <VideoSlidePoster file={slideFile} />
                         <SlideVideo
                             activeVideoRef={isActive ? activeVideoRef : undefined}
                             className="pointer-events-none absolute inset-0 size-full object-contain select-none [-webkit-touch-callout:none]"
@@ -2180,61 +2117,17 @@ export const PhotoViewer = memo(function PhotoViewer({
                                     undefined
                             }
                             onError={() => {
-                                if (slideFile) {
-                                    handleBrokenSlideMedia(slideFile.id);
-                                }
+                                handleBrokenSlideMedia(slideFile.id);
                             }}
                             onLoadedData={() => {
-                                if (
-                                    isActive &&
-                                    viewportRef.current &&
-                                    activeVideoRef.current
-                                ) {
-                                    pinchLayoutRef.current = {
-                                        container: viewportRef.current,
-                                        image: activeVideoRef.current,
-                                    };
-                                    updatePanBounds(
-                                        viewportRef.current,
-                                        activeVideoRef.current,
-                                    );
-                                }
+                                registerActiveMedia(activeVideoRef.current);
                             }}
                         />
                     </div>
                 ) : (
                     <div
                         className="absolute inset-0 flex items-center justify-center"
-                        style={
-                            isActive && slideZoomEnabled ?
-                                pinchZoom.transformStyle :
-                                undefined
-                        }
-                        onPointerDown={
-                            isActive && slideZoomEnabled ?
-                                handleZoomPointerDown :
-                                undefined
-                        }
-                        onPointerMove={
-                            isActive && slideZoomEnabled ?
-                                pinchZoom.onPointerMove :
-                                undefined
-                        }
-                        onPointerUp={
-                            isActive && slideZoomEnabled ?
-                                handleZoomPointerUp :
-                                undefined
-                        }
-                        onPointerCancel={
-                            isActive && slideZoomEnabled ?
-                                handleZoomPointerUp :
-                                undefined
-                        }
-                        ref={
-                            isActive && slideZoomEnabled ?
-                                pinchZoom.wheelTargetRef :
-                                undefined
-                        }
+                        {...zoomProps}
                     >
                         <img
                             ref={isActive ? activeImageRef : undefined}
@@ -2244,25 +2137,10 @@ export const PhotoViewer = memo(function PhotoViewer({
                             decoding="async"
                             draggable={false}
                             onError={() => {
-                                if (slideFile) {
-                                    handleBrokenSlideMedia(slideFile.id);
-                                }
+                                handleBrokenSlideMedia(slideFile.id);
                             }}
                             onLoad={() => {
-                                if (
-                                    isActive &&
-                                    viewportRef.current &&
-                                    activeImageRef.current
-                                ) {
-                                    pinchLayoutRef.current = {
-                                        container: viewportRef.current,
-                                        image: activeImageRef.current,
-                                    };
-                                    updatePanBounds(
-                                        viewportRef.current,
-                                        activeImageRef.current,
-                                    );
-                                }
+                                registerActiveMedia(activeImageRef.current);
                             }}
                         />
                     </div>
@@ -2281,7 +2159,7 @@ export const PhotoViewer = memo(function PhotoViewer({
             <div
                 className={cn(
                     "absolute inset-x-0 top-0 z-10 border-b border-border bg-background transition-transform duration-200",
-                    chromeVisible && !cropMode ?
+                    chromeShown ?
                         "translate-y-0" :
                         "-translate-y-full pointer-events-none",
                 )}
@@ -2302,7 +2180,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                     <span className="min-w-0 flex-1 truncate text-center text-xs text-muted-foreground">
                         {currentIndex + 1} / {sessionFiles.length}
                     </span>
-                    {showSetRelative && file ? (
+                    {showSetRelative ? (
                         <Button
                             type="button"
                             variant={
@@ -2513,7 +2391,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                         {slideOffsets.map((offset) => renderSlide(offset))}
                     </div>
                 </div>
-                {chromeVisible && !cropMode && deviceViewportLabel ? (
+                {chromeShown && deviceViewportLabel ? (
                     <div
                         className={cn(
                             "pointer-events-none absolute left-3 z-20 flex flex-col gap-0.5 rounded bg-black/60 px-1.5 py-1 text-[10px] leading-tight text-white tabular-nums",
@@ -2536,7 +2414,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                 className={cn(
                     "absolute inset-x-0 bottom-0 z-10 flex flex-col gap-2 border-t border-border bg-background px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] transition-transform duration-200",
                     isVideo && "rounded-t-xl shadow-lg",
-                    chromeVisible && !cropMode ?
+                    chromeShown ?
                         "translate-y-0" :
                         "translate-y-full pointer-events-none",
                 )}
@@ -2544,17 +2422,17 @@ export const PhotoViewer = memo(function PhotoViewer({
                 {isVideo ? (
                     <VideoPlaybackControls
                         key={
-                            file && activeSlideMedia?.url ?
+                            activeSlideMedia?.url ?
                                 `${file.id}:${activeSlideMedia.url}` :
                                 "idle"
                         }
                         videoRef={activeVideoRef}
                         attachKey={
-                            file && activeSlideMedia?.status === "ready" ?
+                            activeSlideMedia?.status === "ready" ?
                                 `${file.id}:${activeSlideMedia.url}` :
                                 undefined
                         }
-                        visible={chromeVisible && !cropMode}
+                        visible={chromeShown}
                         onScrubbingChange={setVideoScrubbing}
                     />
                 ) : null}
@@ -2633,14 +2511,14 @@ export const PhotoViewer = memo(function PhotoViewer({
                     onRemoveTag={handleRemoveTag}
                 />
             ) : null}
-            {!readOnly && cropMode && file && isVideo ? (
+            {!readOnly && cropMode && isVideo ? (
                 <VideoEditorOverlay
                     file={file}
                     onCancel={() => setCropMode(false)}
                     onSaved={handleEditSaved}
                 />
             ) : null}
-            {!readOnly && cropMode && file && !isVideo ? (
+            {!readOnly && cropMode && !isVideo ? (
                 <CropEditorOverlay
                     file={file}
                     onCancel={() => setCropMode(false)}

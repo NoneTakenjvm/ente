@@ -81,11 +81,6 @@ type StageReporter = (
 /** Originals up to this size are downloaded while the previous file compresses. */
 const PREFETCH_MAX_BYTES = 64 * 1024 * 1024;
 
-export const compressibleFiles = (
-    files: EnteFile[],
-    includePreviouslyCompressed = false,
-): EnteFile[] => compressManageCandidates(files, includePreviouslyCompressed);
-
 /**
  * Run a batch compression job, compressing one file at a time.
  *
@@ -102,7 +97,7 @@ export const runCompressJob = async (
 ): Promise<CompressJobResult> => {
     const candidates = options.fileIds ?
         options.files.filter((file) => options.fileIds?.has(file.id)) :
-        compressibleFiles(
+        compressManageCandidates(
             options.files,
             options.includePreviouslyCompressed ?? false,
         );

@@ -39,6 +39,8 @@ export function NearnessFilterEditor({
     onDone,
     onBack,
 }: NearnessFilterEditorProps): JSX.Element {
+    const isFlatRoot = isFlatTagFilterRoot(draft.filter.root);
+
     return (
         <div className="flex max-h-[min(70dvh,28rem)] flex-col gap-2 overflow-hidden px-1 pb-2">
             <div className="flex flex-wrap items-center gap-2">
@@ -49,10 +51,10 @@ export function NearnessFilterEditor({
                     onSetRootOp={(op) => {
                         draft.actions.setGroupOp(draft.filter.root.id, op);
                     }}
-                    disabled={!isFlatTagFilterRoot(draft.filter.root)}
+                    disabled={!isFlatRoot}
                 />
             </div>
-            {!isFlatTagFilterRoot(draft.filter.root) ? (
+            {!isFlatRoot ? (
                 <p className="px-1 text-xs text-muted-foreground">
                     {GROUPED_TAG_FILTER_DROPDOWN_HINT}
                 </p>

@@ -4,6 +4,7 @@ import {
     DEFAULT_VIDEO_CRF,
     encodeCompressedStillFromBytes,
 } from "@/lib/compress";
+import { blobFromUint8Array } from "@/lib/bytes-blob";
 import { runFFmpeg, type FFmpegProgressCallback } from "@/lib/ffmpeg";
 import { mediaKindForFile, mimeTypeForFile } from "@/lib/media-kind";
 import { evenOutputSize } from "@/lib/transcode/even-output-size";
@@ -51,9 +52,6 @@ export const VIDEO_COMPRESS_PREVIEW_MAX_LONG_EDGE = 1280;
 /** Default long-edge cap for Manage batch video compression. */
 export const VIDEO_COMPRESS_BATCH_MAX_LONG_EDGE = 1920;
 
-const blobFromBytes = (bytes: Uint8Array, mimeType: string): Blob =>
-    new Blob([Uint8Array.from(bytes)], { type: mimeType });
-
 /** Fit inside a square of `maxLongEdge` (either orientation), never upscale, even sides. */
 const evenScaleFilter = (maxLongEdge: number): string =>
     `scale=w='min(${maxLongEdge},iw)':h='min(${maxLongEdge},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2`;
@@ -92,7 +90,7 @@ const compressVideoWithFfmpeg = async (
             "-movflags", "+faststart",
             "OUTPUT",
         ],
-        blobFromBytes(bytes, mimeType),
+        blobFromUint8Array(bytes, mimeType),
         "mp4",
         onProgress,
     );
@@ -190,7 +188,7 @@ const encodeMediaBytes = async (
                 "-vf", `fps=15,scale=${scale}:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse`,
                 "OUTPUT",
             ],
-            blobFromBytes(bytes, "image/gif"),
+            blobFromUint8Array(bytes, "image/gif"),
             "gif",
             onProgress,
         );

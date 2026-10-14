@@ -18,7 +18,6 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Spinner } from "@/components/ui/spinner";
-import { getEnteCore } from "@/core";
 import {
     bakeRotation,
     containedDisplaySize,
@@ -28,7 +27,8 @@ import {
     maxAspectRatioCrop,
     viewportTargetAspectRatio,
 } from "@/lib/viewport-fit";
-import { getLocalMediaOverride } from "@/lib/local-media-overrides";
+import { loadMediaBytesForEdit } from "@/lib/load-media-bytes";
+import { blobFromUint8Array } from "@/lib/bytes-blob";
 import { mimeTypeForFile } from "@/lib/media-kind";
 import { useLibraryStore } from "@/stores/library-store";
 import { useUIStore } from "@/stores/ui-store";
@@ -104,16 +104,13 @@ export function CropEditorOverlay({
         let cancelled = false;
 
         const loadBytes = async (): Promise<void> => {
-            const loadFile = fileRef.current;
             try {
-                const bytes =
-                    getLocalMediaOverride(loadFile.id) ??
-                    (await getEnteCore().getDecryptedFile(loadFile));
+                const bytes = await loadMediaBytesForEdit(fileRef.current);
                 if (cancelled) {
                     return;
                 }
                 const url = URL.createObjectURL(
-                    new Blob([Uint8Array.from(bytes)], { type: mimeType }),
+                    blobFromUint8Array(bytes, mimeType),
                 );
                 workingUrlRef.current = url;
                 setWorkingBytes(bytes);
@@ -149,11 +146,10 @@ export function CropEditorOverlay({
                 return;
             }
             const { width, height } = entry.contentRect;
-            const nextSize = {
+            setWorkspaceSize({
                 width: Math.max(0, width - CROP_WORKSPACE_INSET_PX * 2),
                 height: Math.max(0, height - CROP_WORKSPACE_INSET_PX * 2),
-            };
-            setWorkspaceSize(nextSize);
+            });
         });
         observer.observe(element);
         return (): void => {
@@ -166,7 +162,7 @@ export function CropEditorOverlay({
             return;
         }
         const url = URL.createObjectURL(
-            new Blob([Uint8Array.from(bytes)], { type: "image/jpeg" }),
+            blobFromUint8Array(bytes, "image/jpeg"),
         );
         if (workingUrlRef.current) {
             URL.revokeObjectURL(workingUrlRef.current);
@@ -196,13 +192,12 @@ export function CropEditorOverlay({
             workspaceSize.width,
             workspaceSize.height,
         );
-        const aspect = targetAspect;
         const nextCrop = maxAspectRatioCrop(
             layout.width,
             layout.height,
-            aspect,
+            targetAspect,
         );
-        setCropAspect(aspect);
+        setCropAspect(targetAspect);
         setDisplayLayout(layout);
         setCrop(nextCrop);
         setCompletedCrop(convertToPixelCrop(nextCrop, layout.width, layout.height));
@@ -220,7 +215,6 @@ export function CropEditorOverlay({
     const handleImageLoad = useCallback(
         (event: SyntheticEvent<HTMLImageElement>): void => {
             const image = event.currentTarget;
-            imageRef.current = image;
             requestAnimationFrame(() => {
                 applyDisplayLayout(image);
             });

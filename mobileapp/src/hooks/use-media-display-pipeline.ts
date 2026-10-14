@@ -185,28 +185,17 @@ export function useMediaDisplayPipeline({
         );
     }, [imageQualitySort, qualityEntries.size, qualityHydrated]);
 
-    useEffect(() => {
-        if (tagFilterFitSort === "none" || embeddingHydrated) {
-            return;
-        }
-        void hydrateEmbeddings();
-    }, [embeddingHydrated, hydrateEmbeddings, tagFilterFitSort]);
+    const needsEmbeddings =
+        tagFilterFitSort !== "none" ||
+        (relativeSort !== "none" && initialLoadDone) ||
+        nearnessActive;
 
     useEffect(() => {
-        if (
-            relativeSort === "none" ||
-            embeddingHydrated ||
-            !initialLoadDone
-        ) {
+        if (!needsEmbeddings || embeddingHydrated) {
             return;
         }
         void hydrateEmbeddings();
-    }, [
-        embeddingHydrated,
-        hydrateEmbeddings,
-        initialLoadDone,
-        relativeSort,
-    ]);
+    }, [embeddingHydrated, hydrateEmbeddings, needsEmbeddings]);
 
     const viewerAspect = viewportTargetAspectRatio(
         viewportTargetWidth,
@@ -228,13 +217,6 @@ export function useMediaDisplayPipeline({
             useUIStore.getState().setNearnessFilter(undefined);
         };
     }, [clearNearnessOnUnmount]);
-
-    useEffect(() => {
-        if (!nearnessActive || embeddingHydrated) {
-            return;
-        }
-        void hydrateEmbeddings();
-    }, [embeddingHydrated, hydrateEmbeddings, nearnessActive]);
 
     useEffect(() => {
         if (!nearnessActive || !nearnessFilter || !embeddingHydrated || !initialLoadDone) {

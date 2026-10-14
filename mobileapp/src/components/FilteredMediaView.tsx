@@ -63,10 +63,9 @@ export function FilteredMediaView({
         disabled: rotateBusy || cropBusy,
     });
 
-    const footerInsetPx =
-        stampActive || rotateActive || cropActive || selectionEnabled ?
-            SELECTION_FOOTER_INSET_PX :
-            0;
+    const toolActive =
+        selectionEnabled || stampActive || rotateActive || cropActive;
+    const footerInsetPx = toolActive ? SELECTION_FOOTER_INSET_PX : 0;
 
     const handleOpenFile = useCallback((file: EnteFile): void => {
         const {
@@ -98,11 +97,7 @@ export function FilteredMediaView({
         <div className="flex min-h-0 flex-1 flex-col">
             <ThumbnailGrid
                 files={files}
-                onOpenFile={
-                    selectionEnabled || stampActive || rotateActive || cropActive ?
-                        undefined :
-                        handleOpenFile
-                }
+                onOpenFile={toolActive ? undefined : handleOpenFile}
                 selection={gridSelection}
                 footerInsetPx={footerInsetPx}
                 previewRotationById={

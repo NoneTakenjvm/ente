@@ -71,13 +71,9 @@ export function SessionProvider({ children }: SessionProviderProps): JSX.Element
             }, idleLockMs);
         };
 
-        const onActivity = (): void => {
-            scheduleIdleLock();
-        };
-
         scheduleIdleLock();
         for (const event of activityEvents) {
-            window.addEventListener(event, onActivity, { passive: true });
+            window.addEventListener(event, scheduleIdleLock, { passive: true });
         }
 
         return (): void => {
@@ -85,7 +81,7 @@ export function SessionProvider({ children }: SessionProviderProps): JSX.Element
                 clearTimeout(idleTimer);
             }
             for (const event of activityEvents) {
-                window.removeEventListener(event, onActivity);
+                window.removeEventListener(event, scheduleIdleLock);
             }
         };
     }, [lock, router]);

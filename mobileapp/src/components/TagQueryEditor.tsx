@@ -1,4 +1,4 @@
-import { memo, useState, type JSX } from "react";
+import { memo, useState, type JSX, type ReactNode } from "react";
 import { TagClausePicker } from "@/components/TagClausePicker";
 import { TagScopeFilterDropdown } from "@/components/TagScopeFilterDropdown";
 import { Button } from "@/components/ui/button";
@@ -131,6 +131,78 @@ function MatchJoinToggle({
     );
 }
 
+function FilterLeafRow({
+    depth,
+    selected,
+    selectLabel,
+    removeLabel,
+    mode,
+    onToggleSelect,
+    onSetMode,
+    onRemove,
+    children,
+}: {
+    depth: number;
+    selected: boolean;
+    selectLabel: string;
+    removeLabel: string;
+    mode: TagFilterMode;
+    onToggleSelect: () => void;
+    onSetMode: (mode: TagFilterMode) => void;
+    onRemove: () => void;
+    children: ReactNode;
+}): JSX.Element {
+    return (
+        <li
+            className="flex items-center gap-2 rounded-md border border-border/60 p-2"
+            style={{ marginLeft: depth * 12 }}
+        >
+            <Checkbox
+                checked={selected}
+                onCheckedChange={onToggleSelect}
+                aria-label={selectLabel}
+            />
+            <span className="min-w-0 flex-1 truncate text-sm">{children}</span>
+            <div className="flex shrink-0 items-center gap-1">
+                <Button
+                    type="button"
+                    size="xs"
+                    variant={mode === "include" ? "default" : "outline"}
+                    className="h-7 px-2"
+                    onClick={() => {
+                        onSetMode("include");
+                    }}
+                >
+                    Has
+                </Button>
+                <Button
+                    type="button"
+                    size="xs"
+                    variant={mode === "exclude" ? "destructive" : "outline"}
+                    className={cn(
+                        "h-7 px-2",
+                        mode === "exclude" && "text-destructive-foreground",
+                    )}
+                    onClick={() => {
+                        onSetMode("exclude");
+                    }}
+                >
+                    Not
+                </Button>
+            </div>
+            <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={removeLabel}
+                onClick={onRemove}
+            >
+                <X className="size-3.5" />
+            </Button>
+        </li>
+    );
+}
+
 const FilterNodeRow = memo(function FilterNodeRow({
     node,
     depth,
@@ -146,130 +218,38 @@ const FilterNodeRow = memo(function FilterNodeRow({
 }: NodeRowProps): JSX.Element {
     if (isTagFilterClause(node)) {
         return (
-            <li
-                className="flex items-center gap-2 rounded-md border border-border/60 p-2"
-                style={{ marginLeft: depth * 12 }}
+            <FilterLeafRow
+                depth={depth}
+                selected={selectedIds.has(node.id)}
+                selectLabel={`Select ${describeTagFilterClause(node)}`}
+                removeLabel={`Remove ${node.tag}`}
+                mode={node.mode}
+                onToggleSelect={() => onToggleSelect(node.id)}
+                onSetMode={(mode) => onSetClauseMode(node.id, mode)}
+                onRemove={() => onRemove(node.id)}
             >
-                <Checkbox
-                    checked={selectedIds.has(node.id)}
-                    onCheckedChange={() => {
-                        onToggleSelect(node.id);
-                    }}
-                    aria-label={`Select ${describeTagFilterClause(node)}`}
-                />
-                <span className="min-w-0 flex-1 truncate text-sm">
-                    {node.tag}
-                </span>
-                <div className="flex shrink-0 items-center gap-1">
-                    <Button
-                        type="button"
-                        size="xs"
-                        variant={
-                            node.mode === "include" ? "default" : "outline"
-                        }
-                        className="h-7 px-2"
-                        onClick={() => {
-                            onSetClauseMode(node.id, "include");
-                        }}
-                    >
-                        Has
-                    </Button>
-                    <Button
-                        type="button"
-                        size="xs"
-                        variant={
-                            node.mode === "exclude" ? "destructive" : "outline"
-                        }
-                        className={cn(
-                            "h-7 px-2",
-                            node.mode === "exclude" &&
-                                "text-destructive-foreground",
-                        )}
-                        onClick={() => {
-                            onSetClauseMode(node.id, "exclude");
-                        }}
-                    >
-                        Not
-                    </Button>
-                </div>
-                <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={`Remove ${node.tag}`}
-                    onClick={() => {
-                        onRemove(node.id);
-                    }}
-                >
-                    <X className="size-3.5" />
-                </Button>
-            </li>
+                {node.tag}
+            </FilterLeafRow>
         );
     }
 
     if (isTagFilterKit(node)) {
         return (
-            <li
-                className="flex items-center gap-2 rounded-md border border-border/60 p-2"
-                style={{ marginLeft: depth * 12 }}
+            <FilterLeafRow
+                depth={depth}
+                selected={selectedIds.has(node.id)}
+                selectLabel={`Select ${describeTagFilterKit(node)}`}
+                removeLabel={`Remove kit ${node.name}`}
+                mode={node.mode}
+                onToggleSelect={() => onToggleSelect(node.id)}
+                onSetMode={(mode) => onSetClauseMode(node.id, mode)}
+                onRemove={() => onRemove(node.id)}
             >
-                <Checkbox
-                    checked={selectedIds.has(node.id)}
-                    onCheckedChange={() => {
-                        onToggleSelect(node.id);
-                    }}
-                    aria-label={`Select ${describeTagFilterKit(node)}`}
-                />
-                <span className="min-w-0 flex-1 truncate text-sm">
-                    <span className="font-medium">{node.name}</span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                        Kit · {node.tags.join(", ")}
-                    </span>
+                <span className="font-medium">{node.name}</span>
+                <span className="block truncate text-xs text-muted-foreground">
+                    Kit · {node.tags.join(", ")}
                 </span>
-                <div className="flex shrink-0 items-center gap-1">
-                    <Button
-                        type="button"
-                        size="xs"
-                        variant={
-                            node.mode === "include" ? "default" : "outline"
-                        }
-                        className="h-7 px-2"
-                        onClick={() => {
-                            onSetClauseMode(node.id, "include");
-                        }}
-                    >
-                        Has
-                    </Button>
-                    <Button
-                        type="button"
-                        size="xs"
-                        variant={
-                            node.mode === "exclude" ? "destructive" : "outline"
-                        }
-                        className={cn(
-                            "h-7 px-2",
-                            node.mode === "exclude" &&
-                                "text-destructive-foreground",
-                        )}
-                        onClick={() => {
-                            onSetClauseMode(node.id, "exclude");
-                        }}
-                    >
-                        Not
-                    </Button>
-                </div>
-                <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={`Remove kit ${node.name}`}
-                    onClick={() => {
-                        onRemove(node.id);
-                    }}
-                >
-                    <X className="size-3.5" />
-                </Button>
-            </li>
+            </FilterLeafRow>
         );
     }
 
@@ -352,25 +332,8 @@ function RootGroupSection({
     onUngroup,
 }: {
     group: TagFilterGroup;
-    filter: TagFilterSelection;
-    selectedIds: Set<string>;
     emptyHint: string;
-    onToggleSelect: (nodeId: string) => void;
-    onRemove: (nodeId: string) => void;
-    onSetClauseMode: (clauseId: string, mode: TagFilterMode) => void;
-    onSetClauseInGroup: (
-        groupId: string,
-        tag: string,
-        mode: TagFilterMode | null,
-    ) => void;
-    onSetKitInGroup: (
-        groupId: string,
-        kit: KitFilterInput,
-        mode: TagFilterMode | null,
-    ) => void;
-    onSetGroupOp: (groupId: string, op: TagFilterJoin) => void;
-    onUngroup: (groupId: string) => void;
-}): JSX.Element {
+} & Omit<NodeRowProps, "node" | "depth">): JSX.Element {
     if (group.children.length === 0) {
         return (
             <div className="flex flex-col gap-2">

@@ -236,25 +236,6 @@ export const wipeOrganizerDBForUser = async (userId: number): Promise<void> => {
 };
 
 /**
- * Return true if encrypted file metadata exists on disk for a user.
- */
-export const hasCachedLibrary = async (userId: number): Promise<boolean> => {
-    const db = await openOrganizerDB(userId);
-    try {
-        if (db.objectStoreNames.contains("fileShards")) {
-            const shardCount = await db.count("fileShards");
-            if (shardCount > 0) {
-                return true;
-            }
-        }
-        const record = await db.get("kv", "files");
-        return record !== undefined;
-    } finally {
-        await db.close();
-    }
-};
-
-/**
  * Drop the active binding and close its connection — an open connection
  * blocks `deleteDB` indefinitely.
  */

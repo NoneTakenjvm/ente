@@ -152,33 +152,18 @@ export function TagFilterBar({
         void hydrateQuality();
     }, [hydrateQuality, imageQualitySort, qualityHydrated]);
 
-    useEffect(() => {
-        if (tagFilterFitSort === "none" || embeddingHydrated) {
-            return;
-        }
-        void hydrateEmbeddings();
-    }, [embeddingHydrated, hydrateEmbeddings, tagFilterFitSort]);
+    const needsEmbeddings =
+        tagFilterFitSort !== "none" ||
+        relativeSort !== "none" ||
+        Boolean(nearnessFilter) ||
+        presets.length > 0;
 
     useEffect(() => {
-        if (relativeSort === "none" || embeddingHydrated) {
+        if (!needsEmbeddings || embeddingHydrated) {
             return;
         }
         void hydrateEmbeddings();
-    }, [embeddingHydrated, hydrateEmbeddings, relativeSort]);
-
-    useEffect(() => {
-        if (!nearnessFilter || embeddingHydrated) {
-            return;
-        }
-        void hydrateEmbeddings();
-    }, [embeddingHydrated, hydrateEmbeddings, nearnessFilter]);
-
-    useEffect(() => {
-        if (!presets.length || embeddingHydrated) {
-            return;
-        }
-        void hydrateEmbeddings();
-    }, [embeddingHydrated, hydrateEmbeddings, presets.length]);
+    }, [embeddingHydrated, hydrateEmbeddings, needsEmbeddings]);
 
     const matchingFileIds = useMemo(
         () => matchingFiles.map((file) => file.id),
@@ -247,7 +232,7 @@ export function TagFilterBar({
         };
         return countKitPresence(
             presets,
-            matchingFiles.map((file) => file.id),
+            matchingFileIds,
             fileIdsByTag,
             estimate,
             excludedKitLikenessIds,
@@ -256,7 +241,7 @@ export function TagFilterBar({
         excludedKitLikenessIds,
         fileIdsByTag,
         filterMenuOpen,
-        matchingFiles,
+        matchingFileIds,
         presenceEstimate,
         presets,
     ]);
@@ -372,12 +357,10 @@ export function TagFilterBar({
     // Keep latched mode when clauses drop to zero; only hide the Sort radios.
     const tagFilterFitAvailable = fitClauseCount > 0;
 
-    const tagsButtonLabel = useMemo((): string => {
-        if (clauseCount === 0) {
-            return "Tags";
-        }
-        return `${clauseCount} tag${clauseCount === 1 ? "" : "s"}`;
-    }, [clauseCount]);
+    const tagsButtonLabel =
+        clauseCount === 0 ?
+            "Tags" :
+            `${clauseCount} tag${clauseCount === 1 ? "" : "s"}`;
 
     const hasQueryContent =
         clauseCount > 0 ||
@@ -419,19 +402,7 @@ export function TagFilterBar({
         [matchingFileIds],
     );
 
-    const requestBulkAdd = useCallback(
-        (tagName: string): void => {
-            if (matchCount > 25) {
-                setPendingBulkTags([tagName]);
-                setConfirmBulkOpen(true);
-                return;
-            }
-            void applyBulkTags([tagName]);
-        },
-        [applyBulkTags, matchCount],
-    );
-
-    const requestBulkPreset = useCallback(
+    const requestBulkTags = useCallback(
         (tags: string[]): void => {
             if (matchCount > 25) {
                 setPendingBulkTags(tags);
@@ -609,7 +580,7 @@ export function TagFilterBar({
                         setBulkError(undefined);
                     }
                 }}
-                onAddTag={requestBulkAdd}
+                onAddTag={(name) => requestBulkTags([name])}
                 onRemoveTag={(name) => {
                     void (async () => {
                         setBulkBusy(true);
@@ -626,7 +597,7 @@ export function TagFilterBar({
                         }
                     })();
                 }}
-                onApplyPreset={requestBulkPreset}
+                onApplyPreset={requestBulkTags}
                 onTogglePinTag={togglePinnedTag}
             />
 

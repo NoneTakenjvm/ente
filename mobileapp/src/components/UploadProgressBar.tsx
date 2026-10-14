@@ -16,7 +16,7 @@ export function UploadProgressBar(): JSX.Element | null {
 
     const { current, total } = progress;
     const progressValue =
-        total > 0 ? Math.round((current / total) * 100) : undefined;
+        total > 0 ? Math.round((current / total) * 100) : 0;
 
     return (
         <button
@@ -31,7 +31,7 @@ export function UploadProgressBar(): JSX.Element | null {
                     "Uploading… · tap to view"}
             </p>
             <Progress
-                value={progressValue ?? 0}
+                value={progressValue}
                 className="pointer-events-none h-1"
             />
         </button>

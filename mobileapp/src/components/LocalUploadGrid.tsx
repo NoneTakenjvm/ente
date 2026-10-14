@@ -15,7 +15,7 @@ import {
     FixedSizeList,
     type ListChildComponentProps,
 } from "react-window";
-import { Check } from "lucide-react";
+import { SelectedTileOverlay } from "@/components/ThumbnailCell";
 import type { GalleryColumnCount } from "@/lib/app-settings";
 import {
     gridIndicesInContentMarquee,
@@ -194,20 +194,7 @@ const LocalUploadCell = memo(function LocalUploadCell({
                     />
                 )}
             </button>
-            {isSelected ? (
-                <>
-                    <span
-                        className="pointer-events-none absolute inset-0 z-[1] bg-primary/30"
-                        aria-hidden
-                    />
-                    <span
-                        className="pointer-events-none absolute right-1.5 bottom-1.5 z-10 flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground"
-                        aria-hidden
-                    >
-                        <Check className="size-4" strokeWidth={3} />
-                    </span>
-                </>
-            ) : null}
+            {isSelected ? <SelectedTileOverlay /> : null}
         </div>
     );
 });
@@ -253,7 +240,6 @@ interface SizedGridProps {
     columns: GalleryColumnCount;
     selection: LocalUploadGridSelection;
     footerInsetPx: number;
-    onScrollOffsetChange: (offset: number) => void;
     listRef: RefObject<FixedSizeList<RowData> | null>;
     scrollControllerRef: RefObject<MarqueeScrollController | null>;
 }
@@ -265,7 +251,6 @@ function SizedGrid({
     columns,
     selection,
     footerInsetPx,
-    onScrollOffsetChange,
     listRef,
     scrollControllerRef,
 }: SizedGridProps): JSX.Element {
@@ -294,13 +279,12 @@ function SizedGrid({
                 }
                 scrollOffsetRef.current = clamped;
                 listRef.current?.scrollTo(clamped);
-                onScrollOffsetChange(clamped);
             },
         };
         return (): void => {
             scrollControllerRef.current = null;
         };
-    }, [listRef, onScrollOffsetChange, scrollControllerRef]);
+    }, [listRef, scrollControllerRef]);
 
     return (
         <FixedSizeList
@@ -314,7 +298,6 @@ function SizedGrid({
             itemData={itemData}
             onScroll={(props) => {
                 scrollOffsetRef.current = props.scrollOffset;
-                onScrollOffsetChange(props.scrollOffset);
             }}
             style={{ paddingBottom: footerInsetPx, touchAction: "pan-y" }}
         >
@@ -330,7 +313,6 @@ interface SizedMasonryGridProps {
     columns: GalleryColumnCount;
     selection: LocalUploadGridSelection;
     footerInsetPx: number;
-    onScrollOffsetChange: (offset: number) => void;
     scrollControllerRef: RefObject<MarqueeScrollController | null>;
     /** Receives the placed layout so marquee hit-tests reuse it. */
     layoutRef: RefObject<UploadMasonryLayout | null>;
@@ -343,7 +325,6 @@ function SizedMasonryGrid({
     columns,
     selection,
     footerInsetPx,
-    onScrollOffsetChange,
     scrollControllerRef,
     layoutRef,
 }: SizedMasonryGridProps): JSX.Element {
@@ -384,23 +365,17 @@ function SizedMasonryGrid({
                     return;
                 }
                 node.scrollTop = clamped;
-                onScrollOffsetChange(clamped);
                 setScrollTop(clamped);
             },
         };
         return (): void => {
             scrollControllerRef.current = null;
         };
-    }, [onScrollOffsetChange, scrollControllerRef]);
+    }, [scrollControllerRef]);
 
-    const handleScroll = useCallback(
-        (event: UIEvent<HTMLDivElement>): void => {
-            const nextScrollTop = event.currentTarget.scrollTop;
-            setScrollTop(nextScrollTop);
-            onScrollOffsetChange(nextScrollTop);
-        },
-        [onScrollOffsetChange],
-    );
+    const handleScroll = (event: UIEvent<HTMLDivElement>): void => {
+        setScrollTop(event.currentTarget.scrollTop);
+    };
 
     return (
         <div
@@ -456,10 +431,6 @@ export function LocalUploadGrid({
     const marqueeAppliedIdsRef = useRef<Set<string>>(new Set());
     const marqueeLastIdsRef = useRef<string[]>([]);
     const [gridWidth, setGridWidth] = useState<number>(0);
-
-    const handleScrollOffsetChange = useCallback((_offset: number): void => {
-        // Scroll offset is owned by scrollControllerRef inside the sized grids.
-    }, []);
 
     const resolveMarqueeItemIds = useCallback(
         (rect: MarqueeRect): string[] => {
@@ -569,7 +540,6 @@ export function LocalUploadGrid({
                             columns={galleryColumns}
                             selection={selection}
                             footerInsetPx={footerInsetPx}
-                            onScrollOffsetChange={handleScrollOffsetChange}
                             scrollControllerRef={scrollControllerRef}
                             layoutRef={masonryLayoutRef}
                         />
@@ -581,7 +551,6 @@ export function LocalUploadGrid({
                             columns={galleryColumns}
                             selection={selection}
                             footerInsetPx={footerInsetPx}
-                            onScrollOffsetChange={handleScrollOffsetChange}
                             listRef={listRef}
                             scrollControllerRef={scrollControllerRef}
                         />

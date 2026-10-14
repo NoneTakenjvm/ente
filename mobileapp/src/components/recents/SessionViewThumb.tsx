@@ -1,16 +1,8 @@
-import {
-    useEffect,
-    useSyncExternalStore,
-    type JSX,
-} from "react";
+import type { JSX } from "react";
 import { ImageOff } from "lucide-react";
+import { useThumbnailEntry } from "@/components/albums/AlbumCoverThumb";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import {
-    getThumbnailEntry,
-    requestThumbnail,
-    subscribeThumbnail,
-} from "@/lib/thumbnail-cache";
 import type { EnteFile } from "ente-media/file";
 
 interface SessionViewThumbProps {
@@ -31,17 +23,7 @@ export function SessionViewThumb({
     onOpen,
     carouselIndex,
 }: SessionViewThumbProps): JSX.Element {
-    const entry = useSyncExternalStore(
-        (listener) => subscribeThumbnail(file?.id ?? -1, listener),
-        () => getThumbnailEntry(file?.id ?? -1),
-        () => getThumbnailEntry(file?.id ?? -1),
-    );
-
-    useEffect(() => {
-        if (file && entry.status === "idle") {
-            requestThumbnail(file);
-        }
-    }, [entry.status, file]);
+    const entry = useThumbnailEntry(file);
 
     if (!file) {
         return (

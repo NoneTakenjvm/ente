@@ -45,9 +45,8 @@ interface ManageAutoCropPanelProps {
     files: EnteFile[];
 }
 
-interface AutoCropCandidate {
-    file: EnteFile;
-}
+const autoCropEligibleFiles = (files: EnteFile[]): EnteFile[] =>
+    files.filter((file) => canAutoCrop(file) && !isFileArchivedLocally(file));
 
 const yieldToMain = (): Promise<void> =>
     new Promise((resolve) => {
@@ -83,7 +82,7 @@ export function ManageAutoCropPanel({
         { current: 0, total: 0 },
     );
     const [statusLine, setStatusLine] = useState<string>("");
-    const [candidates, setCandidates] = useState<AutoCropCandidate[]>([]);
+    const [candidates, setCandidates] = useState<EnteFile[]>([]);
     const [error, setError] = useState<string | undefined>();
     const [resultMessage, setResultMessage] = useState<string | undefined>();
     const scanGenerationRef = useRef<number>(0);
@@ -108,9 +107,7 @@ export function ManageAutoCropPanel({
         setError(undefined);
         setResultMessage(undefined);
         setCandidates([]);
-        const eligible = files.filter(
-            (file) => canAutoCrop(file) && !isFileArchivedLocally(file),
-        );
+        const eligible = autoCropEligibleFiles(files);
         const underPressure = isJsHeapUnderPressure();
         const batchSize = underPressure ?
             AUTO_CROP_BATCH_SIZE_UNDER_PRESSURE :
@@ -193,10 +190,9 @@ export function ManageAutoCropPanel({
             const fileById = new Map(
                 croppable.map((file) => [file.id, file] as const),
             );
-            const found: AutoCropCandidate[] = likelyIds
+            const found: EnteFile[] = likelyIds
                 .map((id) => fileById.get(id))
-                .filter((file): file is EnteFile => file !== undefined)
-                .map((file) => ({ file }));
+                .filter((file): file is EnteFile => file !== undefined);
 
             terminateBorderScanWorker();
             setCandidates(found);
@@ -258,19 +254,17 @@ export function ManageAutoCropPanel({
         try {
             await mapBatched(
                 candidates,
-                async (candidate) => {
+                async (file) => {
                     if (generation !== scanGenerationRef.current) {
                         return;
                     }
                     try {
                         const bytes =
-                            getLocalMediaOverride(candidate.file.id) ??
-                            (await getEnteCore().getDecryptedFile(
-                                candidate.file,
-                            ));
+                            getLocalMediaOverride(file.id) ??
+                            (await getEnteCore().getDecryptedFile(file));
                         const detected = await detectContentBoundsFromBytes(
                             bytes,
-                            mimeTypeForFile(candidate.file),
+                            mimeTypeForFile(file),
                         );
                         if (
                             !detected ||
@@ -280,7 +274,7 @@ export function ManageAutoCropPanel({
                                 detected.height,
                             )
                         ) {
-                            await markAutoCropped(candidate.file);
+                            await markAutoCropped(file);
                             marked += 1;
                             return;
                         }
@@ -289,7 +283,7 @@ export function ManageAutoCropPanel({
                             detected.bounds,
                         );
                         const { finalize } = cropAndReplaceFileOptimistic(
-                            candidate.file.id,
+                            file.id,
                             encoded.bytes,
                             {
                                 width: encoded.width,
@@ -343,9 +337,7 @@ export function ManageAutoCropPanel({
             Math.round((progress.current / progress.total) * 100) :
             0;
 
-    const eligibleRemaining = files.filter(
-        (file) => canAutoCrop(file) && !isFileArchivedLocally(file),
-    ).length;
+    const eligibleRemaining = autoCropEligibleFiles(files).length;
 
     return (
         <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 py-3">

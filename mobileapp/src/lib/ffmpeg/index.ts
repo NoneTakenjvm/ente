@@ -3,6 +3,7 @@ import { PromiseQueue } from "ente-utils/promise";
 import { blobFromUint8Array } from "@/lib/bytes-blob";
 import { logJsHeap } from "@/lib/memory-probe";
 import { withTimeout } from "@/lib/with-timeout";
+import { createWorkerIdleTimer } from "@/lib/worker-idle-timer";
 
 const CORE_BASE = "https://assets.ente.com/ffmpeg-core-0.12.10/";
 /** Reclaim the WASM heap shortly after the last job (mobile Chrome). */
@@ -11,25 +12,20 @@ const THUMB_FRAME_MAX_EDGE = 512;
 
 let ffmpegPromise: Promise<FFmpeg> | undefined;
 const taskQueue = new PromiseQueue<Uint8Array>();
-let idleTerminateTimer: ReturnType<typeof setTimeout> | undefined;
+const idleTimer = createWorkerIdleTimer(FFMPEG_IDLE_TERMINATE_MS, () => {
+    void terminateFFmpeg();
+});
 
 export type FFmpegProgressCallback = (ratio: number) => void;
 
 const randomId = (prefix: string): string =>
     `${prefix}${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
-const clearIdleTerminate = (): void => {
-    if (idleTerminateTimer !== undefined) {
-        clearTimeout(idleTerminateTimer);
-        idleTerminateTimer = undefined;
-    }
-};
-
 /**
  * Tear down the ffmpeg WASM instance to free its large linear memory.
  */
 export const terminateFFmpeg = async (): Promise<void> => {
-    clearIdleTerminate();
+    idleTimer.clear();
     const pending = ffmpegPromise;
     ffmpegPromise = undefined;
     if (!pending) {
@@ -43,15 +39,8 @@ export const terminateFFmpeg = async (): Promise<void> => {
     }
 };
 
-const scheduleIdleTerminate = (): void => {
-    clearIdleTerminate();
-    idleTerminateTimer = setTimeout(() => {
-        void terminateFFmpeg();
-    }, FFMPEG_IDLE_TERMINATE_MS);
-};
-
 const getFFmpeg = (): Promise<FFmpeg> => {
-    clearIdleTerminate();
+    idleTimer.clear();
     if (!ffmpegPromise) {
         const loading = (async (): Promise<FFmpeg> => {
             const ffmpeg = new FFmpeg();
@@ -115,6 +104,7 @@ export const runFFmpeg = async (
             onProgress(Math.min(1, Math.max(0, progress)));
         };
 
+        idleTimer.begin();
         try {
             ffmpeg.on("log", onLog);
             if (onProgress) {
@@ -185,10 +175,26 @@ export const runFFmpeg = async (
             } catch {
                 // ignore
             }
-            scheduleIdleTerminate();
+            idleTimer.end();
         }
     }) as Promise<Uint8Array>;
 };
+
+/** Resolve when {@link video} fires the `ready` handler; reject on error or after 20s. */
+const waitForVideoEvent = (
+    video: HTMLVideoElement,
+    ready: "onloadedmetadata" | "onseeked" | "onloadeddata",
+    errorMessage: string,
+    timeoutMessage: string,
+): Promise<void> =>
+    withTimeout(
+        new Promise<void>((resolve, reject) => {
+            video[ready] = () => resolve();
+            video.onerror = () => reject(new Error(errorMessage));
+        }),
+        20_000,
+        timeoutMessage,
+    );
 
 /**
  * Extract a poster frame using the browser video decoder (reliable on mobile).
@@ -206,13 +212,10 @@ const extractVideoFrameViaCanvas = async (
         // "metadata" leaves some browsers with no decoded frame to draw.
         video.preload = "auto";
         video.src = url;
-        await withTimeout(
-            new Promise<void>((resolve, reject) => {
-                video.onloadedmetadata = () => resolve();
-                video.onerror = () =>
-                    reject(new Error("Video frame decode failed"));
-            }),
-            20_000,
+        await waitForVideoEvent(
+            video,
+            "onloadedmetadata",
+            "Video frame decode failed",
             "Timed out decoding video frame",
         );
         if (video.videoWidth <= 0 || video.videoHeight <= 0) {
@@ -224,25 +227,19 @@ const extractVideoFrameViaCanvas = async (
                 0;
         if (seekTime > 0) {
             video.currentTime = seekTime;
-            await withTimeout(
-                new Promise<void>((resolve, reject) => {
-                    video.onseeked = () => resolve();
-                    video.onerror = () =>
-                        reject(new Error("Video seek failed"));
-                }),
-                20_000,
+            await waitForVideoEvent(
+                video,
+                "onseeked",
+                "Video seek failed",
                 "Timed out seeking video frame",
             );
         }
         // Drawing before a frame is decoded yields a blank canvas, not an error.
         if (video.readyState < 2) {
-            await withTimeout(
-                new Promise<void>((resolve, reject) => {
-                    video.onloadeddata = () => resolve();
-                    video.onerror = () =>
-                        reject(new Error("Video frame decode failed"));
-                }),
-                20_000,
+            await waitForVideoEvent(
+                video,
+                "onloadeddata",
+                "Video frame decode failed",
                 "Timed out decoding video frame",
             );
         }

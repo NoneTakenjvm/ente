@@ -8,10 +8,7 @@ import {
 } from "@/db/thumbnails";
 import { blobFromUint8Array } from "@/lib/bytes-blob";
 import { isGalleryScrolling } from "@/lib/gallery-scroll-activity";
-import {
-    readJsHeapSnapshot,
-    type JsHeapSnapshot,
-} from "@/lib/memory-probe";
+import { readJsHeapSnapshot } from "@/lib/memory-probe";
 import type { EnteFile } from "ente-media/file";
 
 type ThumbnailStatus = "idle" | "loading" | "ready" | "error";
@@ -215,16 +212,11 @@ const emergencyEvict = (): void => {
     }
 };
 
-const isThumbHeapUnderPressure = (
-    snapshot: JsHeapSnapshot | undefined = readJsHeapSnapshot(),
-): boolean =>
-    snapshot !== undefined && snapshot.usedRatio >= THUMB_HEAP_PRESSURE_RATIO;
-
 const relieveHeapPressureIfNeeded = (): void => {
-    if (!isThumbHeapUnderPressure()) {
-        return;
+    const snapshot = readJsHeapSnapshot();
+    if (snapshot !== undefined && snapshot.usedRatio >= THUMB_HEAP_PRESSURE_RATIO) {
+        emergencyEvict();
     }
-    emergencyEvict();
 };
 
 /** Reset a cancelled in-flight load so a remount can request again. */
@@ -296,19 +288,15 @@ const applyReadyNow = (fileId: number, bytes: Uint8Array): void => {
     const byteSize = bytes.byteLength;
     evictSessionUntilFit(byteSize);
 
+    // Discard first so the new entry lands at the end of the map (LRU order).
     const existing = cache.get(fileId);
     if (existing) {
-        dropReadyBytes(existing);
-        if (existing.url) {
-            URL.revokeObjectURL(existing.url);
-        }
+        discardCacheEntry(fileId, existing);
     }
 
     const blob = blobFromUint8Array(bytes, "image/jpeg");
     const url = URL.createObjectURL(blob);
     sessionReadyBytes += byteSize;
-    // Delete first so the entry moves to the end of the map (LRU order).
-    cache.delete(fileId);
     cache.set(fileId, { status: "ready", url, byteSize });
     if (hasSubscribers(fileId)) {
         notify(fileId);
@@ -490,20 +478,6 @@ export const requestThumbnail = (file: EnteFile): ThumbnailEntry => {
 };
 
 /**
- * Decrypt thumbnail bytes when already present in IDB. Does not network-fetch
- * (mass scans must avoid fetch+decode spikes on mobile Chrome).
- */
-export const loadCachedDecryptedThumbnailBytes = async (
-    file: EnteFile,
-): Promise<Uint8Array | undefined> => {
-    const cached = await getThumbnailCiphertext(file.id);
-    if (!cached) {
-        return undefined;
-    }
-    return decryptThumbnailCiphertext(cached, file.key);
-};
-
-/**
  * Decrypt thumbnail bytes for background jobs (IDB cache, else fetch + cache).
  */
 export const loadDecryptedThumbnailBytes = async (
@@ -529,26 +503,7 @@ export const primeThumbnailFromBytes = (
     imageBytes: Uint8Array,
     mimeType = "image/jpeg",
 ): void => {
-    const existing = cache.get(fileId);
-    if (existing) {
-        dropReadyBytes(existing);
-        revokeEntryUrl(existing);
-    }
-    dropPendingReady(fileId);
-    const loading: ThumbnailEntry = { status: "loading" };
-    cache.set(fileId, loading);
-    notify(fileId);
-
-    void (async (): Promise<void> => {
-        try {
-            const thumbBytes = await generateImageThumbnail(imageBytes, mimeType);
-            if (isCurrentLoad(fileId, loading)) {
-                scheduleSetReady(fileId, thumbBytes);
-            }
-        } catch {
-            failLoad(fileId, loading);
-        }
-    })();
+    primeThumbnail(fileId, () => generateImageThumbnail(imageBytes, mimeType));
 };
 
 /**
@@ -558,10 +513,21 @@ export const primeVideoThumbnailFromBytes = (
     fileId: number,
     videoBytes: Uint8Array,
 ): void => {
+    primeThumbnail(fileId, async () => {
+        const { extractVideoFrameJpeg } = await import("@/lib/ffmpeg");
+        const frameBytes = await extractVideoFrameJpeg(videoBytes, "video/mp4");
+        return generateImageThumbnail(frameBytes);
+    });
+};
+
+/** Replace the file's entry with a loading one and fill it from `generate`. */
+const primeThumbnail = (
+    fileId: number,
+    generate: () => Promise<Uint8Array>,
+): void => {
     const existing = cache.get(fileId);
     if (existing) {
-        dropReadyBytes(existing);
-        revokeEntryUrl(existing);
+        discardCacheEntry(fileId, existing);
     }
     dropPendingReady(fileId);
     const loading: ThumbnailEntry = { status: "loading" };
@@ -570,9 +536,7 @@ export const primeVideoThumbnailFromBytes = (
 
     void (async (): Promise<void> => {
         try {
-            const { extractVideoFrameJpeg } = await import("@/lib/ffmpeg");
-            const frameBytes = await extractVideoFrameJpeg(videoBytes, "video/mp4");
-            const thumbBytes = await generateImageThumbnail(frameBytes);
+            const thumbBytes = await generate();
             if (isCurrentLoad(fileId, loading)) {
                 scheduleSetReady(fileId, thumbBytes);
             }

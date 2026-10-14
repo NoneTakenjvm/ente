@@ -19,7 +19,10 @@ import {
     removeDerivedReplaceOutboxEntries,
     type DerivedReplaceOutboxEntry,
 } from "@/lib/derived-replace-outbox";
-import type { FavoriteOutboxEntry } from "@/lib/favorite-outbox";
+import {
+    favoriteOutboxEntryKey,
+    type FavoriteOutboxEntry,
+} from "@/lib/favorite-outbox";
 import {
     addFavoriteMembershipIds,
     removeFavoriteMembershipIds,
@@ -30,10 +33,6 @@ import {
 } from "@/lib/tag-outbox-runner";
 import type { VisibilityOutboxEntry } from "@/lib/visibility-outbox";
 import { probeVideoDurationSec } from "@/lib/video-edit";
-
-const favoriteEntryKey: (entry: FavoriteOutboxEntry) => string = (
-    entry: FavoriteOutboxEntry,
-): string => entry.fileHashAndTypeKey ?? String(entry.fileId);
 
 const isFileIdInTrash: (fileId: number) => Promise<boolean> = async (
     fileId: number,
@@ -52,6 +51,18 @@ const isFileIdInTrash: (fileId: number) => Promise<boolean> = async (
                 item.file.id === fileId,
         );
 };
+
+const favoriteMutationContext = (
+    library: ReturnType<typeof useLibraryStore.getState>,
+): {
+    collections: Collection[];
+    allFiles: EnteFile[];
+    pendingByHashAndType: typeof pendingFavoriteFilesByHashAndType;
+} => ({
+    collections: library.collections,
+    allFiles: library.allFiles,
+    pendingByHashAndType: pendingFavoriteFilesByHashAndType,
+});
 
 export interface UseLibraryBootstrapOptions {
     /** Extra work after cache load and remote sync (e.g. phash hydrate). */
@@ -128,16 +139,7 @@ export const useLibraryBootstrap: (
                         typeof useLibraryStore.getState
                     > = useLibraryStore.getState();
                     const core: EnteCore = getEnteCore();
-                    const ctx: {
-                        collections: Collection[];
-                        allFiles: EnteFile[];
-                        pendingByHashAndType: typeof pendingFavoriteFilesByHashAndType;
-                    } = {
-                        collections: library.collections,
-                        allFiles: library.allFiles,
-                        pendingByHashAndType:
-                            pendingFavoriteFilesByHashAndType,
-                    };
+                    const ctx = favoriteMutationContext(library);
 
                     const ackedKeys: string[] = [];
                     const toAdd: EnteFile[] = [];
@@ -146,7 +148,7 @@ export const useLibraryBootstrap: (
                     const removeKeys: string[] = [];
 
                     for (const entry of entries) {
-                        const key: string = favoriteEntryKey(entry);
+                        const key: string = favoriteOutboxEntryKey(entry);
                         const file: EnteFile | undefined =
                             library.allFiles.find(
                                 (candidate: EnteFile): boolean =>
@@ -200,16 +202,7 @@ export const useLibraryBootstrap: (
                         );
                     }
                     const core: EnteCore = getEnteCore();
-                    const ctx: {
-                        collections: Collection[];
-                        allFiles: EnteFile[];
-                        pendingByHashAndType: typeof pendingFavoriteFilesByHashAndType;
-                    } = {
-                        collections: library.collections,
-                        allFiles: library.allFiles,
-                        pendingByHashAndType:
-                            pendingFavoriteFilesByHashAndType,
-                    };
+                    const ctx = favoriteMutationContext(library);
                     if (entry.isFavorite) {
                         const membershipIds = await core.addToFavorites(
                             [file],

@@ -47,7 +47,8 @@ export type BuildKitEmbeddingFoldOptions = {
     random?: () => number;
 };
 
-const mulberry32 = (seed: number): (() => number) => {
+/** Seeded PRNG in `[0, 1)` (LCG) for reproducible folds. */
+export const mulberry32 = (seed: number): (() => number) => {
     let state = seed >>> 0;
     return (): number => {
         state = (Math.imul(1664525, state) + 1013904223) >>> 0;
@@ -55,13 +56,15 @@ const mulberry32 = (seed: number): (() => number) => {
     };
 };
 
-const shuffleInPlace = <T>(items: T[], random: () => number): void => {
+/** Fisher–Yates shuffle of {@link items} using {@link random}; returns it. */
+export const shuffleInPlace = <T>(items: T[], random: () => number): T[] => {
     for (let i = items.length - 1; i > 0; i -= 1) {
         const j = Math.floor(random() * (i + 1));
         const tmp = items[i]!;
         items[i] = items[j]!;
         items[j] = tmp;
     }
+    return items;
 };
 
 /**
@@ -161,8 +164,7 @@ export const buildKitEmbeddingEvalFold = (
     if (members.length < 4) {
         return undefined;
     }
-    const shuffled = [...members];
-    shuffleInPlace(shuffled, random);
+    const shuffled = shuffleInPlace([...members], random);
     const seedCount = Math.max(
         2,
         Math.min(
@@ -280,9 +282,9 @@ export const evaluateKitEmbeddingGenome = (
     const negScores = fold.negativeIds.map(scoreOf);
     const holdoutAuc = mannWhitneyAuc(posScores, negScores);
 
-    const candidates = [...fold.holdoutIds, ...fold.negativeIds];
-    const ranked = candidates
-        .map((id) => ({ id, score: scoreOf(id) }))
+    const scores = [...posScores, ...negScores];
+    const ranked = [...fold.holdoutIds, ...fold.negativeIds]
+        .map((id, index) => ({ id, score: scores[index]! }))
         .sort((a, b) => b.score - a.score)
         .map((row) => row.id);
     const k = Math.min(fold.holdoutIds.length, ranked.length);

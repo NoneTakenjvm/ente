@@ -11,6 +11,7 @@
  */
 import type { PhashEntry } from "@/lib/crop-match";
 import { KIT_EMBEDDING_DIMS, type ReadonlyEmbeddingMap } from "@/lib/kit-embedding";
+import { embeddingCosineDistance } from "@/lib/similarity-clip";
 import {
     hammingDistancePacked,
     parseDHashHex,
@@ -143,24 +144,6 @@ export const listKitSeedIds = (
     return ids.sort((a, b) => a - b);
 };
 
-const packedHashesFromEntry = (
-    entry: PhashEntry | undefined,
-): PackedDHash[] | undefined => {
-    if (!entry?.hashes.length) {
-        return undefined;
-    }
-    return entry.hashes.map((hex) => parseDHashHex(hex));
-};
-
-const packedColorFromEntry = (
-    entry: PhashEntry | undefined,
-): PackedDHash | undefined => {
-    if (!entry?.color) {
-        return undefined;
-    }
-    return parseDHashHex(entry.color);
-};
-
 /**
  * Nearness distance between two phash signals (lower = closer).
  *
@@ -218,15 +201,88 @@ const medoidFromEntry = (
     fileId: number,
     entry: PhashEntry | undefined,
 ): KitMedoid | undefined => {
-    const hashes = packedHashesFromEntry(entry);
-    if (!hashes) {
+    if (!entry?.hashes.length) {
         return undefined;
     }
     return {
         fileId,
-        hashes,
-        color: packedColorFromEntry(entry),
+        hashes: entry.hashes.map((hex) => parseDHashHex(hex)),
+        color: entry.color ? parseDHashHex(entry.color) : undefined,
     };
+};
+
+/**
+ * Sorted, de-duplicated seeds (up to {@link maxSeeds}) that {@link toCandidate}
+ * can resolve.
+ */
+const collectSeedCandidates = <T>(
+    seedFileIds: readonly number[],
+    maxSeeds: number,
+    toCandidate: (fileId: number) => T | undefined,
+): T[] => {
+    const candidates: T[] = [];
+    const seen = new Set<number>();
+    for (const fileId of [...seedFileIds].sort((a, b) => a - b)) {
+        if (seen.has(fileId)) {
+            continue;
+        }
+        seen.add(fileId);
+        const candidate = toCandidate(fileId);
+        if (!candidate) {
+            continue;
+        }
+        candidates.push(candidate);
+        if (candidates.length >= maxSeeds) {
+            break;
+        }
+    }
+    return candidates;
+};
+
+/** Order files by ascending score, ties by id. */
+const sortByScore = (
+    files: readonly EnteFile[],
+    scoreById: ReadonlyMap<number, number>,
+): EnteFile[] =>
+    [...files].sort((a, b) => {
+        const scoreA = scoreById.get(a.id)!;
+        const scoreB = scoreById.get(b.id)!;
+        if (scoreA !== scoreB) {
+            return scoreA - scoreB;
+        }
+        return a.id - b.id;
+    });
+
+/**
+ * Strongest weighted steal penalty across rivals: how much closer a rival is
+ * than the selected kit, scaled by how distinct that rival is.
+ */
+const strongestRivalPenalty = <Rival extends { length: number }>(
+    dSelected: number,
+    rivals: readonly Rival[],
+    distanceToRival: (rival: Rival) => number,
+    weightFor: (rival: Rival, index: number) => number,
+): number => {
+    let bestPenalty = 0;
+    for (let i = 0; i < rivals.length; i++) {
+        const rival = rivals[i]!;
+        if (!rival.length) {
+            continue;
+        }
+        const dRival = distanceToRival(rival);
+        if (!Number.isFinite(dRival)) {
+            continue;
+        }
+        const steal = Math.max(0, dSelected - dRival);
+        if (steal === 0) {
+            continue;
+        }
+        const penalty = steal * weightFor(rival, i);
+        if (penalty > bestPenalty) {
+            bestPenalty = penalty;
+        }
+    }
+    return bestPenalty;
 };
 
 /**
@@ -252,22 +308,8 @@ export const pickKitMedoids = (
     const maxSeeds = options?.maxSeeds ?? MAX_KIT_SEEDS;
     const minSeparation = options?.minSeparation ?? KIT_MEDOID_MIN_SEPARATION;
 
-    const candidates: KitMedoid[] = [];
-    const seen = new Set<number>();
-    for (const fileId of [...seedFileIds].sort((a, b) => a - b)) {
-        if (seen.has(fileId)) {
-            continue;
-        }
-        seen.add(fileId);
-        const medoid = medoidFromEntry(fileId, entries.get(fileId));
-        if (!medoid) {
-            continue;
-        }
-        candidates.push(medoid);
-        if (candidates.length >= maxSeeds) {
-            break;
-        }
-    }
+    const candidates = collectSeedCandidates(seedFileIds, maxSeeds, (fileId) =>
+        medoidFromEntry(fileId, entries.get(fileId)));
 
     if (candidates.length === 0 || maxMedoids <= 0) {
         return [];
@@ -383,28 +425,20 @@ export const sortFilesByKitNearness = (
     if (!medoids.length) {
         return [...files];
     }
-    return [...files].sort((a, b) => {
-        const scoreA = kitNearnessDistance(
-            a.id,
-            medoids,
-            entries,
-            colorBonus,
-            colorRadius,
-            structureGate,
-        );
-        const scoreB = kitNearnessDistance(
-            b.id,
-            medoids,
-            entries,
-            colorBonus,
-            colorRadius,
-            structureGate,
-        );
-        if (scoreA !== scoreB) {
-            return scoreA - scoreB;
-        }
-        return a.id - b.id;
-    });
+    const scoreById = new Map(
+        files.map((file) => [
+            file.id,
+            kitNearnessDistance(
+                file.id,
+                medoids,
+                entries,
+                colorBonus,
+                colorRadius,
+                structureGate,
+            ),
+        ]),
+    );
+    return sortByScore(files, scoreById);
 };
 
 /**
@@ -497,35 +531,22 @@ export const kitNearnessDistanceCompetitive = (
         return dSelected;
     }
 
-    let bestPenalty = 0;
-    for (let i = 0; i < rivals.length; i++) {
-        const rival = rivals[i]!;
-        if (!rival.length) {
-            continue;
-        }
-        const dRival = kitNearnessDistance(
-            fileId,
-            rival,
-            entries,
-            colorBonus,
-            colorRadius,
-            structureGate,
-        );
-        if (!Number.isFinite(dRival)) {
-            continue;
-        }
-        const steal = Math.max(0, dSelected - dRival);
-        if (steal === 0) {
-            continue;
-        }
-        const weight =
-            options?.rivalWeights?.[i] ??
-            kitDistinctiveness(kitDistance(selected, rival), tau);
-        const penalty = steal * weight;
-        if (penalty > bestPenalty) {
-            bestPenalty = penalty;
-        }
-    }
+    const bestPenalty = strongestRivalPenalty(
+        dSelected,
+        rivals,
+        (rival) =>
+            kitNearnessDistance(
+                fileId,
+                rival,
+                entries,
+                colorBonus,
+                colorRadius,
+                structureGate,
+            ),
+        (rival, index) =>
+            options?.rivalWeights?.[index] ??
+            kitDistinctiveness(kitDistance(selected, rival), tau),
+    );
     return dSelected + lambda * bestPenalty;
 };
 
@@ -655,26 +676,19 @@ export const sortFilesByKitNearnessCompetitive = (
             kitDistinctiveness(kitDistance(selected, rival), tau) :
             0);
     const scoreOptions = { ...options, rivalWeights };
-    return [...files].sort((a, b) => {
-        const scoreA = kitNearnessDistanceCompetitive(
-            a.id,
-            selected,
-            rivals,
-            entries,
-            scoreOptions,
-        );
-        const scoreB = kitNearnessDistanceCompetitive(
-            b.id,
-            selected,
-            rivals,
-            entries,
-            scoreOptions,
-        );
-        if (scoreA !== scoreB) {
-            return scoreA - scoreB;
-        }
-        return a.id - b.id;
-    });
+    const scoreById = new Map(
+        files.map((file) => [
+            file.id,
+            kitNearnessDistanceCompetitive(
+                file.id,
+                selected,
+                rivals,
+                entries,
+                scoreOptions,
+            ),
+        ]),
+    );
+    return sortByScore(files, scoreById);
 };
 
 /**
@@ -702,26 +716,6 @@ export const MAX_KIT_EMBEDDING_MEDOIDS = 3;
  */
 export const KIT_EMBEDDING_MEDOID_MIN_SEPARATION = 0.08;
 
-const embeddingDot = (a: ArrayLike<number>, b: ArrayLike<number>): number => {
-    let sum = 0;
-    const n = Math.min(a.length, b.length);
-    for (let i = 0; i < n; i++) {
-        sum += a[i]! * b[i]!;
-    }
-    return sum;
-};
-
-/** Cosine distance between two L2-normalized vectors (0 = identical). */
-export const embeddingCosineDistanceVectors = (
-    left: ArrayLike<number> | undefined,
-    right: ArrayLike<number> | undefined,
-): number => {
-    if (!left?.length || !right?.length || left.length !== right.length) {
-        return Number.POSITIVE_INFINITY;
-    }
-    return 1 - embeddingDot(left, right);
-};
-
 export type KitEmbeddingMedoid = {
     fileId: number;
     vector: Float32Array;
@@ -741,7 +735,7 @@ const kitEmbeddingLocalDensity = (
             continue;
         }
         if (
-            embeddingCosineDistanceVectors(pivot.vector, other.vector) <
+            embeddingCosineDistance(pivot.vector, other.vector) <
             minSeparation
         ) {
             density += 1;
@@ -771,22 +765,16 @@ export const pickKitEmbeddingMedoids = (
     const minSeparation =
         options?.minSeparation ?? KIT_EMBEDDING_MEDOID_MIN_SEPARATION;
 
-    const candidates: KitEmbeddingMedoid[] = [];
-    const seen = new Set<number>();
-    for (const fileId of [...seedFileIds].sort((a, b) => a - b)) {
-        if (seen.has(fileId)) {
-            continue;
-        }
-        seen.add(fileId);
-        const vector = embeddings.get(fileId);
-        if (vector?.length !== KIT_EMBEDDING_DIMS) {
-            continue;
-        }
-        candidates.push({ fileId, vector });
-        if (candidates.length >= maxSeeds) {
-            break;
-        }
-    }
+    const candidates = collectSeedCandidates<KitEmbeddingMedoid>(
+        seedFileIds,
+        maxSeeds,
+        (fileId) => {
+            const vector = embeddings.get(fileId);
+            return vector?.length === KIT_EMBEDDING_DIMS ?
+                { fileId, vector } :
+                undefined;
+        },
+    );
 
     if (candidates.length === 0 || maxMedoids <= 0) {
         return [];
@@ -795,14 +783,15 @@ export const pickKitEmbeddingMedoids = (
         return [candidates[0]!];
     }
 
-    const densityOf = (pivot: KitEmbeddingMedoid): number =>
-        kitEmbeddingLocalDensity(pivot, candidates, minSeparation);
-
     let bestStart = 0;
     let bestDensity = -1;
     for (let i = 0; i < candidates.length; i++) {
         const pivot = candidates[i]!;
-        const density = densityOf(pivot);
+        const density = kitEmbeddingLocalDensity(
+            pivot,
+            candidates,
+            minSeparation,
+        );
         if (
             density > bestDensity ||
             (density === bestDensity &&
@@ -823,7 +812,7 @@ export const pickKitEmbeddingMedoids = (
             const candidate = remaining[i]!;
             let minDistance = Number.POSITIVE_INFINITY;
             for (const medoid of medoids) {
-                const distance = embeddingCosineDistanceVectors(
+                const distance = embeddingCosineDistance(
                     candidate.vector,
                     medoid.vector,
                 );
@@ -834,7 +823,11 @@ export const pickKitEmbeddingMedoids = (
             if (minDistance < minSeparation) {
                 continue;
             }
-            const density = densityOf(candidate);
+            const density = kitEmbeddingLocalDensity(
+                candidate,
+                candidates,
+                minSeparation,
+            );
             // Skip isolated points so mistags are not adopted as prototypes.
             if (density < 1) {
                 continue;
@@ -898,52 +891,24 @@ export const buildKitEmbeddingCentroid = (
 };
 
 /**
- * Cosine distance to a single prototype vector (0 = identical).
- * Missing embedding → Infinity.
- */
-export const kitEmbeddingDistance = (
-    fileId: number,
-    prototype: ArrayLike<number> | undefined,
-    embeddings: ReadonlyEmbeddingMap,
-): number => {
-    if (!prototype?.length) {
-        return Number.POSITIVE_INFINITY;
-    }
-    const vector = embeddings.get(fileId);
-    if (vector?.length !== prototype.length) {
-        return Number.POSITIVE_INFINITY;
-    }
-    return 1 - embeddingDot(vector, prototype);
-};
-
-/**
  * Min cosine distance to any medoid / prototype (multi-mode kits).
+ * Missing embedding → Infinity.
  */
 export const kitEmbeddingMinDistance = (
     fileId: number,
     medoids: readonly ArrayLike<number>[],
     embeddings: ReadonlyEmbeddingMap,
 ): number => {
-    if (!medoids.length) {
-        return Number.POSITIVE_INFINITY;
-    }
+    const vector = embeddings.get(fileId);
     let best = Number.POSITIVE_INFINITY;
     for (const medoid of medoids) {
-        const d = kitEmbeddingDistance(fileId, medoid, embeddings);
-        if (d < best) {
-            best = d;
+        const distance = embeddingCosineDistance(vector, medoid);
+        if (distance < best) {
+            best = distance;
         }
     }
     return best;
 };
-
-/**
- * Cosine distance between two prototypes (0 = identical).
- */
-export const kitEmbeddingCentroidDistance = (
-    left: ArrayLike<number> | undefined,
-    right: ArrayLike<number> | undefined,
-): number => embeddingCosineDistanceVectors(left, right);
 
 /** Min distance between any pair across two medoid sets. */
 const kitEmbeddingMedoidSetDistance = (
@@ -953,7 +918,7 @@ const kitEmbeddingMedoidSetDistance = (
     let best = Number.POSITIVE_INFINITY;
     for (const a of left) {
         for (const b of right) {
-            const d = embeddingCosineDistanceVectors(a, b);
+            const d = embeddingCosineDistance(a, b);
             if (d < best) {
                 best = d;
             }
@@ -988,31 +953,17 @@ export const kitEmbeddingDistanceCompetitive = (
         return dSelected;
     }
 
-    let bestPenalty = 0;
-    for (let i = 0; i < rivalMedoidSets.length; i++) {
-        const rival = rivalMedoidSets[i];
-        if (!rival?.length) {
-            continue;
-        }
-        const dRival = kitEmbeddingMinDistance(fileId, rival, embeddings);
-        if (!Number.isFinite(dRival)) {
-            continue;
-        }
-        const steal = Math.max(0, dSelected - dRival);
-        if (steal === 0) {
-            continue;
-        }
-        const weight =
-            options?.rivalWeights?.[i] ??
+    const bestPenalty = strongestRivalPenalty(
+        dSelected,
+        rivalMedoidSets,
+        (rival) => kitEmbeddingMinDistance(fileId, rival, embeddings),
+        (rival, index) =>
+            options?.rivalWeights?.[index] ??
             kitDistinctiveness(
                 kitEmbeddingMedoidSetDistance(selectedMedoids, rival),
                 tau,
-            );
-        const penalty = steal * weight;
-        if (penalty > bestPenalty) {
-            bestPenalty = penalty;
-        }
-    }
+            ),
+    );
     return dSelected + lambda * bestPenalty;
 };
 
@@ -1083,13 +1034,8 @@ export const sortFilesByKitEmbeddingCompetitive = (
             ),
         );
     }
-    stills.sort((a, b) => {
-        const scoreA = distanceById.get(a.id)!;
-        const scoreB = distanceById.get(b.id)!;
-        if (scoreA !== scoreB) {
-            return scoreA - scoreB;
-        }
-        return a.id - b.id;
-    });
-    return { files: [...stills, ...videos], distanceById };
+    return {
+        files: [...sortByScore(stills, distanceById), ...videos],
+        distanceById,
+    };
 };

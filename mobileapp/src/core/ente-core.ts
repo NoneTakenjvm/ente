@@ -28,11 +28,7 @@ import {
     type BytesProgressCallback,
     type ServerCiphertext,
 } from "./download";
-import {
-    getPublicMetadata,
-    updateFileVisibility,
-    updatePublicMetadata,
-} from "./metadata";
+import { getPublicMetadata, updateFileVisibility } from "./metadata";
 import type { ItemVisibility } from "ente-media/file-metadata";
 import {
     bootstrapOrganizerConfig,
@@ -247,13 +243,6 @@ export class EnteCore {
         return getPublicMetadata(file);
     }
 
-    updatePublicMetadata(
-        file: EnteFile,
-        updates: Partial<FilePublicMagicMetadataData>,
-    ): Promise<void> {
-        return updatePublicMetadata(this.http, file, updates);
-    }
-
     /**
      * Set file visibility (archive / visible) via private magic metadata.
      */
@@ -440,27 +429,6 @@ export class EnteCore {
             title,
             organizerTags,
             onProgress,
-        );
-    }
-
-    async uploadRotatedImage(
-        sourceFile: EnteFile,
-        jpegBytes: Uint8Array,
-        collection: Collection,
-        dimensions: { width: number; height: number },
-        title: string,
-        organizerTags?: string[],
-    ): Promise<EnteFile> {
-        const { uploadRotatedImage: uploadRotatedImageToRemote } =
-            await import("./upload/upload-image");
-        return uploadRotatedImageToRemote(
-            this.http,
-            sourceFile,
-            jpegBytes,
-            collection,
-            dimensions,
-            title,
-            organizerTags,
         );
     }
 

@@ -13,6 +13,8 @@ import ReactCrop, {
 } from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
 import { RotateCcw, RotateCw } from "lucide-react";
+import type { CropSaveResult } from "@/components/CropEditorOverlay";
+import { formatTime } from "@/components/VideoPlaybackControls";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -45,27 +47,13 @@ import type { EnteFile } from "ente-media/file";
 const CROP_WORKSPACE_INSET_PX = 16;
 const MIN_TRIM_GAP_SEC = 0.25;
 
-export interface VideoSaveResult {
-    optimisticFile: EnteFile;
-    bytes: Uint8Array;
-    finalize: Promise<EnteFile>;
-}
+export type VideoSaveResult = CropSaveResult;
 
 interface VideoEditorOverlayProps {
     file: EnteFile;
     onCancel: () => void;
     onSaved: (result: VideoSaveResult) => void;
 }
-
-const formatTime = (seconds: number): string => {
-    if (!Number.isFinite(seconds) || seconds < 0) {
-        return "0:00";
-    }
-    const total = Math.floor(seconds);
-    const mins = Math.floor(total / 60);
-    const secs = total % 60;
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
-};
 
 export function VideoEditorOverlay({
     file,
@@ -170,11 +158,10 @@ export function VideoEditorOverlay({
                 return;
             }
             const { width, height } = entry.contentRect;
-            const nextSize = {
+            setWorkspaceSize({
                 width: Math.max(0, width - CROP_WORKSPACE_INSET_PX * 2),
                 height: Math.max(0, height - CROP_WORKSPACE_INSET_PX * 2),
-            };
-            setWorkspaceSize(nextSize);
+            });
         });
         observer.observe(element);
         return (): void => {
@@ -247,7 +234,6 @@ export function VideoEditorOverlay({
     const handleVideoLoaded = useCallback(
         (event: SyntheticEvent<HTMLVideoElement>): void => {
             const video = event.currentTarget;
-            videoRef.current = video;
             if (video.videoWidth > 0 && video.videoHeight > 0) {
                 setSourceDimensions({
                     width: video.videoWidth,
@@ -355,13 +341,6 @@ export function VideoEditorOverlay({
         setEncodeProgress(undefined);
         setError(undefined);
 
-        const cropRect = cropRectForVideoSave(
-            completedCrop,
-            displayLayout.width,
-            displayLayout.height,
-            sourceDimensions.width,
-            sourceDimensions.height,
-        );
         const trim: VideoTrimRange | undefined =
             trimRangeChanged(
                 { startSec: trimStartSec, endSec: trimEndSec },
@@ -374,7 +353,13 @@ export function VideoEditorOverlay({
             displayLayout.width,
             displayLayout.height,
         ) ?
-            cropRect :
+            cropRectForVideoSave(
+                completedCrop,
+                displayLayout.width,
+                displayLayout.height,
+                sourceDimensions.width,
+                sourceDimensions.height,
+            ) :
             undefined;
 
         const saveEdits = async () => {

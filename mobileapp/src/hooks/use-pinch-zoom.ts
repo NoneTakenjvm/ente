@@ -123,6 +123,13 @@ export const computePanBounds: (
     };
 };
 
+const pinchDistance: (
+    pointers: Map<number, { x: number; y: number }>,
+) => number = (pointers: Map<number, { x: number; y: number }>): number => {
+    const points: { x: number; y: number }[] = [...pointers.values()];
+    return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+};
+
 export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
     enabled,
     onPanRelease,
@@ -174,36 +181,46 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
         undefined
     >(undefined);
 
+    const applyPanBounds: (
+        container: HTMLElement,
+        image: HTMLImageElement | HTMLVideoElement,
+    ) => void = useCallback(
+        (container: HTMLElement, image: HTMLImageElement | HTMLVideoElement): void => {
+            const containedSize: { width: number; height: number } = getObjectContainSize(
+                image,
+                container.clientWidth,
+                container.clientHeight,
+            );
+            boundsRef.current = computePanBounds(
+                container.clientWidth,
+                container.clientHeight,
+                containedSize.width,
+                containedSize.height,
+                scale,
+            );
+            setTranslateX((current: number): number =>
+                clamp(
+                    current,
+                    boundsRef.current.minX,
+                    boundsRef.current.maxX,
+                ));
+            setTranslateY((current: number): number =>
+                clamp(
+                    current,
+                    boundsRef.current.minY,
+                    boundsRef.current.maxY,
+                ));
+        },
+        [scale],
+    );
+
     const syncBoundsFromLayout: () => void = useCallback((): void => {
         const layout: PinchLayout | null | undefined = layoutRef?.current;
         if (!layout || scale <= 1.01) {
             return;
         }
-        const containedSize: { width: number; height: number } = getObjectContainSize(
-            layout.image,
-            layout.container.clientWidth,
-            layout.container.clientHeight,
-        );
-        boundsRef.current = computePanBounds(
-            layout.container.clientWidth,
-            layout.container.clientHeight,
-            containedSize.width,
-            containedSize.height,
-            scale,
-        );
-        setTranslateX((current: number): number =>
-            clamp(
-                current,
-                boundsRef.current.minX,
-                boundsRef.current.maxX,
-            ));
-        setTranslateY((current: number): number =>
-            clamp(
-                current,
-                boundsRef.current.minY,
-                boundsRef.current.maxY,
-            ));
-    }, [layoutRef, scale]);
+        applyPanBounds(layout.container, layout.image);
+    }, [applyPanBounds, layoutRef, scale]);
 
     const shouldCaptureGestures: () => boolean = useCallback((): boolean => {
         return scaleRef.current > 1.01 || pointersRef.current.size >= 2;
@@ -213,13 +230,8 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
         if (pointersRef.current.size !== 2) {
             return;
         }
-        const points: { x: number; y: number }[] = [
-            ...pointersRef.current.values(),
-        ];
-        const dx: number = points[0].x - points[1].x;
-        const dy: number = points[0].y - points[1].y;
         pinchStartRef.current = {
-            distance: Math.hypot(dx, dy),
+            distance: pinchDistance(pointersRef.current),
             scale: scaleRef.current,
         };
         panStartRef.current = undefined;
@@ -296,32 +308,9 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
                 boundsRef.current = { minX: 0, maxX: 0, minY: 0, maxY: 0 };
                 return;
             }
-            const containedSize: { width: number; height: number } = getObjectContainSize(
-                image,
-                container.clientWidth,
-                container.clientHeight,
-            );
-            boundsRef.current = computePanBounds(
-                container.clientWidth,
-                container.clientHeight,
-                containedSize.width,
-                containedSize.height,
-                scale,
-            );
-            setTranslateX((current: number): number =>
-                clamp(
-                    current,
-                    boundsRef.current.minX,
-                    boundsRef.current.maxX,
-                ));
-            setTranslateY((current: number): number =>
-                clamp(
-                    current,
-                    boundsRef.current.minY,
-                    boundsRef.current.maxY,
-                ));
+            applyPanBounds(container, image);
         },
-        [enabled, scale],
+        [applyPanBounds, enabled, scale],
     );
 
     const finishGesture: () => void = useCallback((): void => {
@@ -365,10 +354,7 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
             }
             if (scaleRef.current > 1.01) {
                 animateZoomTo(1, 0, 0);
-                pointersRef.current.clear();
-                pinchStartRef.current = undefined;
-                panStartRef.current = undefined;
-                edgeOverflowAccumRef.current = 0;
+                clearPointers();
                 return;
             }
             const rect: DOMRect = container.getBoundingClientRect();
@@ -380,7 +366,7 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
                 -offsetY * (DOUBLE_TAP_SCALE - 1),
             );
         },
-        [animateZoomTo, enabled],
+        [animateZoomTo, clearPointers, enabled],
     );
 
     const onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void =
@@ -430,19 +416,12 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
                 }
                 event.stopPropagation();
                 if (pointersRef.current.size === 2 && pinchStartRef.current) {
-                    const points: { x: number; y: number }[] = [
-                        ...pointersRef.current.values(),
-                    ];
-                    const dx: number = points[0].x - points[1].x;
-                    const dy: number = points[0].y - points[1].y;
-                    const distance: number = Math.hypot(dx, dy);
-                    const nextScale: number = Math.min(
+                    const nextScale: number = clamp(
+                        pinchStartRef.current.scale *
+                            (pinchDistance(pointersRef.current) /
+                                pinchStartRef.current.distance),
+                        MIN_SCALE,
                         MAX_SCALE,
-                        Math.max(
-                            MIN_SCALE,
-                            pinchStartRef.current.scale *
-                            (distance / pinchStartRef.current.distance),
-                        ),
                     );
                     setScale(nextScale);
                     if (nextScale <= 1.01) {
@@ -515,9 +494,10 @@ export const usePinchZoom: (options: PinchZoomOptions) => PinchZoomState = ({
             const intensity: number =
                 event.deltaMode === 1 ? 0.12 : Math.min(0.25, Math.abs(event.deltaY) * 0.0015);
             const delta: number = event.deltaY > 0 ? -intensity : intensity;
-            const nextScale: number = Math.min(
+            const nextScale: number = clamp(
+                scaleRef.current + delta,
+                MIN_SCALE,
                 MAX_SCALE,
-                Math.max(MIN_SCALE, scaleRef.current + delta),
             );
             // Update the ref now so wheel events between renders accumulate.
             scaleRef.current = nextScale;

@@ -86,22 +86,42 @@ interface ThumbnailGridProps {
     previewRotationById?: Record<number, 90 | 180 | 270>;
 }
 
-interface RowData {
-    files: EnteFile[];
-    layout: ThumbnailGridLayout;
+/** Per-cell behaviour and chrome shared by the row grid and the masonry grid. */
+interface CellChrome {
     onOpenFile?: (file: EnteFile) => void;
     selection?: ThumbnailGridSelection;
     showFileSize?: boolean;
     previewRotationById?: Record<number, 90 | 180 | 270>;
 }
 
+interface RowData {
+    files: EnteFile[];
+    layout: ThumbnailGridLayout;
+    chrome: CellChrome;
+}
+
+const cellChromeProps = (
+    file: EnteFile,
+    { onOpenFile, selection, showFileSize, previewRotationById }: CellChrome,
+) => ({
+    onOpen: onOpenFile,
+    isSelected: selection?.selectedIds.has(file.id),
+    onToggleSelect: selection?.onToggle,
+    isAlreadyCompressed: selection?.isAlreadyCompressed?.(file),
+    disabled: selection?.disabled,
+    tapSelects: selection !== undefined,
+    showFileSize,
+    previewRotationDegrees: previewRotationById?.[file.id],
+    observeStoreSelection: selection?.observeStoreSelection,
+    cropMode: selection?.cropMode,
+});
+
 const GridRow = memo(function GridRow({
     index,
     style,
     data,
 }: ListChildComponentProps<RowData>): JSX.Element {
-    const { files, layout, onOpenFile, selection, showFileSize, previewRotationById } =
-        data;
+    const { files, layout, chrome } = data;
     const start: number = index * layout.columns;
     const cells: JSX.Element[] = [];
     for (let column = 0; column < layout.columns; column += 1) {
@@ -114,16 +134,7 @@ const GridRow = memo(function GridRow({
                 key={file.id}
                 file={file}
                 size={layout.itemSize}
-                onOpen={onOpenFile}
-                isSelected={selection?.selectedIds.has(file.id)}
-                onToggleSelect={selection?.onToggle}
-                isAlreadyCompressed={selection?.isAlreadyCompressed?.(file)}
-                disabled={selection?.disabled}
-                tapSelects={selection !== undefined}
-                showFileSize={showFileSize}
-                previewRotationDegrees={previewRotationById?.[file.id]}
-                observeStoreSelection={selection?.observeStoreSelection}
-                cropMode={selection?.cropMode}
+                {...cellChromeProps(file, chrome)}
             />,
         );
     }
@@ -147,12 +158,8 @@ interface SizedGridProps {
     width: number;
     height: number;
     columns: GalleryColumnCount;
-    onOpenFile?: (file: EnteFile) => void;
-    selection?: ThumbnailGridSelection;
+    chrome: CellChrome;
     footerInsetPx: number;
-    showFileSize?: boolean;
-    previewRotationById?: Record<number, 90 | 180 | 270>;
-    onScrollOffsetChange: (offset: number) => void;
     listRef: RefObject<FixedSizeList<RowData> | null>;
     scrollControllerRef: RefObject<MarqueeScrollController | null>;
 }
@@ -162,12 +169,8 @@ function SizedGrid({
     width,
     height,
     columns,
-    onOpenFile,
-    selection,
+    chrome,
     footerInsetPx,
-    showFileSize,
-    previewRotationById,
-    onScrollOffsetChange,
     listRef,
     scrollControllerRef,
 }: SizedGridProps): JSX.Element {
@@ -177,15 +180,8 @@ function SizedGrid({
     );
     const rowCount: number = rowCountForFiles(files.length, layout.columns);
     const itemData: RowData = useMemo(
-        () => ({
-            files,
-            layout,
-            onOpenFile,
-            selection,
-            showFileSize,
-            previewRotationById,
-        }),
-        [files, layout, onOpenFile, previewRotationById, selection, showFileSize],
+        () => ({ files, layout, chrome }),
+        [chrome, files, layout],
     );
 
     const itemKey = useCallback(
@@ -210,13 +206,12 @@ function SizedGrid({
                 noteGalleryScrollActivity();
                 scrollOffsetRef.current = clamped;
                 listRef.current?.scrollTo(clamped);
-                onScrollOffsetChange(clamped);
             },
         };
         return (): void => {
             scrollControllerRef.current = null;
         };
-    }, [listRef, onScrollOffsetChange, scrollControllerRef]);
+    }, [listRef, scrollControllerRef]);
 
     return (
         <FixedSizeList
@@ -233,7 +228,6 @@ function SizedGrid({
             onScroll={(props) => {
                 noteGalleryScrollActivity();
                 scrollOffsetRef.current = props.scrollOffset;
-                onScrollOffsetChange(props.scrollOffset);
             }}
             style={{ paddingBottom: footerInsetPx, touchAction: "pan-y" }}
         >
@@ -247,12 +241,8 @@ interface SizedMasonryGridProps {
     width: number;
     height: number;
     columns: GalleryColumnCount;
-    onOpenFile?: (file: EnteFile) => void;
-    selection?: ThumbnailGridSelection;
+    chrome: CellChrome;
     footerInsetPx: number;
-    showFileSize?: boolean;
-    previewRotationById?: Record<number, 90 | 180 | 270>;
-    onScrollOffsetChange: (offset: number) => void;
     scrollControllerRef: RefObject<MarqueeScrollController | null>;
     /** Receives the placed layout so marquee hit-tests reuse it. */
     layoutRef: RefObject<MasonryLayout | null>;
@@ -267,12 +257,8 @@ function SizedMasonryGrid({
     width,
     height,
     columns,
-    onOpenFile,
-    selection,
+    chrome,
     footerInsetPx,
-    showFileSize,
-    previewRotationById,
-    onScrollOffsetChange,
     scrollControllerRef,
     layoutRef,
     viewOrderKey,
@@ -308,8 +294,7 @@ function SizedMasonryGrid({
         const maxScroll = Math.max(0, node.scrollHeight - node.clientHeight);
         const next = Math.min(node.scrollTop, maxScroll);
         setScrollTop((prev) => (prev === next ? prev : next));
-        onScrollOffsetChange(next);
-    }, [height, onScrollOffsetChange, placedLayout.totalHeight, viewOrderKey]);
+    }, [height, placedLayout.totalHeight, viewOrderKey]);
 
     useEffect(() => {
         scrollControllerRef.current = {
@@ -326,25 +311,19 @@ function SizedMasonryGrid({
                 }
                 noteGalleryScrollActivity();
                 node.scrollTop = clamped;
-                onScrollOffsetChange(clamped);
                 setScrollTop(clamped);
             },
         };
         return (): void => {
             scrollControllerRef.current = null;
         };
-    }, [onScrollOffsetChange, scrollControllerRef]);
+    }, [scrollControllerRef]);
 
-    const handleScroll = useCallback(
-        (event: UIEvent<HTMLDivElement>): void => {
-            const nextScrollTop = event.currentTarget.scrollTop;
-            noteGalleryScrollActivity();
-            // Keep visibility window in sync with hit targets (no rAF lag).
-            onScrollOffsetChange(nextScrollTop);
-            setScrollTop((prev) => (prev === nextScrollTop ? prev : nextScrollTop));
-        },
-        [onScrollOffsetChange],
-    );
+    const handleScroll = (event: UIEvent<HTMLDivElement>): void => {
+        const nextScrollTop = event.currentTarget.scrollTop;
+        noteGalleryScrollActivity();
+        setScrollTop((prev) => (prev === nextScrollTop ? prev : nextScrollTop));
+    };
 
     return (
         <div
@@ -377,22 +356,7 @@ function SizedMasonryGrid({
                                 width={item.width}
                                 height={item.height}
                                 objectFit="contain"
-                                onOpen={onOpenFile}
-                                isSelected={selection?.selectedIds.has(item.fileId)}
-                                onToggleSelect={selection?.onToggle}
-                                isAlreadyCompressed={selection?.isAlreadyCompressed?.(
-                                    file,
-                                )}
-                                disabled={selection?.disabled}
-                                tapSelects={selection !== undefined}
-                                showFileSize={showFileSize}
-                                previewRotationDegrees={
-                                    previewRotationById?.[item.fileId]
-                                }
-                                observeStoreSelection={
-                                    selection?.observeStoreSelection
-                                }
-                                cropMode={selection?.cropMode}
+                                {...cellChromeProps(file, chrome)}
                             />
                         </div>
                     );
@@ -422,9 +386,10 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
     const marqueeLastIdsRef = useRef<number[]>([]);
     const [gridWidth, setGridWidth] = useState<number>(0);
 
-    const handleScrollOffsetChange = useCallback((_offset: number): void => {
-        // Scroll offset is owned by scrollControllerRef inside the sized grids.
-    }, []);
+    const chrome: CellChrome = useMemo(
+        () => ({ onOpenFile, selection, showFileSize, previewRotationById }),
+        [onOpenFile, previewRotationById, selection, showFileSize],
+    );
 
     const viewOrderKey = useMemo(
         () =>
@@ -594,12 +559,8 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
                             width={width}
                             height={height}
                             columns={galleryColumns}
-                            onOpenFile={onOpenFile}
-                            selection={selection}
+                            chrome={chrome}
                             footerInsetPx={footerInsetPx}
-                            showFileSize={showFileSize}
-                            previewRotationById={previewRotationById}
-                            onScrollOffsetChange={handleScrollOffsetChange}
                             scrollControllerRef={scrollControllerRef}
                             layoutRef={masonryLayoutRef}
                             viewOrderKey={viewOrderKey}
@@ -610,12 +571,8 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
                             width={width}
                             height={height}
                             columns={galleryColumns}
-                            onOpenFile={onOpenFile}
-                            selection={selection}
+                            chrome={chrome}
                             footerInsetPx={footerInsetPx}
-                            showFileSize={showFileSize}
-                            previewRotationById={previewRotationById}
-                            onScrollOffsetChange={handleScrollOffsetChange}
                             listRef={listRef}
                             scrollControllerRef={scrollControllerRef}
                         />

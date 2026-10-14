@@ -1,4 +1,5 @@
-import { useEffect, useSyncExternalStore, type JSX } from "react";
+import type { JSX } from "react";
+import { useThumbnailEntry } from "@/components/albums/AlbumCoverThumb";
 import { Badge } from "@/components/ui/badge";
 import {
     Card,
@@ -8,11 +9,6 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import {
-    getThumbnailEntry,
-    requestThumbnail,
-    subscribeThumbnail,
-} from "@/lib/thumbnail-cache";
 import type { EnteFile } from "ente-media/file";
 
 interface DedupGroupCardProps {
@@ -33,17 +29,7 @@ function DedupThumb({
     isKeeper: boolean;
     onSelect: () => void;
 }): JSX.Element {
-    const entry = useSyncExternalStore(
-        (listener) => subscribeThumbnail(file.id, listener),
-        () => getThumbnailEntry(file.id),
-        () => getThumbnailEntry(file.id),
-    );
-
-    useEffect(() => {
-        if (entry.status === "idle") {
-            requestThumbnail(file);
-        }
-    }, [entry.status, file]);
+    const entry = useThumbnailEntry(file);
 
     return (
         <button

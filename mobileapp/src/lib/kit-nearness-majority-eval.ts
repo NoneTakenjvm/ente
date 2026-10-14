@@ -8,6 +8,11 @@ import type {
     AnonymisedKitNearnessCorpus,
 } from "@/lib/kit-nearness-corpus-export";
 import {
+    emptyFitness,
+    pairwiseAuc,
+    topKFromScores,
+} from "@/lib/kit-nearness-corpus-eval-fast";
+import {
     buildCorpusEvalContext,
     type CorpusEvalContext,
     type FitnessBreakdown,
@@ -177,14 +182,7 @@ export class FastMajorityScorer {
 
     evaluate(genome: MajorityGenome): FitnessBreakdown {
         if (!this.folds.length) {
-            return {
-                fitness: 0,
-                holdoutAuc: 0,
-                holdoutTopK: 0,
-                exclAuc: 0,
-                softRivalLift: 0,
-                kitCount: 0,
-            };
+            return emptyFitness();
         }
 
         const tables = this.tablesFor(genome.maxSeeds);
@@ -213,13 +211,14 @@ export class FastMajorityScorer {
                 negScores.push(scoreOf(id));
             }
 
-            const auc = pairwiseAucHigherBetter(posScores, negScores);
-            const topK = topKHigherBetter(
+            const auc = pairwiseAuc(posScores, negScores, false);
+            const topK = topKFromScores(
                 fold.visualHoldoutIds,
                 posScores,
                 this.negativePool,
                 negScores,
                 Math.max(16, fold.visualHoldoutIds.length * 2),
+                false,
             );
 
             let exclAuc = auc;
@@ -245,7 +244,7 @@ export class FastMajorityScorer {
                 for (const id of rivalFold.visualHoldoutIds) {
                     compRival.push(competitive(id));
                 }
-                exclAuc = pairwiseAucHigherBetter(compPos, compRival);
+                exclAuc = pairwiseAuc(compPos, compRival, false);
             } else if (rivalIdx >= 0 && rivalIdx !== i) {
                 // No push-down: exclusivity = can selected-kit fraction separate
                 // selected positives from rival positives?
@@ -254,7 +253,7 @@ export class FastMajorityScorer {
                 for (const id of rivalFold.visualHoldoutIds) {
                     rivalPos.push(scoreOf(id));
                 }
-                exclAuc = pairwiseAucHigherBetter(posScores, rivalPos);
+                exclAuc = pairwiseAuc(posScores, rivalPos, false);
             }
 
             aucSum += auc;
@@ -264,14 +263,7 @@ export class FastMajorityScorer {
         }
 
         if (n === 0) {
-            return {
-                fitness: 0,
-                holdoutAuc: 0,
-                holdoutTopK: 0,
-                exclAuc: 0,
-                softRivalLift: 0,
-                kitCount: 0,
-            };
+            return emptyFitness();
         }
 
         const holdoutAuc = aucSum / n;
@@ -290,53 +282,3 @@ export class FastMajorityScorer {
         };
     }
 }
-
-const pairwiseAucHigherBetter = (
-    pos: readonly number[],
-    neg: readonly number[],
-): number => {
-    if (!pos.length || !neg.length) {
-        return 0;
-    }
-    let wins = 0;
-    for (const p of pos) {
-        for (const n of neg) {
-            if (p > n) {
-                wins += 1;
-            } else if (p === n) {
-                wins += 0.5;
-            }
-        }
-    }
-    return wins / (pos.length * neg.length);
-};
-
-const topKHigherBetter = (
-    posIds: readonly number[],
-    posScores: readonly number[],
-    negIds: readonly number[],
-    negScores: readonly number[],
-    k: number,
-): number => {
-    if (!posIds.length) {
-        return 0;
-    }
-    const all: { id: number; score: number }[] = [];
-    for (let i = 0; i < posIds.length; i++) {
-        all.push({ id: posIds[i]!, score: posScores[i]! });
-    }
-    for (let i = 0; i < negIds.length; i++) {
-        all.push({ id: negIds[i]!, score: negScores[i]! });
-    }
-    all.sort((a, b) => b.score - a.score);
-    const top = new Set(
-        all.slice(0, Math.max(1, k)).map((entry) => entry.id),
-    );
-    let hits = 0;
-    for (const id of posIds) {
-        if (top.has(id)) {
-            hits += 1;
-        }
-    }
-    return hits / posIds.length;
-};

@@ -53,10 +53,7 @@ const tagScopeAfterClauseChange = (
     mode: TagFilterMode | null,
     affectsPresence: boolean,
 ): TagScope => {
-    if (!affectsPresence) {
-        return tagScope;
-    }
-    if (mode === null) {
+    if (!affectsPresence || mode === null) {
         return tagScope;
     }
     if (tagScope === "untagged") {
@@ -233,12 +230,7 @@ const wrapSiblingsInGroup = (
 ): TagFilterGroup => {
     if (root.id === parentId) {
         const idSet = new Set(nodeIds);
-        const selected: TagFilterNode[] = [];
-        for (const child of root.children) {
-            if (idSet.has(child.id)) {
-                selected.push(child);
-            }
-        }
+        const selected = root.children.filter((child) => idSet.has(child.id));
         if (selected.length < 2) {
             return root;
         }
@@ -341,8 +333,8 @@ export const setTagFilterModeOnFilter = (
             root: withoutTag,
         };
     }
-    const clause = {
-        kind: "clause" as const,
+    const clause: TagFilterClauseNode = {
+        kind: "clause",
         id: newTagFilterNodeId(),
         tag,
         mode,

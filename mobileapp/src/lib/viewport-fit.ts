@@ -41,16 +41,6 @@ export const viewportTargetAspectRatio = (
 };
 
 /**
- * Aspect ratio (width / height) of the photo viewer media area on this device.
- *
- * Uses the visual viewport when available so mobile browser chrome is excluded.
- */
-export const deviceViewerAspectRatio = (): number => {
-    const { width, height } = deviceViewerSize();
-    return viewportTargetAspectRatio(width, height);
-};
-
-/**
  * Largest centered crop of {@link aspectRatio} that fits inside the display box.
  */
 export const maxAspectRatioCrop = (

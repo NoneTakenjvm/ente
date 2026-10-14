@@ -16,10 +16,10 @@ export const VIEW_SESSION_RESUME_MS = 30 * 60 * 1000;
 export const VIEW_SESSION_QUALIFY_MS = 1000;
 
 /** Max sessions kept in organizer config / merged lists. */
-export const VIEW_SESSIONS_CLOUD_CAP = 50;
+const VIEW_SESSIONS_CLOUD_CAP = 50;
 
 /** Cap deleted-session tombstones retained in organizer config. */
-export const VIEW_SESSION_TOMBSTONE_CAP = 100;
+const VIEW_SESSION_TOMBSTONE_CAP = 100;
 
 export interface ViewRecord {
     fileId: number;
@@ -89,19 +89,15 @@ export const pickResumeSession = (
     sessions: ViewSession[],
     now: number,
 ): ViewSession | undefined => {
-    if (sessions.length === 0) {
-        return undefined;
-    }
     let latest: ViewSession | undefined;
     for (const session of sessions) {
         if (!latest || session.startedAt > latest.startedAt) {
             latest = session;
         }
     }
-    if (!latest || !shouldResumeSession(latest.endTime, now)) {
-        return undefined;
-    }
-    return latest;
+    return latest && shouldResumeSession(latest.endTime, now) ?
+        latest :
+        undefined;
 };
 
 /**
@@ -131,7 +127,7 @@ export const recomputeSessionAggregates = (
     };
 };
 
-export type BeginViewResult =
+type BeginViewResult =
     | { kind: "appended"; session: ActiveViewSession } |
     { kind: "consecutive"; session: ActiveViewSession };
 
@@ -314,7 +310,7 @@ const isFiniteNumber = (value: unknown): value is number =>
 /**
  * Prefer the session with the newer endTime (LWW); ties break on view count.
  */
-export const preferViewSession = (
+const preferViewSession = (
     a: ViewSession,
     b: ViewSession,
 ): ViewSession => {
@@ -330,7 +326,7 @@ export const preferViewSession = (
 /**
  * Newest-first list capped to {@link VIEW_SESSIONS_CLOUD_CAP}.
  */
-export const capViewSessions = (
+const capViewSessions = (
     sessions: readonly ViewSession[],
     cap: number = VIEW_SESSIONS_CLOUD_CAP,
 ): ViewSession[] => sortSessionsNewestFirst([...sessions]).slice(0, cap);
@@ -338,7 +334,7 @@ export const capViewSessions = (
 /**
  * Keep the newest tombstones only.
  */
-export const capViewSessionTombstones = (
+const capViewSessionTombstones = (
     tombstones: readonly ViewSessionTombstone[],
     cap: number = VIEW_SESSION_TOMBSTONE_CAP,
 ): ViewSessionTombstone[] =>
@@ -403,10 +399,7 @@ export const mergeCloudViewSessions = (
 export const parseCloudViewSessions = (
     raw: unknown,
 ): CloudViewSessionsPayload | undefined => {
-    if (raw === undefined || raw === null) {
-        return undefined;
-    }
-    if (typeof raw !== "object") {
+    if (typeof raw !== "object" || raw === null) {
         return undefined;
     }
     const record = raw as Record<string, unknown>;

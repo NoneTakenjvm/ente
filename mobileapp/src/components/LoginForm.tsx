@@ -35,20 +35,26 @@ export function LoginForm(): JSX.Element {
 
     const loading: boolean = status === "loading";
 
-    const handleSubmit = async (event: FormEvent): Promise<void> => {
-        event.preventDefault();
+    const signIn = async (
+        credentials: Parameters<typeof login>[0],
+    ): Promise<void> => {
         try {
-            await login({
-                email: email.trim(),
-                password,
-                totp: totp.trim() || undefined,
-            });
+            await login(credentials);
             if (isSessionAuthenticated()) {
                 await router.replace("/gallery");
             }
         } catch {
             // Error state is set in the session store.
         }
+    };
+
+    const handleSubmit = async (event: FormEvent): Promise<void> => {
+        event.preventDefault();
+        await signIn({
+            email: email.trim(),
+            password,
+            totp: totp.trim() || undefined,
+        });
     };
 
     const handleDevLogin = async (): Promise<void> => {
@@ -59,12 +65,9 @@ export function LoginForm(): JSX.Element {
                 const { testAccountCredentials } = await import(
                     "@/dev/test-account"
                 );
-                await login(testAccountCredentials);
-                if (isSessionAuthenticated()) {
-                    await router.replace("/gallery");
-                }
+                await signIn(testAccountCredentials);
             } catch {
-                // Error state is set in the session store.
+                // Dev credentials chunk failed to load.
             }
         }
     };

@@ -3,7 +3,6 @@ import {
     useMemo,
     useRef,
     useState,
-    type FormEvent,
     type JSX,
     type PointerEvent as ReactPointerEvent,
 } from "react";
@@ -52,6 +51,11 @@ interface DismissDragStart {
     fromHeader: boolean;
     dragging: boolean;
 }
+
+const isSpecificTypeTab = (type: string): boolean =>
+    type !== ALL_TAG_TYPES_TAB &&
+    type !== DEFAULT_TAG_TYPE &&
+    type !== KITS_TAB;
 
 interface TagPickerSheetProps {
     open: boolean;
@@ -106,8 +110,9 @@ export function TagPickerSheet({
     const setTagType = useTagStore((s) => s.setTagType);
 
     const showKitsTab = Boolean(presets?.length && onApplyPreset);
-    const [selectedType, setSelectedType] = useState<string>(() =>
-        defaultToKits && showKitsTab ? KITS_TAB : DEFAULT_TAG_TYPE);
+    const initialType =
+        defaultToKits && showKitsTab ? KITS_TAB : DEFAULT_TAG_TYPE;
+    const [selectedType, setSelectedType] = useState<string>(initialType);
     const [newTag, setNewTag] = useState<string>("");
     const [newType, setNewType] = useState<string>("");
     const [dragPx, setDragPx] = useState<number>(0);
@@ -157,35 +162,21 @@ export function TagPickerSheet({
 
     const kitScoreTotal = kitScoreFiles?.length ?? 0;
 
-    const defaultCreateType = useMemo((): string => {
-        if (
-            selectedType !== ALL_TAG_TYPES_TAB &&
-            selectedType !== KITS_TAB
-        ) {
-            return selectedType;
-        }
-        return DEFAULT_TAG_TYPE;
-    }, [selectedType]);
-
-    const isSpecificTypeTab =
-        selectedType !== ALL_TAG_TYPES_TAB &&
-        selectedType !== DEFAULT_TAG_TYPE &&
-        selectedType !== KITS_TAB;
+    const defaultCreateType =
+        selectedType !== ALL_TAG_TYPES_TAB && selectedType !== KITS_TAB ?
+            selectedType :
+            DEFAULT_TAG_TYPE;
 
     // Open-reset runs in handleOpenChange (not an effect) to avoid setState-in-effect.
 
     const clearCreateForm = (): void => {
         setNewTag("");
-        setNewType(isSpecificTypeTab ? selectedType : "");
+        setNewType(isSpecificTypeTab(selectedType) ? selectedType : "");
     };
 
     const selectTypeTab = (type: string): void => {
         setSelectedType(type);
-        const specific =
-            type !== ALL_TAG_TYPES_TAB &&
-            type !== DEFAULT_TAG_TYPE &&
-            type !== KITS_TAB;
-        setNewType(specific ? type : "");
+        setNewType(isSpecificTypeTab(type) ? type : "");
     };
 
     const resetDragState = (): void => {
@@ -199,16 +190,12 @@ export function TagPickerSheet({
 
     const handleOpenChange = (nextOpen: boolean): void => {
         if (nextOpen) {
-            const initialType =
-                defaultToKits && showKitsTab ? KITS_TAB : DEFAULT_TAG_TYPE;
             setSelectedType(initialType);
-            setNewTag("");
-            setNewType("");
         } else {
-            setNewTag("");
-            setNewType("");
             resetDragState();
         }
+        setNewTag("");
+        setNewType("");
         onOpenChangeRef.current(nextOpen);
     };
 
@@ -227,9 +214,7 @@ export function TagPickerSheet({
                 resetDragState();
                 setNewTag("");
                 setNewType("");
-                setSelectedType(
-                    defaultToKits && showKitsTab ? KITS_TAB : DEFAULT_TAG_TYPE,
-                );
+                setSelectedType(initialType);
                 onOpenChangeRef.current(false);
                 return;
             }
@@ -304,7 +289,7 @@ export function TagPickerSheet({
             document.removeEventListener("pointerup", onPointerEnd);
             document.removeEventListener("pointercancel", onPointerEnd);
         };
-    }, [open, isCoarsePointer, defaultToKits, showKitsTab]);
+    }, [open, isCoarsePointer, initialType]);
 
     const handleDismissPointerDown = (
         event: ReactPointerEvent<HTMLElement>,
@@ -342,16 +327,32 @@ export function TagPickerSheet({
         clearCreateForm();
     };
 
-    const handleCreateTag = (event: FormEvent): void => {
-        event.preventDefault();
-        submitNewTag();
-    };
-
     const handleInputBlur = (): void => {
         requestAnimationFrame(() => {
             syncLayout();
         });
     };
+
+    const applyButton = onApply ? (
+        <Button
+            type="button"
+            className="w-full"
+            disabled={!pendingChanges || applyBusy}
+            onClick={onApply}
+        >
+            {applyBusy ?
+                "Saving…" :
+                pendingChanges ?
+                    "Apply" :
+                    "No changes"}
+        </Button>
+    ) : null;
+
+    const errorAlert = error ? (
+        <Alert variant="destructive" className="py-2">
+            <AlertDescription>{error}</AlertDescription>
+        </Alert>
+    ) : null;
 
     return (
         <Sheet open={open} onOpenChange={handleOpenChange}>
@@ -607,7 +608,10 @@ export function TagPickerSheet({
                         <SheetFooter className="shrink-0 gap-3 border-t border-border p-4">
                             <form
                                 className="flex w-full flex-col gap-2"
-                                onSubmit={handleCreateTag}
+                                onSubmit={(event) => {
+                                    event.preventDefault();
+                                    submitNewTag();
+                                }}
                             >
                                 <div className="flex w-full items-center gap-2">
                                     <Button
@@ -647,47 +651,13 @@ export function TagPickerSheet({
                                     "Tap tags to stage changes. Apply saves once; closing also saves." :
                                     "Tap a tag to add or remove it. The type field fills from the selected tab when you pick a custom type."}
                             </p>
-                            {onApply ? (
-                                <Button
-                                    type="button"
-                                    className="w-full"
-                                    disabled={!pendingChanges || applyBusy}
-                                    onClick={onApply}
-                                >
-                                    {applyBusy ?
-                                        "Saving…" :
-                                        pendingChanges ?
-                                            "Apply" :
-                                            "No changes"}
-                                </Button>
-                            ) : null}
-                            {error ? (
-                                <Alert variant="destructive" className="py-2">
-                                    <AlertDescription>{error}</AlertDescription>
-                                </Alert>
-                            ) : null}
+                            {applyButton}
+                            {errorAlert}
                         </SheetFooter>
                     ) : onApply || error ? (
                         <div className="shrink-0 space-y-3 border-t border-border p-4">
-                            {onApply ? (
-                                <Button
-                                    type="button"
-                                    className="w-full"
-                                    disabled={!pendingChanges || applyBusy}
-                                    onClick={onApply}
-                                >
-                                    {applyBusy ?
-                                        "Saving…" :
-                                        pendingChanges ?
-                                            "Apply" :
-                                            "No changes"}
-                                </Button>
-                            ) : null}
-                            {error ? (
-                                <Alert variant="destructive" className="py-2">
-                                    <AlertDescription>{error}</AlertDescription>
-                                </Alert>
-                            ) : null}
+                            {applyButton}
+                            {errorAlert}
                         </div>
                     ) : null}
                 </div>

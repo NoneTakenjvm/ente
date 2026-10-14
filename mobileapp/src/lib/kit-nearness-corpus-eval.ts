@@ -12,6 +12,10 @@ import type {
 } from "@/lib/kit-nearness-corpus-export";
 import { FastNearnessScorer } from "@/lib/kit-nearness-corpus-eval-fast";
 import {
+    mulberry32,
+    shuffleInPlace,
+} from "@/lib/kit-nearness-embedding-eval";
+import {
     kitDistance,
     kitNearnessDistance,
     pickKitMedoids,
@@ -63,10 +67,6 @@ export type CorpusEvalContext = {
     folds: KitFold[];
     /** Pre-picked rival fold indices per fold (distant kits). */
     rivalFoldIndex: number[];
-    /** Soft-rival fold indices (visually nearer kits) for over-penalty guard. */
-    softRivalFoldIndex: number[];
-    /** kitDistance(self, softRival) using default medoids — skip soft work when large. */
-    softRivalDelta: number[];
     negativePool: number[];
     /** Packed fast scorer — preferred path for GA. */
     fastScorer: FastNearnessScorer;
@@ -80,23 +80,6 @@ export const DEFAULT_NEARBY_GENOME: NearnessGenome = {
     rivalLambda: 4,
     maxMedoids: 2,
     minSeparation: 10,
-};
-
-const mulberry32 = (seed: number): (() => number) => {
-    let state = seed >>> 0;
-    return (): number => {
-        state = (Math.imul(1664525, state) + 1013904223) >>> 0;
-        return state / 0x1_0000_0000;
-    };
-};
-
-const shuffleInPlace = <T>(items: T[], random: () => number): void => {
-    for (let i = items.length - 1; i > 0; i -= 1) {
-        const j = Math.floor(random() * (i + 1));
-        const tmp = items[i]!;
-        items[i] = items[j]!;
-        items[j] = tmp;
-    }
 };
 
 const primaryPacked = (entry: PhashEntry): PackedDHash | undefined => {
@@ -214,8 +197,7 @@ export const buildCorpusEvalContext = (
             continue;
         }
         const meanPairwise = meanPairwisePrimaryDistance(members, entries);
-        const shuffled = [...members];
-        shuffleInPlace(shuffled, random);
+        const shuffled = shuffleInPlace([...members], random);
         const seedCount = Math.max(
             2,
             Math.min(
@@ -255,9 +237,10 @@ export const buildCorpusEvalContext = (
         let cappedVisual = visualHoldoutIds;
         const maxVisual = options?.maxVisualPositivesPerFold ?? 32;
         if (cappedVisual.length > maxVisual) {
-            const vis = [...cappedVisual];
-            shuffleInPlace(vis, random);
-            cappedVisual = vis.slice(0, maxVisual);
+            cappedVisual = shuffleInPlace([...cappedVisual], random).slice(
+                0,
+                maxVisual,
+            );
         }
         candidates.push({
             kitId: kit.id,
@@ -284,13 +267,9 @@ export const buildCorpusEvalContext = (
         }));
 
     const rivalFoldIndex: number[] = [];
-    const softRivalFoldIndex: number[] = [];
-    const softRivalDelta: number[] = [];
     for (let i = 0; i < folds.length; i++) {
         let bestFar = -1;
         let bestFarDist = -1;
-        let bestNear = -1;
-        let bestNearDist = Number.POSITIVE_INFINITY;
         const self = foldMedoids[i]!;
         for (let j = 0; j < folds.length; j++) {
             if (i === j || !foldMedoids[j]!.length || !self.length) {
@@ -301,16 +280,8 @@ export const buildCorpusEvalContext = (
                 bestFarDist = d;
                 bestFar = j;
             }
-            if (d < bestNearDist && d > 0) {
-                bestNearDist = d;
-                bestNear = j;
-            }
         }
         rivalFoldIndex.push(bestFar);
-        softRivalFoldIndex.push(bestNear >= 0 ? bestNear : bestFar);
-        softRivalDelta.push(
-            bestNear >= 0 ? bestNearDist : Number.POSITIVE_INFINITY,
-        );
     }
 
     const memberSet = new Set<number>();
@@ -331,14 +302,11 @@ export const buildCorpusEvalContext = (
         hashedIds,
         folds,
         rivalFoldIndex,
-        softRivalFoldIndex,
-        softRivalDelta,
         negativePool,
         fastScorer: new FastNearnessScorer({
             entries,
             folds,
             rivalFoldIndex,
-            softRivalDelta,
             negativePool,
         }),
     };

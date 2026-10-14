@@ -1,4 +1,3 @@
-import type { EnteFile } from "ente-media/file";
 import { applyPendingShuffleSubstitutions } from "@/lib/shuffle-file-substitutions";
 
 /** Seeded PRNG (mulberry32). */
@@ -56,38 +55,4 @@ export const reconcileShuffledIds = (
         ordered.push(...shuffleIds(newIds, seed));
     }
     return ordered;
-};
-
-/**
- * Return a new array with the same files in a deterministic shuffled order.
- */
-export const shuffleFiles = (files: EnteFile[], seed: number): EnteFile[] => {
-    const byId = new Map(files.map((file) => [file.id, file]));
-    return reconcileShuffledIds(
-        files.map((file) => file.id),
-        seed,
-    ).flatMap((id) => {
-        const file = byId.get(id);
-        return file ? [file] : [];
-    });
-};
-
-/**
- * Apply a shuffled view order, preserving the relative order of files that
- * remain in the set. New files are shuffled and appended.
- */
-export const applyShuffledOrder = (
-    files: EnteFile[],
-    seed: number,
-    previousOrder?: readonly number[],
-): EnteFile[] => {
-    const byId = new Map(files.map((file) => [file.id, file]));
-    return reconcileShuffledIds(
-        files.map((file) => file.id),
-        seed,
-        previousOrder,
-    ).flatMap((id) => {
-        const file = byId.get(id);
-        return file ? [file] : [];
-    });
 };

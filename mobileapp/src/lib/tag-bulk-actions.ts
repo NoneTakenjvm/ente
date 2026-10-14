@@ -109,15 +109,6 @@ export const bulkRemoveTags = async (
 };
 
 /**
- * Merge source tags onto every file (does not remove existing tags).
- */
-export const bulkMergeTags = async (
-    fileIds: number[],
-    tags: string[],
-): Promise<{ succeeded: number; failed: number }> =>
-    bulkAddTags(fileIds, tags);
-
-/**
  * Apply a staged selection-sheet draft in one batch write.
  */
 export const bulkApplyTagDraft = async (

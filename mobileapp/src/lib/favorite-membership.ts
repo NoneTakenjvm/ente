@@ -83,9 +83,6 @@ export const ensureFavoriteMembershipHydrated = async (): Promise<void> => {
     await hydrateFavoriteMembership();
 };
 
-/** True after {@link hydrateFavoriteMembership} has finished (payload or miss). */
-export const isFavoriteMembershipHydrated = (): boolean => hydrated;
-
 /** True after at least one successful Favourites membership sync or hydrate. */
 export const isFavoriteMembershipReady = (): boolean => ready;
 

@@ -315,7 +315,7 @@ const saveChangedShards = async (
         forceAll,
     );
 
-    if (options?.forceAllShards || forceAll) {
+    if (forceAll) {
         const existing = await loadAllShardRecords();
         for (const record of existing) {
             if (!groups.has(record.shardId)) {

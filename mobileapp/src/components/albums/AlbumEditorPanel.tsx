@@ -74,10 +74,10 @@ export function AlbumEditorPanel({
     const [showCoverPicker, setShowCoverPicker] = useState<boolean>(false);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
 
-    const libraryFiles = useMemo(() => {
-        const deduped = dedupeFilesById(allFiles);
-        return sortFilesByUpload(deduped);
-    }, [allFiles]);
+    const libraryFiles = useMemo(
+        () => sortFilesByUpload(dedupeFilesById(allFiles)),
+        [allFiles],
+    );
 
     const libraryFileIds = useMemo(
         (): Set<number> => new Set(libraryFiles.map((file) => file.id)),

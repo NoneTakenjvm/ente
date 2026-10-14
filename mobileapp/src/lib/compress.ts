@@ -9,7 +9,10 @@ import type {
     CompressWorkerRequest,
     CompressWorkerResponse,
 } from "@/workers/compress-worker-types";
-import { arrayBufferFromUint8Array } from "@/lib/bytes-blob";
+import {
+    arrayBufferFromUint8Array,
+    blobFromUint8Array,
+} from "@/lib/bytes-blob";
 import { createWorkerIdleTimer } from "@/lib/worker-idle-timer";
 
 export const COMPRESSED_TAG = "compressed";
@@ -288,8 +291,6 @@ export const isWorthReplacing = (
 export const buildCompressedOrganizerTags = (sourceFile: EnteFile): string[] =>
     addTagNames(extractTags(sourceFile), COMPRESSED_TAG);
 
-export const isAnimatedGifFile = (file: EnteFile): boolean => isGifFile(file);
-
 /**
  * Derive the replacement title for a compressed file (basename, new extension).
  */
@@ -310,8 +311,6 @@ export const compressedReplaceTitle = (
     return `${baseName}.avif`;
 };
 
-const formatBytes = formatFileSize;
-
 /**
  * Format original vs compressed sizes and percent saved.
  */
@@ -329,56 +328,27 @@ export const formatSizeDelta = (
         compressedBytes,
         savedBytes,
         savedPercent,
-        originalLabel: formatBytes(originalBytes),
-        compressedLabel: formatBytes(compressedBytes),
-        savedLabel: formatBytes(savedBytes),
+        originalLabel: formatFileSize(originalBytes),
+        compressedLabel: formatFileSize(compressedBytes),
+        savedLabel: formatFileSize(savedBytes),
     };
 };
 
-const encodeJpegMainThread = async (
+/**
+ * Decode image bytes with the browser's own decoder (main-thread fallback
+ * paths). Rejects when the bytes cannot be decoded.
+ */
+export const decodeImageElement = (
     bytes: Uint8Array,
-    quality: number,
-): Promise<EncodeJpegResult> =>
+): Promise<HTMLImageElement> =>
     new Promise((resolve, reject) => {
-        const blob = new Blob([Uint8Array.from(bytes)], { type: "image/jpeg" });
-        const imageUrl = URL.createObjectURL(blob);
+        const imageUrl = URL.createObjectURL(
+            blobFromUint8Array(bytes, "image/jpeg"),
+        );
         const image = new Image();
         image.onload = (): void => {
             URL.revokeObjectURL(imageUrl);
-            try {
-                const canvas = document.createElement("canvas");
-                canvas.width = image.width;
-                canvas.height = image.height;
-                const context = canvas.getContext("2d");
-                if (!context) {
-                    reject(new Error("Canvas unavailable"));
-                    return;
-                }
-                context.drawImage(image, 0, 0);
-                canvas.toBlob(
-                    (jpegBlob) => {
-                        if (!jpegBlob) {
-                            reject(new Error("JPEG encode failed"));
-                            return;
-                        }
-                        void jpegBlob.arrayBuffer().then((buffer) => {
-                            resolve({
-                                bytes: new Uint8Array(buffer),
-                                width: image.width,
-                                height: image.height,
-                            });
-                        });
-                    },
-                    "image/jpeg",
-                    quality,
-                );
-            } catch (error: unknown) {
-                reject(
-                    error instanceof Error ?
-                        error :
-                        new Error("JPEG encode failed"),
-                );
-            }
+            resolve(image);
         };
         image.onerror = (): void => {
             URL.revokeObjectURL(imageUrl);
@@ -387,6 +357,59 @@ const encodeJpegMainThread = async (
         image.src = imageUrl;
     });
 
+/** A 2D canvas of the given size, throwing when the context is unavailable. */
+export const createCanvas2d = (
+    width: number,
+    height: number,
+): { canvas: HTMLCanvasElement; context: CanvasRenderingContext2D } => {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+        throw new Error("Canvas unavailable");
+    }
+    return { canvas, context };
+};
+
+/** Encode a canvas as JPEG bytes at {@link quality} (0–1). */
+export const encodeCanvasJpeg = (
+    canvas: HTMLCanvasElement,
+    quality: number,
+): Promise<Uint8Array> =>
+    new Promise((resolve, reject) => {
+        canvas.toBlob(
+            (jpegBlob) => {
+                if (!jpegBlob) {
+                    reject(new Error("JPEG encode failed"));
+                    return;
+                }
+                jpegBlob
+                    .arrayBuffer()
+                    .then((buffer) => {
+                        resolve(new Uint8Array(buffer));
+                    })
+                    .catch(reject);
+            },
+            "image/jpeg",
+            quality,
+        );
+    });
+
+const encodeJpegMainThread = async (
+    bytes: Uint8Array,
+    quality: number,
+): Promise<EncodeJpegResult> => {
+    const image = await decodeImageElement(bytes);
+    const { canvas, context } = createCanvas2d(image.width, image.height);
+    context.drawImage(image, 0, 0);
+    return {
+        bytes: await encodeCanvasJpeg(canvas, quality),
+        width: image.width,
+        height: image.height,
+    };
+};
+
 /** Release the compress worker's WASM encoders after this long with no requests. */
 const COMPRESS_WORKER_IDLE_TERMINATE_MS = 30_000;
 
@@ -394,7 +417,7 @@ let worker: Worker | undefined;
 let requestCounter = 0;
 const workerIdleTimer = createWorkerIdleTimer(
     COMPRESS_WORKER_IDLE_TERMINATE_MS,
-    () => terminateCompressWorker(),
+    () => discardCompressWorker(new Error("Compress worker terminated")),
 );
 
 const getCompressWorker = (): Worker | undefined => {
@@ -426,22 +449,12 @@ const discardCompressWorker = (reason: Error): void => {
 };
 
 /**
- * Terminate the compress worker now, rejecting any in-flight request.
- */
-export const terminateCompressWorker = (): void => {
-    discardCompressWorker(new Error("Compress worker terminated"));
-};
-
-const copiedBuffer = (bytes: Uint8Array): ArrayBuffer =>
-    arrayBufferFromUint8Array(bytes);
-
-/**
  * Post one request to the shared compress worker and resolve with its reply.
  *
  * The request id is assigned here, so compress and crop callers share one
  * counter and their replies cannot be mistaken for each other.
  */
-export const postCompressRequest = (
+const postCompressRequest = (
     request: Omit<CompressWorkerRequest, "id">,
     transfer: Transferable[],
 ): Promise<CompressWorkerResponse> =>
@@ -492,16 +505,22 @@ export const postCompressRequest = (
         compressWorker.postMessage({ ...request, id }, transfer);
     });
 
-const encodeJpegInWorker = async (
+/**
+ * Encode JPEG bytes in the compress worker. {@link options} carries the quality
+ * plus the crop rectangle or size preference for this request.
+ */
+export const encodeJpegInWorker = async (
     bytes: Uint8Array,
-    quality: number,
+    options: Pick<
+        CompressWorkerRequest,
+        "quality" | "cropRect" | "preferSmaller"
+    >,
 ): Promise<EncodeJpegResult> => {
-    const buffer = copiedBuffer(bytes);
+    const buffer = arrayBufferFromUint8Array(bytes);
     const response = await postCompressRequest(
         {
             bytes: new Uint8Array(buffer),
-            quality,
-            preferSmaller: true,
+            ...options,
             output: "jpeg",
         },
         [buffer],
@@ -531,7 +550,7 @@ const encodeStillInWorker = async (
     bytes: Uint8Array,
     minSizeBytes: number,
 ): Promise<EncodeStillImageResult> => {
-    const buffer = copiedBuffer(bytes);
+    const buffer = arrayBufferFromUint8Array(bytes);
     const response = await postCompressRequest(
         {
             bytes: new Uint8Array(buffer),
@@ -574,7 +593,10 @@ export const encodeJpegFromBytes = async (
 ): Promise<EncodeJpegResult> => {
     const clamped = Math.min(MAX_JPEG_QUALITY, Math.max(MIN_JPEG_QUALITY, quality));
     try {
-        return await encodeJpegInWorker(bytes, clamped);
+        return await encodeJpegInWorker(bytes, {
+            quality: clamped,
+            preferSmaller: true,
+        });
     } catch {
         return encodeJpegMainThread(bytes, clamped);
     }

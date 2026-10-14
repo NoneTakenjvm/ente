@@ -167,33 +167,13 @@ export const countTagFilterClauses = (root: TagFilterGroup): number => {
 export const findClauseModeForTag = (
     root: TagFilterGroup,
     tag: string,
-): TagFilterMode | null => {
-    for (const child of root.children) {
-        if (isTagFilterClause(child) && child.tag === tag) {
-            return child.mode;
-        }
-    }
-    return null;
-};
+): TagFilterMode | null => findClauseInGroup(root, tag)?.mode ?? null;
 
 /** True when every root child is a clause or kit (no nested groups). */
 export const isFlatTagFilterRoot = (root: TagFilterGroup): boolean =>
     root.children.every(
         (child) => isTagFilterClause(child) || isTagFilterKit(child),
     );
-
-/** Find a direct-child kit by preset id within one group. */
-export const findKitInGroup = (
-    group: TagFilterGroup,
-    presetId: string,
-): TagFilterKitNode | null => {
-    for (const child of group.children) {
-        if (isTagFilterKit(child) && child.presetId === presetId) {
-            return child;
-        }
-    }
-    return null;
-};
 
 /** Find a direct-child clause for a tag within one group. */
 export const findClauseInGroup = (
@@ -260,9 +240,6 @@ const describeGroupNode = (group: TagFilterGroup): string => {
     if (group.children.length === 0) {
         return "";
     }
-    const parts = group.children
-        .map(describeLeafOrGroup)
-        .filter((part) => part.length > 0);
     if (group.op === "only") {
         const includeParts: string[] = [];
         const excludeParts: string[] = [];
@@ -283,10 +260,7 @@ const describeGroupNode = (group: TagFilterGroup): string => {
         }
         const nested = group.children
             .filter(isTagFilterGroup)
-            .map((child) => {
-                const inner = describeGroupNode(child);
-                return inner ? `(${inner})` : "";
-            })
+            .map(describeLeafOrGroup)
             .filter((part) => part.length > 0);
         const onlyCore =
             includeParts.length > 0 ?
@@ -294,7 +268,10 @@ const describeGroupNode = (group: TagFilterGroup): string => {
                 "only []";
         return [onlyCore, ...excludeParts, ...nested].join(" AND ");
     }
-    return parts.join(` ${group.op.toUpperCase()} `);
+    return group.children
+        .map(describeLeafOrGroup)
+        .filter((part) => part.length > 0)
+        .join(` ${group.op.toUpperCase()} `);
 };
 
 /**
@@ -466,18 +443,14 @@ const untaggedIdsInCandidates = (
     fileIdsByTag: Map<string, Set<number>>,
     includeInEffectsPresenceByName?: ReadonlyMap<string, boolean>,
 ): Set<number> => {
-    const taggedIds = taggedIdsInCandidates(
+    return subtractIds(
         candidateFileIds,
-        fileIdsByTag,
-        includeInEffectsPresenceByName,
+        taggedIdsInCandidates(
+            candidateFileIds,
+            fileIdsByTag,
+            includeInEffectsPresenceByName,
+        ),
     );
-    const next = new Set<number>();
-    for (const id of candidateFileIds) {
-        if (!taggedIds.has(id)) {
-            next.add(id);
-        }
-    }
-    return next;
 };
 
 const taggedIdsInCandidates = (
@@ -542,7 +515,6 @@ const unionIds = (
 const tagIdsInCandidates = (
     tag: string,
     candidateIds: Set<number>,
-    files: EnteFile[],
     fileIdsByTag: Map<string, Set<number>>,
     includeInEffectsPresenceByName?: ReadonlyMap<string, boolean>,
 ): Set<number> => {
@@ -554,31 +526,21 @@ const tagIdsInCandidates = (
         );
     }
     const idsForTag = fileIdsByTag.get(tag);
-    if (!idsForTag || idsForTag.size === 0) {
+    if (!idsForTag) {
         return new Set();
     }
-    const small = idsForTag.size <= candidateIds.size ? idsForTag : candidateIds;
-    const large = idsForTag.size <= candidateIds.size ? candidateIds : idsForTag;
-    const scoped = new Set<number>();
-    for (const id of small) {
-        if (large.has(id)) {
-            scoped.add(id);
-        }
-    }
-    return scoped;
+    return intersectIds(idsForTag, candidateIds);
 };
 
 const evaluateClauseNode = (
     clause: TagFilterClauseNode,
     candidateIds: Set<number>,
-    files: EnteFile[],
     fileIdsByTag: Map<string, Set<number>>,
     includeInEffectsPresenceByName?: ReadonlyMap<string, boolean>,
 ): Set<number> => {
     const tagIds = tagIdsInCandidates(
         clause.tag,
         candidateIds,
-        files,
         fileIdsByTag,
         includeInEffectsPresenceByName,
     );
@@ -594,7 +556,6 @@ const evaluateClauseNode = (
 const kitMemberIdsInCandidates = (
     kitTags: readonly string[],
     candidateIds: Set<number>,
-    files: EnteFile[],
     fileIdsByTag: Map<string, Set<number>>,
     includeInEffectsPresenceByName?: ReadonlyMap<string, boolean>,
 ): Set<number> => {
@@ -606,7 +567,6 @@ const kitMemberIdsInCandidates = (
         matching = tagIdsInCandidates(
             tag,
             matching,
-            files,
             fileIdsByTag,
             includeInEffectsPresenceByName,
         );
@@ -620,14 +580,12 @@ const kitMemberIdsInCandidates = (
 const evaluateKitNode = (
     kit: TagFilterKitNode,
     candidateIds: Set<number>,
-    files: EnteFile[],
     fileIdsByTag: Map<string, Set<number>>,
     includeInEffectsPresenceByName?: ReadonlyMap<string, boolean>,
 ): Set<number> => {
     const members = kitMemberIdsInCandidates(
         kit.tags,
         candidateIds,
-        files,
         fileIdsByTag,
         includeInEffectsPresenceByName,
     );
@@ -685,7 +643,6 @@ export const evaluateTagFilterNode = (
         return evaluateClauseNode(
             node,
             candidateIds,
-            files,
             fileIdsByTag,
             includeInEffectsPresenceByName,
         );
@@ -695,7 +652,6 @@ export const evaluateTagFilterNode = (
         return evaluateKitNode(
             node,
             candidateIds,
-            files,
             fileIdsByTag,
             includeInEffectsPresenceByName,
         );
@@ -738,7 +694,6 @@ export const evaluateTagFilterNode = (
             matchingIds = evaluateClauseNode(
                 clause,
                 matchingIds,
-                files,
                 fileIdsByTag,
                 includeInEffectsPresenceByName,
             );
@@ -748,7 +703,6 @@ export const evaluateTagFilterNode = (
             matchingIds = evaluateKitNode(
                 kit,
                 matchingIds,
-                files,
                 fileIdsByTag,
                 includeInEffectsPresenceByName,
             );
@@ -838,13 +792,21 @@ const applyFavoritesScope = (
     if (favoritesScope === "favorites") {
         return intersectIds(matchingIds, favoriteFileIds);
     }
-    const notFavorites = new Set<number>();
-    for (const id of matchingIds) {
-        if (!favoriteFileIds.has(id)) {
-            notFavorites.add(id);
+    return subtractIds(matchingIds, favoriteFileIds);
+};
+
+const keepFilesWhere = (
+    matchingIds: Set<number>,
+    files: EnteFile[],
+    predicate: (file: EnteFile) => boolean,
+): Set<number> => {
+    const next = new Set<number>();
+    for (const file of files) {
+        if (matchingIds.has(file.id) && predicate(file)) {
+            next.add(file.id);
         }
     }
-    return notFavorites;
+    return next;
 };
 
 const applyMediaScope = (
@@ -855,18 +817,12 @@ const applyMediaScope = (
     if (mediaScope === "all") {
         return matchingIds;
     }
-    const next = new Set<number>();
     const wantVideo = mediaScope === "video";
-    for (const file of files) {
-        if (!matchingIds.has(file.id)) {
-            continue;
-        }
-        const isVideo = file.metadata.fileType === FileType.video;
-        if (isVideo === wantVideo) {
-            next.add(file.id);
-        }
-    }
-    return next;
+    return keepFilesWhere(
+        matchingIds,
+        files,
+        (file) => (file.metadata.fileType === FileType.video) === wantVideo,
+    );
 };
 
 const applyCroppedScope = (
@@ -877,17 +833,12 @@ const applyCroppedScope = (
     if (croppedScope === "all") {
         return matchingIds;
     }
-    const next = new Set<number>();
     const wantCropped = croppedScope === "cropped";
-    for (const file of files) {
-        if (!matchingIds.has(file.id)) {
-            continue;
-        }
-        if (isManuallyCroppedFile(file) === wantCropped) {
-            next.add(file.id);
-        }
-    }
-    return next;
+    return keepFilesWhere(
+        matchingIds,
+        files,
+        (file) => isManuallyCroppedFile(file) === wantCropped,
+    );
 };
 
 const applyRotatedScope = (
@@ -898,17 +849,12 @@ const applyRotatedScope = (
     if (rotatedScope === "all") {
         return matchingIds;
     }
-    const next = new Set<number>();
     const wantRotated = rotatedScope === "rotated";
-    for (const file of files) {
-        if (!matchingIds.has(file.id)) {
-            continue;
-        }
-        if (isManuallyRotatedFile(file) === wantRotated) {
-            next.add(file.id);
-        }
-    }
-    return next;
+    return keepFilesWhere(
+        matchingIds,
+        files,
+        (file) => isManuallyRotatedFile(file) === wantRotated,
+    );
 };
 
 const resolveMatchingIds = (
@@ -945,19 +891,20 @@ const resolveMatchingIds = (
         return matchingIds;
     }
 
-    const exprIds = evaluateTagFilterNode(
-        filter.root,
-        matchingIds,
-        files,
-        fileIdsByTag,
-        includeInEffectsPresenceByName,
-    );
-
     if (countTagFilterClauses(filter.root) === 0) {
         return matchingIds;
     }
 
-    return intersectIds(matchingIds, exprIds);
+    return intersectIds(
+        matchingIds,
+        evaluateTagFilterNode(
+            filter.root,
+            matchingIds,
+            files,
+            fileIdsByTag,
+            includeInEffectsPresenceByName,
+        ),
+    );
 };
 
 /**

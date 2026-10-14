@@ -9,10 +9,12 @@ import {
     MAX_JPEG_QUALITY,
     MIN_JPEG_QUALITY,
     CompressWorkerTimeoutError,
-    postCompressRequest,
+    createCanvas2d,
+    decodeImageElement,
+    encodeCanvasJpeg,
+    encodeJpegInWorker,
     type EncodeJpegResult,
 } from "@/lib/compress";
-import { arrayBufferFromUint8Array } from "@/lib/bytes-blob";
 import type { CropRect } from "@/workers/compress-worker-types";
 import type { RotationDegrees } from "@/lib/rotate";
 
@@ -67,23 +69,11 @@ export const buildCroppedOrganizerTags = (
 };
 
 /**
- * Tags to mark a file as considered by auto-crop without changing pixels.
- */
-export const buildAutoCropSkippedOrganizerTags = (
-    sourceFile: EnteFile,
-): string[] => addTagNames(extractTags(sourceFile), AUTO_CROPPED_TAG);
-
-/**
  * Derive the replacement title for a cropped image (basename, .jpg).
  */
 export const croppedReplaceTitle = (sourceFile: EnteFile): string => {
     const baseName = fileFileName(sourceFile).replace(/\.[^.]+$/u, "");
     return `${baseName}.jpg`;
-};
-
-export const croppedVideoUploadTitle = (title: string): string => {
-    const baseName = title.replace(/\.[^.]+$/u, "");
-    return `${baseName}-cropped.mp4`;
 };
 
 /**
@@ -136,198 +126,75 @@ const boundingBoxForRotation = (
     };
 };
 
+/** Crop {@link source} to {@link cropRect} (clamped to its size) and encode as JPEG. */
+const encodeCroppedCanvasJpeg = async (
+    source: CanvasImageSource,
+    sourceWidth: number,
+    sourceHeight: number,
+    cropRect: CropRect,
+    quality: number,
+): Promise<EncodeJpegResult> => {
+    const clamped = clampCropRect(cropRect, sourceWidth, sourceHeight);
+    const { canvas, context } = createCanvas2d(clamped.width, clamped.height);
+    context.drawImage(
+        source,
+        clamped.x,
+        clamped.y,
+        clamped.width,
+        clamped.height,
+        0,
+        0,
+        clamped.width,
+        clamped.height,
+    );
+    return {
+        bytes: await encodeCanvasJpeg(canvas, quality),
+        width: clamped.width,
+        height: clamped.height,
+    };
+};
+
 const encodeCroppedJpegWithRotation = async (
     bytes: Uint8Array,
     cropRect: CropRect,
     rotationDegrees: RotationDegrees,
     quality: number,
-): Promise<EncodeJpegResult> =>
-    new Promise((resolve, reject) => {
-        const blob = new Blob([Uint8Array.from(bytes)], { type: "image/jpeg" });
-        const imageUrl = URL.createObjectURL(blob);
-        const image = new Image();
-        image.onload = (): void => {
-            URL.revokeObjectURL(imageUrl);
-            try {
-                const rotatedBox = boundingBoxForRotation(
-                    image.width,
-                    image.height,
-                    rotationDegrees,
-                );
-                const rotateCanvas = document.createElement("canvas");
-                rotateCanvas.width = Math.round(rotatedBox.width);
-                rotateCanvas.height = Math.round(rotatedBox.height);
-                const rotateContext = rotateCanvas.getContext("2d");
-                if (!rotateContext) {
-                    reject(new Error("Canvas unavailable"));
-                    return;
-                }
-                rotateContext.translate(
-                    rotateCanvas.width / 2,
-                    rotateCanvas.height / 2,
-                );
-                rotateContext.rotate(rotationRadians(rotationDegrees));
-                rotateContext.drawImage(
-                    image,
-                    -image.width / 2,
-                    -image.height / 2,
-                );
-                const clamped = clampCropRect(
-                    cropRect,
-                    rotateCanvas.width,
-                    rotateCanvas.height,
-                );
-                const outputCanvas = document.createElement("canvas");
-                outputCanvas.width = clamped.width;
-                outputCanvas.height = clamped.height;
-                const outputContext = outputCanvas.getContext("2d");
-                if (!outputContext) {
-                    reject(new Error("Canvas unavailable"));
-                    return;
-                }
-                outputContext.drawImage(
-                    rotateCanvas,
-                    clamped.x,
-                    clamped.y,
-                    clamped.width,
-                    clamped.height,
-                    0,
-                    0,
-                    clamped.width,
-                    clamped.height,
-                );
-                outputCanvas.toBlob(
-                    (jpegBlob) => {
-                        if (!jpegBlob) {
-                            reject(new Error("JPEG encode failed"));
-                            return;
-                        }
-                        jpegBlob
-                            .arrayBuffer()
-                            .then((buffer) => {
-                                resolve({
-                                    bytes: new Uint8Array(buffer),
-                                    width: clamped.width,
-                                    height: clamped.height,
-                                });
-                            })
-                            .catch(reject);
-                    },
-                    "image/jpeg",
-                    quality,
-                );
-            } catch (error: unknown) {
-                reject(
-                    error instanceof Error ?
-                        error :
-                        new Error("JPEG encode failed"),
-                );
-            }
-        };
-        image.onerror = (): void => {
-            URL.revokeObjectURL(imageUrl);
-            reject(new Error("Could not decode image"));
-        };
-        image.src = imageUrl;
-    });
+): Promise<EncodeJpegResult> => {
+    const image = await decodeImageElement(bytes);
+    const rotatedBox = boundingBoxForRotation(
+        image.width,
+        image.height,
+        rotationDegrees,
+    );
+    const { canvas, context } = createCanvas2d(
+        Math.round(rotatedBox.width),
+        Math.round(rotatedBox.height),
+    );
+    context.translate(canvas.width / 2, canvas.height / 2);
+    context.rotate(rotationRadians(rotationDegrees));
+    context.drawImage(image, -image.width / 2, -image.height / 2);
+    return encodeCroppedCanvasJpeg(
+        canvas,
+        canvas.width,
+        canvas.height,
+        cropRect,
+        quality,
+    );
+};
 
 const encodeCroppedJpegMainThread = async (
     bytes: Uint8Array,
     cropRect: CropRect,
     quality: number,
-): Promise<EncodeJpegResult> =>
-    new Promise((resolve, reject) => {
-        const blob = new Blob([Uint8Array.from(bytes)], { type: "image/jpeg" });
-        const imageUrl = URL.createObjectURL(blob);
-        const image = new Image();
-        image.onload = (): void => {
-            URL.revokeObjectURL(imageUrl);
-            try {
-                const clamped = clampCropRect(
-                    cropRect,
-                    image.width,
-                    image.height,
-                );
-                const canvas = document.createElement("canvas");
-                canvas.width = clamped.width;
-                canvas.height = clamped.height;
-                const context = canvas.getContext("2d");
-                if (!context) {
-                    reject(new Error("Canvas unavailable"));
-                    return;
-                }
-                context.drawImage(
-                    image,
-                    clamped.x,
-                    clamped.y,
-                    clamped.width,
-                    clamped.height,
-                    0,
-                    0,
-                    clamped.width,
-                    clamped.height,
-                );
-                canvas.toBlob(
-                    (jpegBlob) => {
-                        if (!jpegBlob) {
-                            reject(new Error("JPEG encode failed"));
-                            return;
-                        }
-                        jpegBlob
-                            .arrayBuffer()
-                            .then((buffer) => {
-                                resolve({
-                                    bytes: new Uint8Array(buffer),
-                                    width: clamped.width,
-                                    height: clamped.height,
-                                });
-                            })
-                            .catch(reject);
-                    },
-                    "image/jpeg",
-                    quality,
-                );
-            } catch (error: unknown) {
-                reject(
-                    error instanceof Error ?
-                        error :
-                        new Error("JPEG encode failed"),
-                );
-            }
-        };
-        image.onerror = (): void => {
-            URL.revokeObjectURL(imageUrl);
-            reject(new Error("Could not decode image"));
-        };
-        image.src = imageUrl;
-    });
-
-const encodeCroppedJpegInWorker = async (
-    bytes: Uint8Array,
-    cropRect: CropRect,
-    quality: number,
 ): Promise<EncodeJpegResult> => {
-    const buffer = arrayBufferFromUint8Array(bytes);
-    const response = await postCompressRequest(
-        {
-            bytes: new Uint8Array(buffer),
-            quality,
-            cropRect,
-            output: "jpeg",
-        },
-        [buffer],
+    const image = await decodeImageElement(bytes);
+    return encodeCroppedCanvasJpeg(
+        image,
+        image.width,
+        image.height,
+        cropRect,
+        quality,
     );
-    if (response.error) {
-        throw new Error(response.error);
-    }
-    if (!response.bytes || !response.width || !response.height) {
-        throw new Error("Encode returned incomplete result");
-    }
-    return {
-        bytes: response.bytes,
-        width: response.width,
-        height: response.height,
-    };
 };
 
 /**
@@ -352,11 +219,10 @@ export const encodeCroppedJpeg = async (
         );
     }
     try {
-        return await encodeCroppedJpegInWorker(
-            bytes,
+        return await encodeJpegInWorker(bytes, {
+            quality: clampedQuality,
             cropRect,
-            clampedQuality,
-        );
+        });
     } catch (error: unknown) {
         // A timed-out worker is a stuck encode; retrying it on the main thread
         // would stall the UI for the same work.

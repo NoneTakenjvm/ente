@@ -34,7 +34,11 @@ import {
     saveEmbeddingMeta,
     type PersistedEmbeddingMeta,
 } from "@/db/kv";
-import { imageFilesForPhash } from "@/lib/similarity-job";
+import {
+    imageFilesForPhash,
+    runWithConcurrency,
+    waitIfPaused,
+} from "@/lib/similarity-job";
 import { isEnteVideoFile } from "@/lib/media-kind";
 import { waitWhileGalleryScrolling } from "@/lib/gallery-scroll-activity";
 import type { EnteFile } from "ente-media/file";
@@ -172,18 +176,6 @@ export const resolveKitEmbeddingBatchSize = (
     return clamped;
 };
 
-/** Active backend after the first model load (undefined until then). */
-export const getKitEmbeddingDevice = (): KitEmbeddingDevice | undefined =>
-    activeDevice;
-
-/** Weight dtype actually loaded after init. */
-export const getKitEmbeddingDtype = (): ClipEmbeddingDtype | undefined =>
-    activeDtype;
-
-/** Last ORT issue mode (`batched` once a multi-image forward succeeds). */
-export const getKitEmbeddingBatchMode = ():
-    ClipEmbeddingBatchMode | undefined => activeBatchMode;
-
 /** Set when a true batch forward failed and the worker serialised. */
 export const getKitEmbeddingBatchFallbackReason = (): string | undefined =>
     batchFallbackReason;
@@ -291,7 +283,6 @@ export const ensureKitEmbeddingWorkerReady = async (): Promise<void> => {
     if (!initPromise) {
         initPromise = new Promise<void>((resolve, reject) => {
             const worker = getClipWorker();
-            attachMessageRouter(worker);
             const id = ++requestCounter;
             pendingInit = { id, resolve, reject };
             const message: ClipEmbeddingInbound = { kind: "init", id };
@@ -546,41 +537,6 @@ export type RunKitEmbeddingJobOptions = {
 type ReadyThumb = {
     file: EnteFile;
     bytes: Uint8Array;
-};
-
-const waitIfPaused = async (
-    shouldPause?: () => boolean,
-    signal?: AbortSignal,
-): Promise<boolean> => {
-    while (shouldPause?.()) {
-        await new Promise((resolve) => setTimeout(resolve, 200));
-        if (signal?.aborted) {
-            return true;
-        }
-    }
-    return signal?.aborted ?? false;
-};
-
-const runWithConcurrency = async <T>(
-    items: readonly T[],
-    limit: number,
-    worker: (item: T) => Promise<void>,
-): Promise<void> => {
-    if (!items.length) {
-        return;
-    }
-    let index = 0;
-    const runners = Array.from(
-        { length: Math.min(limit, items.length) },
-        async (): Promise<void> => {
-            while (index < items.length) {
-                const current = items[index]!;
-                index += 1;
-                await worker(current);
-            }
-        },
-    );
-    await Promise.all(runners);
 };
 
 /**

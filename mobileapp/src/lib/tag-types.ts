@@ -143,11 +143,6 @@ export const isTagIncludedInEffectsPresence = (
     includeInEffectsPresenceByName: ReadonlyMap<string, boolean>,
 ): boolean => includeInEffectsPresenceByName.get(tagName) !== false;
 
-export const orderedTypeTabs = (types: string[]): string[] => [
-    ALL_TAG_TYPES_TAB,
-    ...types,
-];
-
 /**
  * Sort tags by how many files use them (descending), then alphabetically.
  */

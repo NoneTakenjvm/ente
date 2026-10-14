@@ -104,11 +104,7 @@ const createTrashStore: StateCreator<TrashState> = (set, get) => ({
         set({ isSyncing: true, errorMessage: undefined });
         try {
             const result = await pullTrash(collections);
-            if (result.permanentlyDeletedFileIds.length) {
-                await pruneLocalCachesForFileIds(
-                    result.permanentlyDeletedFileIds,
-                );
-            }
+            await pruneLocalCachesForFileIds(result.permanentlyDeletedFileIds);
             // Merge optimistic seeds that arrived during the pull and were
             // preserved on disk by pullTrash's final re-read.
             const byId = new Map(
@@ -218,9 +214,7 @@ const createTrashStore: StateCreator<TrashState> = (set, get) => ({
         await getEnteCore().emptyTrash(lastUpdatedAt);
         set({ items: [], lastUpdatedAt });
         await persistItems([]);
-        if (fileIds.length) {
-            await pruneLocalCachesForFileIds(fileIds);
-        }
+        await pruneLocalCachesForFileIds(fileIds);
     },
 
     reset: (): void => {

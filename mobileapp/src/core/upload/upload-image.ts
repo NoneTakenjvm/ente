@@ -31,7 +31,7 @@ import { updatePublicMetadata } from "../metadata";
 import { fileUploadSortTime } from "@/lib/sort-files";
 import { buildOrganizerUpdate } from "@/lib/tag-writes";
 
-export interface UploadJpegOptions {
+interface UploadJpegOptions {
     title: string;
     creationTime: number;
     modificationTime: number;
@@ -108,7 +108,7 @@ const buildPublicMagicData = (
  * and thumbnail PUTs run in parallel. Optional {@link UploadJpegOptions.crypto}
  * runs the crypto on the batch slot's worker instead of the main thread.
  */
-export const uploadJpegImage = async (
+const uploadJpegImage = async (
     http: HttpClient,
     collection: Collection,
     jpegBytes: Uint8Array,
@@ -164,7 +164,7 @@ export const uploadJpegImage = async (
     return decryptRemoteFile(remoteFile, collection.key);
 };
 
-export interface UploadDerivedImageOptions {
+interface UploadDerivedImageOptions {
     title: string;
     organizerTags?: string[];
 }
@@ -172,7 +172,7 @@ export interface UploadDerivedImageOptions {
 /**
  * Upload a JPEG derived from an existing library file (compress, crop, etc.).
  */
-export const uploadDerivedImage = async (
+const uploadDerivedImage = async (
     http: HttpClient,
     sourceFile: EnteFile,
     jpegBytes: Uint8Array,
@@ -239,31 +239,7 @@ export const uploadCroppedImage = async (
         { title, organizerTags },
     );
 
-/**
- * Upload a rotated JPEG as a new file id (legacy derive-copy path).
- *
- * Prefer {@link updateRotatedImageInPlace} so tags, favourites, and sessions
- * stay on the same file id.
- */
-export const uploadRotatedImage = async (
-    http: HttpClient,
-    sourceFile: EnteFile,
-    jpegBytes: Uint8Array,
-    collection: Collection,
-    dimensions: { width: number; height: number },
-    title: string,
-    organizerTags: string[] = ["rotated"],
-): Promise<EnteFile> =>
-    uploadDerivedImage(
-        http,
-        sourceFile,
-        jpegBytes,
-        collection,
-        dimensions,
-        { title, organizerTags },
-    );
-
-export interface UpdateImageInPlaceOptions {
+interface UpdateImageInPlaceOptions {
     title: string;
     width: number;
     height: number;
@@ -279,7 +255,7 @@ export interface UpdateImageInPlaceOptions {
  * merges dimensions + organizer tags into existing public magic metadata so
  * captions and other fields are preserved.
  */
-export const updateImageBytesInPlace = async (
+const updateImageBytesInPlace = async (
     http: HttpClient,
     sourceFile: EnteFile,
     jpegBytes: Uint8Array,

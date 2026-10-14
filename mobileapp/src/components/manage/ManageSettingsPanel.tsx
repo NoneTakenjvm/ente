@@ -84,6 +84,16 @@ const kitNearnessTaggedFileIds = (
             .map((file) => file.id),
     );
 
+/** First selected toggle value as an integer, or `undefined` when none/invalid. */
+const parseToggleInteger = (next: unknown): number | undefined => {
+    const raw: unknown = Array.isArray(next) ? next[0] : next;
+    if (typeof raw !== "string" || raw === "") {
+        return undefined;
+    }
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isFinite(parsed) ? parsed : undefined;
+};
+
 export function ManageSettingsPanel(): JSX.Element {
     const videoAutoPlay = useSettingsStore((s) => s.videoAutoPlay);
     const videoLoop = useSettingsStore((s) => s.videoLoop);
@@ -679,20 +689,13 @@ export function ManageSettingsPanel(): JSX.Element {
                                 variant="outline"
                                 value={[String(galleryColumns)]}
                                 onValueChange={(next) => {
-                                    const raw = Array.isArray(next) ?
-                                        next[0] :
-                                        next;
-                                    if (raw === undefined || raw === "") {
-                                        return;
+                                    const parsed = parseToggleInteger(next);
+                                    if (parsed !== undefined) {
+                                        patchSettings({
+                                            galleryColumns:
+                                                clampGalleryColumns(parsed),
+                                        });
                                     }
-                                    const parsed = Number.parseInt(raw, 10);
-                                    if (!Number.isFinite(parsed)) {
-                                        return;
-                                    }
-                                    patchSettings({
-                                        galleryColumns:
-                                            clampGalleryColumns(parsed),
-                                    });
                                 }}
                                 className="w-full"
                             >
@@ -762,19 +765,12 @@ export function ManageSettingsPanel(): JSX.Element {
                                 variant="outline"
                                 value={[String(similarMaxGroupSize)]}
                                 onValueChange={(next) => {
-                                    const raw = Array.isArray(next) ?
-                                        next[0] :
-                                        next;
-                                    if (raw === undefined || raw === "") {
-                                        return;
+                                    const parsed = parseToggleInteger(next);
+                                    if (parsed !== undefined) {
+                                        patchSettings({
+                                            similarMaxGroupSize: parsed,
+                                        });
                                     }
-                                    const parsed = Number.parseInt(raw, 10);
-                                    if (!Number.isFinite(parsed)) {
-                                        return;
-                                    }
-                                    patchSettings({
-                                        similarMaxGroupSize: parsed,
-                                    });
                                 }}
                                 className="w-full"
                             >
@@ -818,22 +814,15 @@ export function ManageSettingsPanel(): JSX.Element {
                                 variant="outline"
                                 value={[String(clipEmbeddingBatchSize)]}
                                 onValueChange={(next) => {
-                                    const raw = Array.isArray(next) ?
-                                        next[0] :
-                                        next;
-                                    if (raw === undefined || raw === "") {
-                                        return;
+                                    const parsed = parseToggleInteger(next);
+                                    if (parsed !== undefined) {
+                                        patchSettings({
+                                            clipEmbeddingBatchSize:
+                                                clampClipEmbeddingBatchSize(
+                                                    parsed,
+                                                ),
+                                        });
                                     }
-                                    const parsed = Number.parseInt(raw, 10);
-                                    if (!Number.isFinite(parsed)) {
-                                        return;
-                                    }
-                                    patchSettings({
-                                        clipEmbeddingBatchSize:
-                                            clampClipEmbeddingBatchSize(
-                                                parsed,
-                                            ),
-                                    });
                                 }}
                                 className="w-full flex-wrap"
                             >

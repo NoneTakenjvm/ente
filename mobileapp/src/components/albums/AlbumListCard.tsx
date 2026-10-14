@@ -1,6 +1,5 @@
 import {
     useCallback,
-    useRef,
     type JSX,
     type PointerEvent as ReactPointerEvent,
 } from "react";
@@ -41,8 +40,6 @@ export function AlbumListCard({
     onDragMove,
     onDragEnd,
 }: AlbumListCardProps): JSX.Element {
-    const cardRef = useRef<HTMLDivElement>(null);
-
     const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>): void => {
         if (!reorderMode) {
             return;
@@ -74,7 +71,6 @@ export function AlbumListCard({
 
     return (
         <Card
-            ref={cardRef}
             data-album-id={albumId}
             className={cn(
                 "gap-0 py-0 transition-colors",

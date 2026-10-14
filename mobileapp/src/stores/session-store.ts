@@ -143,6 +143,13 @@ const clearLocalState = (): void => {
     resetEnteCore();
 };
 
+const signedOutState = {
+    status: "idle",
+    userID: undefined,
+    email: undefined,
+    errorMessage: undefined,
+} as const;
+
 const persistCurrentSession = async (
     authToken: string,
     masterKey: string,
@@ -207,12 +214,7 @@ const createSessionStore: StateCreator<SessionState> = (set) => ({
         clearPersistedSession();
         clearSessionLock();
         clearLocalState();
-        set({
-            status: "idle",
-            userID: undefined,
-            email: undefined,
-            errorMessage: undefined,
-        });
+        set(signedOutState);
     },
 
     lock: async (): Promise<void> => {
@@ -277,12 +279,7 @@ const createSessionStore: StateCreator<SessionState> = (set) => ({
             await wipeOrganizerDB();
         }
         clearLocalState();
-        set({
-            status: "idle",
-            userID: undefined,
-            email: undefined,
-            errorMessage: undefined,
-        });
+        set(signedOutState);
     },
 });
 

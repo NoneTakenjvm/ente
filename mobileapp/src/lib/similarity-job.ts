@@ -131,24 +131,6 @@ const hashBytesInWorker = (
         worker.postMessage(request, [bytes.buffer as ArrayBuffer]);
     });
 
-/**
- * Verify whether two images could be the same photo under a crop, entirely on
- * the worker thread. Prefer {@link checkCropMatchBatchInWorkers} for Stage-2.
- */
-export const checkCropMatchInWorkers = (
-    aColor: string,
-    aGrid: string,
-    bColor: string,
-    bGrid: string,
-): Promise<boolean> =>
-    checkCropMatchBatchInWorkers(
-        {
-            a: { color: aColor, grid: aGrid },
-            b: { color: bColor, grid: bGrid },
-        },
-        [["a", "b"]],
-    ).then((matches) => matches[0] ?? false);
-
 export type CropBatchEntry = { color: string; grid: string };
 
 /**
@@ -285,8 +267,8 @@ const cacheCheckConcurrency = 32;
 const cachedThumbnailConcurrency = 32;
 const networkThumbnailConcurrency = 8;
 
-const runWithConcurrency = async <T>(
-    items: T[],
+export const runWithConcurrency = async <T>(
+    items: readonly T[],
     limit: number,
     worker: (item: T) => Promise<void>,
 ): Promise<void> => {
@@ -304,7 +286,7 @@ const runWithConcurrency = async <T>(
     await Promise.all(runners);
 };
 
-const waitIfPaused = async (
+export const waitIfPaused = async (
     shouldPause?: () => boolean,
     signal?: AbortSignal,
 ): Promise<boolean> => {

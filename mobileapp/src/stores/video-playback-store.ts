@@ -62,13 +62,7 @@ export const useVideoPlaybackStore = create<VideoPlaybackState>((set, get) => ({
     setVolume: (volume: number): void => {
         const clamped = Math.min(1, Math.max(0, volume));
         persistVolume(clamped);
-        const updates: Partial<VideoPlaybackState> = { volume: clamped };
-        if (clamped > 0) {
-            updates.muted = false;
-        } else {
-            updates.muted = true;
-        }
-        set(updates);
+        set({ volume: clamped, muted: !(clamped > 0) });
     },
 
     setMuted: (muted: boolean): void => {

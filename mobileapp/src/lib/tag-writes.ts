@@ -114,12 +114,6 @@ export const tagsEqual = (left: string[], right: string[]): boolean => {
     return sortedLeft.every((tag, index) => tag === sortedRight[index]);
 };
 
-export const organizerUpdateForFile = (
-    file: EnteFile,
-    mutator: TagMutator,
-): Pick<OrganizerPublicMetadata, "_organizer_v1"> =>
-    buildOrganizerUpdate(tagsForFile(file, mutator));
-
 /**
  * Return a copy of {@link file} with organizer tags applied locally (no remote write).
  *

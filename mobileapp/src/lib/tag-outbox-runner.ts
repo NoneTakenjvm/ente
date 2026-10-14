@@ -10,6 +10,7 @@ import {
 } from "@/lib/derived-replace-outbox";
 import { isDerivedReplaceInFlight } from "@/lib/derived-replace-queue";
 import {
+    favoriteOutboxEntryKey,
     getFavoriteOutboxEntries,
     isFavoriteOutboxHydrated,
     removeFavoriteOutboxEntriesIfUnchanged,
@@ -42,11 +43,9 @@ const favoriteDrainChunkSize = 100;
 
 let intervalId: ReturnType<typeof setInterval> | undefined;
 let flushDebounceId: ReturnType<typeof setTimeout> | undefined;
-let drainChain: Promise<TagOutboxDrainStats> = Promise.resolve({
-    verifiedIds: [],
-    pendingIds: [],
-    writeFailures: 0,
-});
+let drainChain: Promise<TagOutboxDrainStats> = Promise.resolve(
+    emptyDrainStats(),
+);
 let lastFailureToastAt = 0;
 
 export interface TagOutboxDrainStats {
@@ -54,6 +53,10 @@ export interface TagOutboxDrainStats {
     pendingIds: number[];
     /** Files whose PUT/verify failed this pass (not superseded intents). */
     writeFailures: number;
+}
+
+function emptyDrainStats(): TagOutboxDrainStats {
+    return { verifiedIds: [], pendingIds: [], writeFailures: 0 };
 }
 
 export interface FavoriteMutationsResult {
@@ -95,12 +98,16 @@ const collectionKeyFor = (
     return collection?.key;
 };
 
-const favoriteEntryKey = (entry: FavoriteOutboxEntry): string =>
-    entry.fileHashAndTypeKey ?? String(entry.fileId);
+const describeTagFailures = (count: number): string =>
+    count === 1 ? "tags for 1 photo" : `tags for ${count} photos`;
 
-const notifyTagWriteFailures = (
+const describeFavoriteFailures = (count: number): string =>
+    count === 1 ? "1 favourite" : `${count} favourites`;
+
+const notifyFailures = (
     pendingCount: number,
     source: "user" | "periodic",
+    describe: (count: number) => string,
 ): void => {
     if (pendingCount <= 0) {
         return;
@@ -114,31 +121,7 @@ const notifyTagWriteFailures = (
     }
     lastFailureToastAt = now;
     toast.error(
-        pendingCount === 1 ?
-            "Couldn't sync tags for 1 photo — will keep retrying" :
-            `Couldn't sync tags for ${pendingCount} photos — will keep retrying`,
-    );
-};
-
-const notifyFavoriteSyncFailures = (
-    pendingCount: number,
-    source: "user" | "periodic",
-): void => {
-    if (pendingCount <= 0) {
-        return;
-    }
-    const now = Date.now();
-    if (
-        source === "periodic" &&
-        now - lastFailureToastAt < failureToastCooldownMs
-    ) {
-        return;
-    }
-    lastFailureToastAt = now;
-    toast.error(
-        pendingCount === 1 ?
-            "Couldn't sync 1 favourite — will keep retrying" :
-            `Couldn't sync ${pendingCount} favourites — will keep retrying`,
+        `Couldn't sync ${describe(pendingCount)} — will keep retrying`,
     );
 };
 
@@ -149,11 +132,11 @@ const drainTagEntries = async (
     context: TagOutboxRunnerContext,
 ): Promise<TagOutboxDrainStats> => {
     if (!isTagOutboxHydrated()) {
-        return { verifiedIds: [], pendingIds: [], writeFailures: 0 };
+        return emptyDrainStats();
     }
     const entries = getTagOutboxEntries();
     if (!entries.length) {
-        return { verifiedIds: [], pendingIds: [], writeFailures: 0 };
+        return emptyDrainStats();
     }
 
     const { getFileById, getCollections, patchFile, patchFiles } = context;
@@ -164,12 +147,8 @@ const drainTagEntries = async (
     const skippedIds: number[] = [];
     for (const entry of entries) {
         const file = getFileById(entry.fileId);
-        if (!file) {
-            skippedIds.push(entry.fileId);
-            continue;
-        }
-        const collectionKey = collectionKeyFor(file, collections);
-        if (!collectionKey) {
+        const collectionKey = file && collectionKeyFor(file, collections);
+        if (!file || !collectionKey) {
             skippedIds.push(entry.fileId);
             continue;
         }
@@ -296,13 +275,13 @@ const drainFavoriteEntries = async (
                 const acked = new Set(ackedKeys);
                 if (ackedKeys.length) {
                     const ackedChunk = chunk.filter(
-                        (entry) => acked.has(favoriteEntryKey(entry)),
+                        (entry) => acked.has(favoriteOutboxEntryKey(entry)),
                     );
                     await removeFavoriteOutboxEntriesIfUnchanged(ackedChunk);
                     anySucceeded = true;
                 }
                 const remaining = chunk.filter(
-                    (entry) => !acked.has(favoriteEntryKey(entry)),
+                    (entry) => !acked.has(favoriteOutboxEntryKey(entry)),
                 );
                 if (remaining.length && context.applyFavoriteMutation) {
                     const fallback = await drainFavoriteEntriesOneByOne(
@@ -331,11 +310,10 @@ const drainFavoriteEntries = async (
     const toAdd = entries.filter((entry) => entry.isFavorite);
     const toRemove = entries.filter((entry) => !entry.isFavorite);
 
-    for (let i = 0; i < toAdd.length; i += favoriteDrainChunkSize) {
-        await processChunk(toAdd.slice(i, i + favoriteDrainChunkSize));
-    }
-    for (let i = 0; i < toRemove.length; i += favoriteDrainChunkSize) {
-        await processChunk(toRemove.slice(i, i + favoriteDrainChunkSize));
+    for (const group of [toAdd, toRemove]) {
+        for (let i = 0; i < group.length; i += favoriteDrainChunkSize) {
+            await processChunk(group.slice(i, i + favoriteDrainChunkSize));
+        }
     }
 
     if (anySucceeded && context.syncFavorites) {
@@ -348,7 +326,7 @@ const drainFavoriteEntries = async (
 
     const stillPending = getFavoriteOutboxEntries().length;
     if (notify && failures > 0 && stillPending > 0) {
-        notifyFavoriteSyncFailures(stillPending, source);
+        notifyFailures(stillPending, source, describeFavoriteFailures);
     }
 
     return stillPending;
@@ -413,7 +391,7 @@ const executeDrainPass = async (
     notify: boolean,
 ): Promise<TagOutboxDrainStats> => {
     if (!runnerContext) {
-        return { verifiedIds: [], pendingIds: [], writeFailures: 0 };
+        return emptyDrainStats();
     }
 
     let stats: TagOutboxDrainStats;
@@ -423,7 +401,7 @@ const executeDrainPass = async (
         console.warn("Tag outbox drain failed", error);
         const pending = getTagOutboxEntries().length;
         if (notify && pending > 0) {
-            notifyTagWriteFailures(pending, source);
+            notifyFailures(pending, source, describeTagFailures);
         }
         return {
             verifiedIds: [],
@@ -437,7 +415,7 @@ const executeDrainPass = async (
     await drainDerivedReplaceEntries(runnerContext);
 
     if (notify && stats.writeFailures > 0) {
-        notifyTagWriteFailures(stats.writeFailures, source);
+        notifyFailures(stats.writeFailures, source, describeTagFailures);
     }
 
     return {
@@ -455,11 +433,7 @@ const runDrainPass = (
     notify = true,
 ): Promise<TagOutboxDrainStats> => {
     drainChain = drainChain
-        .catch(() => ({
-            verifiedIds: [] as number[],
-            pendingIds: [] as number[],
-            writeFailures: 0,
-        }))
+        .catch(emptyDrainStats)
         .then(() => executeDrainPass(source, notify));
     return drainChain;
 };
@@ -524,9 +498,5 @@ export const stopTagOutboxRunner = (): void => {
         flushDebounceId = undefined;
     }
     runnerContext = undefined;
-    drainChain = Promise.resolve({
-        verifiedIds: [],
-        pendingIds: [],
-        writeFailures: 0,
-    });
+    drainChain = Promise.resolve(emptyDrainStats());
 };

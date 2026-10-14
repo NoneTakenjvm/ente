@@ -125,8 +125,7 @@ export const pullFiles = async (
         await commitFavoriteMembershipSync();
     }
 
-    const targets = collections;
-    const total = targets.length;
+    const total = collections.length;
     /**
      * Library grouped by collection, built once on the first collection that
      * needs a diff (one pass instead of a full scan per collection). Each
@@ -134,8 +133,8 @@ export const pullFiles = async (
      */
     let filesByCollectionId: Map<number, Map<number, EnteFile>> | undefined;
 
-    for (let i = 0; i < targets.length; i += collectionSyncConcurrency) {
-        const batch = targets.slice(i, i + collectionSyncConcurrency);
+    for (let i = 0; i < collections.length; i += collectionSyncConcurrency) {
+        const batch = collections.slice(i, i + collectionSyncConcurrency);
         await Promise.all(
             batch.map(async (collection, batchIndex) => {
                 const index = i + batchIndex;

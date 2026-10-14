@@ -284,15 +284,3 @@ export const createUnsyncedFavoriteUpdate = (
         },
     };
 };
-
-export const filterFavoriteCollectionFiles = (
-    allFiles: EnteFile[],
-    favoritesCollectionId: number | null,
-): EnteFile[] => {
-    if (favoritesCollectionId === null) {
-        return [];
-    }
-    return allFiles.filter(
-        (file) => file.collectionID === favoritesCollectionId,
-    );
-};

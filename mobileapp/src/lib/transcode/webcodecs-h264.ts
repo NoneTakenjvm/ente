@@ -84,9 +84,13 @@ export const encodeH264WebCodecs = async (
         if (!videoTrack) {
             throw new Error("No video track");
         }
+        const [displayWidth, displayHeight] = await Promise.all([
+            videoTrack.getDisplayWidth(),
+            videoTrack.getDisplayHeight(),
+        ]);
         const { width, height } = evenOutputSize(
-            await videoTrack.getDisplayWidth(),
-            await videoTrack.getDisplayHeight(),
+            displayWidth,
+            displayHeight,
             options.maxLongEdge,
         );
         const target = new BufferTarget();

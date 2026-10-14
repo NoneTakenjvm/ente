@@ -1,4 +1,4 @@
-import { useCallback, useState, type JSX } from "react";
+import { useCallback, useState, type JSX, type ReactNode } from "react";
 import {
     Check,
     Crop,
@@ -211,78 +211,43 @@ export function GalleryToolsMenu({
                                             Query builder
                                         </DropdownMenuLabel>
                                         <TagQueryBuilderContent
+                                            {...query}
                                             filterTarget={filterTarget}
-                                            taggedCount={query.taggedCount}
-                                            untaggedCount={query.untaggedCount}
-                                            favoritesCount={
-                                                query.favoritesCount
-                                            }
-                                            notFavoritesCount={
-                                                query.notFavoritesCount
-                                            }
-                                            photoCount={query.photoCount}
-                                            videoCount={query.videoCount}
-                                            croppedCount={query.croppedCount}
-                                            notCroppedCount={
-                                                query.notCroppedCount
-                                            }
                                         />
                                     </DropdownMenuSubContent>
                                 </DropdownMenuSub>
                             ) : null}
                             {query ? <DropdownMenuSeparator /> : null}
-                            <DropdownMenuItem
-                                onClick={() => {
+                            <ToolMenuItem
+                                label="Select"
+                                active={selectionEnabled}
+                                onSelect={() => {
                                     setEnabled(!selectionEnabled);
                                 }}
                             >
                                 <Check />
-                                Select
-                                {selectionEnabled ? (
-                                    <span className="ml-auto text-xs text-muted-foreground">
-                                        On
-                                    </span>
-                                ) : null}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                                onClick={() => {
-                                    activateStamp();
-                                }}
+                            </ToolMenuItem>
+                            <ToolMenuItem
+                                label="Stamp"
+                                active={stampActive}
+                                onSelect={activateStamp}
                             >
                                 <Stamp />
-                                Stamp
-                                {stampActive ? (
-                                    <span className="ml-auto text-xs text-muted-foreground">
-                                        On
-                                    </span>
-                                ) : null}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                                onClick={() => {
-                                    toggleRotate();
-                                }}
+                            </ToolMenuItem>
+                            <ToolMenuItem
+                                label="Rotate"
+                                active={rotateActive}
+                                onSelect={toggleRotate}
                             >
                                 <RotateCw />
-                                Rotate
-                                {rotateActive ? (
-                                    <span className="ml-auto text-xs text-muted-foreground">
-                                        On
-                                    </span>
-                                ) : null}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                                onClick={() => {
-                                    toggleCrop();
-                                }}
+                            </ToolMenuItem>
+                            <ToolMenuItem
+                                label="Crop"
+                                active={cropActive}
+                                onSelect={toggleCrop}
                             >
                                 <Crop />
-                                Crop
-                                {cropActive ? (
-                                    <span className="ml-auto text-xs text-muted-foreground">
-                                        On
-                                    </span>
-                                ) : null}
-                            </DropdownMenuItem>
+                            </ToolMenuItem>
                         </DropdownMenuGroup>
                     </DropdownMenuContent>
                 </DropdownMenu>
@@ -291,92 +256,111 @@ export function GalleryToolsMenu({
             <div className="hidden items-center gap-1 md:flex">
                 {query ? (
                     <TagQueryBuilderPanel
+                        {...query}
                         filterTarget={filterTarget}
-                        hasQueryContent={query.hasQueryContent}
-                        taggedCount={query.taggedCount}
-                        untaggedCount={query.untaggedCount}
-                        favoritesCount={query.favoritesCount}
-                        notFavoritesCount={query.notFavoritesCount}
-                        photoCount={query.photoCount}
-                        videoCount={query.videoCount}
-                        croppedCount={query.croppedCount}
-                        notCroppedCount={query.notCroppedCount}
                     />
                 ) : null}
-                <Button
-                    type="button"
-                    variant={selectionEnabled ? "secondary" : "outline"}
-                    size="icon-sm"
-                    aria-label={
-                        selectionEnabled ?
-                            "Exit selection mode" :
-                            "Select media"
-                    }
-                    aria-pressed={selectionEnabled}
+                <ToolButton
+                    active={selectionEnabled}
+                    activeLabel="Exit selection mode"
+                    inactiveLabel="Select media"
                     onClick={() => {
                         setEnabled(!selectionEnabled);
                     }}
                 >
                     <Check />
-                </Button>
-                <Button
-                    type="button"
-                    variant={stampActive ? "secondary" : "outline"}
-                    size="icon-sm"
-                    aria-label={
-                        stampActive ?
-                            "Exit stamp tool" :
-                            "Stamp tags onto photos"
-                    }
-                    aria-pressed={stampActive}
-                    title={
-                        stampActive ?
-                            "Exit stamp" :
-                            "Stamp — pick tags, tap photos"
-                    }
+                </ToolButton>
+                <ToolButton
+                    active={stampActive}
+                    activeLabel="Exit stamp tool"
+                    inactiveLabel="Stamp tags onto photos"
+                    activeTitle="Exit stamp"
+                    inactiveTitle="Stamp — pick tags, tap photos"
                     onClick={activateStamp}
                 >
                     <Stamp />
-                </Button>
-                <Button
-                    type="button"
-                    variant={rotateActive ? "secondary" : "outline"}
-                    size="icon-sm"
-                    aria-label={
-                        rotateActive ?
-                            "Exit rotate tool" :
-                            "Quick rotate photos"
-                    }
-                    aria-pressed={rotateActive}
-                    title={
-                        rotateActive ?
-                            "Exit rotate" :
-                            "Rotate — tap photos +90°, then Apply"
-                    }
+                </ToolButton>
+                <ToolButton
+                    active={rotateActive}
+                    activeLabel="Exit rotate tool"
+                    inactiveLabel="Quick rotate photos"
+                    activeTitle="Exit rotate"
+                    inactiveTitle="Rotate — tap photos +90°, then Apply"
                     onClick={toggleRotate}
                 >
                     <RotateCw />
-                </Button>
-                <Button
-                    type="button"
-                    variant={cropActive ? "secondary" : "outline"}
-                    size="icon-sm"
-                    aria-label={
-                        cropActive ?
-                            "Exit crop tool" :
-                            "Quick crop photos"
-                    }
-                    aria-pressed={cropActive}
-                    title={
-                        cropActive ?
-                            "Exit crop" :
-                            "Crop — tap photos, drag boxes, then Apply"
-                    }
+                </ToolButton>
+                <ToolButton
+                    active={cropActive}
+                    activeLabel="Exit crop tool"
+                    inactiveLabel="Quick crop photos"
+                    activeTitle="Exit crop"
+                    inactiveTitle="Crop — tap photos, drag boxes, then Apply"
                     onClick={toggleCrop}
                 >
                     <Crop />
-                </Button>
+                </ToolButton>
             </div>
         </>
+    );
+}
+
+interface ToolMenuItemProps {
+    label: string;
+    active: boolean;
+    onSelect: () => void;
+    children: ReactNode;
+}
+
+function ToolMenuItem({
+    label,
+    active,
+    onSelect,
+    children,
+}: ToolMenuItemProps): JSX.Element {
+    return (
+        <DropdownMenuItem onClick={onSelect}>
+            {children}
+            {label}
+            {active ? (
+                <span className="ml-auto text-xs text-muted-foreground">
+                    On
+                </span>
+            ) : null}
+        </DropdownMenuItem>
+    );
+}
+
+interface ToolButtonProps {
+    active: boolean;
+    activeLabel: string;
+    inactiveLabel: string;
+    activeTitle?: string;
+    inactiveTitle?: string;
+    onClick: () => void;
+    children: ReactNode;
+}
+
+function ToolButton({
+    active,
+    activeLabel,
+    inactiveLabel,
+    activeTitle,
+    inactiveTitle,
+    onClick,
+    children,
+}: ToolButtonProps): JSX.Element {
+    return (
+        <Button
+            type="button"
+            variant={active ? "secondary" : "outline"}
+            size="icon-sm"
+            aria-label={active ? activeLabel : inactiveLabel}
+            aria-pressed={active}
+            title={active ? activeTitle : inactiveTitle}
+            onClick={onClick}
+        >
+            {children}
+        </Button>
     );
 }

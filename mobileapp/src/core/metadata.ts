@@ -80,6 +80,12 @@ type RemotePublicMagicMetadata = Awaited<
     ReturnType<typeof encryptMagicMetadata>
 >;
 
+interface PreparedTagMetadata {
+    file: EnteFile;
+    mergedData: FilePublicMagicMetadataData;
+    magicMetadata: RemotePublicMagicMetadata;
+}
+
 /**
  * PUT one or more public-magic-metadata entries in a single request.
  *
@@ -174,30 +180,49 @@ const putPrivateMetadata = async (
 const maxConflictAttempts = 4;
 
 /**
- * Merge updates into public magic metadata and PUT to remote, re-reading the
- * remote public metadata and merging again on version conflict.
+ * Run {@link attempt}; on a 409 version conflict run {@link recover} and try
+ * again, up to {@link maxConflictAttempts} times.
  */
-export const updatePublicMetadata = async (
-    http: HttpClient,
-    file: EnteFile,
-    updates: Partial<FilePublicMagicMetadataData>,
+const retryOnConflict = async (
+    failureMessage: string,
+    attempt: () => Promise<void>,
+    recover: () => Promise<void>,
 ): Promise<void> => {
-    for (let attempt = 0; attempt < maxConflictAttempts; attempt++) {
+    for (let attemptIndex = 0; attemptIndex < maxConflictAttempts; attemptIndex++) {
         try {
-            const mergedData = {
-                ...file.pubMagicMetadata?.data,
-                ...withEditedAt(updates),
-            } as FilePublicMagicMetadataData;
-            await putPublicMetadata(http, file, mergedData);
+            await attempt();
             return;
         } catch (error) {
             if (
                 !(error instanceof MetadataUpdateError) ||
                 error.status !== 409 ||
-                attempt === maxConflictAttempts - 1
+                attemptIndex === maxConflictAttempts - 1
             ) {
                 throw error;
             }
+            await recover();
+        }
+    }
+    throw new Error(failureMessage);
+};
+
+/**
+ * Merge updates into public magic metadata and PUT to remote, re-reading the
+ * remote public metadata and merging again on version conflict.
+ */
+export const updatePublicMetadata = (
+    http: HttpClient,
+    file: EnteFile,
+    updates: Partial<FilePublicMagicMetadataData>,
+): Promise<void> =>
+    retryOnConflict(
+        `Failed to update public metadata for file ${file.id}`,
+        () =>
+            putPublicMetadata(http, file, {
+                ...file.pubMagicMetadata?.data,
+                ...withEditedAt(updates),
+            } as FilePublicMagicMetadataData),
+        async () => {
             const { pubMagicMetadata } = await getRemoteFile(
                 http,
                 file.collectionID,
@@ -209,10 +234,8 @@ export const updatePublicMetadata = async (
                     file.key,
                 )) as EnteFile["pubMagicMetadata"];
             }
-        }
-    }
-    throw new Error(`Failed to update public metadata for file ${file.id}`);
-};
+        },
+    );
 
 /**
  * Set file visibility (archive / visible) via private magic metadata.
@@ -223,27 +246,16 @@ export const updateFileVisibility = async (
     collectionKey: string,
     visibility: ItemVisibility,
 ): Promise<EnteFile> => {
-    for (let attempt = 0; attempt < maxConflictAttempts; attempt++) {
-        try {
-            const mergedData = {
+    await retryOnConflict(
+        `Failed to update visibility for file ${file.id}`,
+        () =>
+            putPrivateMetadata(http, file, {
                 ...file.magicMetadata?.data,
                 visibility,
-            } as FilePrivateMagicMetadataData;
-            await putPrivateMetadata(http, file, mergedData);
-            return file;
-        } catch (error) {
-            if (
-                !(error instanceof MetadataUpdateError) ||
-                error.status !== 409 ||
-                attempt === maxConflictAttempts - 1
-            ) {
-                throw error;
-            }
-            const fresh = await refetchFile(http, file, collectionKey);
-            Object.assign(file, fresh);
-        }
-    }
-    throw new Error(`Failed to update visibility for file ${file.id}`);
+            } as FilePrivateMagicMetadataData),
+        () => refetchAndAssign(http, file, collectionKey),
+    );
+    return file;
 };
 
 const applyOrganizerTagsLocally = (
@@ -263,15 +275,9 @@ const applyOrganizerTagsLocally = (
  *
  * Works on shallow clones so in-flight encryption never mutates library state.
  */
-export const prepareFilesTagMetadata = async (
+const prepareFilesTagMetadata = async (
     updates: Array<{ file: EnteFile; intendedTags: string[] }>,
-): Promise<
-    Array<{
-        file: EnteFile;
-        mergedData: FilePublicMagicMetadataData;
-        magicMetadata: RemotePublicMagicMetadata;
-    }>
-> =>
+): Promise<PreparedTagMetadata[]> =>
     Promise.all(
         updates.map(async ({ file, intendedTags }) => {
             const working: EnteFile = { ...file };
@@ -298,12 +304,8 @@ export const prepareFilesTagMetadata = async (
 /**
  * Apply prepared tag metadata locally after a successful batch PUT.
  */
-export const applyPreparedTagMetadata = (
-    prepared: Array<{
-        file: EnteFile;
-        mergedData: FilePublicMagicMetadataData;
-        magicMetadata: RemotePublicMagicMetadata;
-    }>,
+const applyPreparedTagMetadata = (
+    prepared: PreparedTagMetadata[],
 ): EnteFile[] => {
     for (const entry of prepared) {
         entry.file.pubMagicMetadata = {
@@ -344,22 +346,18 @@ export const updateFileTags = async (
     collectionKey: string,
     mutator: TagMutator,
 ): Promise<EnteFile> => {
-    for (let attempt = 0; attempt < maxConflictAttempts; attempt++) {
-        try {
-            const mergedData = applyOrganizerTagsLocally(file, mutator);
-            await putPublicMetadata(http, file, mergedData);
-            return file;
-        } catch (error) {
-            if (
-                !(error instanceof MetadataUpdateError) ||
-                error.status !== 409 ||
-                attempt === maxConflictAttempts - 1
-            ) {
-                throw error;
-            }
-            const fresh = await refetchFile(http, file, collectionKey);
-            Object.assign(file, fresh);
-        }
-    }
-    throw new Error(`Failed to update tags for file ${file.id}`);
+    await retryOnConflict(
+        `Failed to update tags for file ${file.id}`,
+        () => putPublicMetadata(http, file, applyOrganizerTagsLocally(file, mutator)),
+        () => refetchAndAssign(http, file, collectionKey),
+    );
+    return file;
+};
+
+const refetchAndAssign = async (
+    http: HttpClient,
+    file: EnteFile,
+    collectionKey: string,
+): Promise<void> => {
+    Object.assign(file, await refetchFile(http, file, collectionKey));
 };

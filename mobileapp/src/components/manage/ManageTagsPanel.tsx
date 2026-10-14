@@ -587,26 +587,17 @@ export function ManageTagsPanel(): JSX.Element {
                         {presetTags.length > 0 ? (
                             <div className="flex flex-wrap gap-1.5">
                                 {presetTags.map((tag) => (
-                                    <Badge
+                                    <RemovableTagBadge
                                         key={tag}
-                                        variant="secondary"
-                                        className="gap-1"
-                                    >
-                                        {tag}
-                                        <button
-                                            type="button"
-                                            className="text-muted-foreground hover:text-foreground"
-                                            aria-label={`Remove ${tag}`}
-                                            onClick={() => {
-                                                setPresetTags((current) =>
-                                                    current.filter(
-                                                        (entry) => entry !== tag,
-                                                    ));
-                                            }}
-                                        >
-                                            ×
-                                        </button>
-                                    </Badge>
+                                        tag={tag}
+                                        removeLabel={`Remove ${tag}`}
+                                        onRemove={() => {
+                                            setPresetTags((current) =>
+                                                current.filter(
+                                                    (entry) => entry !== tag,
+                                                ));
+                                        }}
+                                    />
                                 ))}
                             </div>
                         ) : null}
@@ -731,40 +722,28 @@ export function ManageTagsPanel(): JSX.Element {
                                         </div>
                                         <div className="flex flex-wrap gap-1.5">
                                             {preset.tags.map((tag) => (
-                                                <Badge
+                                                <RemovableTagBadge
                                                     key={tag}
-                                                    variant="secondary"
-                                                    className="gap-1"
-                                                >
-                                                    {tag}
-                                                    <button
-                                                        type="button"
-                                                        className="text-muted-foreground hover:text-foreground"
-                                                        aria-label={`Remove ${tag} from ${preset.name}`}
-                                                        onClick={() => {
-                                                            const next =
-                                                                preset.tags.filter(
-                                                                    (entry) =>
-                                                                        entry !==
-                                                                        tag,
-                                                                );
-                                                            if (
-                                                                next.length === 0
-                                                            ) {
-                                                                deletePreset(
-                                                                    preset.id,
-                                                                );
-                                                                return;
-                                                            }
-                                                            updatePreset(
-                                                                preset.id,
-                                                                { tags: next },
+                                                    tag={tag}
+                                                    removeLabel={`Remove ${tag} from ${preset.name}`}
+                                                    onRemove={() => {
+                                                        const next =
+                                                            preset.tags.filter(
+                                                                (entry) =>
+                                                                    entry !== tag,
                                                             );
-                                                        }}
-                                                    >
-                                                        ×
-                                                    </button>
-                                                </Badge>
+                                                        if (next.length === 0) {
+                                                            deletePreset(
+                                                                preset.id,
+                                                            );
+                                                            return;
+                                                        }
+                                                        updatePreset(
+                                                            preset.id,
+                                                            { tags: next },
+                                                        );
+                                                    }}
+                                                />
                                             ))}
                                         </div>
                                         <select
@@ -1032,6 +1011,30 @@ export function ManageTagsPanel(): JSX.Element {
                 </AlertDialogContent>
             </AlertDialog>
         </div>
+    );
+}
+
+function RemovableTagBadge({
+    tag,
+    removeLabel,
+    onRemove,
+}: {
+    tag: string;
+    removeLabel: string;
+    onRemove: () => void;
+}): JSX.Element {
+    return (
+        <Badge variant="secondary" className="gap-1">
+            {tag}
+            <button
+                type="button"
+                className="text-muted-foreground hover:text-foreground"
+                aria-label={removeLabel}
+                onClick={onRemove}
+            >
+                ×
+            </button>
+        </Badge>
     );
 }
 

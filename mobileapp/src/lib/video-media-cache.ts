@@ -80,21 +80,6 @@ export const retainSessionVideoUrl = (
 };
 
 /**
- * Return a session-cached video blob URL if present (and touch LRU).
- * Does not transfer ownership — prefer {@link takeSessionVideoUrl} for the viewer.
- */
-export const peekSessionVideo = (
-    fileId: number,
-): { url: string; byteSize: number } | undefined => {
-    const entry = sessionCache.get(fileId);
-    if (!entry) {
-        return undefined;
-    }
-    entry.lastAccess = Date.now();
-    return { url: entry.url, byteSize: entry.byteSize };
-};
-
-/**
  * Remove a session entry and return it so the caller owns the blob URL.
  * Prevents the session LRU from revoking a URL still shown in the carousel.
  */

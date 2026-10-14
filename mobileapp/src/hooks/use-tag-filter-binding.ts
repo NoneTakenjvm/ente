@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useMemo } from "react";
 import type { KitFilterInput } from "@/lib/tag-filter-mutations";
 import type {
     CroppedScope,
@@ -50,154 +50,39 @@ export function useTagFilterBinding(
 ): TagFilterBinding {
     const filter = useTagStore((s) =>
         target === "gallery" ? s.tagFilter : s.albumViewFilter);
-    const setTagScopeStore = useTagStore((s) => s.setTagScope);
-    const setFavoritesScopeStore = useTagStore((s) => s.setFavoritesScope);
-    const setMediaScopeStore = useTagStore((s) => s.setMediaScope);
-    const setCroppedScopeStore = useTagStore((s) => s.setCroppedScope);
-    const setRotatedScopeStore = useTagStore((s) => s.setRotatedScope);
-    const setTagFilterModeStore = useTagStore((s) => s.setTagFilterMode);
-    const setClauseModeStore = useTagStore((s) => s.setClauseMode);
-    const setClauseInGroupStore = useTagStore((s) => s.setClauseInGroup);
-    const setKitModeStore = useTagStore((s) => s.setKitMode);
-    const setKitInGroupStore = useTagStore((s) => s.setKitInGroup);
-    const setGroupOpStore = useTagStore((s) => s.setGroupOp);
-    const wrapInGroupStore = useTagStore((s) => s.wrapInGroup);
-    const ungroupStore = useTagStore((s) => s.ungroup);
-    const removeNodeStore = useTagStore((s) => s.removeNode);
-    const clearFiltersStore = useTagStore((s) => s.clearFilters);
 
-    const setTagScope = useCallback(
-        (scope: TagScope): void => {
-            setTagScopeStore(scope, target);
-        },
-        [setTagScopeStore, target],
-    );
-    const setFavoritesScope = useCallback(
-        (favoritesScope: FavoritesScope): void => {
-            setFavoritesScopeStore(favoritesScope, target);
-        },
-        [setFavoritesScopeStore, target],
-    );
-    const setMediaScope = useCallback(
-        (mediaScope: MediaScope): void => {
-            setMediaScopeStore(mediaScope, target);
-        },
-        [setMediaScopeStore, target],
-    );
-    const setCroppedScope = useCallback(
-        (croppedScope: CroppedScope): void => {
-            setCroppedScopeStore(croppedScope, target);
-        },
-        [setCroppedScopeStore, target],
-    );
-    const setRotatedScope = useCallback(
-        (rotatedScope: RotatedScope): void => {
-            setRotatedScopeStore(rotatedScope, target);
-        },
-        [setRotatedScopeStore, target],
-    );
-    const setTagFilterMode = useCallback(
-        (tag: string, mode: TagFilterMode | null): void => {
-            setTagFilterModeStore(tag, mode, target);
-        },
-        [setTagFilterModeStore, target],
-    );
-    const setClauseMode = useCallback(
-        (clauseId: string, mode: TagFilterMode): void => {
-            setClauseModeStore(clauseId, mode, target);
-        },
-        [setClauseModeStore, target],
-    );
-    const setClauseInGroup = useCallback(
-        (
-            groupId: string,
-            tag: string,
-            mode: TagFilterMode | null,
-        ): void => {
-            setClauseInGroupStore(groupId, tag, mode, target);
-        },
-        [setClauseInGroupStore, target],
-    );
-    const setKitMode = useCallback(
-        (kit: KitFilterInput, mode: TagFilterMode | null): void => {
-            setKitModeStore(kit, mode, target);
-        },
-        [setKitModeStore, target],
-    );
-    const setKitInGroup = useCallback(
-        (
-            groupId: string,
-            kit: KitFilterInput,
-            mode: TagFilterMode | null,
-        ): void => {
-            setKitInGroupStore(groupId, kit, mode, target);
-        },
-        [setKitInGroupStore, target],
-    );
-    const setGroupOp = useCallback(
-        (groupId: string, op: TagFilterJoin): void => {
-            setGroupOpStore(groupId, op, target);
-        },
-        [setGroupOpStore, target],
-    );
-    const wrapInGroup = useCallback(
-        (nodeIds: string[], op: TagFilterJoin): void => {
-            wrapInGroupStore(nodeIds, op, target);
-        },
-        [target, wrapInGroupStore],
-    );
-    const ungroup = useCallback(
-        (groupId: string): void => {
-            ungroupStore(groupId, target);
-        },
-        [target, ungroupStore],
-    );
-    const removeNode = useCallback(
-        (nodeId: string): void => {
-            removeNodeStore(nodeId, target);
-        },
-        [removeNodeStore, target],
-    );
-    const clearFilters = useCallback((): void => {
-        clearFiltersStore(target);
-    }, [clearFiltersStore, target]);
+    const actions = useMemo((): Omit<TagFilterBinding, "filter"> => {
+        const store = useTagStore.getState;
+        return {
+            setTagScope: (scope) => store().setTagScope(scope, target),
+            setFavoritesScope: (favoritesScope) =>
+                store().setFavoritesScope(favoritesScope, target),
+            setMediaScope: (mediaScope) =>
+                store().setMediaScope(mediaScope, target),
+            setCroppedScope: (croppedScope) =>
+                store().setCroppedScope(croppedScope, target),
+            setRotatedScope: (rotatedScope) =>
+                store().setRotatedScope(rotatedScope, target),
+            setTagFilterMode: (tag, mode) =>
+                store().setTagFilterMode(tag, mode, target),
+            setClauseMode: (clauseId, mode) =>
+                store().setClauseMode(clauseId, mode, target),
+            setClauseInGroup: (groupId, tag, mode) =>
+                store().setClauseInGroup(groupId, tag, mode, target),
+            setKitMode: (kit, mode) => store().setKitMode(kit, mode, target),
+            setKitInGroup: (groupId, kit, mode) =>
+                store().setKitInGroup(groupId, kit, mode, target),
+            setGroupOp: (groupId, op) => store().setGroupOp(groupId, op, target),
+            wrapInGroup: (nodeIds, op) =>
+                store().wrapInGroup(nodeIds, op, target),
+            ungroup: (groupId) => store().ungroup(groupId, target),
+            removeNode: (nodeId) => store().removeNode(nodeId, target),
+            clearFilters: () => store().clearFilters(target),
+        };
+    }, [target]);
 
     return useMemo(
-        (): TagFilterBinding => ({
-            filter,
-            setTagScope,
-            setFavoritesScope,
-            setMediaScope,
-            setCroppedScope,
-            setRotatedScope,
-            setTagFilterMode,
-            setClauseMode,
-            setClauseInGroup,
-            setKitMode,
-            setKitInGroup,
-            setGroupOp,
-            wrapInGroup,
-            ungroup,
-            removeNode,
-            clearFilters,
-        }),
-        [
-            clearFilters,
-            filter,
-            removeNode,
-            setClauseInGroup,
-            setClauseMode,
-            setCroppedScope,
-            setRotatedScope,
-            setFavoritesScope,
-            setGroupOp,
-            setKitInGroup,
-            setKitMode,
-            setMediaScope,
-            setTagFilterMode,
-            setTagScope,
-            ungroup,
-            wrapInGroup,
-        ],
+        (): TagFilterBinding => ({ filter, ...actions }),
+        [filter, actions],
     );
 }

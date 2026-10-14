@@ -189,9 +189,11 @@ export default function ManagePage(): JSX.Element {
     const [shownGroupCount, setShownGroupCount] = useState<number>(dedupGroupPageSize);
     const initialLoadDone = useLibraryBootstrap({
         afterSync: async (): Promise<void> => {
-            await hydratePhash();
-            await hydrateEmbeddings();
-            await hydrateQuality();
+            await Promise.all([
+                hydratePhash(),
+                hydrateEmbeddings(),
+                hydrateQuality(),
+            ]);
         },
     });
 
@@ -642,12 +644,7 @@ export default function ManagePage(): JSX.Element {
 
     const handleBack = (): void => {
         if (isManageToolSection(section)) {
-            setSection("tools");
-            void router.replace(
-                { pathname: "/manage", query: { section: "tools" } },
-                undefined,
-                { shallow: true },
-            );
+            handleSelectSection("tools");
             return;
         }
         setSection("hub");
@@ -670,10 +667,7 @@ export default function ManagePage(): JSX.Element {
             ) :
             0;
 
-    const showCompressLoader =
-        section === "compress" &&
-        !initialLoadDone &&
-        (syncStatus === "loadingFromCache" || syncStatus === "syncing");
+    const showCompressLoader = section === "compress" && showFullPageLoader;
 
     const shellTitle =
         section === "hub" ? "Manage" : manageSectionTitle(section);

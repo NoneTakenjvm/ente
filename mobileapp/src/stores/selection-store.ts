@@ -73,16 +73,26 @@ const cropOff = {
     cropBusy: false,
 };
 
-const initialState = {
-    enabled: false,
-    selectedIds: [] as number[],
-    stampActive: false,
-    stampTags: [] as string[],
-    stampPickMode: "kit" as StampPickMode,
-    stampSheetOpen: false,
+/** Rotate fields with the tool off; spread into any set() that leaves rotate mode. */
+const rotateOff = {
     rotateActive: false,
     pendingRotations: {} as Record<number, RotationDegrees>,
     rotateBusy: false,
+};
+
+/** Stamp fields with the tool off; spread into any set() that leaves stamp mode. */
+const stampOff = {
+    stampActive: false,
+    stampSheetOpen: false,
+};
+
+const initialState = {
+    enabled: false,
+    selectedIds: [] as number[],
+    stampTags: [] as string[],
+    stampPickMode: "kit" as StampPickMode,
+    ...stampOff,
+    ...rotateOff,
     ...cropOff,
 };
 
@@ -90,28 +100,12 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
     ...initialState,
 
     setEnabled: (enabled: boolean): void => {
-        if (!enabled) {
-            set({
-                enabled: false,
-                selectedIds: [],
-                stampActive: false,
-                stampSheetOpen: false,
-                rotateActive: false,
-                pendingRotations: {},
-                rotateBusy: false,
-                ...cropOff,
-            });
-            return;
-        }
         set({
-            enabled: true,
-            stampActive: false,
-            stampSheetOpen: false,
-            rotateActive: false,
-            pendingRotations: {},
-            rotateBusy: false,
+            enabled,
+            ...(enabled ? {} : { selectedIds: [] }),
+            ...stampOff,
+            ...rotateOff,
             ...cropOff,
-            selectedIds: get().selectedIds,
         });
     },
 
@@ -157,11 +151,8 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
     selectAll: (fileIds: number[]): void => {
         set({
             enabled: true,
-            stampActive: false,
-            stampSheetOpen: false,
-            rotateActive: false,
-            pendingRotations: {},
-            rotateBusy: false,
+            ...stampOff,
+            ...rotateOff,
             ...cropOff,
             selectedIds: [...new Set(fileIds)],
         });
@@ -185,19 +176,17 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
         if (active) {
             const { stampTags, stampPickMode } = get();
             set({
-                stampActive: true,
                 enabled: false,
                 selectedIds: [],
-                rotateActive: false,
-                pendingRotations: {},
-                rotateBusy: false,
+                ...rotateOff,
                 ...cropOff,
+                stampActive: true,
                 stampSheetOpen:
                     stampTags.length === 0 && stampPickMode === "tag",
             });
             return;
         }
-        set({ stampActive: false, stampSheetOpen: false });
+        set(stampOff);
     },
 
     setStampTags: (tags: string[]): void => {
@@ -249,18 +238,16 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
     setRotateActive: (active: boolean): void => {
         if (active) {
             set({
-                rotateActive: true,
                 enabled: false,
                 selectedIds: [],
-                stampActive: false,
-                stampSheetOpen: false,
-                pendingRotations: {},
-                rotateBusy: false,
+                ...stampOff,
+                ...rotateOff,
                 ...cropOff,
+                rotateActive: true,
             });
             return;
         }
-        set({ rotateActive: false, pendingRotations: {}, rotateBusy: false });
+        set(rotateOff);
     },
 
     setRotateBusy: (busy: boolean): void => {
@@ -300,15 +287,12 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
     setCropActive: (active: boolean): void => {
         if (active) {
             set({
-                ...cropOff,
-                cropActive: true,
                 enabled: false,
                 selectedIds: [],
-                stampActive: false,
-                stampSheetOpen: false,
-                rotateActive: false,
-                pendingRotations: {},
-                rotateBusy: false,
+                ...stampOff,
+                ...rotateOff,
+                ...cropOff,
+                cropActive: true,
             });
             return;
         }

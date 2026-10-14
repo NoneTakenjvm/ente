@@ -24,15 +24,7 @@ interface TagQueryBuilderPanelProps extends TagQueryBuilderContentProps {
 export function TagQueryBuilderPanel({
     hasQueryContent,
     clauseCount = 0,
-    filterTarget,
-    taggedCount,
-    untaggedCount,
-    favoritesCount,
-    notFavoritesCount,
-    photoCount,
-    videoCount,
-    croppedCount,
-    notCroppedCount,
+    ...contentProps
 }: TagQueryBuilderPanelProps): JSX.Element {
     return (
         <DropdownMenu>
@@ -60,17 +52,7 @@ export function TagQueryBuilderPanel({
                     <DropdownMenuLabel className="shrink-0 px-0">
                         Query builder
                     </DropdownMenuLabel>
-                    <TagQueryBuilderContent
-                        filterTarget={filterTarget}
-                        taggedCount={taggedCount}
-                        untaggedCount={untaggedCount}
-                        favoritesCount={favoritesCount}
-                        notFavoritesCount={notFavoritesCount}
-                        photoCount={photoCount}
-                        videoCount={videoCount}
-                        croppedCount={croppedCount}
-                        notCroppedCount={notCroppedCount}
-                    />
+                    <TagQueryBuilderContent {...contentProps} />
                 </DropdownMenuGroup>
             </DropdownMenuContent>
         </DropdownMenu>

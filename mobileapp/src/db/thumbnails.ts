@@ -294,9 +294,3 @@ export const deleteThumbnailCiphertext = async (
 /** Flush coalesced LRU lastAccess writes (pagehide / durable flush). */
 export const flushThumbnailLruTouches = (): Promise<void> =>
     thumbnailTouches.flush();
-
-/** Test helper — drop the session byte counter (does not touch IndexedDB). */
-export const resetThumbnailDiskByteCacheForTests = (): void => {
-    cachedDiskBytes = undefined;
-    seedDiskBytesPromise = undefined;
-};

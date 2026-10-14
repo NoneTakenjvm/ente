@@ -114,17 +114,17 @@ export default function AlbumsPage(): JSX.Element {
     }, [allFiles, sortLibraryFiles]);
 
     const albumFiles = useMemo(() => {
-        if (!activeAlbum) {
+        if (!activeAlbumQuery) {
             return [];
         }
         return filterFilesByTags(
             libraryFiles,
-            queryAlbumFilter(activeAlbum),
+            activeAlbumQuery,
             fileIdsByTag,
             { favoriteFileIds, includeInEffectsPresenceByName },
         );
     }, [
-        activeAlbum,
+        activeAlbumQuery,
         favoriteFileIds,
         fileIdsByTag,
         includeInEffectsPresenceByName,

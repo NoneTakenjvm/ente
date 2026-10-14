@@ -41,6 +41,11 @@ import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
 import { toast } from "sonner";
 
+const isFullyApplied = (
+    info: { count: number; total: number } | undefined,
+): boolean =>
+    info !== undefined && info.total > 0 && info.count === info.total;
+
 export function SelectionActionFooter(): JSX.Element | null {
     const enabled = useSelectionStore((s) => s.enabled);
     const selectedIds = useSelectionStore((s) => s.selectedIds);
@@ -132,25 +137,25 @@ export function SelectionActionFooter(): JSX.Element | null {
         [livePresence.presence],
     );
 
-    const runTagBusy = useCallback(
-        async (task: () => Promise<{ failed: number }>): Promise<boolean> => {
+    /** Runs a footer tag write and leaves selection mode once it succeeds. */
+    const runTagAction = useCallback(
+        async (task: () => Promise<{ failed: number }>): Promise<void> => {
             setTagBusy(true);
             setTagError(undefined);
             try {
                 await task();
-                return true;
+                exitSelection();
             } catch (error) {
                 setTagError(
                     error instanceof Error ?
                         error.message :
                         "Could not update tags",
                 );
-                return false;
             } finally {
                 setTagBusy(false);
             }
         },
-        [],
+        [exitSelection],
     );
 
     /** Flush staged sheet edits. `"applied"` means tags were written. */
@@ -262,16 +267,13 @@ export function SelectionActionFooter(): JSX.Element | null {
             if (!selectedIds.length) {
                 return;
             }
-            const info = presence.get(tag);
-            const ok =
-                info && info.count === info.total && info.total > 0 ?
-                    await runTagBusy(() => bulkRemoveTags(selectedIds, [tag])) :
-                    await runTagBusy(() => bulkAddTags(selectedIds, [tag]));
-            if (ok) {
-                exitSelection();
-            }
+            const fullyOn = isFullyApplied(presence.get(tag));
+            await runTagAction(() =>
+                fullyOn ?
+                    bulkRemoveTags(selectedIds, [tag]) :
+                    bulkAddTags(selectedIds, [tag]));
         },
-        [exitSelection, presence, runTagBusy, selectedIds],
+        [presence, runTagAction, selectedIds],
     );
 
     const handleCopyTagsFromFirst = useCallback(async (): Promise<void> => {
@@ -289,11 +291,8 @@ export function SelectionActionFooter(): JSX.Element | null {
             return;
         }
         const targets = selectedFiles.slice(1).map((file) => file.id);
-        const ok = await runTagBusy(() => bulkAddTags(targets, tags));
-        if (ok) {
-            exitSelection();
-        }
-    }, [exitSelection, runTagBusy, selectedFiles]);
+        await runTagAction(() => bulkAddTags(targets, tags));
+    }, [runTagAction, selectedFiles]);
 
     const handleFavorite = useCallback(
         async (isFavorite: boolean): Promise<void> => {
@@ -412,14 +411,11 @@ export function SelectionActionFooter(): JSX.Element | null {
                     <div className="flex gap-1.5 overflow-x-auto pb-0.5">
                         {workingSetTags.map((tag) => {
                             const info = presence.get(tag);
-                            const fullyOn =
-                                Boolean(info) &&
-                                info!.count === info!.total &&
-                                info!.total > 0;
+                            const fullyOn = isFullyApplied(info);
                             const partial =
-                                Boolean(info) &&
-                                info!.count > 0 &&
-                                info!.count < info!.total;
+                                info !== undefined &&
+                                info.count > 0 &&
+                                info.count < info.total;
                             return (
                                 <Button
                                     key={tag}
@@ -457,16 +453,8 @@ export function SelectionActionFooter(): JSX.Element | null {
                                 className="h-8 shrink-0 border-dashed"
                                 disabled={footerTagActionsDisabled}
                                 onClick={() => {
-                                    void (async () => {
-                                        const ok = await runTagBusy(() =>
-                                            bulkAddTags(
-                                                selectedIds,
-                                                preset.tags,
-                                            ));
-                                        if (ok) {
-                                            exitSelection();
-                                        }
-                                    })();
+                                    void runTagAction(() =>
+                                        bulkAddTags(selectedIds, preset.tags));
                                 }}
                             >
                                 {preset.name}

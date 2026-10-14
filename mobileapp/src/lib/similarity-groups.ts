@@ -89,8 +89,42 @@ class UnionFind {
     }
 }
 
-const variantDistance = (left: string[], right: string[]): number =>
-    variantHammingDistanceHex(left, right);
+/** Resolve file ids to display items, skipping files with no known collection. */
+const similarityGroupItems = (
+    fileIds: Iterable<number>,
+    filesById: Map<number, EnteFile>,
+    names: Map<number, string>,
+): DedupGroupItem[] => {
+    const items: DedupGroupItem[] = [];
+    for (const fileId of fileIds) {
+        const file = filesById.get(fileId);
+        if (!file) {
+            continue;
+        }
+        const collectionName = names.get(file.collectionID);
+        if (!collectionName) {
+            continue;
+        }
+        items.push({
+            file,
+            collectionIDs: new Set([file.collectionID]),
+            collectionName,
+        });
+    }
+    return items;
+};
+
+const toSimilarityGroup = (
+    items: DedupGroupItem[],
+    maxDistance: number,
+): SimilarityGroup => {
+    items.sort((a, b) => a.collectionName.localeCompare(b.collectionName));
+    return {
+        id: `similar-${items.map((item) => item.file.id).sort((a, b) => a - b).join("-")}`,
+        items,
+        maxDistance,
+    };
+};
 
 /** Only the owned, allowed-collection, non-archived image files that have a phash entry. */
 export const indexableFiles = (
@@ -149,31 +183,11 @@ export const clustersToSimilarityGroups = (
     const groups: SimilarityGroup[] = [];
 
     for (const cluster of clusters) {
-        const items: DedupGroupItem[] = [];
-        for (const fileId of cluster.fileIds) {
-            const file = filesById.get(fileId);
-            if (!file) {
-                continue;
-            }
-            const collectionName = names.get(file.collectionID);
-            if (!collectionName) {
-                continue;
-            }
-            items.push({
-                file,
-                collectionIDs: new Set([file.collectionID]),
-                collectionName,
-            });
-        }
+        const items = similarityGroupItems(cluster.fileIds, filesById, names);
         if (items.length < 2) {
             continue;
         }
-        items.sort((a, b) => a.collectionName.localeCompare(b.collectionName));
-        groups.push({
-            id: `similar-${items.map((item) => item.file.id).sort((a, b) => a - b).join("-")}`,
-            items,
-            maxDistance: cluster.furthestDistance,
-        });
+        groups.push(toSimilarityGroup(items, cluster.furthestDistance));
     }
 
     return groups.sort((a, b) => b.items.length - a.items.length);
@@ -230,60 +244,37 @@ const assembleGroup = (
     memberIndices: number[],
     indexed: Array<{ fileId: number; entry: PhashEntry }>,
     filesById: Map<number, EnteFile>,
-    collections: Collection[],
-    userId: number,
+    names: Map<number, string>,
     computeMaxDistance = true,
 ): SimilarityGroup | undefined => {
-    const ownedCollections = normalOwnedCollections(collections, userId);
-    const names = collectionNameByID(ownedCollections);
-
-    const items: DedupGroupItem[] = [];
-    let maxDistance = 0;
-    const memberHashes: string[][] = [];
-
-    for (const index of memberIndices) {
-        const { fileId, entry } = indexed[index]!;
-        memberHashes.push(entry.hashes);
-        const file = filesById.get(fileId);
-        if (!file) {
-            continue;
-        }
-        const collectionName = names.get(file.collectionID);
-        if (!collectionName) {
-            continue;
-        }
-        items.push({
-            file,
-            collectionIDs: new Set([file.collectionID]),
-            collectionName,
-        });
-    }
-
+    const items = similarityGroupItems(
+        memberIndices.map((index) => indexed[index]!.fileId),
+        filesById,
+        names,
+    );
     if (items.length < 2) {
         return undefined;
     }
 
+    let maxDistance = 0;
     if (
         computeMaxDistance &&
-        memberHashes.length <= MAX_DISTANCE_PAIRWISE_MEMBERS
+        memberIndices.length <= MAX_DISTANCE_PAIRWISE_MEMBERS
     ) {
-        for (let i = 0; i < memberHashes.length; i++) {
-            for (let j = i + 1; j < memberHashes.length; j++) {
+        for (let i = 0; i < memberIndices.length; i++) {
+            for (let j = i + 1; j < memberIndices.length; j++) {
                 maxDistance = Math.max(
                     maxDistance,
-                    variantDistance(memberHashes[i]!, memberHashes[j]!),
+                    variantHammingDistanceHex(
+                        indexed[memberIndices[i]!]!.entry.hashes,
+                        indexed[memberIndices[j]!]!.entry.hashes,
+                    ),
                 );
             }
         }
     }
 
-    items.sort((a, b) => a.collectionName.localeCompare(b.collectionName));
-
-    return {
-        id: `similar-${items.map((item) => item.file.id).sort((a, b) => a - b).join("-")}`,
-        items,
-        maxDistance,
-    };
+    return toSimilarityGroup(items, maxDistance);
 };
 
 export interface CropMergeOptions {
@@ -376,27 +367,19 @@ export const mergeCropMatches = async (
         }
     };
 
+    const seedFileIdSets =
+        stage1Clusters && stage1Clusters.length > 0 ?
+            stage1Clusters.map((cluster) => cluster.fileIds) :
+            groups.map((group) => group.items.map((item) => item.file.id));
     const stage1MemberIndexes = new Set<number>();
-    if (stage1Clusters && stage1Clusters.length > 0) {
-        for (const cluster of stage1Clusters) {
-            const memberIndexes = cluster.fileIds
-                .map((fileId) => indexById.get(fileId))
-                .filter((index): index is number => index !== undefined);
-            for (const index of memberIndexes) {
-                stage1MemberIndexes.add(index);
-            }
-            seedMemberIndexes(memberIndexes);
+    for (const seedFileIds of seedFileIdSets) {
+        const memberIndexes = seedFileIds
+            .map((fileId) => indexById.get(fileId))
+            .filter((index): index is number => index !== undefined);
+        for (const index of memberIndexes) {
+            stage1MemberIndexes.add(index);
         }
-    } else {
-        for (const group of groups) {
-            const memberIndexes = group.items
-                .map((item) => indexById.get(item.file.id))
-                .filter((index): index is number => index !== undefined);
-            for (const index of memberIndexes) {
-                stage1MemberIndexes.add(index);
-            }
-            seedMemberIndexes(memberIndexes);
-        }
+        seedMemberIndexes(memberIndexes);
     }
 
     const buckets = new Map<string, number[]>();
@@ -475,6 +458,10 @@ export const mergeCropMatches = async (
         MAX_TOTAL_CROP_CANDIDATES,
     );
 
+    const names = collectionNameByID(
+        normalOwnedCollections(collections, userId),
+    );
+
     const rebuildGroups = (computeMaxDistance: boolean): SimilarityGroup[] => {
         const groupsByRoot = new Map<number, number[]>();
         for (let i = 0; i < indexed.length; i++) {
@@ -499,8 +486,7 @@ export const mergeCropMatches = async (
                 memberIndices,
                 indexed,
                 filesById,
-                collections,
-                userId,
+                names,
                 computeMaxDistance,
             );
             if (group) {

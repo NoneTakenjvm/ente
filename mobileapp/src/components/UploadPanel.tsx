@@ -176,16 +176,16 @@ export function UploadPanel({
     const panelOpen = useUploadJobStore((s) => s.panelOpen);
     const setPanelOpen = useUploadJobStore((s) => s.setPanelOpen);
     const requestCancel = useUploadJobStore((s) => s.requestCancel);
+    const uploadProgress = useUploadJobStore((s) => s.progress);
 
     const albums = useMemo(
         () => uploadableCollections(collections),
         [collections],
     );
 
-    const selectedCollectionId = useMemo(
-        (): number | undefined =>
-            defaultUploadCollectionId(albums, activeCollectionId),
-        [activeCollectionId, albums],
+    const selectedCollectionId = defaultUploadCollectionId(
+        albums,
+        activeCollectionId,
     );
 
     const [phase, setPhase] = useState<PanelPhase>("idle");
@@ -196,15 +196,7 @@ export function UploadPanel({
         current: 0,
         total: 0,
     });
-    const [uploadProgress, setUploadProgress] = useState<{
-        current: number;
-        total: number;
-        inFlight: number;
-    }>({
-        current: 0,
-        total: 0,
-        inFlight: 0,
-    });
+    const [uploadInFlight, setUploadInFlight] = useState<number>(0);
     const [resultMessage, setResultMessage] = useState<string | undefined>();
     const stagedFilesRef = useRef<StagedFile[]>([]);
     const stagingGenerationRef = useRef<number>(0);
@@ -212,6 +204,7 @@ export function UploadPanel({
 
     const staging = phase === "staging";
     const uploading = phase === "uploading";
+    const selectionLocked = staging || uploading;
 
     useEffect(() => {
         stagedFilesRef.current = stagedFiles;
@@ -240,7 +233,7 @@ export function UploadPanel({
             setPhase("uploading");
             setError(undefined);
             setResultMessage(undefined);
-            setUploadProgress({ current: 0, total: filesToUpload.length, inFlight: 0 });
+            setUploadInFlight(0);
             setUploadJobStatus("running");
             setUploadJobProgress(0, filesToUpload.length);
 
@@ -250,18 +243,20 @@ export function UploadPanel({
             const errors: string[] = [];
             let nextIndex = 0;
 
+            const throwIfCancelled = (): void => {
+                if (useUploadJobStore.getState().cancelRequested) {
+                    throw new Error("Upload cancelled");
+                }
+            };
+
             const uploadStagedFile = async (
                 entry: StagedFile,
                 crypto: UploadCryptoWorker,
             ): Promise<void> => {
-                if (useUploadJobStore.getState().cancelRequested) {
-                    throw new Error("Upload cancelled");
-                }
+                throwIfCancelled();
                 if (entry.kind === "video") {
                     const prepared = await prepareLocalVideo(entry.file);
-                    if (useUploadJobStore.getState().cancelRequested) {
-                        throw new Error("Upload cancelled");
-                    }
+                    throwIfCancelled();
                     await uploadVideoFile(
                         selectedCollectionId,
                         prepared.file,
@@ -279,9 +274,7 @@ export function UploadPanel({
                 }
 
                 const prepared = await prepareLocalImage(entry.file);
-                if (useUploadJobStore.getState().cancelRequested) {
-                    throw new Error("Upload cancelled");
-                }
+                throwIfCancelled();
                 await uploadImageFile(
                     selectedCollectionId,
                     prepared.bytes,
@@ -296,13 +289,8 @@ export function UploadPanel({
             };
 
             const reportProgress = (): void => {
-                const current = completed + failed;
-                setUploadProgress({
-                    current,
-                    total: filesToUpload.length,
-                    inFlight,
-                });
-                setUploadJobProgress(current, filesToUpload.length);
+                setUploadInFlight(inFlight);
+                setUploadJobProgress(completed + failed, filesToUpload.length);
             };
 
             const worker = async (slotIndex: number): Promise<void> => {
@@ -500,7 +488,7 @@ export function UploadPanel({
     );
 
     const toggleFile = useCallback((id: string): void => {
-        if (staging || uploading) {
+        if (selectionLocked) {
             return;
         }
         setSelectedIds((current) => {
@@ -512,10 +500,10 @@ export function UploadPanel({
             }
             return next;
         });
-    }, [staging, uploading]);
+    }, [selectionLocked]);
 
     const selectMany = useCallback((ids: string[], mode: "add" | "toggle" | "set"): void => {
-        if (staging || uploading) {
+        if (selectionLocked) {
             return;
         }
         setSelectedIds((current) => {
@@ -534,26 +522,11 @@ export function UploadPanel({
             }
             return next;
         });
-    }, [staging, uploading]);
-
-    const stagedIds = useMemo(
-        () => new Set(stagedFiles.map((entry) => entry.id)),
-        [stagedFiles],
-    );
-
-    const activeSelectedIds = useMemo(() => {
-        const next = new Set<string>();
-        for (const id of selectedIds) {
-            if (stagedIds.has(id)) {
-                next.add(id);
-            }
-        }
-        return next;
-    }, [selectedIds, stagedIds]);
+    }, [selectionLocked]);
 
     const selectedFiles = useMemo(
-        () => stagedFiles.filter((entry) => activeSelectedIds.has(entry.id)),
-        [activeSelectedIds, stagedFiles],
+        () => stagedFiles.filter((entry) => selectedIds.has(entry.id)),
+        [selectedIds, stagedFiles],
     );
 
     const gridItems: LocalUploadItem[] = useMemo(
@@ -570,12 +543,9 @@ export function UploadPanel({
 
     const allSelected =
         stagedFiles.length > 0 &&
-        stagedFiles.every((entry) => activeSelectedIds.has(entry.id));
+        stagedFiles.every((entry) => selectedIds.has(entry.id));
 
     const toggleAll = (): void => {
-        if (staging || uploading) {
-            return;
-        }
         setSelectedIds(
             allSelected ?
                 new Set() :
@@ -623,15 +593,15 @@ export function UploadPanel({
 
     const gridSelection = useMemo(
         () => ({
-            selectedIds: activeSelectedIds,
+            selectedIds,
             onToggle: toggleFile,
             onSelectMany: selectMany,
             onSetSelection: (ids: string[]): void => {
                 selectMany(ids, "set");
             },
-            disabled: staging || uploading,
+            disabled: selectionLocked,
         }),
-        [activeSelectedIds, selectMany, staging, toggleFile, uploading],
+        [selectedIds, selectMany, selectionLocked, toggleFile],
     );
 
     const albumsLoading =
@@ -641,15 +611,10 @@ export function UploadPanel({
     const canPick =
         selectedCollectionId !== undefined &&
         albums.length > 0 &&
-        !staging &&
-        !uploading &&
+        !selectionLocked &&
         !albumsLoading;
 
-    const canManualUpload =
-        phase === "review" &&
-        activeSelectedIds.size > 0 &&
-        !staging &&
-        !uploading;
+    const canManualUpload = phase === "review" && selectedIds.size > 0;
 
     const progressPercent =
         uploadProgress.total > 0 ?
@@ -660,6 +625,8 @@ export function UploadPanel({
         stagingProgress.total > 0 ?
             Math.round((stagingProgress.current / stagingProgress.total) * 100) :
             0;
+
+    const showPicker = phase === "idle" || staging;
 
     const closeLabel =
         phase === "done" ?
@@ -732,7 +699,7 @@ export function UploadPanel({
                                     {stagedFiles.length === 1 ? "" : "s"}
                                     {uploading ?
                                         ` · uploading ${uploadProgress.current}/${uploadProgress.total}` :
-                                        ` · ${activeSelectedIds.size} selected`}
+                                        ` · ${selectedIds.size} selected`}
                                 </p>
                                 {phase === "review" ? (
                                     <div className="flex flex-wrap gap-2">
@@ -740,7 +707,6 @@ export function UploadPanel({
                                             type="button"
                                             variant="ghost"
                                             size="sm"
-                                            disabled={staging || uploading || stagedFiles.length === 0}
                                             onClick={toggleAll}
                                         >
                                             {allSelected ? "Deselect all" : "Select all"}
@@ -770,8 +736,8 @@ export function UploadPanel({
                         <div className="flex flex-col gap-3 py-2">
                             <p className="flex items-center gap-2 text-sm text-muted-foreground">
                                 <Spinner />
-                                {uploadProgress.inFlight > 0 ?
-                                    `Encrypting and uploading ${uploadProgress.current} of ${uploadProgress.total} (${uploadProgress.inFlight} in progress)…` :
+                                {uploadInFlight > 0 ?
+                                    `Encrypting and uploading ${uploadProgress.current} of ${uploadProgress.total} (${uploadInFlight} in progress)…` :
                                     `Encrypting and uploading ${uploadProgress.current} of ${uploadProgress.total}…`}
                             </p>
                             <Progress value={progressPercent} />
@@ -809,35 +775,25 @@ export function UploadPanel({
                     >
                         {closeLabel}
                     </Button>
-                    {phase === "idle" || staging ? (
-                        <>
-                            <FilePickButton
-                                disabled={!canPick}
-                                onFilesChange={handleFilesChange}
-                            >
-                                Choose files
-                            </FilePickButton>
-                            {stagedFiles.length > 0 ? (
-                                <Button
-                                    type="button"
-                                    onClick={handleManualUpload}
-                                    disabled={!canManualUpload}
-                                >
-                                    Upload {activeSelectedIds.size} file
-                                    {activeSelectedIds.size === 1 ? "" : "s"}
-                                </Button>
-                            ) : null}
-                        </>
-                    ) : phase === "review" ? (
-                        <Button
-                            type="button"
-                            onClick={handleManualUpload}
-                            disabled={!canManualUpload}
+                    {showPicker ? (
+                        <FilePickButton
+                            disabled={!canPick}
+                            onFilesChange={handleFilesChange}
                         >
-                            Upload {activeSelectedIds.size} file
-                            {activeSelectedIds.size === 1 ? "" : "s"}
-                        </Button>
+                            Choose files
+                        </FilePickButton>
                     ) : null}
+                    {phase === "review" ||
+                    (showPicker && stagedFiles.length > 0) ? (
+                            <Button
+                                type="button"
+                                onClick={handleManualUpload}
+                                disabled={!canManualUpload}
+                            >
+                                Upload {selectedIds.size} file
+                                {selectedIds.size === 1 ? "" : "s"}
+                            </Button>
+                        ) : null}
                 </SheetFooter>
             </SheetContent>
         </Sheet>

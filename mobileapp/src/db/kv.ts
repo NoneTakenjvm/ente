@@ -5,29 +5,33 @@ import type {
     ViewSession,
     ViewSessionTombstone,
 } from "@/lib/view-sessions";
-import {
-    decryptCachePayload,
-    encryptCachePayload,
-    type EncryptedPayload,
-} from "./crypto";
+import { decryptCachePayload, encryptCachePayload } from "./crypto";
 import { getOrganizerDB, type KvKey } from "./index";
 
-const getEncrypted = async (key: KvKey): Promise<EncryptedPayload | undefined> => {
+const loadKv = async <T>(
+    key: KvKey,
+    cacheKey: string,
+): Promise<T | undefined> => {
     const db = await getOrganizerDB();
     const record = await db.get("kv", key);
     if (!record) {
         return undefined;
     }
-    return {
-        encryptedData: record.encryptedData,
-        decryptionHeader: record.decryptionHeader,
-    };
+    return decryptCachePayload<T>(
+        {
+            encryptedData: record.encryptedData,
+            decryptionHeader: record.decryptionHeader,
+        },
+        cacheKey,
+    );
 };
 
-const putEncrypted = async (
+const saveKv = async (
     key: KvKey,
-    payload: EncryptedPayload,
+    value: unknown,
+    cacheKey: string,
 ): Promise<void> => {
+    const payload = await encryptCachePayload(value, cacheKey);
     const db = await getOrganizerDB();
     await db.put("kv", { key, ...payload });
 };
@@ -35,18 +39,14 @@ const putEncrypted = async (
 export const loadEncryptedCollections = async (
     cacheKey: string,
 ): Promise<Collection[] | undefined> => {
-    const payload = await getEncrypted("collections");
-    if (!payload) {
-        return undefined;
-    }
-    return decryptCachePayload<Collection[]>(payload, cacheKey);
+    return loadKv<Collection[]>("collections", cacheKey);
 };
 
 export const saveEncryptedCollections = async (
     collections: Collection[],
     cacheKey: string,
 ): Promise<void> => {
-    await putEncrypted("collections", await encryptCachePayload(collections, cacheKey));
+    await saveKv("collections", collections, cacheKey);
 };
 
 export const loadEncryptedFiles = async (
@@ -77,18 +77,14 @@ export interface PersistedTagIndex {
 export const loadEncryptedTagIndex = async (
     cacheKey: string,
 ): Promise<PersistedTagIndex | undefined> => {
-    const payload = await getEncrypted("tagIndex");
-    if (!payload) {
-        return undefined;
-    }
-    return decryptCachePayload<PersistedTagIndex>(payload, cacheKey);
+    return loadKv<PersistedTagIndex>("tagIndex", cacheKey);
 };
 
 export const saveEncryptedTagIndex = async (
     index: PersistedTagIndex,
     cacheKey: string,
 ): Promise<void> => {
-    await putEncrypted("tagIndex", await encryptCachePayload(index, cacheKey));
+    await saveKv("tagIndex", index, cacheKey);
 };
 
 /** Meta for chunked phash storage (v4); entries live in the `phashChunks` store. */
@@ -110,15 +106,8 @@ interface PhashChunkPayload {
 export const loadPhashMeta = async (
     cacheKey: string,
 ): Promise<PersistedPhashMeta | undefined> => {
-    const payload = await getEncrypted("phashIndex");
-    if (!payload) {
-        return undefined;
-    }
-    const meta = await decryptCachePayload<{ version?: number }>(
-        payload,
-        cacheKey,
-    );
-    return meta.version === 4 ? (meta as PersistedPhashMeta) : undefined;
+    const meta = await loadKv<{ version?: number }>("phashIndex", cacheKey);
+    return meta?.version === 4 ? (meta as PersistedPhashMeta) : undefined;
 };
 
 /**
@@ -155,7 +144,7 @@ export const appendPhashChunk = async (
         version: 4,
         nextChunkId: chunkId + 1,
     };
-    await putEncrypted("phashIndex", await encryptCachePayload(nextMeta, cacheKey));
+    await saveKv("phashIndex", nextMeta, cacheKey);
 };
 
 /** Read every phash chunk, applying later chunks (and removals) over earlier ones. */
@@ -189,7 +178,7 @@ export const clearPhashChunks = async (cacheKey: string): Promise<void> => {
     const db = await getOrganizerDB();
     await db.clear("phashChunks");
     const meta: PersistedPhashMeta = { version: 4, nextChunkId: 0 };
-    await putEncrypted("phashIndex", await encryptCachePayload(meta, cacheKey));
+    await saveKv("phashIndex", meta, cacheKey);
 };
 
 /** fileId → combined quality score in [0, 1] (higher = better). */
@@ -201,21 +190,14 @@ export interface PersistedQualityIndex {
 export const loadEncryptedQualityIndex = async (
     cacheKey: string,
 ): Promise<PersistedQualityIndex | undefined> => {
-    const payload = await getEncrypted("qualityIndex");
-    if (!payload) {
-        return undefined;
-    }
-    return decryptCachePayload<PersistedQualityIndex>(payload, cacheKey);
+    return loadKv<PersistedQualityIndex>("qualityIndex", cacheKey);
 };
 
 export const saveEncryptedQualityIndex = async (
     index: PersistedQualityIndex,
     cacheKey: string,
 ): Promise<void> => {
-    await putEncrypted(
-        "qualityIndex",
-        await encryptCachePayload(index, cacheKey),
-    );
+    await saveKv("qualityIndex", index, cacheKey);
 };
 
 export interface PersistedTagOutboxEntry {
@@ -227,21 +209,14 @@ export interface PersistedTagOutboxEntry {
 export const loadEncryptedTagOutbox = async (
     cacheKey: string,
 ): Promise<PersistedTagOutboxEntry[] | undefined> => {
-    const payload = await getEncrypted("tagOutbox");
-    if (!payload) {
-        return undefined;
-    }
-    return decryptCachePayload<PersistedTagOutboxEntry[]>(payload, cacheKey);
+    return loadKv<PersistedTagOutboxEntry[]>("tagOutbox", cacheKey);
 };
 
 export const saveEncryptedTagOutbox = async (
     entries: PersistedTagOutboxEntry[],
     cacheKey: string,
 ): Promise<void> => {
-    await putEncrypted(
-        "tagOutbox",
-        await encryptCachePayload(entries, cacheKey),
-    );
+    await saveKv("tagOutbox", entries, cacheKey);
 };
 
 export interface PersistedFavoriteOutboxEntry {
@@ -254,24 +229,14 @@ export interface PersistedFavoriteOutboxEntry {
 export const loadEncryptedFavoriteOutbox = async (
     cacheKey: string,
 ): Promise<PersistedFavoriteOutboxEntry[] | undefined> => {
-    const payload = await getEncrypted("favoriteOutbox");
-    if (!payload) {
-        return undefined;
-    }
-    return decryptCachePayload<PersistedFavoriteOutboxEntry[]>(
-        payload,
-        cacheKey,
-    );
+    return loadKv<PersistedFavoriteOutboxEntry[]>("favoriteOutbox", cacheKey);
 };
 
 export const saveEncryptedFavoriteOutbox = async (
     entries: PersistedFavoriteOutboxEntry[],
     cacheKey: string,
 ): Promise<void> => {
-    await putEncrypted(
-        "favoriteOutbox",
-        await encryptCachePayload(entries, cacheKey),
-    );
+    await saveKv("favoriteOutbox", entries, cacheKey);
 };
 
 /**
@@ -281,11 +246,7 @@ export const saveEncryptedFavoriteOutbox = async (
 export const loadEncryptedFavoriteMembership = async (
     cacheKey: string,
 ): Promise<number[] | undefined> => {
-    const payload = await getEncrypted("favoriteMembership");
-    if (!payload) {
-        return undefined;
-    }
-    const decoded = await decryptCachePayload<unknown>(payload, cacheKey);
+    const decoded = await loadKv<unknown>("favoriteMembership", cacheKey);
     if (!Array.isArray(decoded)) {
         return undefined;
     }
@@ -299,10 +260,7 @@ export const saveEncryptedFavoriteMembership = async (
     fileIds: number[],
     cacheKey: string,
 ): Promise<void> => {
-    await putEncrypted(
-        "favoriteMembership",
-        await encryptCachePayload(fileIds, cacheKey),
-    );
+    await saveKv("favoriteMembership", fileIds, cacheKey);
 };
 
 export interface PersistedVisibilityOutboxEntry {
@@ -314,24 +272,14 @@ export interface PersistedVisibilityOutboxEntry {
 export const loadEncryptedVisibilityOutbox = async (
     cacheKey: string,
 ): Promise<PersistedVisibilityOutboxEntry[] | undefined> => {
-    const payload = await getEncrypted("visibilityOutbox");
-    if (!payload) {
-        return undefined;
-    }
-    return decryptCachePayload<PersistedVisibilityOutboxEntry[]>(
-        payload,
-        cacheKey,
-    );
+    return loadKv<PersistedVisibilityOutboxEntry[]>("visibilityOutbox", cacheKey);
 };
 
 export const saveEncryptedVisibilityOutbox = async (
     entries: PersistedVisibilityOutboxEntry[],
     cacheKey: string,
 ): Promise<void> => {
-    await putEncrypted(
-        "visibilityOutbox",
-        await encryptCachePayload(entries, cacheKey),
-    );
+    await saveKv("visibilityOutbox", entries, cacheKey);
 };
 
 export interface PersistedDerivedReplaceOutboxEntry {
@@ -347,24 +295,14 @@ export interface PersistedDerivedReplaceOutboxEntry {
 export const loadEncryptedDerivedReplaceOutbox = async (
     cacheKey: string,
 ): Promise<PersistedDerivedReplaceOutboxEntry[] | undefined> => {
-    const payload = await getEncrypted("derivedReplaceOutbox");
-    if (!payload) {
-        return undefined;
-    }
-    return decryptCachePayload<PersistedDerivedReplaceOutboxEntry[]>(
-        payload,
-        cacheKey,
-    );
+    return loadKv<PersistedDerivedReplaceOutboxEntry[]>("derivedReplaceOutbox", cacheKey);
 };
 
 export const saveEncryptedDerivedReplaceOutbox = async (
     entries: PersistedDerivedReplaceOutboxEntry[],
     cacheKey: string,
 ): Promise<void> => {
-    await putEncrypted(
-        "derivedReplaceOutbox",
-        await encryptCachePayload(entries, cacheKey),
-    );
+    await saveKv("derivedReplaceOutbox", entries, cacheKey);
 };
 
 /** Decrypted trash item persisted for offline / Manage → Trash. */
@@ -382,38 +320,27 @@ export interface PersistedTrashCollectionKey {
 export const loadEncryptedTrashItems = async (
     cacheKey: string,
 ): Promise<PersistedTrashItem[] | undefined> => {
-    const payload = await getEncrypted("trashItems");
-    if (!payload) {
-        return undefined;
-    }
-    return decryptCachePayload<PersistedTrashItem[]>(payload, cacheKey);
+    return loadKv<PersistedTrashItem[]>("trashItems", cacheKey);
 };
 
 export const saveEncryptedTrashItems = async (
     items: PersistedTrashItem[],
     cacheKey: string,
 ): Promise<void> => {
-    await putEncrypted("trashItems", await encryptCachePayload(items, cacheKey));
+    await saveKv("trashItems", items, cacheKey);
 };
 
 export const loadEncryptedTrashCollectionKeys = async (
     cacheKey: string,
 ): Promise<PersistedTrashCollectionKey[] | undefined> => {
-    const payload = await getEncrypted("trashCollectionKeys");
-    if (!payload) {
-        return undefined;
-    }
-    return decryptCachePayload<PersistedTrashCollectionKey[]>(payload, cacheKey);
+    return loadKv<PersistedTrashCollectionKey[]>("trashCollectionKeys", cacheKey);
 };
 
 export const saveEncryptedTrashCollectionKeys = async (
     keys: PersistedTrashCollectionKey[],
     cacheKey: string,
 ): Promise<void> => {
-    await putEncrypted(
-        "trashCollectionKeys",
-        await encryptCachePayload(keys, cacheKey),
-    );
+    await saveKv("trashCollectionKeys", keys, cacheKey);
 };
 
 /** CLIP vectors for kit nearness ranking (and corpus export). */
@@ -442,36 +369,12 @@ export interface EmbeddingChunkPayload {
     entries: Record<number, number[]>;
 }
 
-export const loadEncryptedEmbeddingIndex = async (
-    cacheKey: string,
-): Promise<PersistedEmbeddingIndex | undefined> => {
-    const payload = await getEncrypted("embeddingIndex");
-    if (!payload) {
-        return undefined;
-    }
-    return decryptCachePayload<PersistedEmbeddingIndex>(payload, cacheKey);
-};
-
-export const saveEncryptedEmbeddingIndex = async (
-    index: PersistedEmbeddingIndex,
-    cacheKey: string,
-): Promise<void> => {
-    await putEncrypted(
-        "embeddingIndex",
-        await encryptCachePayload(index, cacheKey),
-    );
-};
-
 export const loadEmbeddingMeta = async (
     cacheKey: string,
 ): Promise<PersistedEmbeddingMeta | undefined> => {
-    const payload = await getEncrypted("embeddingIndex");
-    if (!payload) {
-        return undefined;
-    }
-    const parsed = await decryptCachePayload<
+    const parsed = await loadKv<
         PersistedEmbeddingMeta | PersistedEmbeddingIndex
-    >(payload, cacheKey);
+    >("embeddingIndex", cacheKey);
     if (!parsed || typeof parsed !== "object") {
         return undefined;
     }
@@ -486,10 +389,7 @@ export const saveEmbeddingMeta = async (
     meta: PersistedEmbeddingMeta,
     cacheKey: string,
 ): Promise<void> => {
-    await putEncrypted(
-        "embeddingIndex",
-        await encryptCachePayload(meta, cacheKey),
-    );
+    await saveKv("embeddingIndex", meta, cacheKey);
 };
 
 export const clearEmbeddingChunks = async (): Promise<void> => {
@@ -575,19 +475,12 @@ export interface PersistedViewSessions {
 export const loadEncryptedViewSessions = async (
     cacheKey: string,
 ): Promise<PersistedViewSessions | undefined> => {
-    const payload = await getEncrypted("viewSessions");
-    if (!payload) {
-        return undefined;
-    }
-    return decryptCachePayload<PersistedViewSessions>(payload, cacheKey);
+    return loadKv<PersistedViewSessions>("viewSessions", cacheKey);
 };
 
 export const saveEncryptedViewSessions = async (
     data: PersistedViewSessions,
     cacheKey: string,
 ): Promise<void> => {
-    await putEncrypted(
-        "viewSessions",
-        await encryptCachePayload(data, cacheKey),
-    );
+    await saveKv("viewSessions", data, cacheKey);
 };

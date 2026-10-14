@@ -277,6 +277,24 @@ interface UIState {
     substituteMediaShuffleFileId: (oldId: number, newId: number) => void;
 }
 
+/** Patch that switches off every ordering so the caller can enable exactly one. */
+const clearOrderings = (
+    state: Pick<UIState, "mediaViewOrder">,
+): Partial<UIState> => ({
+    viewportFitSort: "none",
+    uploadedAtSort: "none",
+    imageSizeSort: "none",
+    imageQualitySort: "none",
+    tagFilterFitSort: "none",
+    relativeSort: "none",
+    relativeStartFileId: undefined,
+    nearnessFilter: undefined,
+    nearnessSource: undefined,
+    ...(state.mediaViewOrder === "shuffled" ?
+        { mediaViewOrder: "default" as const, mediaShuffledFileIds: [] } :
+        {}),
+});
+
 export const useUIStore = create<UIState>((set) => {
     const initialViewportTarget = deviceViewerSize();
     return {
@@ -290,25 +308,8 @@ export const useUIStore = create<UIState>((set) => {
         viewportFitSort: "none",
         setViewportFitSort: (mode: ViewportFitSort): void => {
             set((state) => ({
+                ...(mode !== "none" ? clearOrderings(state) : {}),
                 viewportFitSort: mode,
-                ...(mode !== "none" ?
-                    {
-                        uploadedAtSort: "none" as const,
-                        imageSizeSort: "none" as const,
-                        imageQualitySort: "none" as const,
-                        tagFilterFitSort: "none" as const,
-                        relativeSort: "none" as const,
-                        relativeStartFileId: undefined,
-                        nearnessFilter: undefined,
-                        nearnessSource: undefined,
-                        ...(state.mediaViewOrder === "shuffled" ?
-                            {
-                                mediaViewOrder: "default" as const,
-                                mediaShuffledFileIds: [] as number[],
-                            } :
-                            {}),
-                    } :
-                    {}),
             }));
         },
         viewportTargetWidth: initialViewportTarget.width,
@@ -335,132 +336,50 @@ export const useUIStore = create<UIState>((set) => {
         uploadedAtSort: "none",
         setUploadedAtSort: (mode: UploadedAtSort): void => {
             set((state) => ({
+                ...(mode !== "none" ? clearOrderings(state) : {}),
                 uploadedAtSort: mode,
-                ...(mode !== "none" ?
-                    {
-                        viewportFitSort: "none" as const,
-                        imageSizeSort: "none" as const,
-                        imageQualitySort: "none" as const,
-                        tagFilterFitSort: "none" as const,
-                        relativeSort: "none" as const,
-                        relativeStartFileId: undefined,
-                        nearnessFilter: undefined,
-                        nearnessSource: undefined,
-                        ...(state.mediaViewOrder === "shuffled" ?
-                            {
-                                mediaViewOrder: "default" as const,
-                                mediaShuffledFileIds: [] as number[],
-                            } :
-                            {}),
-                    } :
-                    {}),
             }));
         },
         imageSizeSort: "none",
         setImageSizeSort: (mode: ImageSizeSort): void => {
             set((state) => ({
+                ...(mode !== "none" ? clearOrderings(state) : {}),
                 imageSizeSort: mode,
-                ...(mode !== "none" ?
-                    {
-                        viewportFitSort: "none" as const,
-                        uploadedAtSort: "none" as const,
-                        imageQualitySort: "none" as const,
-                        tagFilterFitSort: "none" as const,
-                        relativeSort: "none" as const,
-                        relativeStartFileId: undefined,
-                        nearnessFilter: undefined,
-                        nearnessSource: undefined,
-                        ...(state.mediaViewOrder === "shuffled" ?
-                            {
-                                mediaViewOrder: "default" as const,
-                                mediaShuffledFileIds: [] as number[],
-                            } :
-                            {}),
-                    } :
-                    {}),
             }));
         },
         imageQualitySort: "none",
         setImageQualitySort: (mode: ImageQualitySort): void => {
             set((state) => ({
+                ...(mode !== "none" ? clearOrderings(state) : {}),
                 imageQualitySort: mode,
-                ...(mode !== "none" ?
-                    {
-                        viewportFitSort: "none" as const,
-                        uploadedAtSort: "none" as const,
-                        imageSizeSort: "none" as const,
-                        tagFilterFitSort: "none" as const,
-                        relativeSort: "none" as const,
-                        relativeStartFileId: undefined,
-                        nearnessFilter: undefined,
-                        nearnessSource: undefined,
-                        ...(state.mediaViewOrder === "shuffled" ?
-                            {
-                                mediaViewOrder: "default" as const,
-                                mediaShuffledFileIds: [] as number[],
-                            } :
-                            {}),
-                    } :
-                    {}),
             }));
         },
         tagFilterFitSort: "none",
         setTagFilterFitSort: (mode: TagFilterFitSort): void => {
             set((state) => ({
+                ...(mode !== "none" ? clearOrderings(state) : {}),
                 tagFilterFitSort: mode,
-                ...(mode !== "none" ?
-                    {
-                        viewportFitSort: "none" as const,
-                        uploadedAtSort: "none" as const,
-                        imageSizeSort: "none" as const,
-                        imageQualitySort: "none" as const,
-                        relativeSort: "none" as const,
-                        relativeStartFileId: undefined,
-                        nearnessFilter: undefined,
-                        nearnessSource: undefined,
-                        ...(state.mediaViewOrder === "shuffled" ?
-                            {
-                                mediaViewOrder: "default" as const,
-                                mediaShuffledFileIds: [] as number[],
-                            } :
-                            {}),
-                    } :
-                    {}),
             }));
         },
         relativeSort: "none",
         relativeSeed: 1,
         relativeStartFileId: undefined,
         setRelativeSort: (mode: RelativeSort): void => {
-            set((state) => ({
-                relativeSort: mode,
-                ...(mode !== "none" ?
-                    {
-                    // New random tip only when turning relative on from off.
-                        relativeSeed:
-                        state.relativeSort === "none" ?
-                            Date.now() :
-                            state.relativeSeed,
-                        relativeStartFileId:
-                        state.relativeSort === "none" ?
-                            undefined :
-                            state.relativeStartFileId,
-                        viewportFitSort: "none" as const,
-                        uploadedAtSort: "none" as const,
-                        imageSizeSort: "none" as const,
-                        imageQualitySort: "none" as const,
-                        tagFilterFitSort: "none" as const,
-                        nearnessFilter: undefined,
-                        nearnessSource: undefined,
-                        ...(state.mediaViewOrder === "shuffled" ?
-                            {
-                                mediaViewOrder: "default" as const,
-                                mediaShuffledFileIds: [] as number[],
-                            } :
-                            {}),
-                    } :
-                    { relativeStartFileId: undefined }),
-            }));
+            set((state) => {
+                if (mode === "none") {
+                    return { relativeSort: mode, relativeStartFileId: undefined };
+                }
+                // New random tip only when turning relative on from off.
+                const turningOn = state.relativeSort === "none";
+                return {
+                    ...clearOrderings(state),
+                    relativeSort: mode,
+                    relativeSeed: turningOn ? Date.now() : state.relativeSeed,
+                    relativeStartFileId: turningOn ?
+                        undefined :
+                        state.relativeStartFileId,
+                };
+            });
         },
         setRelativeStartFileId: (fileId: number): void => {
             set((state) => {
@@ -518,26 +437,14 @@ export const useUIStore = create<UIState>((set) => {
             source: NearnessSource = "filter",
         ): void => {
             set((state) => ({
-                nearnessFilter: filter,
-                nearnessSource: filter !== undefined ? source : undefined,
                 ...(filter !== undefined ?
                     {
+                        ...clearOrderings(state),
                         nearnessEpoch: state.nearnessEpoch + 1,
-                        viewportFitSort: "none" as const,
-                        uploadedAtSort: "none" as const,
-                        imageSizeSort: "none" as const,
-                        imageQualitySort: "none" as const,
-                        tagFilterFitSort: "none" as const,
-                        relativeSort: "none" as const,
-                        relativeStartFileId: undefined,
-                        ...(state.mediaViewOrder === "shuffled" ?
-                            {
-                                mediaViewOrder: "default" as const,
-                                mediaShuffledFileIds: [] as number[],
-                            } :
-                            {}),
                     } :
                     {}),
+                nearnessFilter: filter,
+                nearnessSource: filter !== undefined ? source : undefined,
             }));
         },
         reapplyNearness: (): void => {
@@ -549,39 +456,23 @@ export const useUIStore = create<UIState>((set) => {
             });
         },
         setMediaShuffled: (seed: number): void => {
-            set({
+            set((state) => ({
+                ...clearOrderings(state),
                 mediaViewOrder: "shuffled",
                 mediaShuffleSeed: seed,
                 mediaShuffledFileIds: [],
-                viewportFitSort: "none",
-                uploadedAtSort: "none",
-                imageSizeSort: "none",
-                imageQualitySort: "none",
-                tagFilterFitSort: "none",
-                relativeSort: "none",
-                relativeStartFileId: undefined,
-                nearnessFilter: undefined,
-                nearnessSource: undefined,
-            });
+            }));
         },
         setMediaDefaultOrder: (): void => {
             set({ mediaViewOrder: "default", mediaShuffledFileIds: [] });
         },
         reshuffleMedia: (): void => {
-            set({
+            set((state) => ({
+                ...clearOrderings(state),
                 mediaViewOrder: "shuffled",
                 mediaShuffleSeed: Date.now(),
                 mediaShuffledFileIds: [],
-                viewportFitSort: "none",
-                uploadedAtSort: "none",
-                imageSizeSort: "none",
-                imageQualitySort: "none",
-                tagFilterFitSort: "none",
-                relativeSort: "none",
-                relativeStartFileId: undefined,
-                nearnessFilter: undefined,
-                nearnessSource: undefined,
-            });
+            }));
         },
         reconcileMediaShuffle: (fileIds: readonly number[]): void => {
             set((state) => {

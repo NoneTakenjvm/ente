@@ -185,10 +185,7 @@ export const rankByKitMarginsInWorker = async (
  * only the newest waiter builds and posts its request.
  */
 export const estimateKitPresenceInWorker = async (
-    input: TrainingPopulationInput & {
-        kits: readonly { id: string; tags: readonly string[] }[];
-        viewFiles: readonly EnteFile[];
-    },
+    input: KitPresenceInput,
 ): Promise<KitPresenceEstimate | undefined> => {
     const ticket = ++latestPresenceTicket;
     while (presenceInFlight) {

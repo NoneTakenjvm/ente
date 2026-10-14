@@ -551,20 +551,6 @@ const detectContentBoundsFromSource = (
 };
 
 /**
- * Detect non-black content bounds for a loaded image element.
- */
-export const detectContentBoundsFromElement = async (
-    image: HTMLImageElement,
-    threshold = DEFAULT_CONTENT_THRESHOLD,
-): Promise<PixelRect | undefined> =>
-    detectContentBoundsFromSource(
-        image,
-        image.naturalWidth,
-        image.naturalHeight,
-        threshold,
-    );
-
-/**
  * Detect content bounds from encoded image bytes without building a full-res
  * pixel buffer — used by mass auto-crop scanning.
  */
@@ -669,57 +655,6 @@ export const cropRectForVideoSave = (
         naturalWidth: sourceWidth,
         naturalHeight: sourceHeight,
     });
-
-/**
- * Detect non-black content bounds from the current video frame.
- */
-export const detectContentBoundsFromVideo = async (
-    video: HTMLVideoElement,
-    threshold = DEFAULT_CONTENT_THRESHOLD,
-): Promise<PixelRect | undefined> => {
-    const naturalWidth = video.videoWidth;
-    const naturalHeight = video.videoHeight;
-    if (naturalWidth <= 0 || naturalHeight <= 0) {
-        return undefined;
-    }
-
-    const scale = Math.min(
-        1,
-        CONTENT_DETECT_MAX_EDGE / Math.max(naturalWidth, naturalHeight),
-    );
-    const detectWidth = Math.max(1, Math.round(naturalWidth * scale));
-    const detectHeight = Math.max(1, Math.round(naturalHeight * scale));
-
-    const canvas = document.createElement("canvas");
-    canvas.width = detectWidth;
-    canvas.height = detectHeight;
-    const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) {
-        return undefined;
-    }
-    context.drawImage(video, 0, 0, detectWidth, detectHeight);
-    const imageData = context.getImageData(0, 0, detectWidth, detectHeight);
-    const detected = detectContentBoundsFromImageData(imageData, threshold);
-    if (!detected) {
-        return undefined;
-    }
-
-    const bounds = mapDetectedBoundsToNatural(
-        detected,
-        naturalWidth,
-        naturalHeight,
-        scale,
-    );
-    if (
-        bounds.x === 0 &&
-        bounds.y === 0 &&
-        bounds.width === naturalWidth &&
-        bounds.height === naturalHeight
-    ) {
-        return undefined;
-    }
-    return bounds;
-};
 
 /** Canvas size after a 90° or 270° baked rotation. */
 export const dimensionsAfterQuarterTurn = (

@@ -26,7 +26,7 @@ let hydrated = false;
 let persistChain: Promise<void> = Promise.resolve();
 let favoriteOutboxHydrateInFlight: Promise<void> | undefined;
 
-const entryKey = (entry: FavoriteOutboxEntry): string =>
+export const favoriteOutboxEntryKey = (entry: FavoriteOutboxEntry): string =>
     entry.fileHashAndTypeKey ?? String(entry.fileId);
 
 const toPersisted = (
@@ -67,7 +67,7 @@ export const hydrateFavoriteOutbox = async (): Promise<void> => {
         const persisted = await loadEncryptedFavoriteOutbox(getSessionCacheKey());
         outboxByKey.clear();
         for (const entry of persisted ?? []) {
-            outboxByKey.set(entryKey(entry), entry);
+            outboxByKey.set(favoriteOutboxEntryKey(entry), entry);
         }
         hydrated = true;
     })().finally(() => {
@@ -114,7 +114,7 @@ export const upsertFavoriteOutboxEntry = async (
         fileHashAndTypeKey: fileHashAndTypeKey ?? undefined,
         enqueuedAt: Date.now(),
     };
-    outboxByKey.set(entryKey(entry), entry);
+    outboxByKey.set(favoriteOutboxEntryKey(entry), entry);
     await persistFavoriteOutbox();
 };
 
@@ -139,13 +139,13 @@ export const removeFavoriteOutboxEntriesIfUnchanged = async (
 ): Promise<void> => {
     const keys = sent
         .filter((entry) => {
-            const current = outboxByKey.get(entryKey(entry));
+            const current = outboxByKey.get(favoriteOutboxEntryKey(entry));
             return (
                 current?.isFavorite === entry.isFavorite &&
                 current.enqueuedAt === entry.enqueuedAt
             );
         })
-        .map(entryKey);
+        .map(favoriteOutboxEntryKey);
     await removeFavoriteOutboxEntries(keys);
 };
 

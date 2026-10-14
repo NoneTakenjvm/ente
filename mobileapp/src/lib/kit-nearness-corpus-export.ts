@@ -11,6 +11,7 @@
  */
 import type { PhashEntry } from "@/lib/crop-match";
 import { KIT_EMBEDDING_DIMS, KIT_EMBEDDING_MODEL_ID, type KitTileEmbeddings, type ReadonlyEmbeddingMap } from "@/lib/kit-embedding";
+import { shuffleInPlace } from "@/lib/kit-nearness-embedding-eval";
 import { KIT_TILE_LAYOUT_ID } from "@/lib/kit-tile-layout";
 import { tagSetKey, type TagPreset } from "@/lib/tag-presets";
 import { extractUserTags } from "@/lib/tags";
@@ -118,20 +119,6 @@ export type BuildAnonymisedCorpusInput = {
 
 const padIndex = (index: number, width: number): string =>
     String(index).padStart(width, "0");
-
-/**
- * Fisher–Yates shuffle (copy). Uses {@link random} in `[0, 1)`.
- */
-const shuffleCopy = <T>(items: readonly T[], random: () => number): T[] => {
-    const next = [...items];
-    for (let i = next.length - 1; i > 0; i -= 1) {
-        const j = Math.floor(random() * (i + 1));
-        const tmp = next[i]!;
-        next[i] = next[j]!;
-        next[j] = tmp;
-    }
-    return next;
-};
 
 const defaultRandom = (): number => {
     const buf = new Uint32Array(1);
@@ -247,7 +234,7 @@ export const buildAnonymisedKitNearnessCorpus = (
         }
     }
 
-    const shuffledTags = shuffleCopy([...tagSet].sort(), random);
+    const shuffledTags = shuffleInPlace([...tagSet].sort(), random);
     const tagWidth = Math.max(4, String(shuffledTags.length).length);
     const tagIdByName = new Map<string, string>();
     shuffledTags.forEach((tag, index) => {
@@ -269,7 +256,7 @@ export const buildAnonymisedKitNearnessCorpus = (
         return result;
     };
 
-    const shuffledFiles = shuffleCopy(eligible, random);
+    const shuffledFiles = shuffleInPlace([...eligible], random);
     let embeddingCount = 0;
     const tileMatrices: Float32Array[] = [];
     let tileRowCount = 0;
@@ -298,7 +285,7 @@ export const buildAnonymisedKitNearnessCorpus = (
     });
 
     const kits: AnonymisedCorpusKit[] = [];
-    const shuffledKits = shuffleCopy(input.kits, random);
+    const shuffledKits = shuffleInPlace([...input.kits], random);
     let kitIndex = 0;
     for (const kit of shuffledKits) {
         const tags = remapTags(kit.tags);

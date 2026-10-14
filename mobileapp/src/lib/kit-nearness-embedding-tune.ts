@@ -20,7 +20,7 @@ import {
     buildKitEmbeddingEvalFold,
     evaluateKitEmbeddingGenome,
     listEmbeddedKitMembers,
-    type KitEmbeddingEvalFold,
+    mulberry32,
     type KitEmbeddingFitnessBreakdown,
 } from "@/lib/kit-nearness-embedding-eval";
 import type { ReadonlyEmbeddingMap } from "@/lib/kit-embedding";
@@ -107,11 +107,7 @@ export const runKitNearnessTune = async (
         seed = Date.now(),
     } = options;
 
-    const report = (progress: KitNearnessTuneProgress): void => {
-        onProgress?.(progress);
-    };
-
-    report({
+    onProgress?.({
         phase: "setup",
         label: "Preparing holdout fold…",
         current: 0,
@@ -135,13 +131,7 @@ export const runKitNearnessTune = async (
         embeddings,
         rivalKits.filter((kit) => kit.id !== options.kitId),
         {
-            random: (() => {
-                let state = seed >>> 0;
-                return (): number => {
-                    state = (Math.imul(1664525, state) + 1013904223) >>> 0;
-                    return state / 0x1_0000_0000;
-                };
-            })(),
+            random: mulberry32(seed),
             negativePoolSize: 220,
             seedFraction: 0.6,
         },
@@ -198,7 +188,7 @@ export const runKitNearnessTune = async (
     let bestGenome = DEFAULT_KIT_EMBEDDING_GENOME;
     let bestBreakdown = baseline;
 
-    report({
+    onProgress?.({
         phase: "search",
         label: `Baseline fitness ${(baseline.fitness * 100).toFixed(1)}% — grid…`,
         current: evalCount,
@@ -217,7 +207,7 @@ export const runKitNearnessTune = async (
             bestGenome = genome;
             bestBreakdown = breakdown;
         }
-        report({
+        onProgress?.({
             phase: "search",
             label: `Grid ${evalCount}/${total} — best ${(bestBreakdown.fitness * 100).toFixed(1)}%`,
             current: Math.min(evalCount, total),
@@ -230,7 +220,7 @@ export const runKitNearnessTune = async (
     const genome = clampKitEmbeddingNearnessGenome(bestGenome);
     const lift = bestBreakdown.fitness - baseline.fitness;
 
-    report({
+    onProgress?.({
         phase: "done",
         label:
             lift >= KIT_NEARNESS_TUNE_MIN_LIFT ?
@@ -257,5 +247,3 @@ export const runKitNearnessTune = async (
         tuneVersion: KIT_NEARNESS_TUNE_VERSION,
     };
 };
-
-export type { KitEmbeddingEvalFold };

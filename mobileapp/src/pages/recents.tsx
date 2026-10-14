@@ -138,10 +138,7 @@ export default function RecentsPage(): JSX.Element {
             return;
         }
         deleteSession(activeSessionId);
-        setShowDeleteConfirm(false);
-        setViewerIndex(undefined);
-        setActiveSessionId(undefined);
-        setMode("list");
+        handleBack();
     };
 
     const showFullPageLoader =

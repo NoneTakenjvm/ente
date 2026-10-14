@@ -186,16 +186,13 @@ export function CompressionPanel({
                 }
 
                 setCompressedResult(result);
-                setCompressedUrl((prev) => {
-                    if (prev) {
-                        URL.revokeObjectURL(prev);
-                    }
-                    return URL.createObjectURL(
+                setCompressedUrl(
+                    URL.createObjectURL(
                         new Blob([Uint8Array.from(result.bytes)], {
                             type: result.mimeType,
                         }),
-                    );
-                });
+                    ),
+                );
                 setEncodeProgress(100);
                 setPhase("ready");
             } catch (encodeError) {
@@ -231,6 +228,15 @@ export function CompressionPanel({
         };
     }, [compressedUrl]);
 
+    const failUpload = useCallback((uploadError: unknown): void => {
+        setPhase("error");
+        setError(
+            uploadError instanceof Error ?
+                uploadError.message :
+                "Upload failed",
+        );
+    }, []);
+
     const handleUpload = useCallback((): void => {
         if (!originalBytes || !compressedResult) {
             return;
@@ -251,25 +257,14 @@ export function CompressionPanel({
                 );
             onUploaded?.(optimisticFile);
             setPhase("success");
-            void finalize.catch((uploadError: unknown) => {
-                setPhase("error");
-                setError(
-                    uploadError instanceof Error ?
-                        uploadError.message :
-                        "Upload failed",
-                );
-            });
+            void finalize.catch(failUpload);
         } catch (uploadError: unknown) {
-            setPhase("error");
-            setError(
-                uploadError instanceof Error ?
-                    uploadError.message :
-                    "Upload failed",
-            );
+            failUpload(uploadError);
         }
     }, [
         compressAndReplaceMediaOptimistic,
         compressedResult,
+        failUpload,
         file.id,
         onUploaded,
         originalBytes,
@@ -278,6 +273,25 @@ export function CompressionPanel({
     const previewFrameClassName =
         "flex min-h-48 w-full items-center justify-center rounded-md bg-muted";
     const encodedWith = encoderLabel(compressedResult?.encoder);
+    const replaceable =
+        sizeDelta === undefined ||
+        isWorthReplacing(sizeDelta.originalBytes, sizeDelta.compressedBytes);
+
+    const renderPreview = (url: string, alt: string): JSX.Element =>
+        mediaKind === "video" ? (
+            <video
+                className="max-h-48 max-w-full object-contain"
+                src={url}
+                muted
+                playsInline
+            />
+        ) : (
+            <img
+                className="max-h-48 max-w-full object-contain"
+                src={url}
+                alt={alt}
+            />
+        );
 
     return (
         <Sheet
@@ -327,20 +341,7 @@ export function CompressionPanel({
                                     Before
                                 </span>
                                 <div className={previewFrameClassName}>
-                                    {mediaKind === "video" ? (
-                                        <video
-                                            className="max-h-48 max-w-full object-contain"
-                                            src={originalUrl}
-                                            muted
-                                            playsInline
-                                        />
-                                    ) : (
-                                        <img
-                                            className="max-h-48 max-w-full object-contain"
-                                            src={originalUrl}
-                                            alt="Original"
-                                        />
-                                    )}
+                                    {renderPreview(originalUrl, "Original")}
                                 </div>
                                 {sizeDelta ? (
                                     <span className="text-xs text-muted-foreground">
@@ -354,19 +355,9 @@ export function CompressionPanel({
                                 </span>
                                 <div className={previewFrameClassName}>
                                     {compressedUrl ? (
-                                        mediaKind === "video" ? (
-                                            <video
-                                                className="max-h-48 max-w-full object-contain"
-                                                src={compressedUrl}
-                                                muted
-                                                playsInline
-                                            />
-                                        ) : (
-                                            <img
-                                                className="max-h-48 max-w-full object-contain"
-                                                src={compressedUrl}
-                                                alt="Compressed preview"
-                                            />
+                                        renderPreview(
+                                            compressedUrl,
+                                            "Compressed preview",
                                         )
                                     ) : (
                                         <Skeleton className="h-40 w-full max-w-full" />
@@ -383,10 +374,7 @@ export function CompressionPanel({
 
                     {sizeDelta && phase !== "loading" ? (
                         <p className="text-sm text-muted-foreground">
-                            {isWorthReplacing(
-                                sizeDelta.originalBytes,
-                                sizeDelta.compressedBytes,
-                            ) ?
+                            {replaceable ?
                                 <>
                                     Saves {sizeDelta.savedLabel} (
                                     {sizeDelta.savedPercent}%)
@@ -457,11 +445,7 @@ export function CompressionPanel({
                         disabled={
                             phase !== "ready" ||
                             !compressedResult ||
-                            (sizeDelta !== undefined &&
-                                !isWorthReplacing(
-                                    sizeDelta.originalBytes,
-                                    sizeDelta.compressedBytes,
-                                ))
+                            !replaceable
                         }
                     >
                         Compress and replace

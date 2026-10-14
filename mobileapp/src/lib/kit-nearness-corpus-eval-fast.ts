@@ -50,7 +50,6 @@ export class FastNearnessScorer {
     readonly packed: Map<number, PackedPhoto>;
     readonly folds: readonly KitFold[];
     readonly rivalFoldIndex: readonly number[];
-    readonly softRivalDelta: readonly number[];
     readonly negativePool: readonly number[];
     readonly scoreIds: readonly number[];
 
@@ -61,13 +60,11 @@ export class FastNearnessScorer {
         entries: Map<number, PhashEntry>;
         folds: readonly KitFold[];
         rivalFoldIndex: readonly number[];
-        softRivalDelta: readonly number[];
         negativePool: readonly number[];
     }) {
         this.entries = args.entries;
         this.folds = args.folds;
         this.rivalFoldIndex = args.rivalFoldIndex;
-        this.softRivalDelta = args.softRivalDelta;
         this.negativePool = args.negativePool;
 
         this.packed = new Map();
@@ -176,14 +173,7 @@ export class FastNearnessScorer {
 
     evaluate(genome: NearnessGenome): FitnessBreakdown {
         if (!this.folds.length) {
-            return {
-                fitness: 0,
-                holdoutAuc: 0,
-                holdoutTopK: 0,
-                exclAuc: 0,
-                softRivalLift: 0,
-                kitCount: 0,
-            };
+            return emptyFitness();
         }
 
         const tables = this.tablesFor(genome);
@@ -193,7 +183,6 @@ export class FastNearnessScorer {
         let aucSum = 0;
         let topKSum = 0;
         let exclSum = 0;
-        let softLiftSum = 0;
         let n = 0;
 
         for (let i = 0; i < this.folds.length; i++) {
@@ -288,46 +277,27 @@ export class FastNearnessScorer {
                 }
             }
 
-            // Soft-rival over-penalty: almost never on this corpus (δ≫12).
-            let softLift = 0;
-            if ((this.softRivalDelta[i] ?? Infinity) <= 12) {
-                softLift = 0;
-            }
-
             aucSum += auc;
             topKSum += topK;
             exclSum += exclAuc;
-            softLiftSum += softLift;
             n += 1;
         }
 
         if (n === 0) {
-            return {
-                fitness: 0,
-                holdoutAuc: 0,
-                holdoutTopK: 0,
-                exclAuc: 0,
-                softRivalLift: 0,
-                kitCount: 0,
-            };
+            return emptyFitness();
         }
 
         const holdoutAuc = aucSum / n;
         const holdoutTopK = topKSum / n;
         const exclAuc = exclSum / n;
-        const softRivalLift = softLiftSum / n;
-        const fitness =
-            holdoutAuc +
-            0.25 * holdoutTopK +
-            0.15 * exclAuc -
-            0.05 * Math.max(0, softRivalLift);
+        const fitness = holdoutAuc + 0.25 * holdoutTopK + 0.15 * exclAuc;
 
         return {
             fitness,
             holdoutAuc,
             holdoutTopK,
             exclAuc,
-            softRivalLift,
+            softRivalLift: 0,
             kitCount: n,
         };
     }
@@ -337,14 +307,32 @@ export class FastNearnessScorer {
     }
 }
 
-const pairwiseAuc = (pos: readonly number[], neg: readonly number[]): number => {
+/** Fitness for a corpus with nothing to score. */
+export const emptyFitness = (): FitnessBreakdown => ({
+    fitness: 0,
+    holdoutAuc: 0,
+    holdoutTopK: 0,
+    exclAuc: 0,
+    softRivalLift: 0,
+    kitCount: 0,
+});
+
+/**
+ * Fraction of (positive, negative) pairs ranked correctly; ties count half.
+ * Empty side → 0.
+ */
+export const pairwiseAuc = (
+    pos: readonly number[],
+    neg: readonly number[],
+    lowerIsBetter = true,
+): number => {
     if (!pos.length || !neg.length) {
         return 0;
     }
     let wins = 0;
     for (const p of pos) {
         for (const n of neg) {
-            if (p < n) {
+            if (lowerIsBetter ? p < n : p > n) {
                 wins += 1;
             } else if (p === n) {
                 wins += 0.5;
@@ -357,12 +345,13 @@ const pairwiseAuc = (pos: readonly number[], neg: readonly number[]): number => 
 /**
  * Top-K hit rate without building a full Map — merge pos+neg scores.
  */
-const topKFromScores = (
+export const topKFromScores = (
     posIds: readonly number[],
     posScores: readonly number[],
     negIds: readonly number[],
     negScores: readonly number[],
     k: number,
+    lowerIsBetter = true,
 ): number => {
     if (!posIds.length) {
         return 0;
@@ -374,7 +363,8 @@ const topKFromScores = (
     for (let i = 0; i < negIds.length; i++) {
         all.push({ id: negIds[i]!, score: negScores[i]! });
     }
-    all.sort((a, b) => a.score - b.score);
+    all.sort((a, b) =>
+        lowerIsBetter ? a.score - b.score : b.score - a.score);
     const top = new Set(
         all.slice(0, Math.max(1, k)).map((entry) => entry.id),
     );

@@ -71,6 +71,57 @@ interface TagClausePickerProps {
     triggerSize?: "sm" | "xs";
 }
 
+const ONLY_MODE_NOT_TITLE =
+    "Not is unavailable in ONLY mode — exact tag set only";
+
+/** Has / Not buttons; pressing the active one clears the mode. */
+function ModeButtons({
+    mode,
+    notDisabled,
+    hasTitle,
+    notTitle,
+    onChange,
+}: {
+    mode: TagFilterMode | null;
+    notDisabled: boolean;
+    hasTitle?: string;
+    notTitle?: string;
+    onChange: (mode: TagFilterMode | null) => void;
+}): JSX.Element {
+    return (
+        <div className="flex shrink-0 items-center gap-1">
+            <Button
+                type="button"
+                size="xs"
+                variant={mode === "include" ? "default" : "outline"}
+                className="h-7 px-2"
+                title={hasTitle}
+                onClick={() => {
+                    onChange(mode === "include" ? null : "include");
+                }}
+            >
+                Has
+            </Button>
+            <Button
+                type="button"
+                size="xs"
+                variant={mode === "exclude" ? "destructive" : "outline"}
+                className={cn(
+                    "h-7 px-2",
+                    mode === "exclude" && "text-destructive-foreground",
+                )}
+                disabled={notDisabled}
+                title={notTitle}
+                onClick={() => {
+                    onChange(mode === "exclude" ? null : "exclude");
+                }}
+            >
+                Not
+            </Button>
+        </div>
+    );
+}
+
 /**
  * Dropdown to add include/exclude tag clauses or kit units at the root or
  * within one group.
@@ -166,9 +217,7 @@ export function TagClausePicker({
             onSetClauseInGroup(scopedGroup.id, tag, mode);
             return;
         }
-        if (onSetTagFilterMode) {
-            onSetTagFilterMode(tag, mode);
-        }
+        onSetTagFilterMode?.(tag, mode);
     };
 
     const handleKitModeChange = (
@@ -306,59 +355,22 @@ export function TagClausePicker({
                                             >
                                                 {count}
                                             </Badge>
-                                            <div className="flex shrink-0 items-center gap-1">
-                                                <Button
-                                                    type="button"
-                                                    size="xs"
-                                                    variant={
-                                                        mode === "include" ?
-                                                            "default" :
-                                                            "outline"
-                                                    }
-                                                    className="h-7 px-2"
-                                                    title="Has every tag in this kit"
-                                                    onClick={() => {
-                                                        handleKitModeChange(
-                                                            preset,
-                                                            mode === "include" ?
-                                                                null :
-                                                                "include",
-                                                        );
-                                                    }}
-                                                >
-                                                    Has
-                                                </Button>
-                                                <Button
-                                                    type="button"
-                                                    size="xs"
-                                                    variant={
-                                                        mode === "exclude" ?
-                                                            "destructive" :
-                                                            "outline"
-                                                    }
-                                                    className={cn(
-                                                        "h-7 px-2",
-                                                        mode === "exclude" &&
-                                                            "text-destructive-foreground",
-                                                    )}
-                                                    disabled={isOnlyMode}
-                                                    title={
-                                                        isOnlyMode ?
-                                                            "Not is unavailable in ONLY mode — exact tag set only" :
-                                                            "Not this kit (missing at least one tag)"
-                                                    }
-                                                    onClick={() => {
-                                                        handleKitModeChange(
-                                                            preset,
-                                                            mode === "exclude" ?
-                                                                null :
-                                                                "exclude",
-                                                        );
-                                                    }}
-                                                >
-                                                    Not
-                                                </Button>
-                                            </div>
+                                            <ModeButtons
+                                                mode={mode}
+                                                notDisabled={isOnlyMode}
+                                                hasTitle="Has every tag in this kit"
+                                                notTitle={
+                                                    isOnlyMode ?
+                                                        ONLY_MODE_NOT_TITLE :
+                                                        "Not this kit (missing at least one tag)"
+                                                }
+                                                onChange={(nextMode) => {
+                                                    handleKitModeChange(
+                                                        preset,
+                                                        nextMode,
+                                                    );
+                                                }}
+                                            />
                                         </li>
                                     );
                                 })}
@@ -390,58 +402,18 @@ export function TagClausePicker({
                                         >
                                             {count}
                                         </Badge>
-                                        <div className="flex shrink-0 items-center gap-1">
-                                            <Button
-                                                type="button"
-                                                size="xs"
-                                                variant={
-                                                    mode === "include" ?
-                                                        "default" :
-                                                        "outline"
-                                                }
-                                                className="h-7 px-2"
-                                                onClick={() => {
-                                                    handleModeChange(
-                                                        tag,
-                                                        mode === "include" ?
-                                                            null :
-                                                            "include",
-                                                    );
-                                                }}
-                                            >
-                                                Has
-                                            </Button>
-                                            <Button
-                                                type="button"
-                                                size="xs"
-                                                variant={
-                                                    mode === "exclude" ?
-                                                        "destructive" :
-                                                        "outline"
-                                                }
-                                                className={cn(
-                                                    "h-7 px-2",
-                                                    mode === "exclude" &&
-                                                        "text-destructive-foreground",
-                                                )}
-                                                disabled={isOnlyMode}
-                                                title={
-                                                    isOnlyMode ?
-                                                        "Not is unavailable in ONLY mode — exact tag set only" :
-                                                        undefined
-                                                }
-                                                onClick={() => {
-                                                    handleModeChange(
-                                                        tag,
-                                                        mode === "exclude" ?
-                                                            null :
-                                                            "exclude",
-                                                    );
-                                                }}
-                                            >
-                                                Not
-                                            </Button>
-                                        </div>
+                                        <ModeButtons
+                                            mode={mode}
+                                            notDisabled={isOnlyMode}
+                                            notTitle={
+                                                isOnlyMode ?
+                                                    ONLY_MODE_NOT_TITLE :
+                                                    undefined
+                                            }
+                                            onChange={(nextMode) => {
+                                                handleModeChange(tag, nextMode);
+                                            }}
+                                        />
                                     </li>
                                 );
                             })}

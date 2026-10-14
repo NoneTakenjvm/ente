@@ -557,7 +557,7 @@ export const templateMatchScoreGrids = (
  * Production pairs do not know which file is the tighter crop. Second direction
  * is skipped when the first already matches.
  */
-export const templateMatchScoreGridsEither = (
+const templateMatchScoreGridsEither = (
     a: Uint8Array,
     b: Uint8Array,
 ): number => {

@@ -43,14 +43,17 @@ import {
     mergeAheadOrganizerTags,
     reconcileTagOutboxWithFiles,
     remapTagOutboxFileId,
+    removeTagOutboxEntries,
 } from "@/lib/tag-outbox";
 import { drainTagOutbox, flushTagOutboxNow, requestTagOutboxFlush } from "@/lib/tag-outbox-runner";
 import {
     enqueueDerivedReplace,
+    type DerivedReplaceSave,
     type EnqueueDerivedReplaceOptions,
 } from "@/lib/derived-replace-queue";
 import {
     remapDerivedReplaceOutboxFileId,
+    type DerivedReplaceKind,
     removeDerivedReplaceOutboxEntries,
     removeDerivedReplaceOutboxEntryIfCurrent,
     upsertDerivedReplaceOutboxEntry,
@@ -85,6 +88,7 @@ import {
     ensureVisibilityOutboxHydrated,
     getVisibilityOutboxEntries,
     reconcileVisibilityOutboxWithFiles,
+    removeVisibilityOutboxEntries,
     isFileArchivedLocally,
 } from "@/lib/visibility-outbox";
 import {
@@ -284,14 +288,6 @@ interface LibraryState {
     reset: () => void;
 }
 
-const rebuildFavoritesFromLibrary = (
-    userId: number,
-    collections: Collection[],
-    allFiles: EnteFile[],
-): void => {
-    useFavoritesStore.getState().rebuildFromLibrary(userId, collections, allFiles);
-};
-
 const excludeLocallyTrashedFiles = (
     files: EnteFile[],
     extraTrashedIds?: Iterable<number>,
@@ -446,6 +442,50 @@ const applyOptimisticBatchTags = (
     scheduleSaveEncryptedFiles(() => get().allFiles, fileIds);
 };
 
+const requireFile = (get: () => LibraryState, fileId: number): EnteFile => {
+    const file = get().allFiles.find((entry) => entry.id === fileId);
+    if (!file) {
+        throw new Error(`File ${fileId} not found`);
+    }
+    return file;
+};
+
+const requireCollection = (
+    get: () => LibraryState,
+    collectionId: number,
+): Collection => {
+    const collection = get().collections.find(
+        (entry) => entry.id === collectionId,
+    );
+    if (!collection) {
+        throw new Error(`Collection ${collectionId} not found`);
+    }
+    return collection;
+};
+
+/**
+ * Swap `file` for a copy carrying `intendedTags` in place, then update the tag
+ * index and schedule the cache write. Returns the optimistic file, or
+ * `undefined` when the file is no longer in the library.
+ */
+const applyOptimisticFileTags = (
+    set: (partial: Partial<LibraryState>) => void,
+    get: () => LibraryState,
+    file: EnteFile,
+    intendedTags: string[],
+): EnteFile | undefined => {
+    const { allFiles, fileIndexById } = get();
+    const previousTags = extractTags(file);
+    const optimisticFile = fileWithOrganizerTags(file, intendedTags);
+    if (!patchFileInPlace(allFiles, file.id, optimisticFile, fileIndexById)) {
+        return undefined;
+    }
+    commitAllFiles(set, get, allFiles, { rebuildIndex: false });
+    useTagStore.getState().applyFileTags(file.id, intendedTags, previousTags);
+    scheduleSaveEncryptedFiles(() => get().allFiles, [file.id]);
+    return optimisticFile;
+};
+
 /** Carry a tag rename, delete, or merge into kits and pinned tags. */
 const rewritePresetTags = (
     affectedNames: string[],
@@ -589,18 +629,10 @@ const uploadCroppedAndReplace = async (
     croppedBytes: Uint8Array,
     dimensions: { width: number; height: number },
 ): Promise<EnteFile> => {
-    const { collections } = get();
-    const collection = collections.find(
-        (entry) => entry.id === sourceFile.collectionID,
-    );
-    if (!collection) {
-        throw new Error(`Collection ${sourceFile.collectionID} not found`);
-    }
-
     const uploaded = await getEnteCore().uploadCroppedImage(
         sourceFile,
         croppedBytes,
-        collection,
+        requireCollection(get, sourceFile.collectionID),
         dimensions,
         croppedReplaceTitle(sourceFile),
         buildCroppedOrganizerTags(sourceFile),
@@ -627,18 +659,10 @@ const uploadEditedVideoAndReplace = async (
     sourceFile: EnteFile,
     result: CroppedVideoResult,
 ): Promise<EnteFile> => {
-    const { collections } = get();
-    const collection = collections.find(
-        (entry) => entry.id === sourceFile.collectionID,
-    );
-    if (!collection) {
-        throw new Error(`Collection ${sourceFile.collectionID} not found`);
-    }
-
     const uploaded = await getEnteCore().uploadCroppedVideo(
         sourceFile,
         result,
-        collection,
+        requireCollection(get, sourceFile.collectionID),
         compressedReplaceTitle(sourceFile),
         buildCroppedOrganizerTags(sourceFile),
     );
@@ -719,6 +743,30 @@ const derivedReplaceQueueOptions = (
     };
 };
 
+/** Save the outbox entry, then queue the replace with matching completion hooks. */
+const queueDerivedReplace = async (
+    fileId: number,
+    bytes: Uint8Array,
+    dimensions: { width: number; height: number },
+    kind: DerivedReplaceKind,
+    save: DerivedReplaceSave,
+): Promise<EnteFile> => {
+    const enqueuedAt = await upsertDerivedReplaceOutboxEntry(
+        fileId,
+        bytes,
+        dimensions.width,
+        dimensions.height,
+        kind,
+    );
+    return enqueueDerivedReplace(
+        fileId,
+        bytes,
+        dimensions,
+        save,
+        derivedReplaceQueueOptions(fileId, enqueuedAt),
+    );
+};
+
 /**
  * Single-flight remote sync. Concurrent callers share one run so overlapping
  * bootstrap / outbox drains cannot race cursors against encrypted file writes.
@@ -784,7 +832,11 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             useTagStore.getState().rebuildFromFiles(filesWithOutbox);
         }
 
-        rebuildFavoritesFromLibrary(userId, collections ?? [], filesWithOutbox);
+        useFavoritesStore.getState().rebuildFromLibrary(
+            userId,
+            collections ?? [],
+            filesWithOutbox,
+        );
 
         const organizerCollection = (collections ?? []).find((collection) =>
             isOrganizerConfigCollection(collection));
@@ -792,10 +844,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             const config = organizerAppConfigFromCollection(organizerCollection);
             useSettingsStore.getState().hydrateFromOrganizerConfig(config);
             void import("@/stores/tag-speed-store").then(({ useTagSpeedStore }) => {
-                useTagSpeedStore.getState().hydrateFromOrganizerConfig({
-                    tagPresets: config.tagPresets,
-                    pinnedTags: config.pinnedTags,
-                });
+                useTagSpeedStore.getState().hydrateFromOrganizerConfig(config);
             });
             void import("@/stores/view-sessions-store").then(
                 ({ useViewSessionsStore }) => {
@@ -853,10 +902,11 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 );
                 void import("@/stores/tag-speed-store").then(
                     ({ useTagSpeedStore }) => {
-                        useTagSpeedStore.getState().hydrateFromOrganizerConfig({
-                            tagPresets: organizerBootstrap.config.tagPresets,
-                            pinnedTags: organizerBootstrap.config.pinnedTags,
-                        });
+                        useTagSpeedStore
+                            .getState()
+                            .hydrateFromOrganizerConfig(
+                                organizerBootstrap.config,
+                            );
                     },
                 );
                 useAlbumStore.getState().hydrateFromOrganizerConfig(
@@ -896,10 +946,12 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                     },
                 });
 
-                await ensureTagOutboxHydrated();
-                await ensureFavoriteOutboxHydrated();
-                await ensureFavoriteMembershipHydrated();
-                await ensureVisibilityOutboxHydrated();
+                await Promise.all([
+                    ensureTagOutboxHydrated(),
+                    ensureFavoriteOutboxHydrated(),
+                    ensureFavoriteMembershipHydrated(),
+                    ensureVisibilityOutboxHydrated(),
+                ]);
 
                 // [Note: No-op sync skips the library recompute]
                 //
@@ -943,7 +995,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                     allFiles = applyOutboxVisibilityToFiles(allFiles);
                     allFiles = excludeLocallyTrashedFiles(allFiles);
                     useTagStore.getState().rebuildFromFiles(allFiles);
-                    rebuildFavoritesFromLibrary(
+                    useFavoritesStore.getState().rebuildFromLibrary(
                         getEnteCore().getUserID(),
                         collections,
                         allFiles,
@@ -963,9 +1015,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                     await saveEncryptedFiles(allFiles, getSessionCacheKey());
                 }
 
-                void import("@/stores/trash-store").then(({ useTrashStore }) => {
-                    void useTrashStore.getState().syncTrash(collections);
-                });
+                void useTrashStore.getState().syncTrash(collections);
 
                 // Pull organizer_clip mldata into local embedding cache (non-blocking).
                 void import("@/lib/organizer-clip-sync").then(
@@ -1101,49 +1151,25 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
     },
 
     applyLocalTagsOnFile: (fileId: number, intendedTags: string[]): void => {
-        const { allFiles, fileIndexById } = get();
         const file = get().getFileById(fileId);
-        if (!file) {
-            return;
+        if (file) {
+            applyOptimisticFileTags(set, get, file, intendedTags);
         }
-        const previousTags = extractTags(file);
-        const optimisticFile = fileWithOrganizerTags(file, intendedTags);
-        if (!patchFileInPlace(allFiles, fileId, optimisticFile, fileIndexById)) {
-            return;
-        }
-        commitAllFiles(set, get, allFiles, { rebuildIndex: false });
-        useTagStore.getState().applyFileTags(
-            fileId,
-            intendedTags,
-            previousTags,
-        );
-        scheduleSaveEncryptedFiles(() => get().allFiles, [fileId]);
     },
 
     updateTagsOnFile: async (
         fileId: number,
         mutator: TagMutator,
     ): Promise<void> => {
-        const { allFiles, fileIndexById } = get();
         const file = get().getFileById(fileId);
         if (!file) {
             throw new Error(`File ${fileId} not found`);
         }
 
-        const previousTags = extractTags(file);
-        const intendedTags = applyTagMutator(mutator, previousTags);
-        const optimisticFile = fileWithOrganizerTags(file, intendedTags);
-        if (!patchFileInPlace(allFiles, fileId, optimisticFile, fileIndexById)) {
+        const intendedTags = applyTagMutator(mutator, extractTags(file));
+        if (!applyOptimisticFileTags(set, get, file, intendedTags)) {
             return;
         }
-
-        commitAllFiles(set, get, allFiles, { rebuildIndex: false });
-        useTagStore.getState().applyFileTags(
-            fileId,
-            intendedTags,
-            previousTags,
-        );
-        scheduleSaveEncryptedFiles(() => get().allFiles, [fileId]);
 
         enqueueTagOutboxEntries([{ fileId, intendedTags }]);
         requestTagOutboxFlush();
@@ -1389,18 +1415,8 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         compressedBytes: Uint8Array,
         dimensions: { width: number; height: number },
     ): Promise<EnteFile> => {
-        const { allFiles, collections } = get();
-        const file = allFiles.find((entry) => entry.id === fileId);
-        if (!file) {
-            throw new Error(`File ${fileId} not found`);
-        }
-
-        const collection = collections.find(
-            (entry) => entry.id === file.collectionID,
-        );
-        if (!collection) {
-            throw new Error(`Collection ${file.collectionID} not found`);
-        }
+        const file = requireFile(get, fileId);
+        const collection = requireCollection(get, file.collectionID);
 
         const originalSize = file.info?.fileSize;
         if (
@@ -1443,11 +1459,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             ) => void;
         },
     ): Promise<{ finalize: Promise<EnteFile> }> => {
-        const { allFiles } = get();
-        const file = allFiles.find((entry) => entry.id === fileId);
-        if (!file) {
-            throw new Error(`File ${fileId} not found`);
-        }
+        const file = requireFile(get, fileId);
 
         const { compressMediaBytes } = await import(
             "@/lib/transcode/compress-media"
@@ -1485,37 +1497,21 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         originalByteLength: number,
         onUploadProgress?: (ratio: number) => void,
     ): { optimisticFile: EnteFile; finalize: Promise<EnteFile> } => {
-        const { allFiles, collections } = get();
-        const file = allFiles.find((entry) => entry.id === fileId);
-        if (!file) {
-            throw new Error(`File ${fileId} not found`);
-        }
-        if (!collections.some((entry) => entry.id === file.collectionID)) {
-            throw new Error(`Collection ${file.collectionID} not found`);
-        }
+        const file = requireFile(get, fileId);
+        requireCollection(get, file.collectionID);
         if (!isWorthReplacing(originalByteLength, result.bytes.length)) {
             throw new CompressionSkippedError();
         }
 
-        const previousTags = extractTags(file);
-        const intendedTags = buildCompressedOrganizerTags(file);
-        const optimisticFile = fileWithOrganizerTags(file, intendedTags);
-        if (!patchFileInPlace(
-            allFiles,
-            fileId,
-            optimisticFile,
-            get().fileIndexById,
-        )) {
+        const optimisticFile = applyOptimisticFileTags(
+            set,
+            get,
+            file,
+            buildCompressedOrganizerTags(file),
+        );
+        if (!optimisticFile) {
             throw new Error(`File ${fileId} not found`);
         }
-
-        commitAllFiles(set, get, allFiles, { rebuildIndex: false });
-        useTagStore.getState().applyFileTags(
-            fileId,
-            intendedTags,
-            previousTags,
-        );
-        scheduleSaveEncryptedFiles(() => get().allFiles, [fileId]);
         setLocalMediaOverride(fileId, result.bytes);
         if (result.mimeType.startsWith("video/")) {
             queueMicrotask(() => {
@@ -1525,58 +1521,38 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             primeThumbnailFromBytes(fileId, result.bytes, result.mimeType);
         }
 
-        const finalize = (async (): Promise<EnteFile> => {
-            const enqueuedAt = await upsertDerivedReplaceOutboxEntry(
-                fileId,
-                result.bytes,
-                result.width,
-                result.height,
-                "compress",
-            );
-
-            const uploaded = await enqueueDerivedReplace(
-                fileId,
-                result.bytes,
-                { width: result.width, height: result.height },
-                async (bytes, dimensions, replaceFileId) => {
-                    const source = get().allFiles.find(
-                        (entry) => entry.id === replaceFileId,
-                    );
-                    if (!source) {
-                        throw new Error(`File ${replaceFileId} not found`);
-                    }
-                    const sourceCollection = get().collections.find(
-                        (entry) => entry.id === source.collectionID,
-                    );
-                    if (!sourceCollection) {
-                        throw new Error(
-                            `Collection ${source.collectionID} not found`,
-                        );
-                    }
-                    const uploadedMedia = await getEnteCore().uploadCompressedMedia(
-                        source,
-                        {
-                            ...result,
-                            bytes,
-                            width: dimensions.width,
-                            height: dimensions.height,
-                        },
-                        sourceCollection,
-                        compressedReplaceTitle(source, result.extension),
-                        buildCompressedOrganizerTags(source),
-                        onUploadProgress,
-                    );
-                    return replaceSourceWithCompressed(
-                        set,
-                        get,
-                        source,
-                        uploadedMedia,
-                    );
-                },
-                derivedReplaceQueueOptions(fileId, enqueuedAt),
-            );
-            return uploaded;
-        })();
+        const finalize = queueDerivedReplace(
+            fileId,
+            result.bytes,
+            { width: result.width, height: result.height },
+            "compress",
+            async (bytes, dimensions, replaceFileId) => {
+                const source = requireFile(get, replaceFileId);
+                const sourceCollection = requireCollection(
+                    get,
+                    source.collectionID,
+                );
+                const uploadedMedia = await getEnteCore().uploadCompressedMedia(
+                    source,
+                    {
+                        ...result,
+                        bytes,
+                        width: dimensions.width,
+                        height: dimensions.height,
+                    },
+                    sourceCollection,
+                    compressedReplaceTitle(source, result.extension),
+                    buildCompressedOrganizerTags(source),
+                    onUploadProgress,
+                );
+                return replaceSourceWithCompressed(
+                    set,
+                    get,
+                    source,
+                    uploadedMedia,
+                );
+            },
+        );
 
         return { optimisticFile, finalize };
     },
@@ -1585,11 +1561,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         fileId: number,
         degrees: RotationDegrees,
     ): Promise<EnteFile> => {
-        const { allFiles } = get();
-        const file = allFiles.find((entry) => entry.id === fileId);
-        if (!file) {
-            throw new Error(`File ${fileId} not found`);
-        }
+        const file = requireFile(get, fileId);
 
         const core = getEnteCore();
         const userId = core.getUserID();
@@ -1656,18 +1628,8 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         fileId: number,
         crop: VideoCropRect,
     ): Promise<EnteFile> => {
-        const { allFiles, collections } = get();
-        const file = allFiles.find((entry) => entry.id === fileId);
-        if (!file) {
-            throw new Error(`File ${fileId} not found`);
-        }
-
-        const collection = collections.find(
-            (entry) => entry.id === file.collectionID,
-        );
-        if (!collection) {
-            throw new Error(`Collection ${file.collectionID} not found`);
-        }
+        const file = requireFile(get, fileId);
+        const collection = requireCollection(get, file.collectionID);
 
         const bytes = await getEnteCore().getDecryptedFile(file);
         const { cropVideoBytes } = await import("@/lib/video-edit");
@@ -1698,14 +1660,10 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         croppedBytes: Uint8Array,
         dimensions: { width: number; height: number },
     ): Promise<EnteFile> => {
-        const file = get().allFiles.find((entry) => entry.id === fileId);
-        if (!file) {
-            throw new Error(`File ${fileId} not found`);
-        }
         return uploadCroppedAndReplace(
             set,
             get,
-            file,
+            requireFile(get, fileId),
             croppedBytes,
             dimensions,
         );
@@ -1717,36 +1675,22 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         dimensions: { width: number; height: number },
         options?: { autoCropped?: boolean; sourceBytes?: Uint8Array },
     ): { optimisticFile: EnteFile; finalize: Promise<EnteFile> } => {
-        const { allFiles } = get();
-        const file = allFiles.find((entry) => entry.id === fileId);
-        if (!file) {
-            throw new Error(`File ${fileId} not found`);
-        }
+        const file = requireFile(get, fileId);
 
         // Callers that already decoded the source pass it to skip a re-download.
         const previousOverride =
             getLocalMediaOverride(fileId)?.slice() ?? options?.sourceBytes;
-        const previousTags = extractTags(file);
-        const intendedTags = buildCroppedOrganizerTags(file, {
-            autoCropped: options?.autoCropped,
-        });
-        const optimisticFile = fileWithOrganizerTags(file, intendedTags);
-        if (!patchFileInPlace(
-            allFiles,
-            fileId,
-            optimisticFile,
-            get().fileIndexById,
-        )) {
+        const optimisticFile = applyOptimisticFileTags(
+            set,
+            get,
+            file,
+            buildCroppedOrganizerTags(file, {
+                autoCropped: options?.autoCropped,
+            }),
+        );
+        if (!optimisticFile) {
             throw new Error(`File ${fileId} not found`);
         }
-
-        commitAllFiles(set, get, allFiles, { rebuildIndex: false });
-        useTagStore.getState().applyFileTags(
-            fileId,
-            intendedTags,
-            previousTags,
-        );
-        scheduleSaveEncryptedFiles(() => get().allFiles, [fileId]);
         setLocalMediaOverride(fileId, croppedBytes);
         primeThumbnailFromBytes(fileId, croppedBytes);
 
@@ -1773,36 +1717,20 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 });
             }
 
-            const enqueuedAt = await upsertDerivedReplaceOutboxEntry(
-                fileId,
-                croppedBytes,
-                dimensions.width,
-                dimensions.height,
-                "crop",
-            );
-
-            const uploaded = await enqueueDerivedReplace(
+            return queueDerivedReplace(
                 fileId,
                 croppedBytes,
                 dimensions,
-                async (bytes, dims, replaceFileId) => {
-                    const source = get().allFiles.find(
-                        (entry) => entry.id === replaceFileId,
-                    );
-                    if (!source) {
-                        throw new Error(`File ${replaceFileId} not found`);
-                    }
-                    return uploadCroppedAndReplace(
+                "crop",
+                async (bytes, dims, replaceFileId) =>
+                    uploadCroppedAndReplace(
                         set,
                         get,
-                        source,
+                        requireFile(get, replaceFileId),
                         bytes,
                         dims,
-                    );
-                },
-                derivedReplaceQueueOptions(fileId, enqueuedAt),
+                    ),
             );
-            return uploaded;
         })();
 
         return { optimisticFile, finalize };
@@ -1812,33 +1740,19 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         fileId: number,
         result: CroppedVideoResult,
     ): { optimisticFile: EnteFile; finalize: Promise<EnteFile> } => {
-        const { allFiles } = get();
-        const file = allFiles.find((entry) => entry.id === fileId);
-        if (!file) {
-            throw new Error(`File ${fileId} not found`);
-        }
+        const file = requireFile(get, fileId);
 
         // Prefer an existing override reference — do not .slice() (doubles RAM).
         const previousOverride = getLocalMediaOverride(fileId);
-        const previousTags = extractTags(file);
-        const intendedTags = buildCroppedOrganizerTags(file);
-        const optimisticFile = fileWithOrganizerTags(file, intendedTags);
-        if (!patchFileInPlace(
-            allFiles,
-            fileId,
-            optimisticFile,
-            get().fileIndexById,
-        )) {
+        const optimisticFile = applyOptimisticFileTags(
+            set,
+            get,
+            file,
+            buildCroppedOrganizerTags(file),
+        );
+        if (!optimisticFile) {
             throw new Error(`File ${fileId} not found`);
         }
-
-        commitAllFiles(set, get, allFiles, { rebuildIndex: false });
-        useTagStore.getState().applyFileTags(
-            fileId,
-            intendedTags,
-            previousTags,
-        );
-        scheduleSaveEncryptedFiles(() => get().allFiles, [fileId]);
         setLocalMediaOverride(fileId, result.bytes);
         // Defer poster extract so it does not overlap ffmpeg WASM + source video.
         queueMicrotask(() => {
@@ -1863,25 +1777,13 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 });
             }
 
-            const enqueuedAt = await upsertDerivedReplaceOutboxEntry(
-                fileId,
-                result.bytes,
-                result.width,
-                result.height,
-                "video-edit",
-            );
-
-            const uploaded = await enqueueDerivedReplace(
+            return queueDerivedReplace(
                 fileId,
                 result.bytes,
                 { width: result.width, height: result.height },
+                "video-edit",
                 async (bytes, dimensions, replaceFileId) => {
-                    const source = get().allFiles.find(
-                        (entry) => entry.id === replaceFileId,
-                    );
-                    if (!source) {
-                        throw new Error(`File ${replaceFileId} not found`);
-                    }
+                    const source = requireFile(get, replaceFileId);
                     const { probeVideoDurationSec } = await import("@/lib/video-edit");
                     const duration = await probeVideoDurationSec(bytes, "video/mp4");
                     return uploadEditedVideoAndReplace(set, get, source, {
@@ -1891,9 +1793,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                         duration,
                     });
                 },
-                derivedReplaceQueueOptions(fileId, enqueuedAt),
             );
-            return uploaded;
         })();
 
         return { optimisticFile, finalize };
@@ -1907,15 +1807,8 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         creationTime: number,
         crypto?: UploadCryptoWorker,
     ): Promise<EnteFile> => {
-        const collection = get().collections.find(
-            (entry) => entry.id === collectionId,
-        );
-        if (!collection) {
-            throw new Error(`Collection ${collectionId} not found`);
-        }
-
         const uploaded = await getEnteCore().uploadLocalImage(
-            collection,
+            requireCollection(get, collectionId),
             jpegBytes,
             {
                 title,
@@ -1939,15 +1832,8 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         mimeType: string,
         crypto?: UploadCryptoWorker,
     ): Promise<EnteFile> => {
-        const collection = get().collections.find(
-            (entry) => entry.id === collectionId,
-        );
-        if (!collection) {
-            throw new Error(`Collection ${collectionId} not found`);
-        }
-
         const uploaded = await getEnteCore().uploadLocalVideo(
-            collection,
+            requireCollection(get, collectionId),
             video,
             {
                 title,
@@ -1993,10 +1879,6 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         useFavoritesStore.getState().removeTrashedFileIds([...trashedIds]);
         await removeFavoriteOutboxForFileIds([...trashedIds]);
         await removeFavoriteMembershipForFileIds([...trashedIds]);
-        const { removeTagOutboxEntries } = await import("@/lib/tag-outbox");
-        const { removeVisibilityOutboxEntries } = await import(
-            "@/lib/visibility-outbox"
-        );
         await removeTagOutboxEntries([...trashedIds]);
         await removeVisibilityOutboxEntries([...trashedIds]);
         await removeDerivedReplaceOutboxEntries([...trashedIds]);
@@ -2017,7 +1899,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             removedFileIds: [],
             addedFiles: files,
         });
-        rebuildFavoritesFromLibrary(
+        useFavoritesStore.getState().rebuildFromLibrary(
             getEnteCore().getUserID(),
             get().collections,
             nextFiles,

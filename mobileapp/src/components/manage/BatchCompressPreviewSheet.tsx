@@ -7,11 +7,7 @@ import {
     SheetHeader,
     SheetTitle,
 } from "@/components/ui/sheet";
-import {
-    fileByteSize,
-    formatFileSize,
-    formatSizeDelta,
-} from "@/lib/compress";
+import { fileByteSize, formatFileSize } from "@/lib/compress";
 import type { EnteFile } from "ente-media/file";
 
 interface BatchCompressPreviewSheetProps {
@@ -35,8 +31,6 @@ export function BatchCompressPreviewSheet({
     );
 
     const settingsSummary = `Skip under ${minSizeLabel.replace(/\+$/u, "")}`;
-
-    const sizeSummary = formatSizeDelta(totalBytes, Math.round(totalBytes * 0.7));
 
     return (
         <Sheet
@@ -95,7 +89,7 @@ export function BatchCompressPreviewSheet({
                     </ul>
                     {totalBytes > 0 ? (
                         <p className="text-xs text-muted-foreground">
-                            Selected total: {sizeSummary.originalLabel}
+                            Selected total: {formatFileSize(totalBytes)}
                         </p>
                     ) : null}
                 </div>

@@ -208,10 +208,7 @@ export const ThumbnailCell = memo(function ThumbnailCell({
         >
             <button
                 type="button"
-                className={cn(
-                    "size-full",
-                    "focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-                )}
+                className="size-full focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={clearPress}
@@ -296,20 +293,25 @@ export const ThumbnailCell = memo(function ThumbnailCell({
                     {formatFileSize(sizeBytes)}
                 </span>
             ) : null}
-            {tapSelects && showSelected ? (
-                <>
-                    <span
-                        className="pointer-events-none absolute inset-0 z-[1] bg-primary/30"
-                        aria-hidden
-                    />
-                    <span
-                        className="pointer-events-none absolute right-1.5 bottom-1.5 z-10 flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground"
-                        aria-hidden
-                    >
-                        <Check className="size-4" strokeWidth={3} />
-                    </span>
-                </>
-            ) : null}
+            {tapSelects && showSelected ? <SelectedTileOverlay /> : null}
         </div>
     );
 }, thumbnailCellPropsAreEqual);
+
+/** Tint and check badge drawn over a selected tile. */
+export function SelectedTileOverlay(): JSX.Element {
+    return (
+        <>
+            <span
+                className="pointer-events-none absolute inset-0 z-[1] bg-primary/30"
+                aria-hidden
+            />
+            <span
+                className="pointer-events-none absolute right-1.5 bottom-1.5 z-10 flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground"
+                aria-hidden
+            >
+                <Check className="size-4" strokeWidth={3} />
+            </span>
+        </>
+    );
+}

@@ -423,39 +423,31 @@ const edgesToFileEdges = (
     return edges;
 };
 
-/**
- * CLIP-first Stage-1: each embedded file proposes its top-K CLIP neighbours
- * within the collect band; mutual (or tight) edges are confirmed, tight dHash
- * pairs are added, then everything is clustered at {@link threshold}.
- */
-const runClipNearestClusteringCore = (
-    items: Stage1Item[],
+type EmbeddedItem = {
+    itemIndex: number;
+    vector: ArrayLike<number>;
+};
+
+/** Items that have a non-empty embedding, with their index into {@link items}. */
+const embeddedItems = (
+    items: NumericStage1Item[],
     embeddings: Stage1EmbeddingMap,
-    threshold: number,
-): Stage1ClusteringResult => {
-    const numericItems = toNumericItems(items);
-    const embedded: Array<{
-        itemIndex: number;
-        vector: ArrayLike<number>;
-    }> = [];
-    for (let i = 0; i < numericItems.length; i++) {
-        const vector = embeddings.get(numericItems[i]!.fileId);
+): EmbeddedItem[] => {
+    const embedded: EmbeddedItem[] = [];
+    for (let i = 0; i < items.length; i++) {
+        const vector = embeddings.get(items[i]!.fileId);
         if (vector?.length) {
             embedded.push({ itemIndex: i, vector });
         }
     }
-    if (embedded.length < 2) {
-        return { clusters: [], edges: [] };
-    }
+    return embedded;
+};
 
-    const vectors = embedded.map((entry) => entry.vector);
-    const topByIndex = findClipTopNeighbours(
-        vectors,
-        CLIP_CONFIRM_TOP_K,
-        CLIP_SCORE_COLLECT_MAX,
-    );
-    const confirmed = collectConfirmedClipEdges(topByIndex);
-
+/** Map confirmed CLIP edges (indexes into {@link embedded}) to item-index edges. */
+const confirmedClipEdgesByKey = (
+    confirmed: ReturnType<typeof collectConfirmedClipEdges>,
+    embedded: EmbeddedItem[],
+): Map<string, CandidateEdge> => {
     const edgeByKey = new Map<string, CandidateEdge>();
     for (const edge of confirmed) {
         const left = embedded[edge.left]!.itemIndex;
@@ -468,6 +460,39 @@ const runClipNearestClusteringCore = (
             distance: edge.score,
         });
     }
+    return edgeByKey;
+};
+
+const yieldToEventLoop = (): Promise<void> =>
+    new Promise<void>((resolve) => {
+        setTimeout(resolve, 0);
+    });
+
+/**
+ * CLIP-first Stage-1: each embedded file proposes its top-K CLIP neighbours
+ * within the collect band; mutual (or tight) edges are confirmed, tight dHash
+ * pairs are added, then everything is clustered at {@link threshold}.
+ */
+const runClipNearestClusteringCore = (
+    items: Stage1Item[],
+    embeddings: Stage1EmbeddingMap,
+    threshold: number,
+): Stage1ClusteringResult => {
+    const numericItems = toNumericItems(items);
+    const embedded = embeddedItems(numericItems, embeddings);
+    if (embedded.length < 2) {
+        return { clusters: [], edges: [] };
+    }
+
+    const vectors = embedded.map((entry) => entry.vector);
+    const topByIndex = findClipTopNeighbours(
+        vectors,
+        CLIP_CONFIRM_TOP_K,
+        CLIP_SCORE_COLLECT_MAX,
+    );
+    const confirmed = collectConfirmedClipEdges(topByIndex);
+
+    const edgeByKey = confirmedClipEdgesByKey(confirmed, embedded);
 
     addTightHashEdges(numericItems, edgeByKey);
 
@@ -492,16 +517,7 @@ const runClipNearestClusteringAsync = async (
     shouldAbort?: () => boolean,
 ): Promise<Stage1ClusteringResult> => {
     const numericItems = toNumericItems(items);
-    const embedded: Array<{
-        itemIndex: number;
-        vector: ArrayLike<number>;
-    }> = [];
-    for (let i = 0; i < numericItems.length; i++) {
-        const vector = embeddings.get(numericItems[i]!.fileId);
-        if (vector?.length) {
-            embedded.push({ itemIndex: i, vector });
-        }
-    }
+    const embedded = embeddedItems(numericItems, embeddings);
     const total = embedded.length;
     if (total < 2) {
         onProgress({ phase: "done", completed: 0, total: 0, clusters: [] });
@@ -530,9 +546,7 @@ const runClipNearestClusteringAsync = async (
         const completed = i + 1;
         if (completed % yieldEvery === 0 || completed === total) {
             onProgress({ phase: "comparing", completed, total });
-            await new Promise<void>((resolve) => {
-                setTimeout(resolve, 0);
-            });
+            await yieldToEventLoop();
         }
     }
 
@@ -541,18 +555,7 @@ const runClipNearestClusteringAsync = async (
     }
 
     const confirmed = collectConfirmedClipEdges(topByIndex);
-    const edgeByKey = new Map<string, CandidateEdge>();
-    for (const edge of confirmed) {
-        const left = embedded[edge.left]!.itemIndex;
-        const right = embedded[edge.right]!.itemIndex;
-        const a = Math.min(left, right);
-        const b = Math.max(left, right);
-        edgeByKey.set(`${a}:${b}`, {
-            left: a,
-            right: b,
-            distance: edge.score,
-        });
-    }
+    const edgeByKey = confirmedClipEdgesByKey(confirmed, embedded);
 
     addTightHashEdges(numericItems, edgeByKey);
 
@@ -569,9 +572,7 @@ const runClipNearestClusteringAsync = async (
         total,
         clusters,
     });
-    await new Promise<void>((resolve) => {
-        setTimeout(resolve, 0);
-    });
+    await yieldToEventLoop();
     onProgress({ phase: "done", completed: total, total, clusters });
     return { clusters, edges };
 };
@@ -756,9 +757,7 @@ export const runStage1Clustering = async (
             clustersDirty = false;
         }
         if (shouldYield) {
-            await new Promise<void>((resolve) => {
-                setTimeout(resolve, 0);
-            });
+            await yieldToEventLoop();
         }
     }
 
@@ -779,9 +778,7 @@ export const runStage1Clustering = async (
         total,
         clusters: finalClusters,
     });
-    await new Promise<void>((resolve) => {
-        setTimeout(resolve, 0);
-    });
+    await yieldToEventLoop();
 
     onProgress({
         phase: "done",

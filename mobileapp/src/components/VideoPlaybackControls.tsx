@@ -18,7 +18,7 @@ interface VideoPlaybackControlsProps {
     onScrubbingChange?: (scrubbing: boolean) => void;
 }
 
-const formatTime = (seconds: number): string => {
+export const formatTime = (seconds: number): string => {
     if (!Number.isFinite(seconds) || seconds < 0) {
         return "0:00";
     }
@@ -168,6 +168,15 @@ export function VideoPlaybackControls({
         [videoRef],
     );
 
+    const beginScrubbing = (): void => {
+        setScrubbingState(true);
+        wasPlayingRef.current = playing;
+        const video = videoRef.current;
+        if (video && !video.paused) {
+            video.pause();
+        }
+    };
+
     if (!visible) {
         return null;
     }
@@ -190,26 +199,14 @@ export function VideoPlaybackControls({
                 max={100}
                 value={[progress]}
                 disabled={duration <= 0}
-                onPointerDown={() => {
-                    setScrubbingState(true);
-                    wasPlayingRef.current = playing;
-                    const video = videoRef.current;
-                    if (video && !video.paused) {
-                        video.pause();
-                    }
-                }}
+                onPointerDown={beginScrubbing}
                 onValueChange={(value) => {
                     const next = Array.isArray(value) ? value[0] : value;
                     if (next === undefined) {
                         return;
                     }
                     if (!scrubbing) {
-                        wasPlayingRef.current = playing;
-                        const video = videoRef.current;
-                        if (video && !video.paused) {
-                            video.pause();
-                        }
-                        setScrubbingState(true);
+                        beginScrubbing();
                     }
                     seekToRatio(next / 100);
                 }}

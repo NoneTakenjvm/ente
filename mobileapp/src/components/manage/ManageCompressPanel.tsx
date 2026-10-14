@@ -482,6 +482,16 @@ export function ManageCompressPanel({
     const clauseCount = countTagFilterClauses(filter.root);
     const filterActive = isTagFilterActive(filter);
     const isFlat = isFlatTagFilterRoot(filter.root);
+    const scopeCounts = {
+        taggedCount,
+        untaggedCount,
+        favoritesCount,
+        notFavoritesCount,
+        photoCount: fileKindCounts.photos,
+        videoCount: fileKindCounts.videos,
+        croppedCount: fileKindCounts.cropped,
+        notCroppedCount: fileKindCounts.notCropped,
+    };
     const hasQueryContent =
         clauseCount > 0 ||
         filter.tagScope !== "all" ||
@@ -504,14 +514,7 @@ export function ManageCompressPanel({
             <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-3">
                 <div className="flex shrink-0 flex-wrap items-center gap-2">
                     <TagScopeFilterDropdown
-                        taggedCount={taggedCount}
-                        untaggedCount={untaggedCount}
-                        favoritesCount={favoritesCount}
-                        notFavoritesCount={notFavoritesCount}
-                        photoCount={fileKindCounts.photos}
-                        videoCount={fileKindCounts.videos}
-                        croppedCount={fileKindCounts.cropped}
-                        notCroppedCount={fileKindCounts.notCropped}
+                        {...scopeCounts}
                         tagScope={filter.tagScope}
                         onTagScopeChange={actions.setTagScope}
                         favoritesScope={filter.favoritesScope}
@@ -563,14 +566,7 @@ export function ManageCompressPanel({
                                 <TagQueryEditor
                                     filter={filter}
                                     actions={actions}
-                                    taggedCount={taggedCount}
-                                    untaggedCount={untaggedCount}
-                                    favoritesCount={favoritesCount}
-                                    notFavoritesCount={notFavoritesCount}
-                                    photoCount={fileKindCounts.photos}
-                                    videoCount={fileKindCounts.videos}
-                                    croppedCount={fileKindCounts.cropped}
-                                    notCroppedCount={fileKindCounts.notCropped}
+                                    {...scopeCounts}
                                 />
                             </DropdownMenuGroup>
                         </DropdownMenuContent>

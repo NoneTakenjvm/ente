@@ -18,7 +18,7 @@ const CopyFilesResponse = z.object({
     oldToNewFileIDMap: z.record(z.string(), z.number()),
 });
 
-export interface CollectionFileItem {
+interface CollectionFileItem {
     id: number;
     encryptedKey: string;
     keyDecryptionNonce: string;
@@ -93,7 +93,7 @@ const currentUserRoleInCollection = (
     return collection.sharees.find((sharee) => sharee.id === userId)?.role;
 };
 
-export const canAddFilesToCollection = (
+const canAddFilesToCollection = (
     collection: Collection,
     userId: number,
 ): boolean => {
@@ -101,7 +101,7 @@ export const canAddFilesToCollection = (
     return role === "OWNER" || role === "ADMIN" || role === "COLLABORATOR";
 };
 
-export const canDirectlyUploadToCollection = (
+const canDirectlyUploadToCollection = (
     collection: Collection,
     userId: number,
 ): boolean => collection.owner.id === userId;
@@ -121,6 +121,17 @@ const encryptWithCollectionKey = async (
         }),
     );
 
+const postJson = (
+    ctx: CollectionFilesContext,
+    path: string,
+    body: unknown,
+): Promise<Response> =>
+    ctx.http.authFetch(path, undefined, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+
 /**
  * Link existing files to a collection on remote.
  */
@@ -134,13 +145,9 @@ export const addToCollection = async (
             collection,
             batchFiles,
         );
-        await ctx.http.authFetch("/collections/add-files", undefined, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                collectionID: collection.id,
-                files: encryptedFileKeys,
-            }),
+        await postJson(ctx, "/collections/add-files", {
+            collectionID: collection.id,
+            files: encryptedFileKeys,
         });
     });
 };
@@ -148,7 +155,7 @@ export const addToCollection = async (
 /**
  * Copy non-owned files into an owned destination collection.
  */
-export const copyFiles = async (
+const copyFiles = async (
     ctx: CollectionFilesContext,
     dstCollection: Collection,
     files: EnteFile[],
@@ -190,14 +197,10 @@ export const copyFiles = async (
                 dstCollection,
                 batchFiles,
             );
-            const res = await ctx.http.authFetch("/files/copy", undefined, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    dstCollectionID: dstCollection.id,
-                    srcCollectionID,
-                    files: encryptedFileKeys,
-                }),
+            const res = await postJson(ctx, "/files/copy", {
+                dstCollectionID: dstCollection.id,
+                srcCollectionID,
+                files: encryptedFileKeys,
             });
             const { oldToNewFileIDMap } = CopyFilesResponse.parse(
                 await res.json(),
@@ -221,7 +224,7 @@ export const copyFiles = async (
     return copiedFiles;
 };
 
-export const moveFromCollection = async (
+const moveFromCollection = async (
     ctx: CollectionFilesContext,
     fromCollectionID: number,
     toCollection: Collection,
@@ -232,14 +235,10 @@ export const moveFromCollection = async (
             toCollection,
             batchFiles,
         );
-        await ctx.http.authFetch("/collections/move-files", undefined, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                fromCollectionID,
-                toCollectionID: toCollection.id,
-                files: encryptedFileKeys,
-            }),
+        await postJson(ctx, "/collections/move-files", {
+            fromCollectionID,
+            toCollectionID: toCollection.id,
+            files: encryptedFileKeys,
         });
     });
 };
@@ -250,13 +249,9 @@ const removeNonCollectionOwnerFiles = async (
     files: EnteFile[],
 ): Promise<void> => {
     await batched(files, async (batchFiles) => {
-        await ctx.http.authFetch("/collections/v3/remove-files", undefined, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                collectionID,
-                fileIDs: batchFiles.map((file) => file.id),
-            }),
+        await postJson(ctx, "/collections/v3/remove-files", {
+            collectionID,
+            fileIDs: batchFiles.map((file) => file.id),
         });
     });
 };
@@ -301,10 +296,10 @@ const removeOwnFilesFromOwnCollection = async (
         }
 
         const targetCollection = collectionsByID.get(targetCollectionID);
-        if (targetCollection?.owner.id !== userId) {
-            continue;
-        }
-        if (targetCollection.type === "uncategorized") {
+        if (
+            targetCollection?.owner.id !== userId ||
+            targetCollection.type === "uncategorized"
+        ) {
             continue;
         }
 
@@ -331,14 +326,10 @@ const removeOwnFilesFromOwnCollection = async (
         return;
     }
 
-    const uncategorizedCollection =
-        findUserUncategorizedCollection(ctx) ??
-        (await savedOrCreateUserUncategorizedCollection(ctx));
-
     await moveFromCollection(
         ctx,
         collectionID,
-        uncategorizedCollection,
+        await savedOrCreateUserUncategorizedCollection(ctx),
         remainingFiles,
     );
 };
@@ -407,10 +398,8 @@ export const addOrCopyToCollection = async (
         userId,
     );
 
-    const filesToAdd: EnteFile[] = [];
+    const filesToAdd = new Map<number, EnteFile>();
     const filesToCopy: EnteFile[] = [];
-    const seenAddFileIDs = new Set<number>();
-    const seenCopyFileIDs = new Set<number>();
 
     for (const file of otherOwnedFiles) {
         const fileHashAndTypeKey = hashAndTypeKey(file);
@@ -419,17 +408,13 @@ export const addOrCopyToCollection = async (
             undefined;
 
         if (userOwnedEquivalent) {
-            if (!seenAddFileIDs.has(userOwnedEquivalent.id)) {
-                seenAddFileIDs.add(userOwnedEquivalent.id);
-                filesToAdd.push(userOwnedEquivalent);
-            }
-        } else if (!seenCopyFileIDs.has(file.id)) {
-            seenCopyFileIDs.add(file.id);
+            filesToAdd.set(userOwnedEquivalent.id, userOwnedEquivalent);
+        } else {
             filesToCopy.push(file);
         }
     }
 
-    const reusableOwnedFiles = uniqueFilesByID(filesToAdd).filter(
+    const reusableOwnedFiles = [...filesToAdd.values()].filter(
         (file) => !destinationFileIDs.has(file.id),
     );
     if (reusableOwnedFiles.length) {
