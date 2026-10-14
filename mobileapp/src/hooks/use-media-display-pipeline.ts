@@ -6,7 +6,7 @@ import {
     useRef,
     useState,
 } from "react";
-import { sortFilesByUpdatedAt } from "@/lib/updated-at-sort";
+import { sortFilesByUploadedAt } from "@/lib/uploaded-at-sort";
 import {
     sortFilesByViewportFit,
     viewportTargetAspectRatio,
@@ -133,7 +133,7 @@ export function useMediaDisplayPipeline({
     const viewportFitSort = useUIStore((s) => s.viewportFitSort);
     const viewportTargetWidth = useUIStore((s) => s.viewportTargetWidth);
     const viewportTargetHeight = useUIStore((s) => s.viewportTargetHeight);
-    const updatedAtSort = useUIStore((s) => s.updatedAtSort);
+    const uploadedAtSort = useUIStore((s) => s.uploadedAtSort);
     const imageSizeSort = useUIStore((s) => s.imageSizeSort);
     const imageQualitySort = useUIStore((s) => s.imageQualitySort);
     const tagFilterFitSort = useUIStore((s) => s.tagFilterFitSort);
@@ -681,7 +681,7 @@ export function useMediaDisplayPipeline({
         if (
             mediaViewOrder !== "shuffled" ||
             viewportFitSort !== "none" ||
-            updatedAtSort !== "none" ||
+            uploadedAtSort !== "none" ||
             imageSizeSort !== "none" ||
             imageQualitySort !== "none" ||
             tagFilterFitActive ||
@@ -700,7 +700,7 @@ export function useMediaDisplayPipeline({
         reconcileMediaShuffle,
         relativeActive,
         tagFilterFitActive,
-        updatedAtSort,
+        uploadedAtSort,
         viewportFitSort,
     ]);
 
@@ -769,10 +769,10 @@ export function useMediaDisplayPipeline({
                     ),
             );
         }
-        if (updatedAtSort !== "none") {
+        if (uploadedAtSort !== "none") {
             return reuseComputedOrder(
-                `updated:${updatedAtSort}`,
-                () => sortFilesByUpdatedAt(filteredFiles, updatedAtSort),
+                `uploaded:${uploadedAtSort}`,
+                () => sortFilesByUploadedAt(filteredFiles, uploadedAtSort),
             );
         }
         if (viewportFitSort !== "none") {
@@ -823,7 +823,7 @@ export function useMediaDisplayPipeline({
         tagFilter,
         tagFilterFitActive,
         tagFilterFitSort,
-        updatedAtSort,
+        uploadedAtSort,
         viewportFitSort,
         viewportTargetHeight,
         viewportTargetWidth,

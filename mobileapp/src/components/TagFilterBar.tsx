@@ -110,8 +110,8 @@ export function TagFilterBar({
     const setMediaDefaultOrder = useUIStore((s) => s.setMediaDefaultOrder);
     const viewportFitSort = useUIStore((s) => s.viewportFitSort);
     const setViewportFitSort = useUIStore((s) => s.setViewportFitSort);
-    const updatedAtSort = useUIStore((s) => s.updatedAtSort);
-    const setUpdatedAtSort = useUIStore((s) => s.setUpdatedAtSort);
+    const uploadedAtSort = useUIStore((s) => s.uploadedAtSort);
+    const setUploadedAtSort = useUIStore((s) => s.setUploadedAtSort);
     const imageSizeSort = useUIStore((s) => s.imageSizeSort);
     const setImageSizeSort = useUIStore((s) => s.setImageSizeSort);
     const imageQualitySort = useUIStore((s) => s.imageQualitySort);
@@ -464,8 +464,8 @@ export function TagFilterBar({
                         onCroppedScopeChange={setCroppedScope}
                         viewportFitSort={viewportFitSort}
                         onViewportFitSortChange={setViewportFitSort}
-                        updatedAtSort={updatedAtSort}
-                        onUpdatedAtSortChange={setUpdatedAtSort}
+                        uploadedAtSort={uploadedAtSort}
+                        onUploadedAtSortChange={setUploadedAtSort}
                         imageSizeSort={imageSizeSort}
                         onImageSizeSortChange={setImageSizeSort}
                         imageQualitySort={imageQualitySort}

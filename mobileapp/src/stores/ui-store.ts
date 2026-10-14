@@ -6,7 +6,7 @@ import type { ImageSizeSort } from "@/lib/image-size-sort";
 import type { RelativeSort } from "@/lib/relative-sort";
 import type { TagFilterFitSort } from "@/lib/tag-filter-fit-sort";
 import type { TagFilterSelection } from "@/lib/tags";
-import type { UpdatedAtSort } from "@/lib/updated-at-sort";
+import type { UploadedAtSort } from "@/lib/uploaded-at-sort";
 import {
     deviceViewerSize,
     type ViewportFitSort,
@@ -205,8 +205,8 @@ interface UIState {
     cropLockAspect: boolean;
     setCropLockAspect: (locked: boolean) => void;
     /** Gallery reorder by last update time (session-only). */
-    updatedAtSort: UpdatedAtSort;
-    setUpdatedAtSort: (mode: UpdatedAtSort) => void;
+    uploadedAtSort: UploadedAtSort;
+    setUploadedAtSort: (mode: UploadedAtSort) => void;
     /** Gallery reorder by pixel area (session-only). */
     imageSizeSort: ImageSizeSort;
     setImageSizeSort: (mode: ImageSizeSort) => void;
@@ -293,7 +293,7 @@ export const useUIStore = create<UIState>((set) => {
                 viewportFitSort: mode,
                 ...(mode !== "none" ?
                     {
-                        updatedAtSort: "none" as const,
+                        uploadedAtSort: "none" as const,
                         imageSizeSort: "none" as const,
                         imageQualitySort: "none" as const,
                         tagFilterFitSort: "none" as const,
@@ -332,10 +332,10 @@ export const useUIStore = create<UIState>((set) => {
         setCropLockAspect: (locked: boolean): void => {
             set({ cropLockAspect: locked });
         },
-        updatedAtSort: "none",
-        setUpdatedAtSort: (mode: UpdatedAtSort): void => {
+        uploadedAtSort: "none",
+        setUploadedAtSort: (mode: UploadedAtSort): void => {
             set((state) => ({
-                updatedAtSort: mode,
+                uploadedAtSort: mode,
                 ...(mode !== "none" ?
                     {
                         viewportFitSort: "none" as const,
@@ -363,7 +363,7 @@ export const useUIStore = create<UIState>((set) => {
                 ...(mode !== "none" ?
                     {
                         viewportFitSort: "none" as const,
-                        updatedAtSort: "none" as const,
+                        uploadedAtSort: "none" as const,
                         imageQualitySort: "none" as const,
                         tagFilterFitSort: "none" as const,
                         relativeSort: "none" as const,
@@ -387,7 +387,7 @@ export const useUIStore = create<UIState>((set) => {
                 ...(mode !== "none" ?
                     {
                         viewportFitSort: "none" as const,
-                        updatedAtSort: "none" as const,
+                        uploadedAtSort: "none" as const,
                         imageSizeSort: "none" as const,
                         tagFilterFitSort: "none" as const,
                         relativeSort: "none" as const,
@@ -411,7 +411,7 @@ export const useUIStore = create<UIState>((set) => {
                 ...(mode !== "none" ?
                     {
                         viewportFitSort: "none" as const,
-                        updatedAtSort: "none" as const,
+                        uploadedAtSort: "none" as const,
                         imageSizeSort: "none" as const,
                         imageQualitySort: "none" as const,
                         relativeSort: "none" as const,
@@ -446,7 +446,7 @@ export const useUIStore = create<UIState>((set) => {
                             undefined :
                             state.relativeStartFileId,
                         viewportFitSort: "none" as const,
-                        updatedAtSort: "none" as const,
+                        uploadedAtSort: "none" as const,
                         imageSizeSort: "none" as const,
                         imageQualitySort: "none" as const,
                         tagFilterFitSort: "none" as const,
@@ -524,7 +524,7 @@ export const useUIStore = create<UIState>((set) => {
                     {
                         nearnessEpoch: state.nearnessEpoch + 1,
                         viewportFitSort: "none" as const,
-                        updatedAtSort: "none" as const,
+                        uploadedAtSort: "none" as const,
                         imageSizeSort: "none" as const,
                         imageQualitySort: "none" as const,
                         tagFilterFitSort: "none" as const,
@@ -554,7 +554,7 @@ export const useUIStore = create<UIState>((set) => {
                 mediaShuffleSeed: seed,
                 mediaShuffledFileIds: [],
                 viewportFitSort: "none",
-                updatedAtSort: "none",
+                uploadedAtSort: "none",
                 imageSizeSort: "none",
                 imageQualitySort: "none",
                 tagFilterFitSort: "none",
@@ -573,7 +573,7 @@ export const useUIStore = create<UIState>((set) => {
                 mediaShuffleSeed: Date.now(),
                 mediaShuffledFileIds: [],
                 viewportFitSort: "none",
-                updatedAtSort: "none",
+                uploadedAtSort: "none",
                 imageSizeSort: "none",
                 imageQualitySort: "none",
                 tagFilterFitSort: "none",

@@ -41,7 +41,8 @@ const buildMetadata = (
     fileType: FileType.video,
     title: options.title,
     creationTime: ensureInteger(options.creationTime),
-    modificationTime: ensureInteger(Date.now() * 1000),
+    // The picked file's last-modified time doubles as its modification time.
+    modificationTime: ensureInteger(options.creationTime),
     hash,
     duration: ensureInteger(options.duration),
 });

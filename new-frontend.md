@@ -7,12 +7,18 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-10-14 |
-| **Last agent / session** | Bulk quick-rotate / quick-crop Apply speed-up (`0.3.189`) |
+| **Last agent / session** | Upload-time metadata consistency + "Uploaded At" sort (`0.3.190`) |
 | **Current milestone** | Post-M8 UX / upload performance |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
-| **Next recommended action** | Phone QA of `0.3.189`: quick-rotate and quick-crop 20+ photos and Apply — progress should climb several at a time, all files end up rotated/cropped once, undo still works on a cropped photo, failed items stay pending for retry. Then QA the `0.3.188` perf items if not done yet. |
+| **Next recommended action** | Phone QA of `0.3.190`: tag a file uploaded by the official app, then confirm its position under the "Uploaded At" sort does not move; crop/compress a photo and confirm the copy keeps the source's upload position. Then QA `0.3.189`: quick-rotate and quick-crop 20+ photos and Apply — progress should climb several at a time, all files end up rotated/cropped once, undo still works on a cropped photo, failed items stay pending for retry. Then QA the `0.3.188` perf items if not done yet. |
 
-**This session (local only — not pushed, `0.3.189`):**
+**This session (local only — not pushed, `0.3.190`):**
+1. **`uploadedAt` is stamped on first write** — `putPublicMetadata` and `prepareFilesTagMetadata` (`core/metadata.ts`) freeze `uploadedAt` from `fileUploadSortTime` when a file has none, so official-app uploads stop drifting with `updationTime` once touched here.
+2. **Derived uploads carry history** — crop/compress/rotate-as-new keep the source's `uploadedAt`, `editedTime` and `editedName`; in-place rotate re-stamps `uploadedAt` too. Fresh uploads use `modificationTime = creationTime` (was upload-now).
+3. **"Updated At" sort → "Uploaded At"** — `lib/uploaded-at-sort.ts` sorts by `fileUploadSortTime`; store/filter-bar/dropdown/pipeline identifiers renamed to `uploadedAt…`.
+4. **Known limits** — legacy files freeze at their first-write `updationTime` (true original upload time is not recoverable); `editedAt` on derived copies is still reset; if the official app replaces rather than merges `pubMagicMetadata`, custom keys are lost (outside this repo).
+
+**Previous session (local only, `0.3.189`):**
 1. **Bulk Apply concurrency** — `RotateToolFooter` runs 3 rotations at a time, `CropToolFooter` 2 crops at a time (each still waits for its own upload, bounding memory). Both were strictly one file at a time end to end.
 2. **`mapBatched` is a sliding pool** — each runner picks the next item as soon as it finishes, instead of lock-step slices waiting on the slowest item. All existing callers catch inside `op`.
 3. **No second download for crop undo** — `cropAndReplaceFileOptimistic` takes `options.sourceBytes`; quick crop and auto-crop pass the bytes they already decrypted, so finalize no longer re-downloads the original just to record edit history.

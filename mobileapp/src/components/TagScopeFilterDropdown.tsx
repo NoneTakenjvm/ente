@@ -32,7 +32,7 @@ import type { ImageQualitySort } from "@/lib/image-quality";
 import type { ImageSizeSort } from "@/lib/image-size-sort";
 import type { RelativeSort } from "@/lib/relative-sort";
 import type { TagFilterFitSort } from "@/lib/tag-filter-fit-sort";
-import type { UpdatedAtSort } from "@/lib/updated-at-sort";
+import type { UploadedAtSort } from "@/lib/uploaded-at-sort";
 import type { TagPreset } from "@/lib/tag-presets";
 import { cn } from "@/lib/utils";
 import { useTagStore } from "@/stores/tag-store";
@@ -43,7 +43,7 @@ type OptionsSectionId =
     "favourites" |
     "manualCrop" |
     "mediaType" |
-    "updatedAt" |
+    "uploadedAt" |
     "viewportFit" |
     "imageSize" |
     "imageQuality" |
@@ -121,8 +121,8 @@ interface TagScopeFilterDropdownProps {
     viewportFitSort?: ViewportFitSort;
     onViewportFitSortChange?: (mode: ViewportFitSort) => void;
     /** Gallery-only: reorder by last update time (not a hide-filter). */
-    updatedAtSort?: UpdatedAtSort;
-    onUpdatedAtSortChange?: (mode: UpdatedAtSort) => void;
+    uploadedAtSort?: UploadedAtSort;
+    onUploadedAtSortChange?: (mode: UploadedAtSort) => void;
     /** Gallery-only: reorder by pixel area (not a hide-filter). */
     imageSizeSort?: ImageSizeSort;
     onImageSizeSortChange?: (mode: ImageSizeSort) => void;
@@ -195,7 +195,7 @@ const isCroppedScope = (value: unknown): value is CroppedScope =>
 const isViewportFitSort = (value: unknown): value is ViewportFitSort =>
     value === "none" || value === "best" || value === "worst";
 
-const isUpdatedAtSort = (value: unknown): value is UpdatedAtSort =>
+const isUploadedAtSort = (value: unknown): value is UploadedAtSort =>
     value === "none" || value === "newest" || value === "oldest";
 
 const isImageSizeSort = (value: unknown): value is ImageSizeSort =>
@@ -229,8 +229,8 @@ export function TagScopeFilterDropdown({
     onCroppedScopeChange,
     viewportFitSort,
     onViewportFitSortChange,
-    updatedAtSort,
-    onUpdatedAtSortChange,
+    uploadedAtSort,
+    onUploadedAtSortChange,
     imageSizeSort,
     onImageSizeSortChange,
     imageQualitySort,
@@ -306,8 +306,8 @@ export function TagScopeFilterDropdown({
     const croppedScope = controlledCroppedScope ?? storeFilter.croppedScope;
     const showViewportFit = onViewportFitSortChange !== undefined;
     const fitSort = viewportFitSort ?? "none";
-    const showUpdatedAt = onUpdatedAtSortChange !== undefined;
-    const updateSort = updatedAtSort ?? "none";
+    const showUploadedAt = onUploadedAtSortChange !== undefined;
+    const uploadedSort = uploadedAtSort ?? "none";
     const showImageSize = onImageSizeSortChange !== undefined;
     const sizeSort = imageSizeSort ?? "none";
     const showImageQuality = onImageQualitySortChange !== undefined;
@@ -332,7 +332,7 @@ export function TagScopeFilterDropdown({
         nearnessSource === "kit" && kitLikenessPresetId !== undefined;
     const showSort =
         showViewportFit ||
-        showUpdatedAt ||
+        showUploadedAt ||
         showImageSize ||
         showImageQuality ||
         showTagFilterFit ||
@@ -461,7 +461,7 @@ export function TagScopeFilterDropdown({
 
     const sortActive =
         fitSort !== "none" ||
-        updateSort !== "none" ||
+        uploadedSort !== "none" ||
         sizeSort !== "none" ||
         qualitySort !== "none" ||
         tagFitSort !== "none" ||
@@ -919,7 +919,7 @@ export function TagScopeFilterDropdown({
                     aria-pressed={!sortActive}
                     disabled={!sortActive}
                     onClick={() => {
-                        onUpdatedAtSortChange?.("none");
+                        onUploadedAtSortChange?.("none");
                         onViewportFitSortChange?.("none");
                         onImageSizeSortChange?.("none");
                         onImageQualitySortChange?.("none");
@@ -935,22 +935,22 @@ export function TagScopeFilterDropdown({
                 </Button>
             </div>
             <DropdownMenuSeparator />
-            {showUpdatedAt ? (
+            {showUploadedAt ? (
                 <OptionsSection
-                    title="Updated At"
+                    title="Uploaded At"
                     open={isOptionsSectionOpen(
-                        "updatedAt",
-                        updateSort !== "none",
+                        "uploadedAt",
+                        uploadedSort !== "none",
                     )}
                     onToggle={() =>
-                        toggleOptionsSection("updatedAt", updateSort !== "none")
+                        toggleOptionsSection("uploadedAt", uploadedSort !== "none")
                     }
                 >
                     <DropdownMenuRadioGroup
-                        value={updateSort === "none" ? "" : updateSort}
+                        value={uploadedSort === "none" ? "" : uploadedSort}
                         onValueChange={(value) => {
-                            if (isUpdatedAtSort(value)) {
-                                onUpdatedAtSortChange(value);
+                            if (isUploadedAtSort(value)) {
+                                onUploadedAtSortChange(value);
                             }
                         }}
                     >
@@ -963,7 +963,7 @@ export function TagScopeFilterDropdown({
                     </DropdownMenuRadioGroup>
                 </OptionsSection>
             ) : null}
-            {showUpdatedAt && showViewportFit ? <DropdownMenuSeparator /> : null}
+            {showUploadedAt && showViewportFit ? <DropdownMenuSeparator /> : null}
             {showViewportFit ? (
                 <OptionsSection
                     title="Viewport fit"
@@ -1052,7 +1052,7 @@ export function TagScopeFilterDropdown({
                     </div>
                 </OptionsSection>
             ) : null}
-            {(showUpdatedAt || showViewportFit) && showImageSize ?
+            {(showUploadedAt || showViewportFit) && showImageSize ?
                 <DropdownMenuSeparator /> :
                 null}
             {showImageSize ? (
@@ -1080,7 +1080,7 @@ export function TagScopeFilterDropdown({
                     </DropdownMenuRadioGroup>
                 </OptionsSection>
             ) : null}
-            {(showUpdatedAt || showViewportFit || showImageSize) &&
+            {(showUploadedAt || showViewportFit || showImageSize) &&
             showImageQuality ?
                 <DropdownMenuSeparator /> :
                 null}
@@ -1115,7 +1115,7 @@ export function TagScopeFilterDropdown({
                     </DropdownMenuRadioGroup>
                 </OptionsSection>
             ) : null}
-            {(showUpdatedAt ||
+            {(showUploadedAt ||
                 showViewportFit ||
                 showImageSize ||
                 showImageQuality) &&
@@ -1153,7 +1153,7 @@ export function TagScopeFilterDropdown({
                     </DropdownMenuRadioGroup>
                 </OptionsSection>
             ) : null}
-            {(showUpdatedAt ||
+            {(showUploadedAt ||
                 showViewportFit ||
                 showImageSize ||
                 showImageQuality ||
@@ -1199,7 +1199,7 @@ export function TagScopeFilterDropdown({
                     ) : null}
                 </OptionsSection>
             ) : null}
-            {(showUpdatedAt ||
+            {(showUploadedAt ||
                 showViewportFit ||
                 showImageSize ||
                 showImageQuality ||

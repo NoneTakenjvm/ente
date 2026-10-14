@@ -10,6 +10,7 @@ import type {
 } from "ente-media/file-metadata";
 import { refetchFile } from "./api/files";
 import type { HttpClient } from "./api/http";
+import { fileUploadSortTime } from "@/lib/sort-files";
 import { extractTags } from "@/lib/tags";
 import {
     buildOrganizerUpdate,
@@ -59,6 +60,21 @@ const withEditedAt = <T extends Record<string, unknown>>(
     editedAt: Date.now() * 1000,
 });
 
+/**
+ * Freeze the file's upload time into {@link data} if it has none yet.
+ *
+ * Files uploaded by other clients have no `uploadedAt`, so their upload sort
+ * key falls back to `updationTime`, which every write bumps. Stamping it on the
+ * first write stops that drift.
+ */
+const withUploadedAt = (
+    file: EnteFile,
+    data: FilePublicMagicMetadataData,
+): FilePublicMagicMetadataData => ({
+    ...data,
+    uploadedAt: data.uploadedAt ?? fileUploadSortTime(file),
+});
+
 type RemotePublicMagicMetadata = Awaited<
     ReturnType<typeof encryptMagicMetadata>
 >;
@@ -105,7 +121,10 @@ const putPublicMetadata = async (
     file: EnteFile,
     data: FilePublicMagicMetadataData,
 ): Promise<void> => {
-    const merged = createMagicMetadata(data, pubMagicVersionForPut(file));
+    const merged = createMagicMetadata(
+        withUploadedAt(file, data),
+        pubMagicVersionForPut(file),
+    );
     const magicMetadata = await encryptMagicMetadata(merged, file.key);
     await putPublicMetadataList(http, [{ id: file.id, magicMetadata }]);
     // Remote increments version after accepting the sent value.
@@ -229,9 +248,9 @@ export const prepareFilesTagMetadata = async (
     Promise.all(
         updates.map(async ({ file, intendedTags }) => {
             const working: EnteFile = { ...file };
-            const mergedData = applyOrganizerTagsLocally(
+            const mergedData = withUploadedAt(
                 working,
-                () => intendedTags,
+                applyOrganizerTagsLocally(working, () => intendedTags),
             );
             const merged = createMagicMetadata(
                 mergedData,

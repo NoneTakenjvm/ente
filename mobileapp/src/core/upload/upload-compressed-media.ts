@@ -25,6 +25,7 @@ import { ensureInteger } from "ente-utils/ensure";
 import type { HttpClient } from "../api/http";
 import { extractVideoFrameJpeg } from "@/lib/ffmpeg";
 import type { CompressMediaResult } from "@/lib/transcode/compress-media";
+import { fileUploadSortTime } from "@/lib/sort-files";
 import { generateImageThumbnail } from "./thumbnail";
 import {
     postEnteFile,
@@ -56,18 +57,24 @@ const buildMetadata = async (
 const buildPublicMagicData = (
     width: number,
     height: number,
-    uploadedAt: number,
+    sourceFile: EnteFile,
     organizerTags: string[],
-): Record<string, unknown> => ({
-    w: ensureInteger(width),
-    h: ensureInteger(height),
-    uploadedAt: ensureInteger(uploadedAt),
-    editedAt: ensureInteger(Date.now() * 1000),
-    _organizer_v1: {
-        tags: organizerTags,
-        updatedAt: Date.now() * 1000,
-    },
-});
+): Record<string, unknown> => {
+    const { editedTime, editedName } = sourceFile.pubMagicMetadata?.data ?? {};
+    return {
+        w: ensureInteger(width),
+        h: ensureInteger(height),
+        uploadedAt: ensureInteger(fileUploadSortTime(sourceFile)),
+        editedAt: ensureInteger(Date.now() * 1000),
+        // Carry the source's user edits over to the derived file.
+        ...(editedTime !== undefined && { editedTime }),
+        ...(editedName !== undefined && { editedName }),
+        _organizer_v1: {
+            tags: organizerTags,
+            updatedAt: Date.now() * 1000,
+        },
+    };
+};
 
 /**
  * Upload a compressed derivative (JPEG, AVIF, WebP, GIF, or MP4) of an existing file.
@@ -119,9 +126,7 @@ export const uploadCompressedMedia = async (
     const publicMagicData = buildPublicMagicData(
         result.width,
         result.height,
-        sourceFile.pubMagicMetadata?.data.uploadedAt ??
-            sourceFile.updationTime ??
-            sourceFile.metadata.creationTime,
+        sourceFile,
         organizerTags,
     );
     const publicMagicMetadata = createMagicMetadata(publicMagicData);

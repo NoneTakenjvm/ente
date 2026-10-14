@@ -28,6 +28,7 @@ import {
     type PostEnteFileRequest,
 } from "./remote";
 import { updatePublicMetadata } from "../metadata";
+import { fileUploadSortTime } from "@/lib/sort-files";
 import { buildOrganizerUpdate } from "@/lib/tag-writes";
 
 export interface UploadJpegOptions {
@@ -45,6 +46,8 @@ export interface UploadJpegOptions {
     uploadedAt?: number;
     /** User-edited capture date carried over from a derived reupload's source. */
     editedTime?: number;
+    /** User-edited file name carried over from a derived reupload's source. */
+    editedName?: string;
     /** Dedicated crypto worker for this upload slot (batch uploads). */
     crypto?: UploadCryptoWorker;
 }
@@ -76,6 +79,9 @@ const buildPublicMagicData = (
     };
     if (options.editedTime !== undefined) {
         data.editedTime = ensureInteger(options.editedTime);
+    }
+    if (options.editedName !== undefined) {
+        data.editedName = options.editedName;
     }
     if (options.organizerTags?.length) {
         data._organizer_v1 = {
@@ -165,22 +171,18 @@ export const uploadDerivedImage = async (
     dimensions: { width: number; height: number },
     options: UploadDerivedImageOptions,
 ): Promise<EnteFile> => {
-    const nowMicros = Date.now() * 1000;
-    // Prefer stamped uploadedAt; otherwise keep the source's gallery sort key
-    // (updationTime → creationTime) so crops don't jump to "just uploaded".
-    const uploadedAt =
-        sourceFile.pubMagicMetadata?.data.uploadedAt ??
-        sourceFile.updationTime ??
-        sourceFile.metadata.creationTime;
+    // Keep the source's gallery sort key so derived files don't jump to
+    // "just uploaded".
     return uploadJpegImage(http, collection, jpegBytes, {
         title: options.title,
         creationTime: sourceFile.metadata.creationTime,
-        modificationTime: nowMicros,
+        modificationTime: Date.now() * 1000,
         width: dimensions.width,
         height: dimensions.height,
         organizerTags: options.organizerTags,
-        uploadedAt,
+        uploadedAt: fileUploadSortTime(sourceFile),
         editedTime: sourceFile.pubMagicMetadata?.data.editedTime,
+        editedName: sourceFile.pubMagicMetadata?.data.editedName,
     });
 };
 
@@ -325,7 +327,9 @@ export const updateImageBytesInPlace = async (
         },
     };
 
+    // Read from sourceFile: `updated.updationTime` is already the new one.
     await updatePublicMetadata(http, updated, {
+        uploadedAt: fileUploadSortTime(sourceFile),
         w: ensureInteger(options.width),
         h: ensureInteger(options.height),
         ...buildOrganizerUpdate(options.organizerTags),
@@ -370,11 +374,12 @@ export const uploadLocalImage = async (
     jpegBytes: Uint8Array,
     options: UploadLocalImageOptions,
 ): Promise<EnteFile> => {
-    const nowMicros = Date.now() * 1000;
+    // The picked file's last-modified time is the only capture time we have,
+    // so it doubles as the original modification time.
     return uploadJpegImage(http, collection, jpegBytes, {
         title: options.title,
         creationTime: options.creationTime,
-        modificationTime: nowMicros,
+        modificationTime: options.creationTime,
         width: options.width,
         height: options.height,
         crypto: options.crypto,
