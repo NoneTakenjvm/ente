@@ -4,7 +4,7 @@ import { pubMagicVersionForPut } from "@/core/metadata";
 import { extractTags, type OrganizerTagMetadata } from "@/lib/tags";
 export type TagMutator = (currentTags: string[]) => string[];
 
-export type OrganizerMetadataBlock = OrganizerTagMetadata & {
+type OrganizerMetadataBlock = OrganizerTagMetadata & {
     updatedAt?: number;
 };
 

@@ -137,7 +137,7 @@ const isRetryableUploadError = (error: unknown): boolean =>
  * finalize is idempotent on the server (it reuses an existing file with the
  * same object keys). Errors are only thrown once retries are exhausted.
  */
-export const withUploadRetry = <T>(
+const withUploadRetry = <T>(
     request: () => Promise<T>,
     maxAttempts = 7,
 ): Promise<T> =>

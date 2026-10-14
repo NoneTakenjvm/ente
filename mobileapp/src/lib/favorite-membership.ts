@@ -198,10 +198,10 @@ export const removeFavoriteMembershipForFileIds = async (
 };
 
 /** Await pending membership encrypt to IDB (hide / logout). */
-export const flushFavoriteMembershipPersist = writer.flush;
+const flushFavoriteMembershipPersist = writer.flush;
 
 /** Wipe in-memory membership on logout; forces next full Favourites pull. */
-export const clearFavoriteMembership = (): void => {
+const clearFavoriteMembership = (): void => {
     membershipIds.clear();
     hydrated = false;
     ready = false;

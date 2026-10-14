@@ -1,11 +1,11 @@
 import type { OrganizerAppConfig } from "@/lib/organizer-config";
 
-export type MediaSortBy = "uploaded" | "edited";
+type MediaSortBy = "uploaded" | "edited";
 
 const isMediaSortBy = (value: unknown): value is MediaSortBy =>
     value === "uploaded" || value === "edited";
 
-export type GalleryThumbnailMode = "grid" | "fit";
+type GalleryThumbnailMode = "grid" | "fit";
 
 export type GalleryColumnCount = 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
@@ -24,7 +24,7 @@ export const MAX_SIMILAR_MAX_GROUP_SIZE = 5;
  */
 export const CLIP_EMBEDDING_BATCH_SIZE_AUTO = 0;
 export const CLIP_EMBEDDING_BATCH_SIZE_OPTIONS = [4, 8, 12, 16] as const;
-export type ClipEmbeddingBatchSizeOption =
+type ClipEmbeddingBatchSizeOption =
     (typeof CLIP_EMBEDDING_BATCH_SIZE_OPTIONS)[number];
 
 export interface PersistedAppSettings {

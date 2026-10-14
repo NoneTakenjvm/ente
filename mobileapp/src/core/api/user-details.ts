@@ -66,7 +66,7 @@ export const UserDetails = z.object({
 });
 
 export type UserDetails = z.infer<typeof UserDetails>;
-export type Subscription = z.infer<typeof Subscription>;
+type Subscription = z.infer<typeof Subscription>;
 
 /**
  * Fetch account usage and subscription details from remote.

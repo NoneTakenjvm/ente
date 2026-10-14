@@ -28,7 +28,7 @@ import {
 } from "@/lib/session-invalidation";
 import { errorMessage } from "@/lib/format";
 
-export type SessionStatus = "idle" | "loading" | "authenticated" | "error";
+type SessionStatus = "idle" | "loading" | "authenticated" | "error";
 
 interface SessionState {
     status: SessionStatus;

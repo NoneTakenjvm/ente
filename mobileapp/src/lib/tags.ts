@@ -8,7 +8,7 @@ export interface OrganizerTagMetadata {
     updatedAt?: number;
 }
 
-export const SYSTEM_TAGS = new Set([
+const SYSTEM_TAGS = new Set([
     "compressed",
     "rotated",
     "cropped",

@@ -279,7 +279,7 @@ export const sortPresetsByMatchCount = (
 /**
  * Canonical key for a tag set (order-independent).
  */
-export const tagSetKey = (tags: string[]): string =>
+const tagSetKey = (tags: string[]): string =>
     [...tags].sort((a, b) => a.localeCompare(b)).join("\0");
 
 const WORKING_SET_LIMIT = 16;

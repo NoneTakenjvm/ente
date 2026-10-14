@@ -15,7 +15,7 @@ import { useTagSpeedStore } from "@/stores/tag-speed-store";
 /**
  * Apply a tag mutator to many files, record undo, and show a toast with Undo.
  */
-export const runBulkTagMutation = async (
+const runBulkTagMutation = async (
     fileIds: number[],
     mutator: TagMutator,
     options?: {
@@ -138,7 +138,7 @@ export const bulkApplyTagDraft = async (
 /**
  * Restore each file's tags from the last bulk undo snapshot.
  */
-export const undoLastBulkTagMutation = async (): Promise<boolean> => {
+const undoLastBulkTagMutation = async (): Promise<boolean> => {
     const entries = useTagSpeedStore.getState().lastBulkUndo;
     if (!entries?.length) {
         toast.message("Nothing to undo");

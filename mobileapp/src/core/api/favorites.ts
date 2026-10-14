@@ -241,5 +241,3 @@ export const removeFromFavoritesCollection = async (
 
     return uniqueResolved.map((file) => file.id);
 };
-
-export { findUserFavoritesCollection };

@@ -30,7 +30,7 @@ export const DEFAULT_MIN_SIZE_BYTES = 800 * 1024;
 const COMPRESS_MIN_SIZE_KEY = "mobileapp-compress-min-size";
 
 /** Minimum savings ratio (0–1) before replacing an original file. */
-export const MIN_COMPRESSION_SAVINGS_RATIO = 0.02;
+const MIN_COMPRESSION_SAVINGS_RATIO = 0.02;
 
 export class CompressionSkippedError extends Error {
     constructor(message = "Compression would not reduce file size") {

@@ -87,7 +87,7 @@ export const mergeOrganizerAppConfig = (
     return merged;
 };
 
-export const organizerMagicMetadata = (
+const organizerMagicMetadata = (
     collection: { magicMetadata?: { data: unknown } },
 ): OrganizerCollectionMagicMetadata | undefined =>
     collection.magicMetadata?.data as

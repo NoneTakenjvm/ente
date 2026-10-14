@@ -16,6 +16,7 @@
         "icons": "node scripts/generate-icons.mjs",
         "typecheck": "tsc --noEmit -p .",
         "typecheck:scripts": "tsc -p scripts/tsconfig.json --noEmit",
+        "knip": "knip",
         "test:e2e:local": "tsx --tsconfig scripts/tsconfig.json scripts/e2e-local-helpers.ts",
         "test:e2e": "tsx --tsconfig scripts/tsconfig.json scripts/e2e-post-m8-ux.ts",
         "test:e2e:smoke": "tsx --tsconfig scripts/tsconfig.json scripts/e2e-smoke.ts"
@@ -67,6 +68,7 @@
         "eslint-plugin-react-hooks": "7.0.1",
         "globals": "16.5.0",
         "happy-dom": "^20.10.6",
+        "knip": "^6.41.0",
         "playwright": "^1.49.1",
         "postcss": "^8.5.15",
         "shadcn": "^4.11.0",

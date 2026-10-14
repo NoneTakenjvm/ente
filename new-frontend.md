@@ -7,12 +7,17 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-10-14 |
-| **Last agent / session** | Simplification plan batch 5 (`mobileapp/simplification-plan.md`): react-image-crop replaced by a shared `CropBox`, single-decode quick crop, zero tsc errors, CI runs lint/typecheck/tests before deploy, `SortMenu` split (`0.3.202`) |
+| **Last agent / session** | Simplification plan complete (`mobileapp/simplification-plan.md`); last batch added knip (dead files/exports/deps) to CI and dropped 59 needless exports (`0.3.203`) |
 | **Current milestone** | Post-M8 UX / upload performance |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
-| **Next recommended action** | Phone QA of `0.3.202` (QA lists for `0.3.195`–`0.3.202` below; crop editor, PhotoViewer gestures and Manage scans need the most attention). Watch the first CI run on push (new lint/typecheck/test steps). Rotate the test-account password. |
+| **Next recommended action** | Phone QA of `0.3.203` (QA lists for `0.3.195`–`0.3.203` below; crop editor, PhotoViewer gestures and Manage scans need the most attention). Watch the first CI run on push (new lint/typecheck/test/knip steps). Rotate the test-account password. |
 
-**This session (committed locally, not pushed, `0.3.202`): simplification plan Phase 5 + follow-ups**
+**This session (committed locally, not pushed, `0.3.203`): knip**
+1. **knip** — `mobileapp/knip.json` (entries: pages, `sw.ts`, workers, scripts; ignores only CSS-imported/config-only deps and the system `ffmpeg` binary); `npm run knip` runs in the deploy workflow after the type checks.
+2. **Cleanup** — `export` dropped from 59 file-local symbols; dead `flushDerivedReplaceOutboxPersist`, `flushFavoriteOutboxPersist`, `countKitPresenceInWorker` and a duplicate `findUserFavoritesCollection` re-export deleted. No crypto/metadata behaviour touched.
+3. **QA** — none beyond a smoke run (no behaviour change); covered by the `0.3.195`–`0.3.202` lists.
+
+**Previous session (committed locally, `0.3.202`): simplification plan Phase 5 + follow-ups**
 1. **Crop UI** — react-image-crop removed. `components/CropBox.tsx` (pointer drag, corner handles, edge handles in the full editor, `lockedRatio`, 32 px minimum, stays inside the media) is shared by QuickCropOverlay and MediaEditorOverlay; crop state is one normalized rect. Lock on shrinks the box to the viewport aspect about its centre; video stays free-form. `maxAspectRatioCrop`, `encodeBakedCrop` and `pixelCropToSourceRect` deleted.
 2. **Quick crop decode** — `encodeNormalizedCroppedJpeg` sends the normalized rect to the compress worker, which resolves it against its single decode (the size-probe `createImageBitmap` is gone).
 3. **Type checks and CI** — `tsc --noEmit` now has 0 errors (test fixtures fixed); `scripts/tsconfig.json` lib ES2022 + WebWorker and the global electron types, so `typecheck:scripts` passes; new `npm run typecheck`. The deploy workflow runs lint, typecheck, typecheck:scripts and tests before the build (Linux runner untested; `@napi-rs/canvas` is the likeliest snag).

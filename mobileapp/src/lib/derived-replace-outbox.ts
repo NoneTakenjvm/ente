@@ -169,11 +169,6 @@ export const remapDerivedReplaceOutboxFileId = async (
 export const getDerivedReplaceOutboxEntries = outbox.entries;
 
 /**
- * Persist the in-memory derived-replace outbox meta to encrypted IDB.
- */
-export const flushDerivedReplaceOutboxPersist = outbox.flush;
-
-/**
  * Drop the in-memory outbox on lock/logout.
  *
  * [Note: derived replace payloads survive lock] Only memory is cleared. The

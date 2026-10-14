@@ -51,6 +51,10 @@ jobs:
               working-directory: mobileapp
               run: npm run typecheck:scripts
 
+            - name: Knip
+              working-directory: mobileapp
+              run: npm run knip
+
             - name: Test
               working-directory: mobileapp
               run: npm test

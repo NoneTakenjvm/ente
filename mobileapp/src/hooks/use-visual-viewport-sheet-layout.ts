@@ -5,7 +5,7 @@ import {
     useSyncExternalStore,
 } from "react";
 
-export interface VisualViewportSheetLayout {
+interface VisualViewportSheetLayout {
     bottomInset: number;
     heightPx: number;
 }

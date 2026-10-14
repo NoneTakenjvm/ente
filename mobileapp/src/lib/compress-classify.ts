@@ -13,7 +13,7 @@ export type CompressImagePreset =
     "avif-q80" |
     "lossless-webp";
 
-export type CompressImageConfidence = "high" | "medium" | "default";
+type CompressImageConfidence = "high" | "medium" | "default";
 
 export interface ImageCompressFeatures {
     width: number;

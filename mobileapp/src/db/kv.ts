@@ -26,25 +26,25 @@ interface PhashChunkPayload {
 }
 
 /** fileId → combined quality score in [0, 1] (higher = better). */
-export interface PersistedQualityIndex {
+interface PersistedQualityIndex {
     version: 3;
     entries: Record<number, number>;
 }
 
-export interface PersistedTagOutboxEntry {
+interface PersistedTagOutboxEntry {
     fileId: number;
     intendedTags: string[];
     enqueuedAt: number;
 }
 
-export interface PersistedFavoriteOutboxEntry {
+interface PersistedFavoriteOutboxEntry {
     fileId: number;
     isFavorite: boolean;
     fileHashAndTypeKey?: string;
     enqueuedAt: number;
 }
 
-export interface PersistedVisibilityOutboxEntry {
+interface PersistedVisibilityOutboxEntry {
     fileId: number;
     visibility: number;
     enqueuedAt: number;

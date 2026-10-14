@@ -12,7 +12,7 @@ export interface PreparedLocalVideo {
 /** Cap metadata probe so a hung decoder cannot stall the upload batch at 0/x. */
 const VIDEO_PROBE_TIMEOUT_MS = 20_000;
 
-export const mimeTypeForVideoFile = (file: File): string => {
+const mimeTypeForVideoFile = (file: File): string => {
     if (file.type.startsWith("video/")) {
         return file.type;
     }

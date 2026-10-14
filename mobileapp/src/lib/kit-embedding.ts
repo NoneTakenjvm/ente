@@ -569,7 +569,7 @@ export const runKitEmbeddingJob = async (
 };
 
 /** Tear down the CLIP worker (e.g. on logout). Safe to call when unused. */
-export const terminateKitEmbeddingWorker = (): void => {
+const terminateKitEmbeddingWorker = (): void => {
     clipWorker.terminate(new Error("CLIP worker terminated"));
     resetWorkerState();
 };

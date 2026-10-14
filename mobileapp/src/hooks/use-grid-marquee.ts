@@ -12,7 +12,7 @@ import {
 } from "@/hooks/use-marquee-selection";
 import type { MarqueeRect } from "@/lib/marquee-selection";
 
-export interface GridMarqueeSelection<Id extends number | string> {
+interface GridMarqueeSelection<Id extends number | string> {
     onSelectMany?: (ids: Id[], mode: "add" | "toggle" | "set") => void;
     /** When set, marquee is baseline ∪ live intersection (retract deselects). */
     onSetSelection?: (ids: Id[]) => void;

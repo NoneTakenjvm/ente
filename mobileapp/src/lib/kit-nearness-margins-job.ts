@@ -5,18 +5,17 @@ import { registerReset } from "@/lib/session-lifecycle";
  * {@link ../workers/kit-nearness-margins.worker.ts}, and return the gallery id
  * order — ranked embedded stills, then unembedded stills by id, then videos.
  *
- * The same worker (and cached tag models) also counts kit presence for the
- * kit likeness list: {@link countKitPresenceInWorker}.
+ * The same worker (and cached tag models) also estimates kit presence for the
+ * kit likeness list: {@link estimateKitPresenceInWorker}.
  */
 import { KIT_EMBEDDING_DIMS, type ReadonlyEmbeddingMap } from "@/lib/kit-embedding";
-import {
-    countKitPresence,
-    type KitMarginsWorkerRequest,
-    type KitMarginsWorkerResponse,
-    type KitPresenceEstimate,
-    type KitPresenceWorkerRequest,
-    type KitPresenceWorkerResponse,
-    type KitWorkerRequest,
+import type {
+    KitMarginsWorkerRequest,
+    KitMarginsWorkerResponse,
+    KitPresenceEstimate,
+    KitPresenceWorkerRequest,
+    KitPresenceWorkerResponse,
+    KitWorkerRequest,
 } from "@/lib/kit-nearness-margins";
 import { isEnteVideoFile } from "@/lib/media-kind";
 import { packEmbeddings } from "@/lib/relative-sort";
@@ -59,7 +58,7 @@ export type KitPresenceInput = TrainingPopulationInput & {
 };
 
 /** Training rows are capped for phone CPUs and sampled deterministically. */
-export const KIT_MARGIN_TRAINING_ROW_CAP = 3000;
+const KIT_MARGIN_TRAINING_ROW_CAP = 3000;
 
 /** Minimum complete members, partial members, tag positives and tag negatives. */
 export const KIT_MARGIN_MIN_EXAMPLES = 8;
@@ -257,29 +256,8 @@ export const estimateKitPresenceInWorker = async (
     };
 };
 
-/**
- * Count, per kit, the shown files assigned as best fit (see
- * {@link countKitPresence}), estimating missing tags with the worker.
- * `undefined` when a newer presence call superseded this one.
- */
-export const countKitPresenceInWorker = async (
-    input: KitPresenceInput,
-): Promise<Map<string, number> | undefined> => {
-    const estimate = await estimateKitPresenceInWorker(input);
-    if (!estimate) {
-        return undefined;
-    }
-    return countKitPresence(
-        input.kits,
-        input.viewFiles.map((file) => file.id),
-        input.fileIdsByTag,
-        estimate,
-        input.excludedKitIds,
-    );
-};
-
 /** Drop the worker and its cached whitening / tag models (logout or idle). */
-export const terminateKitMarginsWorker = (): void => {
+const terminateKitMarginsWorker = (): void => {
     kitWorker.terminate();
 };
 

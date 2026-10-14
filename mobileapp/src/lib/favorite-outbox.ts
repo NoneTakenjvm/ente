@@ -35,11 +35,6 @@ export const ensureFavoriteOutboxHydrated = outbox.hydrate;
 export const isFavoriteOutboxHydrated = outbox.isHydrated;
 
 /**
- * Persist the in-memory outbox to encrypted IDB (page hide / before unload).
- */
-export const flushFavoriteOutboxPersist = outbox.flush;
-
-/**
  * Queue or replace a pending favourite mutation for a file.
  */
 export const upsertFavoriteOutboxEntry = async (

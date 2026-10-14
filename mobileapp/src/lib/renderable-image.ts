@@ -21,7 +21,7 @@ let heicSupportPromise: Promise<boolean> | undefined;
 /**
  * Return true when this browser can decode HEIC in an {@link HTMLImageElement}.
  */
-export const isHEICSupported = (): Promise<boolean> => {
+const isHEICSupported = (): Promise<boolean> => {
     heicSupportPromise ??= new Promise((resolve) => {
         const image = new Image();
         image.onload = (): void => resolve(true);

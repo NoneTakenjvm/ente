@@ -23,9 +23,9 @@ import {
 
 export const ORGANIZER_CLIP_MLDATA_KEY = "organizer_clip" as const;
 
-export const ORGANIZER_CLIP_CLIENT = "mobileapp-pwa";
+const ORGANIZER_CLIP_CLIENT = "mobileapp-pwa";
 
-export const ORGANIZER_CLIP_VERSION = 1;
+const ORGANIZER_CLIP_VERSION = 1;
 
 const OrganizerClipSchema = z.object({
     version: z.number(),
@@ -113,7 +113,7 @@ const decryptRemoteMLData = async (
 /**
  * Fetch and decrypt mldata for one file. Returns undefined when none exists.
  */
-export const fetchOrganizerMLData = async (
+const fetchOrganizerMLData = async (
     http: HttpClient,
     file: EnteFile,
 ): Promise<DecryptedMLData | undefined> => {

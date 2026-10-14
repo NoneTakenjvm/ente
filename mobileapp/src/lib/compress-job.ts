@@ -7,7 +7,7 @@ import { fileFileName } from "ente-media/file-metadata";
 import { errorMessage } from "@/lib/format";
 import type { CompressEncoder } from "@/lib/transcode/compress-media";
 
-export type CompressJobStage =
+type CompressJobStage =
     "download" |
     "compress" |
     "upload" |
@@ -15,7 +15,7 @@ export type CompressJobStage =
     "done" |
     "error";
 
-export interface CompressJobStageUpdate {
+interface CompressJobStageUpdate {
     stage: CompressJobStage;
     fileId: number;
     fileLabel: string;

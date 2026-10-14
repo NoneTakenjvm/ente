@@ -289,7 +289,7 @@ export type TagFilterScopePatch = Partial<
  * Set the favourites, media, crop or rotate scopes in one step. Use
  * {@link setTagFilterScope} for the tag scope, which also prunes clauses.
  */
-export const setTagFilterScopes = (
+const setTagFilterScopes = (
     filter: TagFilterSelection,
     patch: TagFilterScopePatch,
 ): TagFilterSelection => ({ ...filter, ...patch });
@@ -329,7 +329,7 @@ export const setTagFilterModeOnFilter = (
     };
 };
 
-export const setTagFilterGroupOp = (
+const setTagFilterGroupOp = (
     filter: TagFilterSelection,
     groupId: string,
     op: TagFilterJoin,
@@ -338,7 +338,7 @@ export const setTagFilterGroupOp = (
     root: updateGroupOp(filter.root, groupId, op),
 });
 
-export const wrapTagFilterNodesInGroup = (
+const wrapTagFilterNodesInGroup = (
     filter: TagFilterSelection,
     nodeIds: string[],
     op: TagFilterJoin,
@@ -363,7 +363,7 @@ export const wrapTagFilterNodesInGroup = (
     };
 };
 
-export const ungroupTagFilterNode = (
+const ungroupTagFilterNode = (
     filter: TagFilterSelection,
     groupId: string,
 ): TagFilterSelection => {
@@ -603,7 +603,7 @@ export const setKitModeOnFilter = (
 /**
  * Add, update, or clear a kit unit inside one group.
  */
-export const setKitInGroupOnFilter = (
+const setKitInGroupOnFilter = (
     filter: TagFilterSelection,
     groupId: string,
     kit: KitFilterInput,

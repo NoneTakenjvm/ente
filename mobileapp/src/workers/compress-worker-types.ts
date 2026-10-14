@@ -5,7 +5,7 @@ export interface CropRect {
     height: number;
 }
 
-export type CompressWorkerOutput = "jpeg" | "auto";
+type CompressWorkerOutput = "jpeg" | "auto";
 
 export interface CompressWorkerRequest {
     id: number;

@@ -23,7 +23,7 @@ export interface UseLibraryBootstrapOptions {
 let sessionBootstrap: Promise<void> | undefined;
 
 /** Forget the session bootstrap so the next page mount loads from scratch. */
-export const resetLibraryBootstrap = (): void => {
+const resetLibraryBootstrap = (): void => {
     sessionBootstrap = undefined;
 };
 

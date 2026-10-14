@@ -21,7 +21,7 @@ const VIEW_SESSIONS_CLOUD_CAP = 50;
 /** Cap deleted-session tombstones retained in organizer config. */
 const VIEW_SESSION_TOMBSTONE_CAP = 100;
 
-export interface ViewRecord {
+interface ViewRecord {
     fileId: number;
     openedAt: number;
     closedAt: number;

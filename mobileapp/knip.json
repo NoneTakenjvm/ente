@@ -1,0 +1,27 @@
+{
+    "$schema": "https://unpkg.com/knip@6/schema.json",
+    "entry": [
+        "src/pages/**/*.{ts,tsx}",
+        "src/sw.ts",
+        "src/workers/*.worker.ts",
+        "scripts/**/*.{ts,mjs}"
+    ],
+    "project": [
+        "src/**/*.{ts,tsx}",
+        "scripts/**/*.{ts,mjs}"
+    ],
+    "ignoreDependencies": [
+        "@fontsource-variable/inter",
+        "tw-animate-css",
+        "shadcn",
+        "tailwindcss",
+        "@serwist/build",
+        "postcss-load-config"
+    ],
+    "ignoreBinaries": [
+        "ffmpeg"
+    ],
+    "rules": {
+        "duplicates": "off"
+    }
+}

@@ -98,7 +98,7 @@ const flushOrganizerConfigQueue = (): Promise<void> => {
     return flushChain;
 };
 
-export const resetOrganizerConfigSaveQueue = (): void => {
+const resetOrganizerConfigSaveQueue = (): void => {
     pendingPatch = {};
     flushing = false;
 };

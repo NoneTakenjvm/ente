@@ -3,7 +3,7 @@ import { fileAspectRatio, filePixelSize } from "@/lib/file-aspect-ratio";
 import { thumbnailGap } from "@/lib/thumbnail-grid-layout";
 import type { EnteFile } from "ente-media/file";
 
-export interface MasonryItemLayout {
+interface MasonryItemLayout {
     fileId: number;
     file: EnteFile;
     key: number;

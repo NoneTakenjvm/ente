@@ -177,7 +177,7 @@ export const normalizedToPixelRect = (
     height: Math.round(rect.height * imageHeight),
 });
 
-export const countPendingCrops = (
+const countPendingCrops = (
     pending: Record<number, PendingCrop>,
 ): number => Object.keys(pending).length;
 

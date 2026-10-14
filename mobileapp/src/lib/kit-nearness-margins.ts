@@ -93,21 +93,21 @@ export type KitPresenceEstimate = {
 };
 
 /** Weight on the σ-normalised hard margin (plateau 0.5–2). */
-export const KIT_MARGIN_HARD_WEIGHT = 1.5;
+const KIT_MARGIN_HARD_WEIGHT = 1.5;
 
 /** Weight on the σ-normalised weakest-tag log-odds (plateau 2–6). */
-export const KIT_MARGIN_TAG_WEIGHT = 4;
+const KIT_MARGIN_TAG_WEIGHT = 4;
 
 /** Covariance ridge as a multiple of the mean eigenvalue (`tr(S) / dim`). */
-export const KIT_MARGIN_SHRINKAGE = 1;
+const KIT_MARGIN_SHRINKAGE = 1;
 
 /** L2 penalty on whitened logistic weights. */
-export const KIT_MARGIN_L2 = 0.01;
+const KIT_MARGIN_L2 = 0.01;
 
 /** Adam steps per tag model; whitened loss plateaus by ~75. */
-export const KIT_MARGIN_ITERATIONS = 100;
+const KIT_MARGIN_ITERATIONS = 100;
 
-export const KIT_MARGIN_LEARNING_RATE = 0.1;
+const KIT_MARGIN_LEARNING_RATE = 0.1;
 
 /**
  * Mean, shrunk covariance Cholesky factor and whitened rows of a training

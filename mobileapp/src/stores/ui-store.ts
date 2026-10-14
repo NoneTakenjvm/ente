@@ -13,7 +13,7 @@ import {
 import { registerReset } from "@/lib/session-lifecycle";
 
 /** How the active nearness sort was entered (kit picker vs custom filter). */
-export type NearnessSource = "kit" | "filter";
+type NearnessSource = "kit" | "filter";
 
 /**
  * The gallery's session-only reorder. At most one is active; `undefined` is

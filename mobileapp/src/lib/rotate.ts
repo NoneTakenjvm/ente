@@ -6,7 +6,7 @@ import { addTagNames } from "@/lib/tag-writes";
 
 export type RotationDegrees = 90 | 180 | 270;
 
-export const ROTATED_TAG = "rotated";
+const ROTATED_TAG = "rotated";
 
 /**
  * Rotate image bytes clockwise by the given angle using canvas.

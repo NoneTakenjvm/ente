@@ -22,7 +22,7 @@ export interface WorkerClientOptions {
 }
 
 /** Drops the `id` the client assigns, distributing over unions of requests. */
-export type WithoutId<Request> = Request extends unknown ?
+type WithoutId<Request> = Request extends unknown ?
     Omit<Request, "id"> :
     never;
 

@@ -72,7 +72,7 @@ export const logJsHeap = (label: string): JsHeapSnapshot | undefined => {
 };
 
 /** Soft warning threshold used by heavy media jobs. */
-export const JS_HEAP_PRESSURE_RATIO = 0.7;
+const JS_HEAP_PRESSURE_RATIO = 0.7;
 
 export const isJsHeapUnderPressure = (
     snapshot: JsHeapSnapshot | undefined = readJsHeapSnapshot(),

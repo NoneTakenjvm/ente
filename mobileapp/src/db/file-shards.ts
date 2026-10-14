@@ -45,7 +45,7 @@ export const fileLibraryShardId = (fileId: number): number =>
 /**
  * Drop in-memory dirty baseline (logout / DB wipe).
  */
-export const clearFileShardPersistState = (): void => {
+const clearFileShardPersistState = (): void => {
     lastPersistedUpdation = new Map();
     pendingDirtyFileIds = new Set();
     pendingDirtyAll = false;

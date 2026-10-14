@@ -40,7 +40,7 @@ export interface LocalUploadItem {
     file?: Blob;
 }
 
-export interface LocalUploadGridSelection {
+interface LocalUploadGridSelection {
     selectedIds: Set<string>;
     onToggle: (id: string) => void;
     onSelectMany?: (ids: string[], mode: "add" | "toggle" | "set") => void;

@@ -12,7 +12,7 @@ import { evenOutputSize } from "@/lib/transcode/even-output-size";
 export type CompressEncoder = "webcodecs" | "ffmpeg" | "photohoard";
 
 /** `kept` = source audio copied or re-encoded into the output. */
-export type CompressAudioOutcome = "kept" | "none";
+type CompressAudioOutcome = "kept" | "none";
 
 export interface CompressMediaResult {
     bytes: Uint8Array;

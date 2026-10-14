@@ -41,7 +41,7 @@ export const previewTransformForRotation = (
     return `rotate(${degrees}deg) scale(${scale})`;
 };
 
-export const countPendingRotations = (
+const countPendingRotations = (
     pending: Record<number, RotationDegrees>,
 ): number => Object.keys(pending).length;
 
