@@ -1,53 +1,23 @@
-import {
-    useCallback,
-    useEffect,
-    useRef,
-    useState,
-    type JSX,
-} from "react";
-import dynamic from "next/dynamic";
-import { ArrowDownUp, Upload } from "lucide-react";
+import { useEffect, useState, type JSX } from "react";
+import { Upload } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
+import { FilteredMediaView } from "@/components/FilteredMediaView";
+import { GallerySortToggle } from "@/components/GallerySortToggle";
 import { PageLoader } from "@/components/PageLoader";
-import { SelectionActionFooter } from "@/components/SelectionActionFooter";
-import { StampToolFooter } from "@/components/StampToolFooter";
-import { CropToolFooter } from "@/components/CropToolFooter";
-import { RotateToolFooter } from "@/components/RotateToolFooter";
-import { SyncBanner } from "@/components/SyncBanner";
 import { TagFilterBar } from "@/components/TagFilterBar";
-import { ThumbnailGrid } from "@/components/ThumbnailGrid";
 import { Button } from "@/components/ui/button";
 import { useLibraryBootstrap } from "@/hooks/use-library-bootstrap";
+import { useLibraryFiles } from "@/hooks/use-library-files";
+import { useLibraryLoading } from "@/hooks/use-library-loading";
 import { useMediaDisplayPipeline } from "@/hooks/use-media-display-pipeline";
-import { useMediaGridSelection } from "@/hooks/use-media-grid-selection";
-import { useRequireSession } from "@/hooks/use-require-session";
-import { SELECTION_FOOTER_INSET_PX } from "@/lib/selection";
 import { useSessionStore } from "@/stores/session-store";
-import { dedupeFilesById } from "@/lib/sync/merge-files";
-import { isFileArchivedLocally } from "@/lib/visibility-outbox";
-import {
-    remapSortedFilesIfSameIds,
-    sortFilesByEdit,
-    sortFilesByUpload,
-} from "@/lib/sort-files";
-import { useSettingsStore } from "@/stores/settings-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
-import { useSelectionStore } from "@/stores/selection-store";
 import { useTagStore } from "@/stores/tag-store";
 import { useUploadJobStore } from "@/stores/ui-store";
-import type { EnteFile } from "ente-media/file";
 
 /** Stable empty set so gallery can skip favourite-store updates when unused. */
 const EMPTY_FAVORITE_FILE_IDS = new Set<number>();
-
-const PhotoViewer = dynamic(
-    () =>
-        import("@/components/PhotoViewer").then((mod) => ({
-            default: mod.PhotoViewer,
-        })),
-    { ssr: false },
-);
 
 const formatPhotoCount = (count: number): string =>
     count.toLocaleString();
@@ -57,12 +27,9 @@ const formatPhotoCount = (count: number): string =>
  * filter/sort/grid subtree mounts (see {@link GalleryMediaBody}).
  */
 export default function GalleryPage(): JSX.Element {
-    const { ready, authenticated } = useRequireSession();
     const email = useSessionStore((s) => s.email);
     const libraryFileCount = useLibraryStore((s) => s.allFiles.length);
     const setUploadPanelOpen = useUploadJobStore((s) => s.setPanelOpen);
-    const gallerySortBy = useSettingsStore((s) => s.gallerySortBy);
-    const patchSettings = useSettingsStore((s) => s.patchSettings);
     const [bodyMounted, setBodyMounted] = useState(false);
 
     useEffect(() => {
@@ -78,20 +45,6 @@ export default function GalleryPage(): JSX.Element {
         };
     }, []);
 
-    const handleToggleSort = (): void => {
-        patchSettings({
-            gallerySortBy: gallerySortBy === "edited" ? "uploaded" : "edited",
-        });
-    };
-
-    if (!ready || !authenticated) {
-        return (
-            <PageLoader
-                message={ready ? "Redirecting to sign in…" : "Restoring session…"}
-            />
-        );
-    }
-
     return (
         <AppShell
             title="Media"
@@ -99,25 +52,7 @@ export default function GalleryPage(): JSX.Element {
             mainScrolls={false}
             actions={
                 <>
-                    <Button
-                        type="button"
-                        variant={gallerySortBy === "edited" ? "secondary" : "outline"}
-                        size="icon-sm"
-                        aria-label={
-                            gallerySortBy === "edited" ?
-                                "Sort by upload date" :
-                                "Sort by last edited"
-                        }
-                        aria-pressed={gallerySortBy === "edited"}
-                        onClick={handleToggleSort}
-                        title={
-                            gallerySortBy === "edited" ?
-                                "Sorting by edit time — tap to sort by upload" :
-                                "Sorting by upload — tap to sort by edit"
-                        }
-                    >
-                        <ArrowDownUp />
-                    </Button>
+                    <GallerySortToggle />
                     <Button
                         type="button"
                         variant="outline"
@@ -130,7 +65,6 @@ export default function GalleryPage(): JSX.Element {
                 </>
             }
         >
-            <SyncBanner />
             {bodyMounted ? (
                 <GalleryMediaBody />
             ) : (
@@ -157,46 +91,12 @@ export default function GalleryPage(): JSX.Element {
  * Mounted only after the Media shell's first paint.
  */
 function GalleryMediaBody(): JSX.Element {
-    const allFiles = useLibraryStore((s) => s.allFiles);
     const tagFilter = useTagStore((s) => s.tagFilter);
     const favoritesScopeActive = tagFilter.favoritesScope !== "all";
     const favoriteFileIds = useFavoritesStore((s) =>
         favoritesScopeActive ? s.favoriteFileIds : EMPTY_FAVORITE_FILE_IDS);
-    const syncStatus = useLibraryStore((s) => s.syncStatus);
     const initialLoadDone = useLibraryBootstrap();
-    const gallerySortBy = useSettingsStore((s) => s.gallerySortBy);
-
-    const sortLibraryFiles = useCallback(
-        (files: EnteFile[]): EnteFile[] =>
-            gallerySortBy === "edited" ?
-                sortFilesByEdit(files) :
-                sortFilesByUpload(files),
-        [gallerySortBy],
-    );
-
-    // Re-sort only when membership or sort mode changes; a patch that keeps
-    // the same ids (tag touch, version ack) reuses the previous order.
-    const [librarySort, setLibrarySort] = useState(() => ({
-        source: allFiles,
-        sort: sortLibraryFiles,
-        files: sortLibraryFiles(visibleLibraryFiles(allFiles)),
-    }));
-    let libraryFiles = librarySort.files;
-    if (
-        librarySort.source !== allFiles ||
-        librarySort.sort !== sortLibraryFiles
-    ) {
-        const visible = visibleLibraryFiles(allFiles);
-        libraryFiles =
-            (librarySort.sort === sortLibraryFiles ?
-                remapSortedFilesIfSameIds(librarySort.files, visible) :
-                undefined) ?? sortLibraryFiles(visible);
-        setLibrarySort({
-            source: allFiles,
-            sort: sortLibraryFiles,
-            files: libraryFiles,
-        });
-    }
+    const libraryFiles = useLibraryFiles();
 
     const { filteredFiles, displayFiles, matchCount } = useMediaDisplayPipeline({
         libraryFiles,
@@ -206,60 +106,10 @@ function GalleryMediaBody(): JSX.Element {
         clearNearnessOnUnmount: true,
     });
 
-    // The viewer keeps the list it was opened with.
-    const [viewer, setViewer] = useState<
-        { fileId: number; files: EnteFile[] } | undefined
-    >();
-
-    const selectionMode = useSelectionStore((s) => s.mode);
-    const pruneToVisible = useSelectionStore((s) => s.pruneToVisible);
-    const setMode = useSelectionStore((s) => s.setMode);
-    const resetSelection = useSelectionStore((s) => s.reset);
-    const pendingRotations = useSelectionStore((s) => s.pendingRotations);
-    const applyBusy = useSelectionStore((s) => s.applyBusy);
-
-    useEffect(() => {
-        pruneToVisible(new Set(displayFiles.map((file) => file.id)));
-    }, [displayFiles, pruneToVisible]);
-
-    const selectionFilterRef = useRef(tagFilter);
-    useEffect(() => {
-        if (selectionFilterRef.current === tagFilter) {
-            return;
-        }
-        selectionFilterRef.current = tagFilter;
-        const { mode: activeMode } = useSelectionStore.getState();
-        if (activeMode !== "none" && activeMode !== "stamp") {
-            setMode("none");
-        }
-    }, [setMode, tagFilter]);
-
-    useEffect(() => {
-        return (): void => {
-            resetSelection();
-        };
-    }, [resetSelection]);
-
-    const gridSelection = useMediaGridSelection({ disabled: applyBusy });
-
-    const footerInsetPx =
-        selectionMode !== "none" ? SELECTION_FOOTER_INSET_PX : 0;
-
-    const handleOpenFile = useCallback((file: EnteFile): void => {
-        if (useSelectionStore.getState().mode !== "none") {
-            return;
-        }
-        setViewer({ fileId: file.id, files: displayFiles });
-    }, [displayFiles]);
-
-    const handleCloseViewer = useCallback((): void => {
-        setViewer(undefined);
-    }, []);
-
-    const showFullPageLoader: boolean =
-        !initialLoadDone &&
-        (syncStatus === "loadingFromCache" || syncStatus === "syncing") &&
-        displayFiles.length === 0;
+    const showFullPageLoader = useLibraryLoading(
+        initialLoadDone,
+        displayFiles.length,
+    );
 
     return (
         <>
@@ -267,38 +117,10 @@ function GalleryMediaBody(): JSX.Element {
                 matchCount={matchCount}
                 matchingFiles={filteredFiles}
             />
-
-            {showFullPageLoader ? (
-                <PageLoader message="Loading your library…" />
-            ) : (
-                <ThumbnailGrid
-                    files={displayFiles}
-                    onOpenFile={
-                        selectionMode !== "none" ? undefined : handleOpenFile
-                    }
-                    selection={gridSelection}
-                    footerInsetPx={footerInsetPx}
-                    previewRotationById={
-                        selectionMode === "rotate" ? pendingRotations : undefined
-                    }
-                />
-            )}
-
-            <SelectionActionFooter />
-            <StampToolFooter />
-            <RotateToolFooter />
-            <CropToolFooter />
-
-            {viewer ? (
-                <PhotoViewer
-                    files={viewer.files}
-                    initialFileId={viewer.fileId}
-                    onClose={handleCloseViewer}
-                />
-            ) : null}
+            <FilteredMediaView
+                files={displayFiles}
+                loading={showFullPageLoader}
+            />
         </>
     );
 }
-
-const visibleLibraryFiles = (files: EnteFile[]): EnteFile[] =>
-    dedupeFilesById(files).filter((file) => !isFileArchivedLocally(file));

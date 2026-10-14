@@ -36,7 +36,6 @@ export interface CompressJobOptions {
     minSizeBytes?: number;
     maxLongEdge?: number;
     signal: AbortSignal;
-    shouldPause: () => boolean;
     onProgress: (update: CompressJobStageUpdate) => void;
     /** Download and decrypt the original bytes of {@link file}. */
     downloadFile: (
@@ -178,7 +177,7 @@ export const runCompressJob = async (
     let previousUpload: Promise<void> = Promise.resolve();
 
     for (let index = 0; index < candidates.length; index++) {
-        if (options.signal.aborted || options.shouldPause()) {
+        if (options.signal.aborted) {
             break;
         }
 
@@ -189,7 +188,7 @@ export const runCompressJob = async (
             const download = prefetched ?? startDownload(index);
             prefetched = undefined;
             const bytes = await download;
-            if (options.signal.aborted || options.shouldPause()) {
+            if (options.signal.aborted) {
                 break;
             }
             prefetched = prefetchDownload(index + 1);

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { StateCreator } from "zustand";
+import type { BackgroundJobStatus } from "@/hooks/use-job";
 import { reconcileShuffledIds } from "@/lib/shuffle-files";
 import type { ImageQualitySort } from "@/lib/image-quality";
 import type { RelativeSort } from "@/lib/relative-sort";
@@ -40,112 +40,6 @@ export type GalleryOrdering =
     } |
     { kind: "nearness"; filter: TagFilterSelection; source: NearnessSource } |
     { kind: "shuffled"; seed: number; fileIds: number[] };
-
-export type BackgroundJobStatus =
-    | "idle" |
-    "running" |
-    "paused" |
-    "done" |
-    "error";
-
-interface PhashJobState {
-    status: BackgroundJobStatus;
-    progress: { current: number; total: number };
-    setStatus: (status: BackgroundJobStatus) => void;
-    setProgress: (current: number, total: number) => void;
-    reset: () => void;
-}
-
-const initialPhashJob: Pick<
-    PhashJobState,
-    "status" | "progress"
-> = {
-    status: "idle",
-    progress: { current: 0, total: 0 },
-};
-
-const createPhashJobStore: StateCreator<PhashJobState> = (set) => ({
-    ...initialPhashJob,
-
-    setStatus: (status: BackgroundJobStatus): void => {
-        set({ status });
-    },
-
-    setProgress: (current: number, total: number): void => {
-        set({ progress: { current, total } });
-    },
-
-    reset: (): void => {
-        set(initialPhashJob);
-    },
-});
-
-export const usePhashJobStore = create<PhashJobState>(createPhashJobStore);
-
-interface CompressJobState {
-    status: BackgroundJobStatus;
-    progress: {
-        current: number;
-        total: number;
-        stage: string;
-        fileLabel: string;
-        ratio: number | undefined;
-        encoder: string | undefined;
-    };
-    error: string | undefined;
-    setStatus: (status: BackgroundJobStatus) => void;
-    setProgress: (update: {
-        current: number;
-        total: number;
-        stage?: string;
-        fileLabel?: string;
-        ratio?: number;
-        encoder?: string;
-    }) => void;
-    setError: (error: string | undefined) => void;
-    reset: () => void;
-}
-
-const initialCompressJob: Pick<
-    CompressJobState,
-    "status" | "progress" | "error"
-> = {
-    status: "idle",
-    progress: {
-        current: 0,
-        total: 0,
-        stage: "",
-        fileLabel: "",
-        ratio: undefined,
-        encoder: undefined,
-    },
-    error: undefined,
-};
-
-export const useCompressJobStore = create<CompressJobState>((set) => ({
-    ...initialCompressJob,
-    setStatus: (status: BackgroundJobStatus): void => {
-        set({ status });
-    },
-    setProgress: (update): void => {
-        set({
-            progress: {
-                current: update.current,
-                total: update.total,
-                stage: update.stage ?? "",
-                fileLabel: update.fileLabel ?? "",
-                ratio: update.ratio,
-                encoder: update.encoder,
-            },
-        });
-    },
-    setError: (error: string | undefined): void => {
-        set({ error });
-    },
-    reset: (): void => {
-        set(initialCompressJob);
-    },
-}));
 
 interface UploadJobState {
     status: BackgroundJobStatus;
@@ -369,8 +263,6 @@ export const useUIStore = create<UIState>((set) => {
 });
 
 registerReset(() => {
-    usePhashJobStore.getState().reset();
-    useCompressJobStore.getState().reset();
     useUploadJobStore.getState().reset();
     useUIStore.setState({ ordering: undefined });
 });

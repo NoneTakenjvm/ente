@@ -17,7 +17,6 @@ import { waitWhileGalleryScrolling } from "@/lib/gallery-scroll-activity";
 import {
     eligibleImageFiles,
     runWithConcurrency,
-    waitIfPaused,
     workerCount,
 } from "@/lib/job-utils";
 import type {
@@ -46,7 +45,6 @@ export interface ThumbnailAnalysisOptions {
     phashEntries: Map<number, PhashEntry>;
     qualityEntries: Map<number, number>;
     onProgress?: (current: number, total: number) => void;
-    shouldPause?: () => boolean;
     signal?: AbortSignal;
 }
 
@@ -307,10 +305,6 @@ export const runThumbnailAnalysisJob = async (
         if (options.signal?.aborted) {
             return;
         }
-        if (await waitIfPaused(options.shouldPause, options.signal)) {
-            return;
-        }
-
         const bytes = await getDecryptedThumbnailBytes(file);
         if (bytes) {
             while (inFlightAnalyses >= maxInFlightAnalyses) {

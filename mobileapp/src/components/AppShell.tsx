@@ -27,9 +27,12 @@ import {
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { PageLoader } from "@/components/PageLoader";
+import { SyncBanner } from "@/components/SyncBanner";
 import { UploadPanel } from "@/components/UploadPanel";
 import { UploadProgressBar } from "@/components/UploadProgressBar";
 import { useUploadJobStore } from "@/stores/ui-store";
+import { useRequireSession } from "@/hooks/use-require-session";
 import { useVisualViewportHeight } from "@/hooks/use-visual-viewport-height";
 
 interface AppShellProps {
@@ -53,6 +56,10 @@ const navItems = [
     { href: "/manage", label: "Manage", icon: SlidersHorizontal },
 ] as const;
 
+/**
+ * Page chrome for signed-in routes: waits for session restore (redirecting to
+ * sign in when missing), then renders the header, sync banner and bottom nav.
+ */
 export function AppShell({
     title,
     titleBadge,
@@ -71,12 +78,21 @@ export function AppShell({
         uploadPanelOpen || uploadStatus === "running";
     const hideBottomNav = useSelectionStore((s) => s.mode !== "none");
     const viewportHeight = useVisualViewportHeight();
+    const { ready, authenticated } = useRequireSession();
 
     // Optimistic tab: keep pending highlight until pathname catches up.
     const activeHref =
         pendingHref !== undefined && pendingHref !== pathname ?
             pendingHref :
             pathname;
+
+    if (!ready || !authenticated) {
+        return (
+            <PageLoader
+                message={ready ? "Redirecting to sign in…" : "Restoring session…"}
+            />
+        );
+    }
 
     return (
         // [Note: bottom nav] Do not use position:fixed for the tab bar. On iOS
@@ -131,6 +147,7 @@ export function AppShell({
                     mainScrolls ? "overflow-y-auto" : "overflow-hidden",
                 )}
             >
+                <SyncBanner />
                 {children}
             </main>
 

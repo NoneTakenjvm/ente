@@ -3,15 +3,13 @@ import { useRouter } from "next/router";
 import { LoginForm } from "@/components/LoginForm";
 import { UnlockForm } from "@/components/UnlockForm";
 import {
+    ensureSessionRestored,
     isSessionAuthenticated,
     isSessionLockedForLogin,
-    reconcileSessionWithCore,
-    useSessionStore,
 } from "@/stores/session-store";
 
 export default function LoginPage(): JSX.Element {
     const router = useRouter();
-    const restoreFromPersistence = useSessionStore((s) => s.restoreFromPersistence);
     // Lock state lives in sessionStorage; read it after hydration (before paint)
     // so the static HTML and the first client render match.
     const [showUnlock, setShowUnlock] = useState<boolean>(false);
@@ -23,10 +21,7 @@ export default function LoginPage(): JSX.Element {
 
     useEffect(() => {
         const bootstrap = async (): Promise<void> => {
-            reconcileSessionWithCore();
-            if (!isSessionAuthenticated()) {
-                await restoreFromPersistence();
-            }
+            await ensureSessionRestored();
             if (isSessionAuthenticated()) {
                 void router.replace("/gallery");
                 return;
@@ -34,7 +29,7 @@ export default function LoginPage(): JSX.Element {
             setShowUnlock(isSessionLockedForLogin());
         };
         void bootstrap();
-    }, [restoreFromPersistence, router]);
+    }, [router]);
 
     return (
         <main className="flex min-h-dvh items-center justify-center px-4 py-8 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">

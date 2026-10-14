@@ -1,14 +1,14 @@
 import {
     memo,
     useCallback,
-    useEffect,
     useMemo,
-    useRef,
     useState,
     type FormEvent,
     type JSX,
 } from "react";
 import { toast } from "sonner";
+import { useJob } from "@/hooks/use-job";
+import { jobPercent } from "@/lib/job-utils";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Badge } from "@/components/ui/badge";
@@ -100,11 +100,10 @@ export function ManageTagsPanel(): JSX.Element {
     const [renameTarget, setRenameTarget] = useState<string | undefined>();
     const [mergeSources, setMergeSources] = useState<string[]>([]);
     const [mergeTarget, setMergeTarget] = useState<string>("");
-    const [tuningPresetId, setTuningPresetId] = useState<string | undefined>();
-    const [tuneProgress, setTuneProgress] = useState<
-        KitNearnessTuneProgress | undefined
-    >();
-    const tuneAbort = useRef<AbortController | undefined>(undefined);
+    const [tunePresetId, setTunePresetId] = useState<string | undefined>();
+    const tuneJob = useJob<KitNearnessTuneProgress>();
+    const tuningPresetId =
+        tuneJob.status === "running" ? tunePresetId : undefined;
     const [deleteTarget, setDeleteTarget] = useState<string | undefined>();
     const [progress, setProgress] = useState<string | undefined>();
     const [error, setError] = useState<string | undefined>();
@@ -137,12 +136,6 @@ export function ManageTagsPanel(): JSX.Element {
             ),
         [userTags, tagTypes, tagTypeByName, fileIdsByTag],
     );
-
-    useEffect(() => {
-        return (): void => {
-            tuneAbort.current?.abort();
-        };
-    }, []);
 
     /** Run {@link task}, surface failures as the panel error, and return whether every item succeeded. */
     const runWithProgress = useCallback(
@@ -289,10 +282,8 @@ export function ManageTagsPanel(): JSX.Element {
     };
 
     const handleCancelTune = (): void => {
-        tuneAbort.current?.abort();
-        tuneAbort.current = undefined;
-        setTuningPresetId(undefined);
-        setTuneProgress(undefined);
+        tuneJob.reset();
+        toast.message("Tune cancelled");
     };
 
     const handleClearTune = (presetId: string): void => {
@@ -301,25 +292,19 @@ export function ManageTagsPanel(): JSX.Element {
     };
 
     const handleTunePreset = (presetId: string): void => {
-        if (tuningPresetId) {
-            return;
-        }
         const preset = presets.find((entry) => entry.id === presetId);
-        if (!preset) {
+        if (!preset || tuneJob.status === "running") {
             return;
         }
-        void (async (): Promise<void> => {
-            tuneAbort.current?.abort();
-            const abort = new AbortController();
-            tuneAbort.current = abort;
-            setTuningPresetId(presetId);
-            setTuneProgress({
-                phase: "setup",
-                label: "Starting…",
-                current: 0,
-                total: 1,
-            });
-            try {
+        setTunePresetId(presetId);
+        tuneJob.start(
+            async (signal, onProgress) => {
+                onProgress({
+                    phase: "setup",
+                    label: "Starting…",
+                    current: 0,
+                    total: 1,
+                });
                 await hydrateEmbeddings();
                 const embeddings = useEmbeddingIndexStore.getState().entries;
                 if (embeddings.size < 20) {
@@ -328,7 +313,7 @@ export function ManageTagsPanel(): JSX.Element {
                     );
                     return;
                 }
-                if (abort.signal.aborted) {
+                if (signal.aborted) {
                     return;
                 }
                 const result = await runKitNearnessTune({
@@ -341,10 +326,10 @@ export function ManageTagsPanel(): JSX.Element {
                         tags: entry.tags,
                         genome: entry.nearnessTune?.genome,
                     })),
-                    signal: abort.signal,
-                    onProgress: setTuneProgress,
+                    signal,
+                    onProgress,
                 });
-                if (abort.signal.aborted) {
+                if (signal.aborted) {
                     return;
                 }
                 if (result) {
@@ -358,25 +343,13 @@ export function ManageTagsPanel(): JSX.Element {
                         `No clear gain for “${preset.name}” — keeping global defaults`,
                     );
                 }
-            } catch (error: unknown) {
-                if (
-                    error instanceof DOMException &&
-                    error.name === "AbortError"
-                ) {
-                    toast.message("Tune cancelled");
-                    return;
-                }
-                toast.error(
-                    errorMessage(error, "Tune failed"),
-                );
-            } finally {
-                if (tuneAbort.current === abort) {
-                    tuneAbort.current = undefined;
-                    setTuningPresetId(undefined);
-                    setTuneProgress(undefined);
-                }
-            }
-        })();
+            },
+            {
+                onError: (error) => {
+                    toast.error(errorMessage(error, "Tune failed"));
+                },
+            },
+        );
     };
 
     const handleOpenSuggestions = (): void => {
@@ -588,35 +561,21 @@ export function ManageTagsPanel(): JSX.Element {
                                 ))}
                             </div>
                         ) : null}
-                        <select
-                            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                            value=""
-                            disabled={presetTagChoices.length === 0}
-                            aria-label="Add tag to preset"
-                            onChange={(event) => {
-                                const tag = event.target.value;
-                                if (!tag) {
-                                    return;
-                                }
+                        <TagPickerSelect
+                            choices={presetTagChoices}
+                            emptyLabel={
+                                userTags.length === 0 ?
+                                    "Create tags first" :
+                                    "All tags already added"
+                            }
+                            ariaLabel="Add tag to preset"
+                            onPick={(tag) => {
                                 setPresetTags((current) =>
                                     current.includes(tag) ?
                                         current :
                                         [...current, tag]);
                             }}
-                        >
-                            <option value="">
-                                {presetTagChoices.length === 0 ?
-                                    (userTags.length === 0 ?
-                                        "Create tags first" :
-                                        "All tags already added") :
-                                    "Add a tag…"}
-                            </option>
-                            {presetTagChoices.map((tag) => (
-                                <option key={tag} value={tag}>
-                                    {tag}
-                                </option>
-                            ))}
-                        </select>
+                        />
                         <div className="flex flex-wrap gap-2">
                             <Button
                                 type="submit"
@@ -733,16 +692,11 @@ export function ManageTagsPanel(): JSX.Element {
                                                 />
                                             ))}
                                         </div>
-                                        <select
-                                            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                                            value=""
-                                            disabled={addable.length === 0}
-                                            aria-label={`Add tag to ${preset.name}`}
-                                            onChange={(event) => {
-                                                const tag = event.target.value;
-                                                if (!tag) {
-                                                    return;
-                                                }
+                                        <TagPickerSelect
+                                            choices={addable}
+                                            emptyLabel="No more tags to add"
+                                            ariaLabel={`Add tag to ${preset.name}`}
+                                            onPick={(tag) => {
                                                 updatePreset(preset.id, {
                                                     tags: [
                                                         ...preset.tags,
@@ -750,37 +704,18 @@ export function ManageTagsPanel(): JSX.Element {
                                                     ],
                                                 });
                                             }}
-                                        >
-                                            <option value="">
-                                                {addable.length === 0 ?
-                                                    "No more tags to add" :
-                                                    "Add a tag…"}
-                                            </option>
-                                            {addable.map((tag) => (
-                                                <option key={tag} value={tag}>
-                                                    {tag}
-                                                </option>
-                                            ))}
-                                        </select>
+                                        />
                                         {tuningPresetId === preset.id &&
-                                        tuneProgress ? (
+                                        tuneJob.progress ? (
                                                 <div className="flex flex-col gap-1.5">
                                                     <p className="text-xs text-muted-foreground">
-                                                        {tuneProgress.label}
+                                                        {tuneJob.progress.label}
                                                     </p>
                                                     <Progress
-                                                        value={
-                                                            tuneProgress.total > 0 ?
-                                                                Math.min(
-                                                                    100,
-                                                                    Math.round(
-                                                                        (100 *
-                                                                          tuneProgress.current) /
-                                                                          tuneProgress.total,
-                                                                    ),
-                                                                ) :
-                                                                0
-                                                        }
+                                                        value={jobPercent(
+                                                            tuneJob.progress.current,
+                                                            tuneJob.progress.total,
+                                                        )}
                                                         className="h-1"
                                                     />
                                                     <Button
@@ -1006,6 +941,42 @@ function RemovableTagBadge({
                 ×
             </button>
         </Badge>
+    );
+}
+
+/** Dropdown that picks one of `choices`; resets after each pick. */
+function TagPickerSelect({
+    choices,
+    emptyLabel,
+    ariaLabel,
+    onPick,
+}: {
+    choices: string[];
+    emptyLabel: string;
+    ariaLabel: string;
+    onPick: (tag: string) => void;
+}): JSX.Element {
+    return (
+        <select
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            value=""
+            disabled={choices.length === 0}
+            aria-label={ariaLabel}
+            onChange={(event) => {
+                if (event.target.value) {
+                    onPick(event.target.value);
+                }
+            }}
+        >
+            <option value="">
+                {choices.length === 0 ? emptyLabel : "Add a tag…"}
+            </option>
+            {choices.map((tag) => (
+                <option key={tag} value={tag}>
+                    {tag}
+                </option>
+            ))}
+        </select>
     );
 }
 

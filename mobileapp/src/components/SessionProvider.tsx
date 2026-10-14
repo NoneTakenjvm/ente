@@ -4,7 +4,9 @@ import { useRouter } from "next/router";
 import { useEffect, type JSX, type ReactNode } from "react";
 import { idleLockMs } from "@/lib/session-persistence";
 import { installDurableFlushListeners } from "@/lib/durable-flush";
+import { LOGIN_PATHS } from "@/hooks/use-require-session";
 import {
+    ensureSessionRestored,
     isSessionAuthenticated,
     useSessionStore,
 } from "@/stores/session-store";
@@ -27,13 +29,12 @@ interface SessionProviderProps {
  */
 export function SessionProvider({ children }: SessionProviderProps): JSX.Element {
     const router = useRouter();
-    const restoreFromPersistence = useSessionStore((s) => s.restoreFromPersistence);
     const lock = useSessionStore((s) => s.lock);
 
     useEffect(() => {
         installDurableFlushListeners();
-        void restoreFromPersistence();
-    }, [restoreFromPersistence]);
+        void ensureSessionRestored();
+    }, []);
 
     useEffect(() => {
         let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -57,11 +58,7 @@ export function SessionProvider({ children }: SessionProviderProps): JSX.Element
                         // cannot race restore-and-bounce back to the app.
                         await lock();
                         const path = router.pathname;
-                        if (
-                            path !== "/login" &&
-                            path !== "/" &&
-                            path !== "/offline"
-                        ) {
+                        if (!LOGIN_PATHS.has(path)) {
                             void router.replace("/login");
                         }
                     } finally {

@@ -7,11 +7,13 @@ import { loadCachedVideoBytes } from "@/lib/video-media-cache";
 
 /**
  * Load decrypted media bytes for compress/edit, preferring local override and
- * the video disk ciphertext cache when applicable.
+ * the video disk ciphertext cache when applicable. {@link signal} aborts the
+ * network download.
  */
 export const loadMediaBytesForEdit = async (
     file: EnteFile,
     onProgress?: BytesProgressCallback,
+    signal?: AbortSignal,
 ): Promise<Uint8Array> => {
     const override = getLocalMediaOverride(file.id);
     if (override) {
@@ -22,7 +24,7 @@ export const loadMediaBytesForEdit = async (
         return override;
     }
     if (file.metadata.fileType === FileType.video) {
-        return loadCachedVideoBytes(file, onProgress);
+        return loadCachedVideoBytes(file, onProgress, signal);
     }
-    return getEnteCore().getDecryptedFile(file, onProgress);
+    return getEnteCore().getDecryptedFile(file, onProgress, signal);
 };

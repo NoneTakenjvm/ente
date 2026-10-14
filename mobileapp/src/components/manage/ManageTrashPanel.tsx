@@ -1,5 +1,4 @@
 import {
-    useCallback,
     useEffect,
     useMemo,
     useRef,
@@ -8,10 +7,7 @@ import {
 } from "react";
 import { RotateCcw, Trash2 } from "lucide-react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import {
-    ThumbnailGrid,
-    type ThumbnailGridSelection,
-} from "@/components/ThumbnailGrid";
+import { ThumbnailGrid } from "@/components/ThumbnailGrid";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,13 +24,13 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import { useGridSelection } from "@/hooks/use-grid-selection";
 import { isOrganizerConfigCollection } from "@/lib/organizer-config";
 import { useLibraryStore } from "@/stores/library-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useTrashStore } from "@/stores/trash-store";
 import type { Collection } from "ente-media/collection";
-import type { EnteFile } from "ente-media/file";
-import { errorMessage, plural } from "@/lib/format";
+import { plural } from "@/lib/format";
 
 const daysUntilDelete = (deleteByMicros: number): number => {
     const msLeft = deleteByMicros / 1000 - Date.now();
@@ -76,9 +72,6 @@ export function ManageTrashPanel(): JSX.Element {
     const deleteForever = useTrashStore((s) => s.deleteForever);
     const emptyTrash = useTrashStore((s) => s.emptyTrash);
 
-    const [pickedIds, setPickedIds] = useState<Set<number>>(new Set());
-    const [busy, setBusy] = useState<boolean>(false);
-    const [actionError, setActionError] = useState<string | undefined>();
     const [confirm, setConfirm] = useState<PendingConfirm>(undefined);
     const didInitialSyncRef = useRef(false);
 
@@ -89,9 +82,14 @@ export function ManageTrashPanel(): JSX.Element {
     const defaultTargetId =
         targets.find((collection) => collection.type === "uncategorized")?.id ??
         targets[0]?.id;
-    const [restoreCollectionId, setRestoreCollectionId] = useState<
+    const [pickedRestoreId, setPickedRestoreId] = useState<
         number | undefined
-    >(defaultTargetId);
+    >();
+    const restoreCollectionId = targets.some(
+        (collection) => collection.id === pickedRestoreId,
+    ) ?
+        pickedRestoreId :
+        defaultTargetId;
 
     useEffect(() => {
         if (didInitialSyncRef.current) {
@@ -108,64 +106,13 @@ export function ManageTrashPanel(): JSX.Element {
         })();
     }, [hydrateFromCache, syncTrash]);
 
-    useEffect(() => {
-        if (
-            restoreCollectionId === undefined ||
-            !targets.some((collection) => collection.id === restoreCollectionId)
-        ) {
-            setRestoreCollectionId(defaultTargetId);
-        }
-    }, [defaultTargetId, restoreCollectionId, targets]);
-
     const trashFiles = useMemo(
         () => items.map((item) => item.file),
         [items],
     );
 
-    // Ignore picked ids that were restored, deleted or synced away.
-    const selectedIds = useMemo(() => {
-        const visibleIds = new Set(trashFiles.map((file) => file.id));
-        const visiblePicks = new Set(
-            [...pickedIds].filter((id) => visibleIds.has(id)),
-        );
-        return visiblePicks.size === pickedIds.size ? pickedIds : visiblePicks;
-    }, [pickedIds, trashFiles]);
-
-    const handleToggle = useCallback((file: EnteFile): void => {
-        setPickedIds((current) => {
-            const next = new Set(current);
-            if (next.has(file.id)) {
-                next.delete(file.id);
-            } else {
-                next.add(file.id);
-            }
-            return next;
-        });
-    }, []);
-    // Stable so the grid's visible cells only re-render when selection changes.
-    const selection = useMemo(
-        (): ThumbnailGridSelection => ({
-            selectedIds,
-            onToggle: handleToggle,
-            disabled: busy,
-        }),
-        [busy, handleToggle, selectedIds],
-    );
-
-    const runBusy = async (action: () => Promise<void>): Promise<void> => {
-        setBusy(true);
-        setActionError(undefined);
-        try {
-            await action();
-            setPickedIds(new Set());
-        } catch (error) {
-            setActionError(
-                errorMessage(error, "Trash action failed"),
-            );
-        } finally {
-            setBusy(false);
-        }
-    };
+    const { selectedIds, selection, busy, actionError, runBusy } =
+        useGridSelection(trashFiles);
 
     const handleRestore = (): void => {
         const collection = targets.find(
@@ -180,22 +127,21 @@ export function ManageTrashPanel(): JSX.Element {
                 collection,
             );
             await reinsertRestoredFiles(restored);
-        });
+        }, "Trash action failed");
     };
 
     const handleConfirmDestructive = (): void => {
         const pending = confirm;
         setConfirm(undefined);
         if (pending === "empty") {
-            void runBusy(async () => {
-                await emptyTrash();
-            });
+            void runBusy(emptyTrash, "Trash action failed");
             return;
         }
         if (pending === "deleteForever" && selectedIds.size > 0) {
-            void runBusy(async () => {
-                await deleteForever([...selectedIds]);
-            });
+            void runBusy(
+                () => deleteForever([...selectedIds]),
+                "Trash action failed",
+            );
         }
     };
 
@@ -264,7 +210,7 @@ export function ManageTrashPanel(): JSX.Element {
                                 if (!value) {
                                     return;
                                 }
-                                setRestoreCollectionId(Number(value));
+                                setPickedRestoreId(Number(value));
                             }}
                             disabled={busy || targets.length === 0}
                         >

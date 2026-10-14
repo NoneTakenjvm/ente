@@ -229,3 +229,28 @@ export const reconcileSessionWithCore = (): void => {
         });
     }
 };
+
+let restoreInFlight: Promise<void> | undefined;
+
+/**
+ * Reconcile stale store state with the core, then restore the persisted
+ * session if the core is not authenticated. Concurrent callers share one
+ * in-flight restore; the memo clears once it settles, so a later logout or
+ * login can restore again.
+ */
+export const ensureSessionRestored = (): Promise<void> => {
+    reconcileSessionWithCore();
+    if (isSessionAuthenticated()) {
+        return Promise.resolve();
+    }
+    restoreInFlight ??= useSessionStore
+        .getState()
+        .restoreFromPersistence()
+        .then(
+            (): void => undefined,
+        )
+        .finally((): void => {
+            restoreInFlight = undefined;
+        });
+    return restoreInFlight;
+};

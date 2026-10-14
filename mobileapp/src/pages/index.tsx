@@ -2,25 +2,20 @@ import { useEffect, useState, type JSX } from "react";
 import { useRouter } from "next/router";
 import {
     isSessionAuthenticated,
-    reconcileSessionWithCore,
-    useSessionStore,
+    ensureSessionRestored,
 } from "@/stores/session-store";
 
 export default function Home(): JSX.Element {
     const router = useRouter();
-    const restoreFromPersistence = useSessionStore((s) => s.restoreFromPersistence);
     const [ready, setReady] = useState<boolean>(false);
 
     useEffect(() => {
         const bootstrap = async (): Promise<void> => {
-            reconcileSessionWithCore();
-            if (!isSessionAuthenticated()) {
-                await restoreFromPersistence();
-            }
+            await ensureSessionRestored();
             setReady(true);
         };
         void bootstrap();
-    }, [restoreFromPersistence]);
+    }, []);
 
     useEffect(() => {
         if (!ready) {

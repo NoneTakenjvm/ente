@@ -8,11 +8,13 @@ import {
 } from "react";
 import { DedupGroupReview } from "@/components/manage/DedupGroupReview";
 import { Button } from "@/components/ui/button";
+import { JobControls } from "@/components/manage/JobControls";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
+import { useJob } from "@/hooks/use-job";
 import { errorMessage, plural } from "@/lib/format";
-import { eligibleImageFiles } from "@/lib/job-utils";
+import { eligibleImageFiles, jobPercent } from "@/lib/job-utils";
 import {
     defaultSimilarityThreshold,
     indexableFiles,
@@ -24,7 +26,6 @@ import {
     type SimilarityGroup,
 } from "@/lib/similarity-groups";
 import {
-    filesNeedingAnalysis,
     runStage1InWorker,
     runThumbnailAnalysisJob,
     terminatePhashWorker,
@@ -53,7 +54,6 @@ import { usePhashIndexStore } from "@/stores/phash-index-store";
 import { useQualityIndexStore } from "@/stores/quality-index-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useSettingsStore } from "@/stores/settings-store";
-import { usePhashJobStore } from "@/stores/ui-store";
 
 interface ManageSimilarPanelProps {
     showLoader: boolean;
@@ -78,10 +78,7 @@ export function ManageSimilarPanel({
     const setQualityEntries = useQualityIndexStore((s) => s.setEntries);
     const favoriteFileIds = useFavoritesStore((s) => s.favoriteFileIds);
 
-    const phashJobStatus = usePhashJobStore((s) => s.status);
-    const phashProgress = usePhashJobStore((s) => s.progress);
-    const setPhashJobStatus = usePhashJobStore((s) => s.setStatus);
-    const setPhashProgress = usePhashJobStore((s) => s.setProgress);
+    const phashJob = useJob();
 
     const similarMaxGroupSize = useSettingsStore((s) => s.similarMaxGroupSize);
     const similarMaxGroupSizeRef = useRef(similarMaxGroupSize);
@@ -105,8 +102,6 @@ export function ManageSimilarPanel({
     /** >0 means the user asked to find similar groups; 0 = idle until they tap Find. */
     const [similarFindGeneration, setSimilarFindGeneration] = useState<number>(0);
 
-    const jobAbort = useRef<AbortController | undefined>(undefined);
-    const jobPaused = useRef<boolean>(false);
     const cropMergeAbort = useRef<AbortController | undefined>(undefined);
     /** Uncapped groups from the last similar find (trim for display / max-size). */
     const lastFullSimilarGroups = useRef<SimilarityGroup[]>([]);
@@ -119,11 +114,6 @@ export function ManageSimilarPanel({
         return (): void => {
             if (thresholdTimer.current) {
                 clearTimeout(thresholdTimer.current);
-            }
-            jobAbort.current?.abort();
-            // The aborted run no longer updates the store, so don't leave it "running".
-            if (usePhashJobStore.getState().status === "running") {
-                usePhashJobStore.getState().setStatus("paused");
             }
             cropMergeAbort.current?.abort();
             // Drop session edge/crop caches when leaving Similar — they can
@@ -385,74 +375,30 @@ export function ManageSimilarPanel({
     }, [phashEntries, embeddingEntries]);
 
     const handleStartPhashJob = (): void => {
-        if (phashJobStatus === "running") {
-            return;
-        }
-
-        jobAbort.current?.abort();
-        const controller = new AbortController();
-        const { signal } = controller;
-        jobAbort.current = controller;
-        jobPaused.current = false;
-        setPhashJobStatus("running");
-
-        // The scan also scores image quality for the same thumbnails.
-        const pending = filesNeedingAnalysis(
-            allFiles,
-            userId,
-            phashEntries,
-            qualityById,
-        );
-        setPhashProgress(0, pending.length);
-
-        void runThumbnailAnalysisJob({
-            files: allFiles,
-            userId,
-            phashEntries: new Map(phashEntries),
-            qualityEntries: qualityById,
-            signal,
-            shouldPause: () => jobPaused.current,
-            onProgress: (current, total) => {
-                if (!signal.aborted) {
-                    setPhashProgress(current, total);
-                }
+        phashJob.start(
+            (signal, onProgress) =>
+                runThumbnailAnalysisJob({
+                    files: allFiles,
+                    userId,
+                    phashEntries: new Map(phashEntries),
+                    qualityEntries: qualityById,
+                    signal,
+                    onProgress: (current, total) => {
+                        onProgress({ current, total });
+                    },
+                }),
+            {
+                onFinish: (result) => {
+                    setPhashEntries(result.phashEntries);
+                    setQualityEntries(result.qualityEntries);
+                },
             },
-        })
-            .then((result) => {
-                // An aborted run returns partial entries; the pause handler
-                // already set the status and a newer run owns the state now.
-                if (signal.aborted) {
-                    return;
-                }
-                setPhashEntries(result.phashEntries);
-                setQualityEntries(result.qualityEntries);
-                setPhashJobStatus("done");
-            })
-            .catch(() => {
-                if (signal.aborted) {
-                    return;
-                }
-                setPhashJobStatus("error");
-            });
+        );
     };
 
-    const handlePausePhashJob = (): void => {
-        jobPaused.current = true;
-        jobAbort.current?.abort();
-        setPhashJobStatus("paused");
-    };
-
-    const progressPercent =
-        phashProgress.total > 0 ?
-            Math.round((phashProgress.current / phashProgress.total) * 100) :
-            0;
-
-    const similarProgressPercent =
-        similarProgress && similarProgress.total > 0 ?
-            Math.round(
-                (similarProgress.completed / similarProgress.total) * 100,
-            ) :
-            0;
+    const similarProgressPercent = similarProgress ?
+        jobPercent(similarProgress.completed, similarProgress.total) :
+        0;
 
     const emptyTitle =
         similarBusy ?
@@ -486,35 +432,25 @@ export function ManageSimilarPanel({
         >
             {() => (
                 <>
-                    <div className="flex flex-wrap gap-2">
-                        <Button
-                            type="button"
-                            size="sm"
-                            onClick={handleStartPhashJob}
-                            disabled={
-                                phashJobStatus === "running" ||
-                                !phashHydrated ||
-                                !qualityHydrated ||
-                                phashIndexedCount >= phashCandidateCount
-                            }
-                        >
-                            {phashIndexedCount >= phashCandidateCount &&
-                            phashCandidateCount > 0 ?
-                                "Scan complete" :
-                                phashJobStatus === "paused" ?
-                                    "Resume scan" :
-                                    "Scan library"}
-                        </Button>
-                        {phashJobStatus === "running" ? (
-                            <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={handlePausePhashJob}
-                            >
-                                Pause
-                            </Button>
-                        ) : null}
+                    <JobControls
+                        status={phashJob.status}
+                        progress={phashJob.progress}
+                        startLabel="Scan library"
+                        resumeLabel="Resume scan"
+                        complete={
+                            phashIndexedCount >= phashCandidateCount &&
+                            phashCandidateCount > 0
+                        }
+                        disabled={
+                            !phashHydrated ||
+                            !qualityHydrated ||
+                            phashIndexedCount >= phashCandidateCount
+                        }
+                        size="sm"
+                        variant="default"
+                        onStart={handleStartPhashJob}
+                        onPause={phashJob.pause}
+                    >
                         <Button
                             type="button"
                             size="sm"
@@ -548,7 +484,7 @@ export function ManageSimilarPanel({
                                 Cancel
                             </Button>
                         ) : null}
-                    </div>
+                    </JobControls>
                     <Field>
                         <FieldLabel htmlFor="similarity-threshold">
                             Threshold: {threshold}
@@ -598,15 +534,6 @@ export function ManageSimilarPanel({
                             pairs within the threshold. Without CLIP it falls
                             back to hashes only.
                         </p>
-                    ) : null}
-                    {phashJobStatus === "running" ? (
-                        <div className="flex flex-col gap-1">
-                            <Progress value={progressPercent} className="h-1" />
-                            <span className="text-xs text-muted-foreground">
-                                Scanning {phashProgress.current} /{" "}
-                                {phashProgress.total}
-                            </span>
-                        </div>
                     ) : null}
                     {similarBusy && similarProgress ? (
                         <div className="flex flex-col gap-1">

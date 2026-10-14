@@ -10,6 +10,8 @@ import {
 } from "@/components/ui/card";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Switch } from "@/components/ui/switch";
+import { JobControls } from "@/components/manage/JobControls";
+import { useJob } from "@/hooks/use-job";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
     CLIP_EMBEDDING_BATCH_SIZE_AUTO,
@@ -34,7 +36,6 @@ import { useLibraryStore } from "@/stores/library-store";
 import { useQualityIndexStore } from "@/stores/quality-index-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useSettingsStore } from "@/stores/settings-store";
-import type { BackgroundJobStatus } from "@/stores/ui-store";
 import {
     filesNeedingAnalysis,
     runThumbnailAnalysisJob,
@@ -67,10 +68,17 @@ const parseToggleInteger = (next: unknown): number | undefined => {
     return Number.isFinite(parsed) ? parsed : undefined;
 };
 
+const videoSwitches = [
+    { key: "videoAutoPlay", label: "Auto play" },
+    { key: "videoLoop", label: "Loop" },
+    { key: "videoDefaultMuted", label: "Start muted" },
+] as const;
+
 export function ManageSettingsPanel(): JSX.Element {
     const videoAutoPlay = useSettingsStore((s) => s.videoAutoPlay);
     const videoLoop = useSettingsStore((s) => s.videoLoop);
     const videoDefaultMuted = useSettingsStore((s) => s.videoDefaultMuted);
+    const videoSettings = { videoAutoPlay, videoLoop, videoDefaultMuted };
     const galleryColumns = useSettingsStore((s) => s.galleryColumns);
     const galleryThumbnailMode = useSettingsStore((s) => s.galleryThumbnailMode);
     const similarMaxGroupSize = useSettingsStore((s) => s.similarMaxGroupSize);
@@ -79,22 +87,11 @@ export function ManageSettingsPanel(): JSX.Element {
     );
     const patchSettings = useSettingsStore((s) => s.patchSettings);
     const [forceResyncing, setForceResyncing] = useState(false);
-    const [clipJobStatus, setClipJobStatus] =
-        useState<BackgroundJobStatus>("idle");
-    const [clipProgress, setClipProgress] = useState({ current: 0, total: 0 });
+    const clipJob = useJob();
     const [clipRuntime, setClipRuntime] = useState<string>("");
-    const clipAbort = useRef<AbortController | undefined>(undefined);
-    const clipPaused = useRef(false);
     const clipSmokeToastShown = useRef(false);
     const clipBatchFallbackToastShown = useRef(false);
-    const [qualityJobStatus, setQualityJobStatus] =
-        useState<BackgroundJobStatus>("idle");
-    const [qualityProgress, setQualityProgress] = useState({
-        current: 0,
-        total: 0,
-    });
-    const qualityAbort = useRef<AbortController | undefined>(undefined);
-    const qualityPaused = useRef(false);
+    const qualityJob = useJob();
 
     const allFiles = useLibraryStore((s) => s.allFiles);
     const allFilesCount = allFiles.length;
@@ -122,17 +119,6 @@ export function ManageSettingsPanel(): JSX.Element {
     const clipIndexedCount = embeddingEntries.size;
     const qualityCandidateCount = clipCandidateCount;
     const qualityIndexedCount = qualityEntries.size;
-
-    // Job status is local state, so a job left running would be invisible on
-    // return and a second one could start alongside it.
-    useEffect(() => {
-        return (): void => {
-            clipPaused.current = true;
-            qualityPaused.current = true;
-            clipAbort.current?.abort();
-            qualityAbort.current?.abort();
-        };
-    }, []);
 
     useEffect(() => {
         if (embeddingHydrated) {
@@ -169,136 +155,96 @@ export function ManageSettingsPanel(): JSX.Element {
     }, [allFiles, embeddingHydrated, setEmbeddingEntries]);
 
     const handleStartClipJob = (): void => {
-        if (clipJobStatus === "running") {
-            return;
-        }
-        clipAbort.current?.abort();
-        const controller = new AbortController();
-        const { signal } = controller;
-        clipAbort.current = controller;
-        clipPaused.current = false;
         clipSmokeToastShown.current = false;
         clipBatchFallbackToastShown.current = false;
-        setClipJobStatus("running");
         setClipRuntime("");
-        const candidates = eligibleImageFiles(allFiles, userId);
         const existing = stripVideoEmbeddings(embeddingEntries, allFiles);
         if (existing !== embeddingEntries) {
             setEmbeddingEntries(existing);
         }
-        const pending = candidates.filter((file) => !existing.has(file.id));
-        setClipProgress({ current: 0, total: pending.length });
-        if (pending.length === 0) {
-            setClipJobStatus("done");
+        const candidates = eligibleImageFiles(allFiles, userId);
+        if (candidates.every((file) => existing.has(file.id))) {
             toast.message("CLIP scan already complete");
             return;
         }
-        void runKitEmbeddingJob({
-            files: allFiles,
-            userId,
-            existing,
-            signal,
-            shouldPause: () => clipPaused.current,
-            onProgress: (progress) => {
-                if (signal.aborted) {
-                    return;
-                }
-                if (progress.device) {
-                    const mode =
-                        progress.batchMode === "sequential" ?
-                            "sequential" :
-                            `batch×${progress.batchSize ?? "?"}`;
-                    const dtype = progress.dtype ?? "?";
-                    const label = `${progress.device === "webgpu" ? "WebGPU" : "WASM"} ${dtype} · ${mode}`;
-                    setClipRuntime(label);
-                    if (!clipSmokeToastShown.current) {
-                        clipSmokeToastShown.current = true;
-                        if (progress.device === "webgpu") {
-                            toast.success(
-                                `MobileCLIP-S2 on WebGPU (${dtype})`,
-                            );
-                        } else {
-                            const reason = getKitEmbeddingWebGpuSkipReason();
-                            toast.message(
-                                reason ?
-                                    `MobileCLIP-S2 on WASM — ${reason}` :
-                                    "MobileCLIP-S2 on WASM",
-                            );
+        clipJob.start(
+            (signal, onProgress) =>
+                runKitEmbeddingJob({
+                    files: allFiles,
+                    userId,
+                    existing,
+                    signal,
+                    onProgress: (progress) => {
+                        if (signal.aborted) {
+                            return;
                         }
-                    }
-                    if (
-                        progress.batchMode === "sequential" &&
-                        (progress.batchSize ?? 1) > 1 &&
-                        !clipBatchFallbackToastShown.current
-                    ) {
-                        clipBatchFallbackToastShown.current = true;
-                        const reason = getKitEmbeddingBatchFallbackReason();
-                        toast.message(
-                            reason ?
-                                `S2 batch failed — sequential (${reason})` :
-                                "S2 batch failed — running sequential",
+                        if (progress.device) {
+                            const mode =
+                                progress.batchMode === "sequential" ?
+                                    "sequential" :
+                                    `batch×${progress.batchSize ?? "?"}`;
+                            const dtype = progress.dtype ?? "?";
+                            const label = `${progress.device === "webgpu" ? "WebGPU" : "WASM"} ${dtype} · ${mode}`;
+                            setClipRuntime(label);
+                            if (!clipSmokeToastShown.current) {
+                                clipSmokeToastShown.current = true;
+                                if (progress.device === "webgpu") {
+                                    toast.success(
+                                        `MobileCLIP-S2 on WebGPU (${dtype})`,
+                                    );
+                                } else {
+                                    const reason = getKitEmbeddingWebGpuSkipReason();
+                                    toast.message(
+                                        reason ?
+                                            `MobileCLIP-S2 on WASM — ${reason}` :
+                                            "MobileCLIP-S2 on WASM",
+                                    );
+                                }
+                            }
+                            if (
+                                progress.batchMode === "sequential" &&
+                                (progress.batchSize ?? 1) > 1 &&
+                                !clipBatchFallbackToastShown.current
+                            ) {
+                                clipBatchFallbackToastShown.current = true;
+                                const reason = getKitEmbeddingBatchFallbackReason();
+                                toast.message(
+                                    reason ?
+                                        `S2 batch failed — sequential (${reason})` :
+                                        "S2 batch failed — running sequential",
+                                );
+                            }
+                        }
+                        if (progress.phase === "embed") {
+                            onProgress({
+                                current: progress.completed,
+                                total: progress.total,
+                            });
+                        }
+                    },
+                    onBatchPersisted: (entries) => {
+                        if (!signal.aborted) {
+                            setEmbeddingEntries(new Map(entries));
+                        }
+                    },
+                }),
+            {
+                onFinish: (entries, aborted) => {
+                    setEmbeddingEntries(entries);
+                    if (!aborted) {
+                        toast.success(
+                            `CLIP scan complete — ${entries.size} embeddings`,
                         );
                     }
-                }
-                if (progress.phase === "embed") {
-                    setClipProgress({
-                        current: progress.completed,
-                        total: progress.total,
-                    });
-                }
+                },
+                onError: (error) => {
+                    toast.error(errorMessage(error, "CLIP scan failed"));
+                },
             },
-            onBatchPersisted: (entries) => {
-                if (!signal.aborted) {
-                    setEmbeddingEntries(new Map(entries));
-                }
-            },
-        })
-            .then((entries) => {
-                // A superseded run must not overwrite the newer run's state.
-                if (clipAbort.current !== controller) {
-                    return;
-                }
-                setEmbeddingEntries(entries);
-                if (signal.aborted) {
-                    setClipJobStatus("paused");
-                    return;
-                }
-                setClipJobStatus("done");
-                toast.success(
-                    `CLIP scan complete — ${entries.size} embeddings`,
-                );
-            })
-            .catch((error: unknown) => {
-                if (clipAbort.current !== controller) {
-                    return;
-                }
-                if (signal.aborted) {
-                    setClipJobStatus("paused");
-                    return;
-                }
-                setClipJobStatus("error");
-                toast.error(
-                    errorMessage(error, "CLIP scan failed"),
-                );
-            });
-    };
-
-    const handlePauseClipJob = (): void => {
-        clipPaused.current = true;
-        clipAbort.current?.abort();
-        setClipJobStatus("paused");
+        );
     };
 
     const handleStartQualityJob = (): void => {
-        if (qualityJobStatus === "running") {
-            return;
-        }
-        qualityAbort.current?.abort();
-        const controller = new AbortController();
-        const { signal } = controller;
-        qualityAbort.current = controller;
-        qualityPaused.current = false;
-        setQualityJobStatus("running");
         // The scan also hashes the same thumbnails for Similar photos.
         const pending = filesNeedingAnalysis(
             allFiles,
@@ -306,59 +252,39 @@ export function ManageSettingsPanel(): JSX.Element {
             phashEntries,
             qualityEntries,
         );
-        setQualityProgress({ current: 0, total: pending.length });
         if (pending.length === 0) {
-            setQualityJobStatus("done");
             toast.message("Image quality scan already complete");
             return;
         }
-        void runThumbnailAnalysisJob({
-            files: allFiles,
-            userId,
-            phashEntries: new Map(phashEntries),
-            qualityEntries,
-            signal,
-            shouldPause: () => qualityPaused.current,
-            onProgress: (current, total) => {
-                if (!signal.aborted) {
-                    setQualityProgress({ current, total });
-                }
+        qualityJob.start(
+            (signal, onProgress) =>
+                runThumbnailAnalysisJob({
+                    files: allFiles,
+                    userId,
+                    phashEntries: new Map(phashEntries),
+                    qualityEntries,
+                    signal,
+                    onProgress: (current, total) => {
+                        onProgress({ current, total });
+                    },
+                }),
+            {
+                onFinish: (result, aborted) => {
+                    setQualityEntries(result.qualityEntries);
+                    setPhashEntries(result.phashEntries);
+                    if (!aborted) {
+                        toast.success(
+                            `Image quality scan complete — ${result.qualityEntries.size} scored`,
+                        );
+                    }
+                },
+                onError: (error) => {
+                    toast.error(
+                        errorMessage(error, "Image quality scan failed"),
+                    );
+                },
             },
-        })
-            .then((result) => {
-                if (qualityAbort.current !== controller) {
-                    return;
-                }
-                setQualityEntries(result.qualityEntries);
-                setPhashEntries(result.phashEntries);
-                if (signal.aborted) {
-                    setQualityJobStatus("paused");
-                    return;
-                }
-                setQualityJobStatus("done");
-                toast.success(
-                    `Image quality scan complete — ${result.qualityEntries.size} scored`,
-                );
-            })
-            .catch((error: unknown) => {
-                if (qualityAbort.current !== controller) {
-                    return;
-                }
-                if (signal.aborted) {
-                    setQualityJobStatus("paused");
-                    return;
-                }
-                setQualityJobStatus("error");
-                toast.error(
-                    errorMessage(error, "Image quality scan failed"),
-                );
-            });
-    };
-
-    const handlePauseQualityJob = (): void => {
-        qualityPaused.current = true;
-        qualityAbort.current?.abort();
-        setQualityJobStatus("paused");
+        );
     };
 
     const runForceResync = async (): Promise<void> => {
@@ -419,40 +345,20 @@ export function ManageSettingsPanel(): JSX.Element {
                 </CardHeader>
                 <CardContent>
                     <FieldGroup>
-                        <Field orientation="horizontal">
-                            <FieldLabel htmlFor="video-auto-play">
-                                Auto play
-                            </FieldLabel>
-                            <Switch
-                                id="video-auto-play"
-                                checked={videoAutoPlay}
-                                onCheckedChange={(checked) => {
-                                    patchSettings({ videoAutoPlay: checked });
-                                }}
-                            />
-                        </Field>
-                        <Field orientation="horizontal">
-                            <FieldLabel htmlFor="video-loop">Loop</FieldLabel>
-                            <Switch
-                                id="video-loop"
-                                checked={videoLoop}
-                                onCheckedChange={(checked) => {
-                                    patchSettings({ videoLoop: checked });
-                                }}
-                            />
-                        </Field>
-                        <Field orientation="horizontal">
-                            <FieldLabel htmlFor="video-default-muted">
-                                Start muted
-                            </FieldLabel>
-                            <Switch
-                                id="video-default-muted"
-                                checked={videoDefaultMuted}
-                                onCheckedChange={(checked) => {
-                                    patchSettings({ videoDefaultMuted: checked });
-                                }}
-                            />
-                        </Field>
+                        {videoSwitches.map(({ key, label }) => (
+                            <Field key={key} orientation="horizontal">
+                                <FieldLabel htmlFor={key}>
+                                    {label}
+                                </FieldLabel>
+                                <Switch
+                                    id={key}
+                                    checked={videoSettings[key]}
+                                    onCheckedChange={(checked) => {
+                                        patchSettings({ [key]: checked });
+                                    }}
+                                />
+                            </Field>
+                        ))}
                     </FieldGroup>
                 </CardContent>
             </Card>
@@ -466,33 +372,16 @@ export function ManageSettingsPanel(): JSX.Element {
                 </CardHeader>
                 <CardContent>
                     <FieldGroup>
-                        <Field>
-                            <FieldLabel>Gallery width</FieldLabel>
-                            <ToggleGroup
-                                variant="outline"
-                                value={[String(galleryColumns)]}
-                                onValueChange={(next) => {
-                                    const parsed = parseToggleInteger(next);
-                                    if (parsed !== undefined) {
-                                        patchSettings({
-                                            galleryColumns:
-                                                clampGalleryColumns(parsed),
-                                        });
-                                    }
-                                }}
-                                className="w-full"
-                            >
-                                {columnOptions.map((count) => (
-                                    <ToggleGroupItem
-                                        key={count}
-                                        value={String(count)}
-                                        className="flex-1"
-                                    >
-                                        {count}
-                                    </ToggleGroupItem>
-                                ))}
-                            </ToggleGroup>
-                        </Field>
+                        <NumberToggleField
+                            label="Gallery width"
+                            value={galleryColumns}
+                            options={columnOptions}
+                            onChange={(columns) => {
+                                patchSettings({
+                                    galleryColumns: clampGalleryColumns(columns),
+                                });
+                            }}
+                        />
                         <Field>
                             <FieldLabel>Thumbnail layout</FieldLabel>
                             <ToggleGroup
@@ -542,36 +431,15 @@ export function ManageSettingsPanel(): JSX.Element {
                 </CardHeader>
                 <CardContent>
                     <FieldGroup>
-                        <Field>
-                            <FieldLabel>Max group size</FieldLabel>
-                            <ToggleGroup
-                                variant="outline"
-                                value={[String(similarMaxGroupSize)]}
-                                onValueChange={(next) => {
-                                    const parsed = parseToggleInteger(next);
-                                    if (parsed !== undefined) {
-                                        patchSettings({
-                                            similarMaxGroupSize: parsed,
-                                        });
-                                    }
-                                }}
-                                className="w-full"
-                            >
-                                {similarMaxGroupSizeOptions.map((size) => (
-                                    <ToggleGroupItem
-                                        key={size}
-                                        value={String(size)}
-                                        className="flex-1"
-                                    >
-                                        {size}
-                                    </ToggleGroupItem>
-                                ))}
-                            </ToggleGroup>
-                            <p className="text-xs text-muted-foreground">
-                                Hide piles larger than this (usually false
-                                positives)
-                            </p>
-                        </Field>
+                        <NumberToggleField
+                            label="Max group size"
+                            value={similarMaxGroupSize}
+                            options={similarMaxGroupSizeOptions}
+                            hint="Hide piles larger than this (usually false positives)"
+                            onChange={(size) => {
+                                patchSettings({ similarMaxGroupSize: size });
+                            }}
+                        />
                     </FieldGroup>
                 </CardContent>
             </Card>
@@ -591,84 +459,48 @@ export function ManageSettingsPanel(): JSX.Element {
                 </CardHeader>
                 <CardContent className="flex flex-col gap-3">
                     <FieldGroup>
-                        <Field>
-                            <FieldLabel>ORT batch size</FieldLabel>
-                            <ToggleGroup
-                                variant="outline"
-                                value={[String(clipEmbeddingBatchSize)]}
-                                onValueChange={(next) => {
-                                    const parsed = parseToggleInteger(next);
-                                    if (parsed !== undefined) {
-                                        patchSettings({
-                                            clipEmbeddingBatchSize:
-                                                clampClipEmbeddingBatchSize(
-                                                    parsed,
-                                                ),
-                                        });
-                                    }
-                                }}
-                                className="w-full flex-wrap"
-                            >
-                                {clipBatchSizeOptions.map((count) => (
-                                    <ToggleGroupItem
-                                        key={count}
-                                        value={String(count)}
-                                        className="flex-1 min-w-8"
-                                    >
-                                        {count ===
-                                        CLIP_EMBEDDING_BATCH_SIZE_AUTO ?
-                                            "Auto" :
-                                            count}
-                                    </ToggleGroupItem>
-                                ))}
-                            </ToggleGroup>
-                        </Field>
+                        <NumberToggleField
+                            label="ORT batch size"
+                            value={clipEmbeddingBatchSize}
+                            options={clipBatchSizeOptions}
+                            className="w-full flex-wrap"
+                            itemClassName="flex-1 min-w-8"
+                            optionLabel={(count) =>
+                                count === CLIP_EMBEDDING_BATCH_SIZE_AUTO ?
+                                    "Auto" :
+                                    String(count)}
+                            onChange={(count) => {
+                                patchSettings({
+                                    clipEmbeddingBatchSize:
+                                        clampClipEmbeddingBatchSize(count),
+                                });
+                            }}
+                        />
                     </FieldGroup>
                     <p className="text-sm text-muted-foreground">
                         {embeddingHydrated ?
                             `${(
-                                clipJobStatus === "running" ?
-                                    clipIndexedCount + clipProgress.current :
+                                clipJob.status === "running" ?
+                                    clipIndexedCount +
+                                    (clipJob.progress?.current ?? 0) :
                                     clipIndexedCount
                             ).toLocaleString()} / ${clipCandidateCount.toLocaleString()} images embedded` :
                             "Loading embedding index…"}
                         {clipRuntime ? ` · ${clipRuntime}` : null}
-                        {clipJobStatus === "running" && clipProgress.total > 0 ?
-                            ` · scanning ${clipProgress.current}/${clipProgress.total}` :
-                            null}
-                        {clipJobStatus === "paused" ?
-                            " · paused" :
-                            null}
                     </p>
-                    <div className="flex flex-wrap gap-2">
-                        <Button
-                            type="button"
-                            variant="outline"
-                            disabled={
-                                clipJobStatus === "running" ||
-                                !embeddingHydrated ||
-                                (clipIndexedCount >= clipCandidateCount &&
-                                    clipCandidateCount > 0)
-                            }
-                            onClick={handleStartClipJob}
-                        >
-                            {clipIndexedCount >= clipCandidateCount &&
-                            clipCandidateCount > 0 ?
-                                "Scan complete" :
-                                clipJobStatus === "paused" ?
-                                    "Resume CLIP scan" :
-                                    "Scan CLIP embeddings"}
-                        </Button>
-                        {clipJobStatus === "running" ? (
-                            <Button
-                                type="button"
-                                variant="outline"
-                                onClick={handlePauseClipJob}
-                            >
-                                Pause
-                            </Button>
-                        ) : null}
-                    </div>
+                    <JobControls
+                        status={clipJob.status}
+                        progress={clipJob.progress}
+                        startLabel="Scan CLIP embeddings"
+                        resumeLabel="Resume CLIP scan"
+                        complete={
+                            clipIndexedCount >= clipCandidateCount &&
+                            clipCandidateCount > 0
+                        }
+                        disabled={!embeddingHydrated}
+                        onStart={handleStartClipJob}
+                        onPause={clipJob.pause}
+                    />
                 </CardContent>
             </Card>
 
@@ -689,44 +521,73 @@ export function ManageSettingsPanel(): JSX.Element {
                         {qualityHydrated ?
                             `${qualityIndexedCount.toLocaleString()} / ${qualityCandidateCount.toLocaleString()} images scored` :
                             "Loading quality index…"}
-                        {qualityJobStatus === "running" &&
-                        qualityProgress.total > 0 ?
-                            ` · scanning ${qualityProgress.current}/${qualityProgress.total}` :
-                            null}
-                        {qualityJobStatus === "paused" ? " · paused" : null}
                     </p>
-                    <div className="flex flex-wrap gap-2">
-                        <Button
-                            type="button"
-                            variant="outline"
-                            disabled={
-                                qualityJobStatus === "running" ||
-                                !qualityHydrated ||
-                                !phashHydrated ||
-                                (qualityIndexedCount >= qualityCandidateCount &&
-                                    qualityCandidateCount > 0)
-                            }
-                            onClick={handleStartQualityJob}
-                        >
-                            {qualityIndexedCount >= qualityCandidateCount &&
-                            qualityCandidateCount > 0 ?
-                                "Scan complete" :
-                                qualityJobStatus === "paused" ?
-                                    "Resume quality scan" :
-                                    "Scan image quality"}
-                        </Button>
-                        {qualityJobStatus === "running" ? (
-                            <Button
-                                type="button"
-                                variant="outline"
-                                onClick={handlePauseQualityJob}
-                            >
-                                Pause
-                            </Button>
-                        ) : null}
-                    </div>
+                    <JobControls
+                        status={qualityJob.status}
+                        progress={qualityJob.progress}
+                        startLabel="Scan image quality"
+                        resumeLabel="Resume quality scan"
+                        complete={
+                            qualityIndexedCount >= qualityCandidateCount &&
+                            qualityCandidateCount > 0
+                        }
+                        disabled={!qualityHydrated || !phashHydrated}
+                        onStart={handleStartQualityJob}
+                        onPause={qualityJob.pause}
+                    />
                 </CardContent>
             </Card>
         </div>
+    );
+}
+
+/** Labeled toggle group over integer `options`; calls `onChange` with the tapped one. */
+function NumberToggleField({
+    label,
+    value,
+    options,
+    hint,
+    className = "w-full",
+    itemClassName = "flex-1",
+    optionLabel = String,
+    onChange,
+}: {
+    label: string;
+    value: number;
+    options: number[];
+    hint?: string;
+    className?: string;
+    itemClassName?: string;
+    optionLabel?: (option: number) => string;
+    onChange: (value: number) => void;
+}): JSX.Element {
+    return (
+        <Field>
+            <FieldLabel>{label}</FieldLabel>
+            <ToggleGroup
+                variant="outline"
+                value={[String(value)]}
+                onValueChange={(next) => {
+                    const parsed = parseToggleInteger(next);
+                    if (parsed !== undefined) {
+                        onChange(parsed);
+                    }
+                }}
+                className={className}
+            >
+                {options.map((option) => (
+                    <ToggleGroupItem
+                        key={option}
+                        value={String(option)}
+                        className={itemClassName}
+                    >
+                        {optionLabel(option)}
+                    </ToggleGroupItem>
+                ))}
+            </ToggleGroup>
+            {hint ? (
+                <p className="text-xs text-muted-foreground">{hint}</p>
+            ) : null}
+        </Field>
     );
 }

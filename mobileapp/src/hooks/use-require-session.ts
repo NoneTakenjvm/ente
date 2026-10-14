@@ -3,12 +3,13 @@
 import { useRouter } from "next/router";
 import { useCallback, useEffect, useState } from "react";
 import {
+    ensureSessionRestored,
     isSessionAuthenticated,
     reconcileSessionWithCore,
     useSessionStore,
 } from "@/stores/session-store";
 
-const LOGIN_PATHS = new Set(["/login", "/", "/offline"]);
+export const LOGIN_PATHS = new Set(["/login", "/", "/offline"]);
 
 /**
  * Gate protected pages: wait for session restore, then redirect to login when
@@ -20,9 +21,6 @@ export function useRequireSession(): {
     authenticated: boolean;
 } {
     const router = useRouter();
-    const restoreFromPersistence = useSessionStore(
-        (s) => s.restoreFromPersistence,
-    );
     // Re-render when idle lock / logout clears Zustand so the gate updates.
     useSessionStore((s) => s.status);
     const [ready, setReady] = useState(false);
@@ -37,10 +35,7 @@ export function useRequireSession(): {
     useEffect(() => {
         let cancelled = false;
         const bootstrap = async (): Promise<void> => {
-            reconcileSessionWithCore();
-            if (!isSessionAuthenticated()) {
-                await restoreFromPersistence();
-            }
+            await ensureSessionRestored();
             if (cancelled) {
                 return;
             }
@@ -53,7 +48,7 @@ export function useRequireSession(): {
         return (): void => {
             cancelled = true;
         };
-    }, [redirectToLogin, restoreFromPersistence]);
+    }, [redirectToLogin]);
 
     useEffect(() => {
         const onForeground = (): void => {

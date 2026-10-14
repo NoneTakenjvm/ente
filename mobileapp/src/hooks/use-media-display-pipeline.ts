@@ -51,6 +51,7 @@ import {
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
 import { useQualityIndexStore } from "@/stores/quality-index-store";
+import { useSelectionStore } from "@/stores/selection-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
@@ -808,6 +809,19 @@ export function useMediaDisplayPipeline({
         viewportTargetWidth,
         viewerAspect,
     ]);
+
+    // A new filter drops active batch tools; stamp mode survives it.
+    const selectionFilterRef = useRef(tagFilter);
+    useEffect(() => {
+        if (selectionFilterRef.current === tagFilter) {
+            return;
+        }
+        selectionFilterRef.current = tagFilter;
+        const { mode, setMode } = useSelectionStore.getState();
+        if (mode !== "none" && mode !== "stamp") {
+            setMode("none");
+        }
+    }, [tagFilter]);
 
     return {
         filteredFiles,

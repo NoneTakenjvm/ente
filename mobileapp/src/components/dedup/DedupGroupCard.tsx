@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useThumbnailEntry } from "@/components/albums/AlbumCoverThumb";
+import { ThumbnailImage } from "@/components/ThumbnailImage";
 import { Badge } from "@/components/ui/badge";
 import {
     Card,
@@ -7,7 +7,6 @@ import {
     CardHeader,
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { EnteFile } from "ente-media/file";
 
@@ -29,8 +28,6 @@ function DedupThumb({
     isKeeper: boolean;
     onSelect: () => void;
 }): JSX.Element {
-    const entry = useThumbnailEntry(file);
-
     return (
         <button
             type="button"
@@ -42,11 +39,7 @@ function DedupThumb({
             aria-label={isKeeper ? "Keeper" : "Select as keeper"}
             aria-pressed={isKeeper}
         >
-            {entry.status === "ready" && entry.url ? (
-                <img className="size-full object-cover" src={entry.url} alt="" />
-            ) : (
-                <Skeleton className="size-full rounded-none" aria-hidden />
-            )}
+            <ThumbnailImage file={file} />
             {isKeeper ? (
                 <Badge className="absolute bottom-1 left-1 px-1.5 py-0 text-[0.6rem]">
                     Keep

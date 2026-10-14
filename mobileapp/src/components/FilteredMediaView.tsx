@@ -6,7 +6,11 @@ import {
     useState,
     type JSX,
 } from "react";
+import { CropToolFooter } from "@/components/CropToolFooter";
 import { PageLoader } from "@/components/PageLoader";
+import { RotateToolFooter } from "@/components/RotateToolFooter";
+import { SelectionActionFooter } from "@/components/SelectionActionFooter";
+import { StampToolFooter } from "@/components/StampToolFooter";
 import { ThumbnailGrid } from "@/components/ThumbnailGrid";
 import { useMediaGridSelection } from "@/hooks/use-media-grid-selection";
 import { SELECTION_FOOTER_INSET_PX } from "@/lib/selection";
@@ -30,7 +34,9 @@ interface FilteredMediaViewProps {
 }
 
 /**
- * Thumbnail grid with photo viewer. Sort and shuffle are applied by the parent.
+ * Thumbnail grid with photo viewer and selection tool footers. Sort and
+ * shuffle are applied by the parent. The viewer keeps the list it was opened
+ * with; selection resets when the view unmounts.
  */
 export function FilteredMediaView({
     files,
@@ -39,12 +45,16 @@ export function FilteredMediaView({
     albumCoverFileId,
     onSetAlbumCover,
 }: FilteredMediaViewProps): JSX.Element {
-    const [viewerFileId, setViewerFileId] = useState<number | undefined>();
+    const [viewer, setViewer] = useState<
+        { fileId: number; files: EnteFile[] } | undefined
+    >();
 
     const mode = useSelectionStore((s) => s.mode);
     const pruneToVisible = useSelectionStore((s) => s.pruneToVisible);
     const pendingRotations = useSelectionStore((s) => s.pendingRotations);
     const applyBusy = useSelectionStore((s) => s.applyBusy);
+
+    const resetSelection = useSelectionStore((s) => s.reset);
 
     const visibleFileIds = useMemo(
         () => new Set(files.map((file) => file.id)),
@@ -55,6 +65,12 @@ export function FilteredMediaView({
         pruneToVisible(visibleFileIds);
     }, [pruneToVisible, visibleFileIds]);
 
+    useEffect(() => {
+        return (): void => {
+            resetSelection();
+        };
+    }, [resetSelection]);
+
     const gridSelection = useMediaGridSelection({ disabled: applyBusy });
 
     const toolActive = mode !== "none";
@@ -64,11 +80,11 @@ export function FilteredMediaView({
         if (useSelectionStore.getState().mode !== "none") {
             return;
         }
-        setViewerFileId(file.id);
-    }, []);
+        setViewer({ fileId: file.id, files });
+    }, [files]);
 
     const handleCloseViewer = useCallback((): void => {
-        setViewerFileId(undefined);
+        setViewer(undefined);
     }, []);
 
     if (loading && files.length === 0) {
@@ -86,10 +102,14 @@ export function FilteredMediaView({
                     mode === "rotate" ? pendingRotations : undefined
                 }
             />
-            {viewerFileId !== undefined ? (
+            <SelectionActionFooter />
+            <StampToolFooter />
+            <RotateToolFooter />
+            <CropToolFooter />
+            {viewer ? (
                 <PhotoViewer
-                    files={files}
-                    initialFileId={viewerFileId}
+                    files={viewer.files}
+                    initialFileId={viewer.fileId}
                     onClose={handleCloseViewer}
                     albumCoverFileId={albumCoverFileId}
                     onSetAlbumCover={onSetAlbumCover}

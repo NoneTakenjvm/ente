@@ -47,24 +47,6 @@ export const runWithConcurrency = async <T>(
 };
 
 /**
- * Wait while `shouldPause` is true, polling every 200 ms.
- *
- * @returns `true` if the job should stop because `signal` is aborted.
- */
-export const waitIfPaused = async (
-    shouldPause?: () => boolean,
-    signal?: AbortSignal,
-): Promise<boolean> => {
-    while (shouldPause?.()) {
-        await new Promise((resolve) => setTimeout(resolve, 200));
-        if (signal?.aborted) {
-            return true;
-        }
-    }
-    return signal?.aborted ?? false;
-};
-
-/**
  * Wrap `emit` so calls closer together than `minIntervalMs` are dropped.
  * The first call always emits, and `force` bypasses the throttle (use it for
  * the final update).
@@ -82,4 +64,20 @@ export const progressReporter = (
         lastEmitAt = now;
         emit();
     };
+};
+
+/**
+ * Whole percent (0-100) of `current` out of `total`. `ratio` (0-1) is how far
+ * through the item numbered `current` (1-based) the job is.
+ */
+export const jobPercent = (
+    current: number,
+    total: number,
+    ratio?: number,
+): number => {
+    if (total <= 0) {
+        return 0;
+    }
+    const done = ratio === undefined ? current : current - 1 + ratio;
+    return Math.min(100, Math.max(0, Math.round((done / total) * 100)));
 };

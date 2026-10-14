@@ -44,7 +44,6 @@ import {
     eligibleImageFiles,
     progressReporter,
     runWithConcurrency,
-    waitIfPaused,
 } from "@/lib/job-utils";
 import { isEnteVideoFile } from "@/lib/media-kind";
 import { waitWhileGalleryScrolling } from "@/lib/gallery-scroll-activity";
@@ -382,8 +381,6 @@ type RunKitEmbeddingJobOptions = {
      * Called after chunk flushes / job end so UI can refresh rankings.
      */
     onBatchPersisted?: (entries: EmbeddingMap) => void;
-    /** When true, the job waits (like phash scan pause) instead of aborting. */
-    shouldPause?: () => boolean;
     signal?: AbortSignal;
 };
 
@@ -482,9 +479,6 @@ export const runKitEmbeddingJob = async (
                 if (options.signal?.aborted) {
                     return;
                 }
-                if (await waitIfPaused(options.shouldPause, options.signal)) {
-                    return;
-                }
                 const bytes = await getDecryptedThumbnailBytes(file);
                 if (bytes) {
                     thumbs.push({ file, bytes });
@@ -543,7 +537,7 @@ export const runKitEmbeddingJob = async (
                     prefetchChunk(chunks[index + 1]!) :
                     undefined;
             for (let start = 0; start < thumbs.length; start += batchSize) {
-                if (await waitIfPaused(options.shouldPause, options.signal)) {
+                if (options.signal?.aborted) {
                     break;
                 }
                 inFlight.push(

@@ -1,12 +1,7 @@
-import { useEffect, useSyncExternalStore, type JSX } from "react";
+import type { JSX } from "react";
 import { ImageIcon } from "lucide-react";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ThumbnailImage } from "@/components/ThumbnailImage";
 import { cn } from "@/lib/utils";
-import {
-    getThumbnailEntry,
-    requestThumbnail,
-    subscribeThumbnail,
-} from "@/lib/thumbnail-cache";
 import type { EnteFile } from "ente-media/file";
 
 interface AlbumCoverThumbProps {
@@ -15,42 +10,16 @@ interface AlbumCoverThumbProps {
     onClick?: () => void;
 }
 
-/**
- * Subscribe to a file's cached thumbnail and request it when not yet loaded.
- */
-export function useThumbnailEntry(
-    file: EnteFile | undefined,
-): ReturnType<typeof getThumbnailEntry> {
-    const entry = useSyncExternalStore(
-        (listener) => subscribeThumbnail(file?.id ?? -1, listener),
-        () => getThumbnailEntry(file?.id ?? -1),
-        () => getThumbnailEntry(file?.id ?? -1),
-    );
-
-    useEffect(() => {
-        if (file && entry.status === "idle") {
-            requestThumbnail(file);
-        }
-    }, [entry.status, file]);
-
-    return entry;
-}
-
 export function AlbumCoverThumb({
     file,
     className,
     onClick,
 }: AlbumCoverThumbProps): JSX.Element {
-    const entry = useThumbnailEntry(file);
-
-    const content =
-        file && entry.status === "ready" && entry.url ? (
-            <img className="size-full object-cover" src={entry.url} alt="" />
-        ) : file ? (
-            <Skeleton className="size-full rounded-none" aria-hidden />
-        ) : (
-            <ImageIcon className="size-5 text-muted-foreground" aria-hidden />
-        );
+    const content = file ? (
+        <ThumbnailImage file={file} />
+    ) : (
+        <ImageIcon className="size-5 text-muted-foreground" aria-hidden />
+    );
 
     if (onClick) {
         return (

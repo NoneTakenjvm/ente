@@ -6,17 +6,13 @@ import {
     useState,
     type JSX,
 } from "react";
-import { ArrowDownUp, Check, GripVertical, Pencil, Plus } from "lucide-react";
+import { Check, GripVertical, Pencil, Plus } from "lucide-react";
 import { AlbumEditorPanel } from "@/components/albums/AlbumEditorPanel";
 import { AlbumListCard } from "@/components/albums/AlbumListCard";
 import { AppShell } from "@/components/AppShell";
 import { FilteredMediaView } from "@/components/FilteredMediaView";
+import { GallerySortToggle } from "@/components/GallerySortToggle";
 import { PageLoader } from "@/components/PageLoader";
-import { SelectionActionFooter } from "@/components/SelectionActionFooter";
-import { StampToolFooter } from "@/components/StampToolFooter";
-import { CropToolFooter } from "@/components/CropToolFooter";
-import { RotateToolFooter } from "@/components/RotateToolFooter";
-import { SyncBanner } from "@/components/SyncBanner";
 import { TagFilterBar } from "@/components/TagFilterBar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,24 +23,17 @@ import {
     EmptyTitle,
 } from "@/components/ui/empty";
 import { useLibraryBootstrap } from "@/hooks/use-library-bootstrap";
+import { useLibraryFiles } from "@/hooks/use-library-files";
+import { useLibraryLoading } from "@/hooks/use-library-loading";
 import { useMediaDisplayPipeline } from "@/hooks/use-media-display-pipeline";
-import { useRequireSession } from "@/hooks/use-require-session";
 import { resolveAlbumCoverFile } from "@/lib/album-cover";
 import { queryAlbumFilter } from "@/lib/query-albums";
-import { dedupeFilesById } from "@/lib/sync/merge-files";
 import { filterFilesByTags, isTagFilterActive } from "@/lib/tag-filter";
-import { isFileArchivedLocally } from "@/lib/visibility-outbox";
-import {
-    sortFilesByEdit,
-    sortFilesByUpload,
-} from "@/lib/sort-files";
 import type { EnteFile } from "ente-media/file";
 import { useSessionStore } from "@/stores/session-store";
 import { useAlbumStore } from "@/stores/album-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
-import { useLibraryStore } from "@/stores/library-store";
 import { useSelectionStore } from "@/stores/selection-store";
-import { useSettingsStore } from "@/stores/settings-store";
 import { useTagStore } from "@/stores/tag-store";
 import { toast } from "sonner";
 
@@ -55,7 +44,6 @@ type AlbumsMode = "list" | "view" | "edit";
 type ListSubMode = "browse" | "reorder";
 
 export default function AlbumsPage(): JSX.Element {
-    const { ready, authenticated } = useRequireSession();
     const email = useSessionStore((s) => s.email);
 
     const albums = useAlbumStore((s) => s.albums);
@@ -63,8 +51,6 @@ export default function AlbumsPage(): JSX.Element {
     const reorderAlbums = useAlbumStore((s) => s.reorderAlbums);
     const updateAlbum = useAlbumStore((s) => s.updateAlbum);
 
-    const allFiles = useLibraryStore((s) => s.allFiles);
-    const syncStatus = useLibraryStore((s) => s.syncStatus);
     const favoriteFileIds = useFavoritesStore((s) => s.favoriteFileIds);
     const fileIdsByTag = useTagStore((s) => s.fileIdsByTag);
     const albumViewFilter = useTagStore((s) => s.albumViewFilter);
@@ -73,8 +59,6 @@ export default function AlbumsPage(): JSX.Element {
         (s) => s.typeConfig.includeInEffectsPresenceByName,
     );
     const initialLoadDone = useLibraryBootstrap();
-    const gallerySortBy = useSettingsStore((s) => s.gallerySortBy);
-    const patchSettings = useSettingsStore((s) => s.patchSettings);
 
     const [mode, setMode] = useState<AlbumsMode>("list");
     const [listSubMode, setListSubMode] = useState<ListSubMode>("browse");
@@ -94,20 +78,7 @@ export default function AlbumsPage(): JSX.Element {
         [activeAlbum],
     );
 
-    const sortLibraryFiles = useCallback(
-        (files: EnteFile[]): EnteFile[] =>
-            gallerySortBy === "edited" ?
-                sortFilesByEdit(files) :
-                sortFilesByUpload(files),
-        [gallerySortBy],
-    );
-
-    const libraryFiles = useMemo(() => {
-        const deduped = dedupeFilesById(allFiles).filter(
-            (file) => !isFileArchivedLocally(file),
-        );
-        return sortLibraryFiles(deduped);
-    }, [allFiles, sortLibraryFiles]);
+    const libraryFiles = useLibraryFiles();
 
     const albumFiles = useMemo(() => {
         if (!activeAlbumQuery) {
@@ -190,33 +161,11 @@ export default function AlbumsPage(): JSX.Element {
     }, [activeAlbum, albumFiles]);
 
     useEffect(() => {
-        return (): void => {
-            useSelectionStore.getState().reset();
-        };
-    }, []);
-
-    useEffect(() => {
         if (mode === "view") {
             return;
         }
         clearAlbumViewFilter();
     }, [clearAlbumViewFilter, mode]);
-
-    const setSelectionMode = useSelectionStore((s) => s.setMode);
-    const selectionFilterRef = useRef(albumViewFilter);
-    useEffect(() => {
-        if (mode !== "view") {
-            return;
-        }
-        if (selectionFilterRef.current === albumViewFilter) {
-            return;
-        }
-        selectionFilterRef.current = albumViewFilter;
-        const { mode: activeMode } = useSelectionStore.getState();
-        if (activeMode !== "none" && activeMode !== "stamp") {
-            setSelectionMode("none");
-        }
-    }, [albumViewFilter, mode, setSelectionMode]);
 
     const handleBack = useCallback((): void => {
         useSelectionStore.getState().reset();
@@ -310,12 +259,6 @@ export default function AlbumsPage(): JSX.Element {
         toast.success("Album cover updated");
     }, [activeAlbum, updateAlbum]);
 
-    const handleToggleSort = (): void => {
-        patchSettings({
-            gallerySortBy: gallerySortBy === "edited" ? "uploaded" : "edited",
-        });
-    };
-
     const shellTitle =
         mode === "list" ?
             (listSubMode === "reorder" ? "Reorder albums" : "Albums") :
@@ -329,18 +272,10 @@ export default function AlbumsPage(): JSX.Element {
         </Badge>
     );
 
-    const showFullPageLoader =
-        !initialLoadDone &&
-        (syncStatus === "loadingFromCache" || syncStatus === "syncing") &&
-        libraryFiles.length === 0;
-
-    if (!ready || !authenticated) {
-        return (
-            <PageLoader
-                message={ready ? "Redirecting to sign in…" : "Restoring session…"}
-            />
-        );
-    }
+    const showFullPageLoader = useLibraryLoading(
+        initialLoadDone,
+        libraryFiles.length,
+    );
 
     return (
         <AppShell
@@ -402,25 +337,7 @@ export default function AlbumsPage(): JSX.Element {
                         >
                             Select all
                         </Button>
-                        <Button
-                            type="button"
-                            variant={gallerySortBy === "edited" ? "secondary" : "outline"}
-                            size="icon-sm"
-                            aria-label={
-                                gallerySortBy === "edited" ?
-                                    "Sort by upload date" :
-                                    "Sort by last edited"
-                            }
-                            aria-pressed={gallerySortBy === "edited"}
-                            onClick={handleToggleSort}
-                            title={
-                                gallerySortBy === "edited" ?
-                                    "Sorting by edit time — tap to sort by upload" :
-                                    "Sorting by upload — tap to sort by edit"
-                            }
-                        >
-                            <ArrowDownUp />
-                        </Button>
+                        <GallerySortToggle />
                         <Button
                             type="button"
                             variant="outline"
@@ -434,8 +351,6 @@ export default function AlbumsPage(): JSX.Element {
                 ) : null
             }
         >
-            <SyncBanner />
-
             {mode === "view" && activeAlbum ? (
                 <TagFilterBar
                     filterTarget="album"
@@ -513,11 +428,6 @@ export default function AlbumsPage(): JSX.Element {
                     }
                 />
             ) : null}
-
-            <SelectionActionFooter />
-            <StampToolFooter />
-            <RotateToolFooter />
-            <CropToolFooter />
         </AppShell>
     );
 }

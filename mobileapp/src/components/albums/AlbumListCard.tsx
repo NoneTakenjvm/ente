@@ -5,9 +5,8 @@ import {
 } from "react";
 import { GripVertical, Pencil } from "lucide-react";
 import { AlbumCoverThumb } from "@/components/albums/AlbumCoverThumb";
-import { Badge } from "@/components/ui/badge";
+import { MediaListCard } from "@/components/MediaListCard";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import type { EnteFile } from "ente-media/file";
 
@@ -70,7 +69,7 @@ export function AlbumListCard({
     );
 
     return (
-        <Card
+        <MediaListCard
             data-album-id={albumId}
             className={cn(
                 "gap-0 py-0 transition-colors",
@@ -79,37 +78,31 @@ export function AlbumListCard({
                 isDragOver && "ring-2 ring-primary ring-offset-2 ring-offset-background",
             )}
             onClick={reorderMode ? undefined : onOpen}
-        >
-            <div className="flex items-center gap-3 px-4 py-3">
-                {reorderMode ? (
-                    <button
-                        type="button"
-                        className="flex shrink-0 touch-none items-center justify-center rounded-md p-1 text-muted-foreground"
-                        aria-label={`Reorder ${name}`}
-                        onPointerDown={handlePointerDown}
-                        onPointerMove={handlePointerMove}
-                        onPointerUp={handlePointerUp}
-                        onPointerCancel={handlePointerUp}
-                    >
-                        <GripVertical className="size-5" />
-                    </button>
-                ) : null}
-                <AlbumCoverThumb
-                    file={coverFile}
-                    className="size-16 rounded-lg"
-                />
-                <div className="flex min-w-0 flex-1 items-start gap-2">
-                    <span className="min-w-0 flex-1 text-base font-medium leading-snug break-words">
-                        {name}
-                    </span>
-                    <Badge
-                        variant="secondary"
-                        className="mt-0.5 shrink-0 tabular-nums"
-                    >
-                        {matchCount}
-                    </Badge>
-                </div>
-                {!reorderMode ? (
+            name={name}
+            badge={matchCount}
+            leading={
+                <>
+                    {reorderMode ? (
+                        <button
+                            type="button"
+                            className="flex shrink-0 touch-none items-center justify-center rounded-md p-1 text-muted-foreground"
+                            aria-label={`Reorder ${name}`}
+                            onPointerDown={handlePointerDown}
+                            onPointerMove={handlePointerMove}
+                            onPointerUp={handlePointerUp}
+                            onPointerCancel={handlePointerUp}
+                        >
+                            <GripVertical className="size-5" />
+                        </button>
+                    ) : null}
+                    <AlbumCoverThumb
+                        file={coverFile}
+                        className="size-16 rounded-lg"
+                    />
+                </>
+            }
+            trailing={
+                !reorderMode ? (
                     <Button
                         type="button"
                         variant="ghost"
@@ -123,8 +116,8 @@ export function AlbumListCard({
                     >
                         <Pencil className="size-4" />
                     </Button>
-                ) : null}
-            </div>
-        </Card>
+                ) : null
+            }
+        />
     );
 }

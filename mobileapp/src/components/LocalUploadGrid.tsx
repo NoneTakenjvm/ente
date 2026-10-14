@@ -6,7 +6,6 @@ import {
     useRef,
     useState,
     type JSX,
-    type PointerEvent as ReactPointerEvent,
     type RefObject,
 } from "react";
 import AutoSizer from "react-virtualized-auto-sizer";
@@ -14,7 +13,7 @@ import {
     FixedSizeList,
     type ListChildComponentProps,
 } from "react-window";
-import { SelectedTileOverlay } from "@/components/ThumbnailCell";
+import { SelectedTileOverlay, TileFrame } from "@/components/ThumbnailCell";
 import type { GalleryColumnCount } from "@/lib/app-settings";
 import {
     gridIndicesInContentMarquee,
@@ -26,10 +25,9 @@ import {
     rowCountForFiles,
     type ThumbnailGridLayout,
 } from "@/lib/thumbnail-grid-layout";
-import {
-    useMarqueeSelection,
-    type MarqueeScrollController,
-} from "@/hooks/use-marquee-selection";
+import { useGridMarquee } from "@/hooks/use-grid-marquee";
+import { useListScrollController } from "@/hooks/use-list-scroll-controller";
+import type { MarqueeScrollController } from "@/hooks/use-marquee-selection";
 import { cn } from "@/lib/utils";
 import { useSettingsStore } from "@/stores/settings-store";
 
@@ -132,13 +130,7 @@ const LocalUploadCell = memo(function LocalUploadCell({
     const imageSrc = useCellImageSrc(item, width);
 
     return (
-        <div
-            className={cn(
-                "relative shrink-0 overflow-hidden rounded-md bg-muted",
-                disabled && "pointer-events-none opacity-50",
-            )}
-            style={{ width, height }}
-        >
+        <TileFrame width={width} height={height} disabled={disabled}>
             <button
                 type="button"
                 className="size-full focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
@@ -179,7 +171,7 @@ const LocalUploadCell = memo(function LocalUploadCell({
                 )}
             </button>
             {isSelected ? <SelectedTileOverlay /> : null}
-        </div>
+        </TileFrame>
     );
 });
 
@@ -246,28 +238,10 @@ function SizedGrid({
         () => ({ items, layout, selection }),
         [items, layout, selection],
     );
-    const scrollOffsetRef = useRef(0);
-    const outerRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        scrollControllerRef.current = {
-            getScrollTop: (): number => scrollOffsetRef.current,
-            setScrollTop: (next: number): void => {
-                const outer = outerRef.current;
-                const maxScroll =
-                    outer ? Math.max(0, outer.scrollHeight - outer.clientHeight) : 0;
-                const clamped = Math.min(Math.max(0, next), maxScroll);
-                if (clamped === scrollOffsetRef.current) {
-                    return;
-                }
-                scrollOffsetRef.current = clamped;
-                listRef.current?.scrollTo(clamped);
-            },
-        };
-        return (): void => {
-            scrollControllerRef.current = null;
-        };
-    }, [listRef, scrollControllerRef]);
+    const { outerRef, onScroll } = useListScrollController(
+        listRef,
+        scrollControllerRef,
+    );
 
     return (
         <FixedSizeList
@@ -279,9 +253,7 @@ function SizedGrid({
             itemCount={rowCount}
             itemSize={layout.rowHeight}
             itemData={itemData}
-            onScroll={(props) => {
-                scrollOffsetRef.current = props.scrollOffset;
-            }}
+            onScroll={onScroll}
             style={{ paddingBottom: footerInsetPx, touchAction: "pan-y" }}
         >
             {GridRow}
@@ -297,9 +269,6 @@ export function LocalUploadGrid({
     const galleryColumns = useSettingsStore((s) => s.galleryColumns);
     const listRef = useRef<FixedSizeList<RowData>>(null);
     const scrollControllerRef = useRef<MarqueeScrollController | null>(null);
-    const marqueeBaselineRef = useRef<Set<string>>(new Set());
-    const marqueeAppliedIdsRef = useRef<Set<string>>(new Set());
-    const marqueeLastIdsRef = useRef<string[]>([]);
     const [gridWidth, setGridWidth] = useState<number>(0);
 
     const resolveMarqueeItemIds = useCallback(
@@ -322,73 +291,23 @@ export function LocalUploadGrid({
         [galleryColumns, gridWidth, items],
     );
 
-    const handleMarqueeRect = useCallback(
-        (rect: MarqueeRect): void => {
-            if (!selection.onSelectMany) {
-                return;
-            }
-            const itemIds = resolveMarqueeItemIds(rect);
-            if (sameIds(itemIds, marqueeLastIdsRef.current)) {
-                return;
-            }
-            marqueeLastIdsRef.current = itemIds;
-            if (selection.onSetSelection) {
-                const next = new Set(marqueeBaselineRef.current);
-                for (const id of itemIds) {
-                    next.add(id);
-                }
-                selection.onSetSelection([...next]);
-                return;
-            }
-            const fresh: string[] = [];
-            for (const id of itemIds) {
-                if (!marqueeAppliedIdsRef.current.has(id)) {
-                    marqueeAppliedIdsRef.current.add(id);
-                    fresh.push(id);
-                }
-            }
-            if (fresh.length > 0) {
-                selection.onSelectMany(fresh, "add");
-            }
-        },
-        [resolveMarqueeItemIds, selection],
+    const getBaselineIds = useCallback(
+        (): Iterable<string> => selection.selectedIds,
+        [selection.selectedIds],
     );
 
-    const marqueeEnabled =
-        Boolean(selection.onSelectMany) && !selection.disabled;
-
-    const {
-        containerRef,
-        overlayRef,
-        onPointerDown,
-        onPointerMove,
-        onPointerUp,
-        onPointerCancel,
-    } = useMarqueeSelection({
-        enabled: marqueeEnabled,
+    const { containerProps, overlayProps } = useGridMarquee({
+        resolveIds: resolveMarqueeItemIds,
+        selection,
+        getBaselineIds,
         scrollControllerRef,
-        onMarqueeRect: handleMarqueeRect,
-        bottomInsetPx: footerInsetPx,
+        footerInsetPx,
     });
-
-    const handlePointerDown = useCallback(
-        (event: ReactPointerEvent<HTMLDivElement>): void => {
-            marqueeBaselineRef.current = new Set(selection.selectedIds);
-            marqueeAppliedIdsRef.current = new Set();
-            marqueeLastIdsRef.current = [];
-            onPointerDown(event);
-        },
-        [onPointerDown, selection.selectedIds],
-    );
 
     return (
         <div
-            ref={containerRef}
+            {...containerProps}
             className="relative min-h-0 flex-1 select-none overflow-hidden"
-            onPointerDown={handlePointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={onPointerUp}
-            onPointerCancel={onPointerCancel}
         >
             <AutoSizer
                 onResize={({ width }: { width: number }) => {
@@ -408,14 +327,7 @@ export function LocalUploadGrid({
                     />
                 )}
             </AutoSizer>
-            <div
-                ref={overlayRef}
-                className="pointer-events-none absolute z-30 border border-primary bg-primary/20"
-                style={{ display: "none" }}
-            />
+            <div {...overlayProps} />
         </div>
     );
 }
-
-const sameIds = (a: string[], b: string[]): boolean =>
-    a.length === b.length && a.every((id, index) => id === b[index]);

@@ -1,7 +1,6 @@
 import type { JSX } from "react";
 import { ImageOff } from "lucide-react";
-import { useThumbnailEntry } from "@/components/albums/AlbumCoverThumb";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ThumbnailImage } from "@/components/ThumbnailImage";
 import { cn } from "@/lib/utils";
 import type { EnteFile } from "ente-media/file";
 
@@ -23,8 +22,6 @@ export function SessionViewThumb({
     onOpen,
     carouselIndex,
 }: SessionViewThumbProps): JSX.Element {
-    const entry = useThumbnailEntry(file);
-
     if (!file) {
         return (
             <div
@@ -42,7 +39,6 @@ export function SessionViewThumb({
         );
     }
 
-    const ready = entry.status === "ready" && entry.url;
     const openable = carouselIndex !== undefined && onOpen;
 
     return (
@@ -60,15 +56,7 @@ export function SessionViewThumb({
             }}
             aria-label={`Open media ${index + 1}`}
         >
-            {ready ? (
-                <img
-                    className="size-full object-cover"
-                    src={entry.url}
-                    alt=""
-                />
-            ) : (
-                <Skeleton className="size-full rounded-none" aria-hidden />
-            )}
+            <ThumbnailImage file={file} />
         </button>
     );
 }

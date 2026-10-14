@@ -2,18 +2,14 @@ import {
     memo,
     useEffect,
     useRef,
-    useSyncExternalStore,
     type JSX,
+    type ReactNode,
     type PointerEvent as ReactPointerEvent,
 } from "react";
 import { QuickCropOverlay } from "@/components/QuickCropOverlay";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import {
-    getThumbnailEntry,
-    requestThumbnail,
-    subscribeThumbnail,
-} from "@/lib/thumbnail-cache";
+import { useThumbnailEntry } from "@/hooks/use-thumbnail-entry";
 import { fileByteSize } from "@/lib/compress";
 import { previewTransformForRotation } from "@/lib/rotate-draft";
 import type { RotationDegrees } from "@/lib/rotate";
@@ -114,23 +110,12 @@ export const ThumbnailCell = memo(function ThumbnailCell({
             ) :
             undefined;
 
-    const entry = useSyncExternalStore(
-        (listener) => subscribeThumbnail(file.id, listener),
-        () => getThumbnailEntry(file.id),
-        () => getThumbnailEntry(file.id),
-    );
+    const entry = useThumbnailEntry(file);
 
     const imageRef = useRef<HTMLImageElement>(null);
     const pressTimerRef = useRef<number | undefined>(undefined);
     const pressStartRef = useRef<{ x: number; y: number } | undefined>(undefined);
     const longPressTriggeredRef = useRef<boolean>(false);
-
-    useEffect(() => {
-        if (entry.status === "idle" || entry.status === "error") {
-            // requestThumbnail applies the failed-load cooldown and retry cap.
-            requestThumbnail(file);
-        }
-    }, [entry.status, file]);
 
     useEffect(() => {
         return (): void => {
@@ -200,13 +185,7 @@ export const ThumbnailCell = memo(function ThumbnailCell({
     };
 
     return (
-        <div
-            className={cn(
-                "relative shrink-0 overflow-hidden rounded-md bg-muted",
-                disabled && "pointer-events-none opacity-50",
-            )}
-            style={{ width: cellWidth, height: cellHeight }}
-        >
+        <TileFrame width={cellWidth} height={cellHeight} disabled={disabled}>
             <button
                 type="button"
                 className="size-full focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
@@ -295,9 +274,34 @@ export const ThumbnailCell = memo(function ThumbnailCell({
                 </span>
             ) : null}
             {tapSelects && showSelected ? <SelectedTileOverlay /> : null}
-        </div>
+        </TileFrame>
     );
 }, thumbnailCellPropsAreEqual);
+
+/** Rounded, clipped tile box shared by grid cells; dims when disabled. */
+export function TileFrame({
+    width,
+    height,
+    disabled,
+    children,
+}: {
+    width: number;
+    height: number;
+    disabled: boolean;
+    children: ReactNode;
+}): JSX.Element {
+    return (
+        <div
+            className={cn(
+                "relative shrink-0 overflow-hidden rounded-md bg-muted",
+                disabled && "pointer-events-none opacity-50",
+            )}
+            style={{ width, height }}
+        >
+            {children}
+        </div>
+    );
+}
 
 /** Tint and check badge drawn over a selected tile. */
 export function SelectedTileOverlay(): JSX.Element {

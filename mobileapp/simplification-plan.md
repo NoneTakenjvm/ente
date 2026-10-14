@@ -1,6 +1,6 @@
 # mobileapp simplification plan
 
-**Status:** Phases 0–1 committed (`f41698ef32`, APP_VERSION 0.3.195). Phase 2 committed (0.3.196–0.3.197). Phase 3 wave 1 committed (0.3.198); wave 2a (§3.9/§5.6, §5.3, §3.2) committed (0.3.199); §5.4 merged scan plus Phase 4 §2.1b–f, §1.3+§1.7 and §2.6 committed (0.3.200); §3.1 `useJob` next. Written 2026-10-14 against `ntphotos` @ `81946e8e48` (APP_VERSION 0.3.194).
+**Status:** Phases 0–1 committed (`f41698ef32`, APP_VERSION 0.3.195). Phase 2 committed (0.3.196–0.3.197). Phase 3 wave 1 committed (0.3.198); wave 2a (§3.9/§5.6, §5.3, §3.2) committed (0.3.199); §5.4 merged scan plus Phase 4 §2.1b–f, §1.3+§1.7 and §2.6 committed (0.3.200); §3.1 `useJob` and the rest of Phase 4 committed (0.3.201). Phase 5 (optional) next. Written 2026-10-14 against `ntphotos` @ `81946e8e48` (APP_VERSION 0.3.194).
 
 **Purpose:** make `mobileapp/` smaller and easier to change safely, without changing what the app does. The work covers:
 - removing duplicated mechanisms
@@ -219,18 +219,18 @@ Each phase leaves the app shippable. Phases 0–1 are mostly independent PRs tha
 - [x] §3.8 Index-store factory.
 - [x] §3.9 + §5.6 `ordering` / `toolMode` unions and `sortFilesByScore`.
 - [x] §5.2 `createWorkerClient`, one worker at a time, starting with relative-sort.
-- [ ] §5.3 then §3.1: `job-utils.ts`, then `useJob` / `<JobControls>`; delete `usePhashJobStore` and `useCompressJobStore`. (§5.3 done in 0.3.199.)
+- [x] §5.3 then §3.1: `job-utils.ts`, then `useJob` / `<JobControls>`; delete `usePhashJobStore` and `useCompressJobStore`. (§5.3 done in 0.3.199.)
 - [x] §5.5 Collapse the remaining stage-1 twins. §5.8 CLIP transport.
 - [x] §5.4 Merge the phash and quality scans.
 
 ### Phase 4: UI structure (medium risk; phone QA each PR)
-- [ ] §3.2 (= §2.5) manage.tsx becomes a router; add `ManageDuplicatesPanel` and `ManageSimilarPanel`; §3.10 shared panel pieces. (§3.2 done in 0.3.199, pulled forward for §3.1.)
+- [x] §3.2 (= §2.5) manage.tsx becomes a router; add `ManageDuplicatesPanel` and `ManageSimilarPanel`; §3.10 shared panel pieces. (§3.2 done in 0.3.199, pulled forward for §3.1.)
 - [x] §2.1b–f Collapse the tag-filter family (9 files → 5), in the order given in §2.1.
-- [ ] §2.2 Shared grid marquee and scroll; delete the fake masonry.
-- [ ] §2.4 Shared media view, `useLibraryFiles` and the session gate in AppShell; §2.7 one `ensureSessionRestored`; §2.8 one list-card shell.
+- [x] §2.2 Shared grid marquee and scroll; delete the fake masonry.
+- [x] §2.4 Shared media view, `useLibraryFiles` and the session gate in AppShell; §2.7 one `ensureSessionRestored`; §2.8 one list-card shell.
 - [x] §1.3 + §1.7 `PendingBatchFooter`, `ToolFooter` shell, and one busy state in SelectionActionFooter.
-- [ ] §1.2 `MediaEditorOverlay` (merge Crop and Video).
-- [ ] §1.1 PhotoViewer: dedupe first (echo loop, `loadMediaBytesForEdit`), then split by concern.
+- [x] §1.2 `MediaEditorOverlay` (merge Crop and Video).
+- [x] §1.1 PhotoViewer: dedupe first (echo loop, `loadMediaBytesForEdit`), then split by concern.
 - [x] §2.6 Move upload orchestration out of UploadPanel.
 
 ### Phase 5: Optional

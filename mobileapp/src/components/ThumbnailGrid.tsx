@@ -6,7 +6,6 @@ import {
     useRef,
     useState,
     type JSX,
-    type PointerEvent as ReactPointerEvent,
     type RefObject,
     type UIEvent,
 } from "react";
@@ -33,10 +32,9 @@ import {
     rowCountForFiles,
     type ThumbnailGridLayout,
 } from "@/lib/thumbnail-grid-layout";
-import {
-    useMarqueeSelection,
-    type MarqueeScrollController,
-} from "@/hooks/use-marquee-selection";
+import { useGridMarquee } from "@/hooks/use-grid-marquee";
+import { useListScrollController } from "@/hooks/use-list-scroll-controller";
+import type { MarqueeScrollController } from "@/hooks/use-marquee-selection";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useSelectionStore } from "@/stores/selection-store";
 import type { EnteFile } from "ente-media/file";
@@ -189,29 +187,10 @@ function SizedGrid({
         [files, layout.columns],
     );
 
-    const scrollOffsetRef = useRef(0);
-    const outerRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        scrollControllerRef.current = {
-            getScrollTop: (): number => scrollOffsetRef.current,
-            setScrollTop: (next: number): void => {
-                const outer = outerRef.current;
-                const maxScroll =
-                    outer ? Math.max(0, outer.scrollHeight - outer.clientHeight) : 0;
-                const clamped = Math.min(Math.max(0, next), maxScroll);
-                if (clamped === scrollOffsetRef.current) {
-                    return;
-                }
-                noteGalleryScrollActivity();
-                scrollOffsetRef.current = clamped;
-                listRef.current?.scrollTo(clamped);
-            },
-        };
-        return (): void => {
-            scrollControllerRef.current = null;
-        };
-    }, [listRef, scrollControllerRef]);
+    const { outerRef, onScroll } = useListScrollController(
+        listRef,
+        scrollControllerRef,
+    );
 
     return (
         <FixedSizeList
@@ -225,10 +204,7 @@ function SizedGrid({
             itemData={itemData}
             itemKey={itemKey}
             overscanCount={2}
-            onScroll={(props) => {
-                noteGalleryScrollActivity();
-                scrollOffsetRef.current = props.scrollOffset;
-            }}
+            onScroll={onScroll}
             style={{ paddingBottom: footerInsetPx, touchAction: "pan-y" }}
         >
             {GridRow}
@@ -381,9 +357,6 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
     const listRef = useRef<FixedSizeList<RowData>>(null);
     const scrollControllerRef = useRef<MarqueeScrollController | null>(null);
     const masonryLayoutRef = useRef<MasonryLayout | null>(null);
-    const marqueeBaselineRef = useRef<Set<number>>(new Set());
-    const marqueeAppliedIdsRef = useRef<Set<number>>(new Set());
-    const marqueeLastIdsRef = useRef<number[]>([]);
     const [gridWidth, setGridWidth] = useState<number>(0);
 
     const chrome: CellChrome = useMemo(
@@ -451,69 +424,21 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
         [files, galleryColumns, thumbnailMode, gridWidth],
     );
 
-    const handleMarqueeRect = useCallback(
-        (rect: MarqueeRect): void => {
-            if (!selection?.onSelectMany) {
-                return;
-            }
-            const fileIds = resolveMarqueeFileIds(rect);
-            if (sameIds(fileIds, marqueeLastIdsRef.current)) {
-                return;
-            }
-            marqueeLastIdsRef.current = fileIds;
-            if (selection.onSetSelection) {
-                const next = new Set(marqueeBaselineRef.current);
-                for (const id of fileIds) {
-                    next.add(id);
-                }
-                selection.onSetSelection([...next]);
-                return;
-            }
-            // Stamp / add-only tools: never retract (can't un-apply tags).
-            const fresh: number[] = [];
-            for (const id of fileIds) {
-                if (!marqueeAppliedIdsRef.current.has(id)) {
-                    marqueeAppliedIdsRef.current.add(id);
-                    fresh.push(id);
-                }
-            }
-            if (fresh.length > 0) {
-                selection.onSelectMany(fresh, "add");
-            }
-        },
-        [resolveMarqueeFileIds, selection],
+    const getBaselineIds = useCallback(
+        (): Iterable<number> =>
+            selection?.observeStoreSelection ?
+                useSelectionStore.getState().selectedIds :
+                (selection?.selectedIds ?? []),
+        [selection?.observeStoreSelection, selection?.selectedIds],
     );
 
-    const marqueeEnabled =
-        Boolean(selection?.onSelectMany) && !selection?.disabled;
-
-    const {
-        containerRef,
-        overlayRef,
-        onPointerDown,
-        onPointerMove,
-        onPointerUp,
-        onPointerCancel,
-    } = useMarqueeSelection({
-        enabled: marqueeEnabled,
+    const { containerProps, overlayProps } = useGridMarquee({
+        resolveIds: resolveMarqueeFileIds,
+        selection,
+        getBaselineIds,
         scrollControllerRef,
-        onMarqueeRect: handleMarqueeRect,
-        bottomInsetPx: footerInsetPx,
+        footerInsetPx,
     });
-
-    const handlePointerDown = useCallback(
-        (event: ReactPointerEvent<HTMLDivElement>): void => {
-            const baselineIds =
-                selection?.observeStoreSelection ?
-                    useSelectionStore.getState().selectedIds :
-                    [...(selection?.selectedIds ?? [])];
-            marqueeBaselineRef.current = new Set(baselineIds);
-            marqueeAppliedIdsRef.current = new Set();
-            marqueeLastIdsRef.current = [];
-            onPointerDown(event);
-        },
-        [onPointerDown, selection?.observeStoreSelection, selection?.selectedIds],
-    );
 
     if (files.length === 0) {
         return (
@@ -535,17 +460,13 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
 
     return (
         <div
-            ref={containerRef}
+            {...containerProps}
             className="relative min-h-0 flex-1 select-none overflow-hidden"
             style={{
                 // Scrollers are pan-y; an armed marquee blocks the pan itself
                 // (see use-marquee-selection).
                 pointerEvents: interactionsReady ? "auto" : "none",
             }}
-            onPointerDown={handlePointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={onPointerUp}
-            onPointerCancel={onPointerCancel}
         >
             <AutoSizer
                 onResize={({ width }: { width: number }) => {
@@ -578,14 +499,7 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
                         />
                     )}
             </AutoSizer>
-            <div
-                ref={overlayRef}
-                className="pointer-events-none absolute z-30 border border-primary bg-primary/20"
-                style={{ display: "none" }}
-            />
+            <div {...overlayProps} />
         </div>
     );
 });
-
-const sameIds = (a: number[], b: number[]): boolean =>
-    a.length === b.length && a.every((id, index) => id === b[index]);

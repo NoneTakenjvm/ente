@@ -24,7 +24,6 @@ const jobOptions = {
     quality: 0.85,
     videoCrf: 28,
     signal: new AbortController().signal,
-    shouldPause: () => false,
 };
 
 describe("runCompressJob", () => {

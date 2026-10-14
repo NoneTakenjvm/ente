@@ -1,9 +1,6 @@
-import { useCallback, useMemo, useState, type JSX } from "react";
+import { useMemo, type JSX } from "react";
 import { ArchiveRestore } from "lucide-react";
-import {
-    ThumbnailGrid,
-    type ThumbnailGridSelection,
-} from "@/components/ThumbnailGrid";
+import { ThumbnailGrid } from "@/components/ThumbnailGrid";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,12 +9,13 @@ import {
     EmptyHeader,
     EmptyTitle,
 } from "@/components/ui/empty";
+import { useGridSelection } from "@/hooks/use-grid-selection";
 import { dedupeFilesById } from "@/lib/sync/merge-files";
 import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 import { sortFilesByUpload } from "@/lib/sort-files";
 import { useLibraryStore } from "@/stores/library-store";
 import type { EnteFile } from "ente-media/file";
-import { errorMessage, plural } from "@/lib/format";
+import { plural } from "@/lib/format";
 
 interface ManageArchivedPanelProps {
     files: EnteFile[];
@@ -30,9 +28,6 @@ export function ManageArchivedPanel({
     files,
 }: ManageArchivedPanelProps): JSX.Element {
     const batchSetArchived = useLibraryStore((s) => s.batchSetArchived);
-    const [pickedIds, setPickedIds] = useState<Set<number>>(new Set());
-    const [busy, setBusy] = useState<boolean>(false);
-    const [error, setError] = useState<string | undefined>();
 
     const archivedFiles = useMemo(() => {
         const deduped = dedupeFilesById(files).filter(
@@ -41,59 +36,17 @@ export function ManageArchivedPanel({
         return sortFilesByUpload(deduped);
     }, [files]);
 
-    // Ignore picked ids that were unarchived or synced away.
-    const selectedIds = useMemo(() => {
-        const visibleIds = new Set(archivedFiles.map((file) => file.id));
-        const visiblePicks = new Set(
-            [...pickedIds].filter((id) => visibleIds.has(id)),
-        );
-        return visiblePicks.size === pickedIds.size ? pickedIds : visiblePicks;
-    }, [archivedFiles, pickedIds]);
-
-    const handleToggle = useCallback((file: EnteFile): void => {
-        setPickedIds((current) => {
-            const next = new Set(current);
-            if (next.has(file.id)) {
-                next.delete(file.id);
-            } else {
-                next.add(file.id);
-            }
-            return next;
-        });
-    }, []);
-    // Stable so the grid's visible cells only re-render when selection changes.
-    const selection = useMemo(
-        (): ThumbnailGridSelection => ({
-            selectedIds,
-            onToggle: handleToggle,
-            disabled: busy,
-        }),
-        [busy, handleToggle, selectedIds],
-    );
+    const { selectedIds, selection, busy, actionError, runBusy } =
+        useGridSelection(archivedFiles);
 
     const handleUnarchiveSelected = (): void => {
-        const targets = archivedFiles.filter((file) =>
-            selectedIds.has(file.id));
-        if (!targets.length) {
+        if (selectedIds.size === 0) {
             return;
         }
-        setBusy(true);
-        setError(undefined);
-        void batchSetArchived(
-            targets.map((file) => file.id),
-            false,
-        )
-            .then(() => {
-                setPickedIds(new Set());
-            })
-            .catch((unarchiveError: unknown) => {
-                setError(
-                    errorMessage(unarchiveError, "Could not unarchive"),
-                );
-            })
-            .finally(() => {
-                setBusy(false);
-            });
+        void runBusy(
+            () => batchSetArchived([...selectedIds], false),
+            "Could not unarchive",
+        );
     };
 
     if (archivedFiles.length === 0) {
@@ -114,9 +67,9 @@ export function ManageArchivedPanel({
             <p className="shrink-0 px-4 pt-3 text-xs text-muted-foreground">
                 {plural(archivedFiles.length, "archived image")}
             </p>
-            {error ? (
+            {actionError ? (
                 <Alert variant="destructive" className="mx-4 shrink-0">
-                    <AlertDescription>{error}</AlertDescription>
+                    <AlertDescription>{actionError}</AlertDescription>
                 </Alert>
             ) : null}
             <div className="flex min-h-0 flex-1 flex-col px-2">

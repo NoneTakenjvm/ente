@@ -3,9 +3,9 @@ import type { EnteFile } from "ente-media/file";
 import { FileType } from "ente-media/file-type";
 import {
     eligibleImageFiles,
+    jobPercent,
     progressReporter,
     runWithConcurrency,
-    waitIfPaused,
     workerCount,
 } from "@/lib/job-utils";
 
@@ -84,37 +84,6 @@ describe("runWithConcurrency", () => {
     });
 });
 
-describe("waitIfPaused", () => {
-    it("returns false immediately when not paused", async () => {
-        expect(await waitIfPaused(() => false)).toBe(false);
-    });
-
-    it("resolves false once the pause ends", async () => {
-        vi.useFakeTimers();
-        let paused = true;
-        const result = waitIfPaused(() => paused);
-        await vi.advanceTimersByTimeAsync(400);
-        paused = false;
-        await vi.advanceTimersByTimeAsync(200);
-        expect(await result).toBe(false);
-    });
-
-    it("resolves true when aborted while paused", async () => {
-        vi.useFakeTimers();
-        const controller = new AbortController();
-        const result = waitIfPaused(() => true, controller.signal);
-        controller.abort();
-        await vi.advanceTimersByTimeAsync(200);
-        expect(await result).toBe(true);
-    });
-
-    it("reports an already aborted signal", async () => {
-        const controller = new AbortController();
-        controller.abort();
-        expect(await waitIfPaused(undefined, controller.signal)).toBe(true);
-    });
-});
-
 describe("progressReporter", () => {
     it("emits the first call, throttles the rest, and honours force", () => {
         let now = 1000;
@@ -135,5 +104,25 @@ describe("progressReporter", () => {
         report(true);
         expect(emit).toHaveBeenCalledTimes(3);
         vi.restoreAllMocks();
+    });
+});
+
+describe("jobPercent", () => {
+    it("is 0 when total is 0", () => {
+        expect(jobPercent(0, 0)).toBe(0);
+    });
+
+    it("rounds current out of total", () => {
+        expect(jobPercent(1, 3)).toBe(33);
+        expect(jobPercent(3, 3)).toBe(100);
+    });
+
+    it("counts the ratio into the current 1-based item", () => {
+        expect(jobPercent(2, 4, 0.5)).toBe(38);
+    });
+
+    it("clamps to 0-100", () => {
+        expect(jobPercent(5, 4)).toBe(100);
+        expect(jobPercent(1, 4, -1)).toBe(0);
     });
 });

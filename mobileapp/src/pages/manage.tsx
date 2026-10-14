@@ -19,10 +19,9 @@ import { ManageAutoCropPanel } from "@/components/manage/ManageAutoCropPanel";
 import { ManageSettingsPanel } from "@/components/manage/ManageSettingsPanel";
 import { ManageTagsPanel } from "@/components/manage/ManageTagsPanel";
 import { PageLoader } from "@/components/PageLoader";
-import { SyncBanner } from "@/components/SyncBanner";
 import { useLibraryBootstrap } from "@/hooks/use-library-bootstrap";
+import { useLibraryLoading } from "@/hooks/use-library-loading";
 import { APP_VERSION } from "@/lib/app-version";
-import { useRequireSession } from "@/hooks/use-require-session";
 import { useSessionStore } from "@/stores/session-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { usePhashIndexStore } from "@/stores/phash-index-store";
@@ -31,11 +30,9 @@ import { useQualityIndexStore } from "@/stores/quality-index-store";
 
 export default function ManagePage(): JSX.Element {
     const router = useRouter();
-    const { ready, authenticated } = useRequireSession();
     const email = useSessionStore((s) => s.email);
 
     const allFiles = useLibraryStore((s) => s.allFiles);
-    const syncStatus = useLibraryStore((s) => s.syncStatus);
 
     const hydratePhash = usePhashIndexStore((s) => s.ensureHydrated);
     const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
@@ -79,17 +76,7 @@ export default function ManagePage(): JSX.Element {
         void router.replace("/manage", undefined, { shallow: true });
     };
 
-    const showFullPageLoader =
-        !initialLoadDone &&
-        (syncStatus === "loadingFromCache" || syncStatus === "syncing");
-
-    if (!ready || !authenticated) {
-        return (
-            <PageLoader
-                message={ready ? "Redirecting to sign in…" : "Restoring session…"}
-            />
-        );
-    }
+    const showFullPageLoader = useLibraryLoading(initialLoadDone);
 
     return (
         <AppShell
@@ -97,8 +84,6 @@ export default function ManagePage(): JSX.Element {
             email={email}
             onBack={section === "hub" ? undefined : handleBack}
         >
-            <SyncBanner />
-
             {section === "hub" ? (
                 <ManageHub onSelect={handleSelectSection} />
             ) : null}

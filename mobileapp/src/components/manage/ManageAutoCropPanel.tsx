@@ -1,10 +1,4 @@
-import {
-    useCallback,
-    useEffect,
-    useRef,
-    useState,
-    type JSX,
-} from "react";
+import { useEffect, useState, type JSX } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -14,54 +8,23 @@ import {
     EmptyHeader,
     EmptyTitle,
 } from "@/components/ui/empty";
-import { getEnteCore } from "@/core";
+import { useJob } from "@/hooks/use-job";
 import {
-    canAutoCrop,
-    encodeCroppedJpeg,
-    AUTO_CROPPED_TAG,
-} from "@/lib/crop";
-import {
-    detectContentBoundsFromBytes,
-    hasMeaningfulBorder,
-} from "@/lib/crop-editor";
-import {
-    terminateBorderScanWorker,
-    thumbHasBorderInWorker,
-} from "@/lib/border-scan-job";
-import { getLocalMediaOverride } from "@/lib/local-media-overrides";
-import { mimeTypeForFile } from "@/lib/media-kind";
-import { mapBatched } from "@/lib/batched";
-import { addTagNames } from "@/lib/tag-writes";
-import { loadDecryptedThumbnailBytes } from "@/lib/thumbnail-cache";
-import { isFileArchivedLocally } from "@/lib/visibility-outbox";
-import {
-    isJsHeapUnderPressure,
-    logJsHeap,
-} from "@/lib/memory-probe";
-import { useLibraryStore } from "@/stores/library-store";
+    AUTO_CROP_BATCH_SIZE,
+    AUTO_CROP_BATCH_SIZE_UNDER_PRESSURE,
+    autoCropEligibleFiles,
+    runAutoCropApply,
+    runAutoCropScan,
+    type AutoCropProgress,
+} from "@/lib/auto-crop-job";
+import { terminateBorderScanWorker } from "@/lib/border-scan-job";
+import { jobPercent } from "@/lib/job-utils";
 import type { EnteFile } from "ente-media/file";
 import { errorMessage, plural } from "@/lib/format";
 
 interface ManageAutoCropPanelProps {
     files: EnteFile[];
 }
-
-const autoCropEligibleFiles = (files: EnteFile[]): EnteFile[] =>
-    files.filter((file) => canAutoCrop(file) && !isFileArchivedLocally(file));
-
-const yieldToMain = (): Promise<void> =>
-    new Promise((resolve) => {
-        setTimeout(resolve, 0);
-    });
-
-const THUMB_CONCURRENCY = 1;
-const APPLY_CONCURRENCY = 1;
-/**
- * Cap each auto-crop run. Lower than the UI "up to 100" aspiration when the
- * heap is under pressure — phone Chrome dies long before 100 full decrypts.
- */
-const AUTO_CROP_BATCH_SIZE = 100;
-const AUTO_CROP_BATCH_SIZE_UNDER_PRESSURE = 20;
 
 /**
  * Scan for images with black borders and batch-crop them.
@@ -73,268 +36,67 @@ const AUTO_CROP_BATCH_SIZE_UNDER_PRESSURE = 20;
 export function ManageAutoCropPanel({
     files,
 }: ManageAutoCropPanelProps): JSX.Element {
-    const cropAndReplaceFileOptimistic = useLibraryStore(
-        (s) => s.cropAndReplaceFileOptimistic,
-    );
-    const updateTagsOnFile = useLibraryStore((s) => s.updateTagsOnFile);
-    const [scanning, setScanning] = useState<boolean>(false);
-    const [applying, setApplying] = useState<boolean>(false);
-    const [progress, setProgress] = useState<{ current: number; total: number }>(
-        { current: 0, total: 0 },
-    );
-    const [statusLine, setStatusLine] = useState<string>("");
+    const scanJob = useJob<AutoCropProgress>();
+    const applyJob = useJob<AutoCropProgress>();
     const [candidates, setCandidates] = useState<EnteFile[]>([]);
     const [error, setError] = useState<string | undefined>();
     const [resultMessage, setResultMessage] = useState<string | undefined>();
-    const scanGenerationRef = useRef<number>(0);
 
     useEffect(() => {
         return (): void => {
             terminateBorderScanWorker();
-            scanGenerationRef.current += 1;
         };
     }, []);
 
-    const markAutoCropped = useCallback(
-        async (file: EnteFile): Promise<void> => {
-            await updateTagsOnFile(file.id, (tags) => addTagNames(tags, AUTO_CROPPED_TAG));
-        },
-        [updateTagsOnFile],
-    );
+    const scanning = scanJob.status === "running";
+    const applying = applyJob.status === "running";
 
-    const handleScan = useCallback(async (): Promise<void> => {
-        const generation = ++scanGenerationRef.current;
-        setScanning(true);
+    const handleScan = (): void => {
         setError(undefined);
         setResultMessage(undefined);
         setCandidates([]);
-        const eligible = autoCropEligibleFiles(files);
-        const underPressure = isJsHeapUnderPressure();
-        const batchSize = underPressure ?
-            AUTO_CROP_BATCH_SIZE_UNDER_PRESSURE :
-            AUTO_CROP_BATCH_SIZE;
-        const remaining = Math.max(0, eligible.length - batchSize);
-        const croppable = eligible.slice(0, batchSize);
-        logJsHeap(
-            underPressure ?
-                "auto-crop:scan-start(pressure)" :
-                "auto-crop:scan-start",
-        );
-
-        const isCancelled = (): boolean =>
-            generation !== scanGenerationRef.current;
-
-        try {
-            setStatusLine(
-                remaining > 0 ?
-                    `Scanning batch of ${croppable.length} (${remaining} more later)…` :
-                    "Loading thumbnails and scanning…",
-            );
-            setProgress({ current: 0, total: croppable.length });
-            const likelyIds: number[] = [];
-            let thumbDone = 0;
-            let fetchedThumbs = 0;
-            let markedClean = 0;
-            let failedThumbs = 0;
-            let lastProgressAt = 0;
-
-            await mapBatched(
-                croppable,
-                async (file) => {
-                    if (isCancelled()) {
-                        return;
-                    }
-                    try {
-                        const thumbBytes = await loadDecryptedThumbnailBytes(file);
-                        fetchedThumbs += 1;
-                        if (isCancelled()) {
-                            return;
-                        }
-                        const hasBorder = await thumbHasBorderInWorker(
-                            file.id,
-                            thumbBytes,
-                        );
-                        if (hasBorder) {
-                            likelyIds.push(file.id);
-                        } else {
-                            await markAutoCropped(file);
-                            markedClean += 1;
-                        }
-                    } catch {
-                        failedThumbs += 1;
-                    } finally {
-                        thumbDone += 1;
-                        const now = Date.now();
-                        if (
-                            thumbDone === croppable.length ||
-                            now - lastProgressAt >= 200
-                        ) {
-                            lastProgressAt = now;
-                            setProgress({
-                                current: thumbDone,
-                                total: croppable.length,
-                            });
-                        }
-                        if (thumbDone % 4 === 0) {
-                            await yieldToMain();
-                        }
+        scanJob.start(
+            (signal, onProgress) => runAutoCropScan(files, signal, onProgress),
+            {
+                onFinish: (result, aborted) => {
+                    if (!aborted) {
+                        setCandidates(result.found);
+                        setResultMessage(result.message);
                     }
                 },
-                { concurrency: THUMB_CONCURRENCY },
-            );
+                onError: (scanError) => {
+                    setError(errorMessage(scanError, "Scan failed"));
+                },
+            },
+        );
+    };
 
-            if (isCancelled()) {
-                terminateBorderScanWorker();
-                return;
-            }
-
-            const fileById = new Map(
-                croppable.map((file) => [file.id, file] as const),
-            );
-            const found: EnteFile[] = likelyIds
-                .map((id) => fileById.get(id))
-                .filter((file): file is EnteFile => file !== undefined);
-
-            terminateBorderScanWorker();
-            setCandidates(found);
-            setStatusLine("");
-            logJsHeap("auto-crop:scan-done");
-            const batchNote =
-                remaining > 0 ?
-                    ` ${remaining} eligible left for later runs.` :
-                    "";
-            const pressureNote = underPressure ?
-                " (smaller batch - memory pressure)." :
-                "";
-            const cleanNote =
-                markedClean > 0 ?
-                    ` Marked ${markedClean} without borders as done.` :
-                    "";
-            const failNote =
-                failedThumbs > 0 ?
-                    ` ${failedThumbs} thumbs failed (will retry next run).` :
-                    "";
-            if (!found.length) {
-                setResultMessage(
-                    `No letterboxed images in this batch of ${fetchedThumbs}.${cleanNote}${failNote}${batchNote}${pressureNote}`,
-                );
-            } else {
-                setResultMessage(
-                    `Found ${found.length} likely letterboxed. Crop verifies each at full resolution.${cleanNote}${failNote}${batchNote}${pressureNote}`,
-                );
-            }
-        } catch (scanError: unknown) {
-            if (isCancelled()) {
-                return;
-            }
-            setError(
-                errorMessage(scanError, "Scan failed"),
-            );
-        } finally {
-            if (!isCancelled()) {
-                setScanning(false);
-                setStatusLine("");
-            }
-        }
-    }, [files, markAutoCropped]);
-
-    const handleApply = useCallback(async (): Promise<void> => {
+    const handleApply = (): void => {
         if (!candidates.length) {
             return;
         }
-        const generation = ++scanGenerationRef.current;
-        setApplying(true);
         setError(undefined);
-        setProgress({ current: 0, total: candidates.length });
-        logJsHeap("auto-crop:apply-start");
-        let cropped = 0;
-        let marked = 0;
-        let completed = 0;
-        try {
-            await mapBatched(
-                candidates,
-                async (file) => {
-                    if (generation !== scanGenerationRef.current) {
-                        return;
-                    }
-                    try {
-                        const bytes =
-                            getLocalMediaOverride(file.id) ??
-                            (await getEnteCore().getDecryptedFile(file));
-                        const detected = await detectContentBoundsFromBytes(
-                            bytes,
-                            mimeTypeForFile(file),
-                        );
-                        if (
-                            !detected ||
-                            !hasMeaningfulBorder(
-                                detected.bounds,
-                                detected.width,
-                                detected.height,
-                            )
-                        ) {
-                            await markAutoCropped(file);
-                            marked += 1;
-                            return;
-                        }
-                        const encoded = await encodeCroppedJpeg(
-                            bytes,
-                            detected.bounds,
-                        );
-                        const { finalize } = cropAndReplaceFileOptimistic(
-                            file.id,
-                            encoded.bytes,
-                            {
-                                width: encoded.width,
-                                height: encoded.height,
-                            },
-                            { autoCropped: true, sourceBytes: bytes },
-                        );
-                        void finalize.catch(() => {
-                            // Store path handles revert/toast.
-                        });
-                        cropped += 1;
-                    } catch {
-                        // Continue batch.
-                    } finally {
-                        completed += 1;
-                        setProgress({
-                            current: completed,
-                            total: candidates.length,
-                        });
-                        await yieldToMain();
+        applyJob.start(
+            (signal, onProgress) =>
+                runAutoCropApply(candidates, signal, onProgress),
+            {
+                onFinish: (message, aborted) => {
+                    if (!aborted) {
+                        setResultMessage(message);
+                        setCandidates([]);
                     }
                 },
-                { concurrency: APPLY_CONCURRENCY },
-            );
-            if (generation !== scanGenerationRef.current) {
-                return;
-            }
-            setResultMessage(
-                `Cropped ${cropped}, marked ${marked} without borders (${candidates.length} in this batch).`,
-            );
-            setCandidates([]);
-            logJsHeap("auto-crop:apply-done");
-            terminateBorderScanWorker();
-        } finally {
-            if (generation === scanGenerationRef.current) {
-                setApplying(false);
-            }
-        }
-    }, [candidates, cropAndReplaceFileOptimistic, markAutoCropped]);
+            },
+        );
+    };
 
-    const handleCancel = useCallback((): void => {
-        scanGenerationRef.current += 1;
-        setScanning(false);
-        setApplying(false);
-        setStatusLine("");
+    const handleCancel = (): void => {
+        scanJob.reset();
+        applyJob.reset();
         terminateBorderScanWorker();
-    }, []);
+    };
 
-    const progressPercent =
-        progress.total > 0 ?
-            Math.round((progress.current / progress.total) * 100) :
-            0;
+    const progress = scanning ? scanJob.progress : applyJob.progress;
 
     const eligibleRemaining = autoCropEligibleFiles(files).length;
 
@@ -353,9 +115,7 @@ export function ManageAutoCropPanel({
             <div className="flex flex-wrap gap-2">
                 <Button
                     type="button"
-                    onClick={() => {
-                        void handleScan();
-                    }}
+                    onClick={handleScan}
                     disabled={scanning || applying || files.length === 0}
                 >
                     {scanning ? "Scanning…" : "Scan for borders"}
@@ -363,9 +123,7 @@ export function ManageAutoCropPanel({
                 <Button
                     type="button"
                     variant="secondary"
-                    onClick={() => {
-                        void handleApply();
-                    }}
+                    onClick={handleApply}
                     disabled={
                         applying || scanning || candidates.length === 0
                     }
@@ -384,11 +142,14 @@ export function ManageAutoCropPanel({
                     </Button>
                 ) : null}
             </div>
-            {scanning || applying ? (
+            {progress && (scanning || applying) ? (
                 <div className="flex flex-col gap-1">
-                    <Progress value={progressPercent} className="h-1" />
+                    <Progress
+                        value={jobPercent(progress.current, progress.total)}
+                        className="h-1"
+                    />
                     <span className="text-xs text-muted-foreground">
-                        {statusLine ? `${statusLine} ` : null}
+                        {progress.label ? `${progress.label} ` : null}
                         {progress.current} / {progress.total}
                     </span>
                 </div>

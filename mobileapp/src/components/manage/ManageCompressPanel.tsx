@@ -1,8 +1,6 @@
 import {
     useCallback,
-    useEffect,
     useMemo,
-    useRef,
     useState,
     type JSX,
 } from "react";
@@ -31,6 +29,7 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import { useJob, type JobProgress } from "@/hooks/use-job";
 import { useScopeCounts } from "@/hooks/use-scope-counts";
 import { useTagFilterDraft } from "@/hooks/use-tag-filter-draft";
 import {
@@ -46,6 +45,7 @@ import {
     writeCompressMinSizeBytes,
 } from "@/lib/compress";
 import { runCompressJob } from "@/lib/compress-job";
+import { jobPercent } from "@/lib/job-utils";
 import { mediaKindForFile } from "@/lib/media-kind";
 import {
     countTagFilterClauses,
@@ -57,7 +57,6 @@ import {
     isTagFilterActive,
 } from "@/lib/tag-filter";
 import { VIDEO_COMPRESS_BATCH_MAX_LONG_EDGE } from "@/lib/transcode/compress-media";
-import { useCompressJobStore } from "@/stores/ui-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useTagStore } from "@/stores/tag-store";
@@ -66,6 +65,13 @@ import type { EnteFile } from "ente-media/file";
 import { errorMessage, formatFileSize, plural } from "@/lib/format";
 
 const COMPRESS_FOOTER_INSET_PX = 220;
+
+interface CompressProgress extends JobProgress {
+    stage: string;
+    fileLabel: string;
+    ratio?: number;
+    encoder?: string;
+}
 
 interface ManageCompressPanelProps {
     files: EnteFile[];
@@ -104,13 +110,8 @@ export function ManageCompressPanel({
 
     const { filter, actions, setFilter } = useTagFilterDraft();
 
-    const jobStatus = useCompressJobStore((s) => s.status);
-    const jobProgress = useCompressJobStore((s) => s.progress);
-    const jobError = useCompressJobStore((s) => s.error);
-    const setJobError = useCompressJobStore((s) => s.setError);
-    const setJobStatus = useCompressJobStore((s) => s.setStatus);
-    const setJobProgress = useCompressJobStore((s) => s.setProgress);
-    const resetJob = useCompressJobStore((s) => s.reset);
+    const job = useJob<CompressProgress>();
+    const [jobError, setJobError] = useState<string | undefined>();
 
     const [includePreviouslyCompressed, setIncludePreviouslyCompressed] =
         useState<boolean>(false);
@@ -121,17 +122,6 @@ export function ManageCompressPanel({
     const [batchPreviewOpen, setBatchPreviewOpen] = useState<boolean>(false);
     const [resultMessage, setResultMessage] = useState<string | undefined>();
     const [compressTarget, setCompressTarget] = useState<EnteFile | undefined>();
-
-    const jobAbort = useRef<AbortController | undefined>(undefined);
-    const jobPaused = useRef<boolean>(false);
-
-    // Leaving the panel pauses the running job; its handlers mark it paused.
-    useEffect(() => {
-        return (): void => {
-            jobPaused.current = true;
-            jobAbort.current?.abort();
-        };
-    }, []);
 
     const scopeCounts = useScopeCounts(files);
 
@@ -279,111 +269,73 @@ export function ManageCompressPanel({
         setIncludePreviouslyCompressed((current) => !current);
     };
 
-    const handleStartJob = useCallback((): void => {
-        if (jobStatus === "running" || activeSelectedIds.size === 0) {
+    const handleStartJob = (): void => {
+        if (job.status === "running" || activeSelectedIds.size === 0) {
             return;
         }
 
-        jobAbort.current?.abort();
-        const controller = new AbortController();
-        const { signal } = controller;
-        jobAbort.current = controller;
-        jobPaused.current = false;
         setJobError(undefined);
         setResultMessage(undefined);
-        setJobStatus("running");
-        setJobProgress({
-            current: 0,
-            total: activeSelectedIds.size,
-            stage: "download",
-            fileLabel: "",
-        });
         setBatchPreviewOpen(false);
 
-        void runCompressJob({
-            files: candidates,
-            fileIds: activeSelectedIds,
-            includePreviouslyCompressed,
-            quality: DEFAULT_JPEG_QUALITY,
-            videoCrf: DEFAULT_VIDEO_CRF,
-            minSizeBytes,
-            maxLongEdge: VIDEO_COMPRESS_BATCH_MAX_LONG_EDGE,
-            signal,
-            shouldPause: () => jobPaused.current,
-            onProgress: (update) => {
-                if (signal.aborted) {
-                    return;
-                }
-                setJobProgress({
-                    current: update.current,
-                    total: update.total,
-                    stage: update.stage,
-                    fileLabel: update.fileLabel,
-                    ratio: update.ratio,
-                    encoder: update.encoder,
+        job.start(
+            (signal, onProgress) => {
+                onProgress({
+                    current: 0,
+                    total: activeSelectedIds.size,
+                    stage: "download",
+                    fileLabel: "",
+                });
+                return runCompressJob({
+                    files: candidates,
+                    fileIds: activeSelectedIds,
+                    includePreviouslyCompressed,
+                    quality: DEFAULT_JPEG_QUALITY,
+                    videoCrf: DEFAULT_VIDEO_CRF,
+                    minSizeBytes,
+                    maxLongEdge: VIDEO_COMPRESS_BATCH_MAX_LONG_EDGE,
+                    signal,
+                    onProgress,
+                    downloadFile: async (file, onDownloadProgress) => {
+                        const { loadMediaBytesForEdit } = await import(
+                            "@/lib/load-media-bytes"
+                        );
+                        return loadMediaBytesForEdit(file, (progress) => {
+                            const total = progress.total > 0 ? progress.total : progress.loaded;
+                            onDownloadProgress(total > 0 ? progress.loaded / total : undefined);
+                        });
+                    },
+                    compressFile: (fileId, bytes, options) =>
+                        compressAndUploadMedia(fileId, bytes, options),
                 });
             },
-            downloadFile: async (file, onProgress) => {
-                const { loadMediaBytesForEdit } = await import(
-                    "@/lib/load-media-bytes"
-                );
-                return loadMediaBytesForEdit(file, (progress) => {
-                    const total = progress.total > 0 ? progress.total : progress.loaded;
-                    onProgress(total > 0 ? progress.loaded / total : undefined);
-                });
+            {
+                onFinish: (result, aborted) => {
+                    if (aborted) {
+                        return;
+                    }
+                    const parts = [
+                        `Compressed ${plural(result.completed, "file")}`,
+                    ];
+                    if (result.skipped > 0) {
+                        parts.push(`${result.skipped} skipped`);
+                    }
+                    if (result.failed > 0) {
+                        parts.push(`${result.failed} failed`);
+                    }
+                    setResultMessage(parts.join(" · "));
+                },
+                onError: (error) => {
+                    setJobError(
+                        errorMessage(error, "Compression job failed"),
+                    );
+                },
             },
-            compressFile: (fileId, bytes, options) =>
-                compressAndUploadMedia(fileId, bytes, options),
-        })
-            .then((result) => {
-                // Stop clears the ref and Resume replaces it, so a run that is
-                // no longer current must not touch the shared job state.
-                if (jobAbort.current !== controller) {
-                    return;
-                }
-                if (signal.aborted) {
-                    setJobStatus("paused");
-                    return;
-                }
-                setJobStatus("done");
-                const parts = [
-                    `Compressed ${plural(result.completed, "file")}`,
-                ];
-                if (result.skipped > 0) {
-                    parts.push(`${result.skipped} skipped`);
-                }
-                if (result.failed > 0) {
-                    parts.push(`${result.failed} failed`);
-                }
-                setResultMessage(parts.join(" · "));
-            })
-            .catch((error: unknown) => {
-                if (jobAbort.current !== controller) {
-                    return;
-                }
-                if (signal.aborted) {
-                    setJobStatus("paused");
-                    return;
-                }
-                setJobStatus("error");
-                setJobError(
-                    errorMessage(error, "Compression job failed"),
-                );
-            });
-    }, [
-        activeSelectedIds,
-        candidates,
-        compressAndUploadMedia,
-        includePreviouslyCompressed,
-        setJobError,
-        jobStatus,
-        minSizeBytes,
-        setJobProgress,
-        setJobStatus,
-    ]);
+        );
+    };
 
     const handleReviewCompression = (): void => {
-        if (activeSelectedIds.size === 0 || jobStatus === "running") {
+        if (activeSelectedIds.size === 0 || job.status === "running") {
             return;
         }
         if (activeSelectedIds.size === 1) {
@@ -396,41 +348,17 @@ export function ManageCompressPanel({
         setBatchPreviewOpen(true);
     };
 
-    const handlePauseJob = (): void => {
-        jobPaused.current = true;
-        jobAbort.current?.abort();
-        setJobStatus("paused");
+    const handleReset = (): void => {
+        job.reset();
+        setJobError(undefined);
     };
 
-    const handleStopJob = (): void => {
-        jobPaused.current = false;
-        jobAbort.current?.abort();
-        jobAbort.current = undefined;
-        resetJob();
-    };
-
-    const jobRunning = jobStatus === "running";
+    const jobRunning = job.status === "running";
+    const jobProgress = job.progress;
     const stageRatioPercent =
-        jobProgress.ratio !== undefined ?
+        jobProgress?.ratio !== undefined ?
             Math.round(jobProgress.ratio * 100) :
             undefined;
-    const progressPercent =
-        jobProgress.total > 0 ?
-            Math.round(
-                ((jobProgress.current - (stageRatioPercent !== undefined ?
-                    (100 - stageRatioPercent) / 100 :
-                    0)) /
-                    jobProgress.total) *
-                    100,
-            ) :
-            0;
-    const barPercent =
-        stageRatioPercent !== undefined && jobProgress.total > 0 ?
-            Math.round(
-                ((jobProgress.current - 1) / jobProgress.total) * 100 +
-                    stageRatioPercent / jobProgress.total,
-            ) :
-            progressPercent;
 
     const gridSelection = useMemo(
         () => ({
@@ -462,11 +390,11 @@ export function ManageCompressPanel({
         filter.rotatedScope !== "all";
 
     const encoderHint =
-        jobProgress.encoder === "webcodecs" ?
+        jobProgress?.encoder === "webcodecs" ?
             "Hardware H.264" :
-            jobProgress.encoder === "ffmpeg" ?
+            jobProgress?.encoder === "ffmpeg" ?
                 "ffmpeg (CPU)" :
-                jobProgress.encoder === "photohoard" ?
+                jobProgress?.encoder === "photohoard" ?
                     "AVIF/WebP" :
                     undefined;
 
@@ -644,7 +572,7 @@ export function ManageCompressPanel({
                                 type="button"
                                 variant="outline"
                                 size="sm"
-                                onClick={handlePauseJob}
+                                onClick={job.pause}
                             >
                                 Pause
                             </Button>
@@ -652,13 +580,13 @@ export function ManageCompressPanel({
                                 type="button"
                                 variant="destructive"
                                 size="sm"
-                                onClick={handleStopJob}
+                                onClick={handleReset}
                             >
                                 Stop
                             </Button>
                         </>
                     ) : null}
-                    {jobStatus === "paused" ? (
+                    {job.status === "paused" ? (
                         <>
                             <Button
                                 type="button"
@@ -671,28 +599,32 @@ export function ManageCompressPanel({
                                 type="button"
                                 variant="destructive"
                                 size="sm"
-                                onClick={handleStopJob}
+                                onClick={handleReset}
                             >
                                 Stop
                             </Button>
                         </>
                     ) : null}
-                    {jobStatus === "done" || jobStatus === "error" ? (
+                    {job.status === "done" || job.status === "error" ? (
                         <Button
                             type="button"
                             variant="outline"
                             size="sm"
-                            onClick={resetJob}
+                            onClick={handleReset}
                         >
                             Reset
                         </Button>
                     ) : null}
                 </div>
 
-                {jobRunning ? (
+                {jobRunning && jobProgress ? (
                     <div className="flex flex-col gap-1">
                         <Progress
-                            value={Math.min(100, Math.max(0, barPercent))}
+                            value={jobPercent(
+                                jobProgress.current,
+                                jobProgress.total,
+                                jobProgress.ratio,
+                            )}
                             className="h-1"
                         />
                         <span className="flex items-center gap-2 text-xs text-muted-foreground">

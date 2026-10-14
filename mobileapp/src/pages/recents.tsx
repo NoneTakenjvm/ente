@@ -10,7 +10,6 @@ import { AppShell } from "@/components/AppShell";
 import { PageLoader } from "@/components/PageLoader";
 import { SessionListCard } from "@/components/recents/SessionListCard";
 import { SessionViewThumb } from "@/components/recents/SessionViewThumb";
-import { SyncBanner } from "@/components/SyncBanner";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,7 +19,7 @@ import {
     EmptyTitle,
 } from "@/components/ui/empty";
 import { useLibraryBootstrap } from "@/hooks/use-library-bootstrap";
-import { useRequireSession } from "@/hooks/use-require-session";
+import { useLibraryLoading } from "@/hooks/use-library-loading";
 import {
     formatSessionLore,
     formatSessionName,
@@ -40,12 +39,10 @@ const PhotoViewer = dynamic(
 type RecentsMode = "list" | "view";
 
 export default function RecentsPage(): JSX.Element {
-    const { ready, authenticated } = useRequireSession();
     const email = useSessionStore((s) => s.email);
     const sessions = useViewSessionsStore((s) => s.sessions);
     const deleteSession = useViewSessionsStore((s) => s.deleteSession);
     const allFiles = useLibraryStore((s) => s.allFiles);
-    const syncStatus = useLibraryStore((s) => s.syncStatus);
     const getFileById = useLibraryStore((s) => s.getFileById);
     const initialLoadDone = useLibraryBootstrap();
 
@@ -132,18 +129,10 @@ export default function RecentsPage(): JSX.Element {
         handleBack();
     };
 
-    const showFullPageLoader =
-        !initialLoadDone &&
-        (syncStatus === "loadingFromCache" || syncStatus === "syncing") &&
-        allFiles.length === 0;
-
-    if (!ready || !authenticated) {
-        return (
-            <PageLoader
-                message={ready ? "Redirecting to sign in…" : "Restoring session…"}
-            />
-        );
-    }
+    const showFullPageLoader = useLibraryLoading(
+        initialLoadDone,
+        allFiles.length,
+    );
 
     const title =
         mode === "list" ?
@@ -171,7 +160,6 @@ export default function RecentsPage(): JSX.Element {
                 ) : undefined
             }
         >
-            <SyncBanner />
             {showFullPageLoader ? (
                 <PageLoader message="Loading library…" />
             ) : mode === "list" ? (
