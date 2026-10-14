@@ -89,14 +89,4 @@ describe("viewport-fit", () => {
         const ordered = sortFilesByViewportFit(files, "best", viewport);
         expect(ordered.map((file) => file.id)).toEqual([1, 3, 2]);
     });
-
-    it("sortFilesByViewportFit none preserves input order in a copy", () => {
-        const files = [
-            fileWithAspect(3, 16, 9),
-            fileWithAspect(1, 9, 16),
-        ];
-        const ordered = sortFilesByViewportFit(files, "none", 9 / 16);
-        expect(ordered.map((file) => file.id)).toEqual([3, 1]);
-        expect(ordered).not.toBe(files);
-    });
 });

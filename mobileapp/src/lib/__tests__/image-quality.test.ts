@@ -144,10 +144,4 @@ describe("sortFilesByImageQuality", () => {
             sortFilesByImageQuality(files, "best", scores).map((f) => f.id),
         ).toEqual([2, 3, 1, 4]);
     });
-
-    it("none returns a shallow copy in the same order", () => {
-        const ordered = sortFilesByImageQuality(files, "none", scores);
-        expect(ordered.map((f) => f.id)).toEqual([1, 2, 3, 4]);
-        expect(ordered).not.toBe(files);
-    });
 });

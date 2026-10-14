@@ -48,9 +48,9 @@ const isFullyApplied = (
     info !== undefined && info.total > 0 && info.count === info.total;
 
 export function SelectionActionFooter(): JSX.Element | null {
-    const enabled = useSelectionStore((s) => s.enabled);
+    const enabled = useSelectionStore((s) => s.mode === "select");
     const selectedIds = useSelectionStore((s) => s.selectedIds);
-    const setEnabled = useSelectionStore((s) => s.setEnabled);
+    const setMode = useSelectionStore((s) => s.setMode);
 
     const allFiles = useLibraryStore((s) => s.allFiles);
     const batchSetFavorite = useLibraryStore((s) => s.batchSetFavorite);
@@ -126,8 +126,8 @@ export function SelectionActionFooter(): JSX.Element | null {
     }, [pinnedTags, recentTags]);
 
     const exitSelection = useCallback((): void => {
-        setEnabled(false);
-    }, [setEnabled]);
+        setMode("none");
+    }, [setMode]);
 
     const stageDraft = useCallback(
         (mutator: (current: TagDraft) => TagDraft): void => {

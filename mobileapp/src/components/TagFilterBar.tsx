@@ -39,7 +39,7 @@ import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagFilterBinding } from "@/hooks/use-tag-filter-binding";
 import { useTagStore } from "@/stores/tag-store";
 import type { TagFilterTarget } from "@/stores/tag-store";
-import { useUIStore } from "@/stores/ui-store";
+import { useUIStore, type GalleryOrdering } from "@/stores/ui-store";
 import type { EnteFile } from "ente-media/file";
 import { errorMessage, plural } from "@/lib/format";
 
@@ -89,7 +89,7 @@ export function TagFilterBar({
     const countFiles = scopeCandidateFiles ?? allFiles;
 
     const selectAll = useSelectionStore((s) => s.selectAll);
-    const setStampActive = useSelectionStore((s) => s.setStampActive);
+    const setSelectionMode = useSelectionStore((s) => s.setMode);
     const setStampTags = useSelectionStore((s) => s.setStampTags);
     const setStampPickMode = useSelectionStore((s) => s.setStampPickMode);
     const setStampSheetOpen = useSelectionStore((s) => s.setStampSheetOpen);
@@ -98,25 +98,9 @@ export function TagFilterBar({
     const pinnedTags = useTagSpeedStore((s) => s.pinnedTags);
     const togglePinnedTag = useTagSpeedStore((s) => s.togglePinnedTag);
 
-    const mediaViewOrder = useUIStore((s) => s.mediaViewOrder);
-    const setMediaShuffled = useUIStore((s) => s.setMediaShuffled);
-    const setMediaDefaultOrder = useUIStore((s) => s.setMediaDefaultOrder);
-    const viewportFitSort = useUIStore((s) => s.viewportFitSort);
-    const setViewportFitSort = useUIStore((s) => s.setViewportFitSort);
-    const uploadedAtSort = useUIStore((s) => s.uploadedAtSort);
-    const setUploadedAtSort = useUIStore((s) => s.setUploadedAtSort);
-    const imageSizeSort = useUIStore((s) => s.imageSizeSort);
-    const setImageSizeSort = useUIStore((s) => s.setImageSizeSort);
-    const imageQualitySort = useUIStore((s) => s.imageQualitySort);
-    const setImageQualitySort = useUIStore((s) => s.setImageQualitySort);
-    const tagFilterFitSort = useUIStore((s) => s.tagFilterFitSort);
-    const setTagFilterFitSort = useUIStore((s) => s.setTagFilterFitSort);
-    const relativeSort = useUIStore((s) => s.relativeSort);
-    const setRelativeSort = useUIStore((s) => s.setRelativeSort);
+    const ordering = useUIStore((s) => s.ordering);
+    const setOrdering = useUIStore((s) => s.setOrdering);
     const reapplyRelativeSort = useUIStore((s) => s.reapplyRelativeSort);
-    const nearnessFilter = useUIStore((s) => s.nearnessFilter);
-    const nearnessSource = useUIStore((s) => s.nearnessSource);
-    const setNearnessFilter = useUIStore((s) => s.setNearnessFilter);
     const reapplyNearness = useUIStore((s) => s.reapplyNearness);
     const kitLikenessRivalPenalty = useUIStore(
         (s) => s.kitLikenessRivalPenalty,
@@ -137,17 +121,22 @@ export function TagFilterBar({
     const qualityHydrated = useQualityIndexStore((s) => s.isHydrated);
     const hydrateQuality = useQualityIndexStore((s) => s.ensureHydrated);
 
+    const nearnessFilter =
+        ordering?.kind === "nearness" ? ordering.filter : undefined;
+    const nearnessSource =
+        ordering?.kind === "nearness" ? ordering.source : undefined;
+
     useEffect(() => {
-        if (imageQualitySort === "none" || qualityHydrated) {
+        if (ordering?.kind !== "imageQuality" || qualityHydrated) {
             return;
         }
         void hydrateQuality();
-    }, [hydrateQuality, imageQualitySort, qualityHydrated]);
+    }, [hydrateQuality, ordering?.kind, qualityHydrated]);
 
     const needsEmbeddings =
-        tagFilterFitSort !== "none" ||
-        relativeSort !== "none" ||
-        Boolean(nearnessFilter) ||
+        ordering?.kind === "tagFilterFit" ||
+        ordering?.kind === "relative" ||
+        ordering?.kind === "nearness" ||
         presets.length > 0;
 
     useEffect(() => {
@@ -249,6 +238,19 @@ export function TagFilterBar({
         return matchNearnessFilterToKitPreset(nearnessFilter, presets)?.id;
     }, [nearnessFilter, nearnessSource, presets]);
 
+    const viewportFitSort =
+        ordering?.kind === "viewportFit" ? ordering.direction : "none";
+    const uploadedAtSort =
+        ordering?.kind === "uploadedAt" ? ordering.direction : "none";
+    const imageSizeSort =
+        ordering?.kind === "imageSize" ? ordering.direction : "none";
+    const imageQualitySort =
+        ordering?.kind === "imageQuality" ? ordering.direction : "none";
+    const tagFilterFitSort =
+        ordering?.kind === "tagFilterFit" ? ordering.direction : "none";
+    const relativeSort =
+        ordering?.kind === "relative" ? ordering.direction : "none";
+
     // Kit deleted or tags no longer match — drop orphaned kit nearness.
     useEffect(() => {
         if (nearnessSource !== "kit" || !nearnessFilter) {
@@ -257,40 +259,44 @@ export function TagFilterBar({
         if (matchNearnessFilterToKitPreset(nearnessFilter, presets)) {
             return;
         }
-        setNearnessFilter(undefined);
-    }, [nearnessFilter, nearnessSource, presets, setNearnessFilter]);
+        setOrdering(undefined);
+    }, [nearnessFilter, nearnessSource, presets, setOrdering]);
 
     const handleFilterNearnessChange = useCallback(
         (filter: TagFilterSelection | undefined): void => {
             if (filter === undefined) {
-                setNearnessFilter(undefined);
+                clearOrderingKind("nearness");
                 return;
             }
-            setNearnessFilter(filter, "filter");
+            setOrdering({ kind: "nearness", filter, source: "filter" });
         },
-        [setNearnessFilter],
+        [setOrdering],
     );
 
     const handleKitLikenessPresetIdChange = useCallback(
         (presetId: string | undefined): void => {
             if (!presetId) {
-                setNearnessFilter(undefined);
+                clearOrderingKind("nearness");
                 return;
             }
             const preset = presets.find((entry) => entry.id === presetId);
             if (!preset?.tags.length) {
                 return;
             }
-            setNearnessFilter(nearnessFilterFromKitTags(preset.tags), "kit");
+            setOrdering({
+                kind: "nearness",
+                filter: nearnessFilterFromKitTags(preset.tags),
+                source: "kit",
+            });
             setStampPickMode("kit");
             setStampTags(preset.tags);
-            setStampActive(true);
+            setSelectionMode("stamp");
             setStampSheetOpen(false);
         },
         [
             presets,
-            setNearnessFilter,
-            setStampActive,
+            setOrdering,
+            setSelectionMode,
             setStampPickMode,
             setStampSheetOpen,
             setStampTags,
@@ -303,7 +309,7 @@ export function TagFilterBar({
     const [bulkBusy, setBulkBusy] = useState<boolean>(false);
     const [bulkError, setBulkError] = useState<string | undefined>();
 
-    const isShuffled = mediaViewOrder === "shuffled";
+    const isShuffled = ordering?.kind === "shuffled";
     const filterActive = isTagFilterActive(tagFilter);
 
     const libraryFileIds = useMemo(
@@ -428,21 +434,72 @@ export function TagFilterBar({
                         rotatedScope={tagFilter.rotatedScope}
                         onRotatedScopeChange={setRotatedScope}
                         viewportFitSort={viewportFitSort}
-                        onViewportFitSortChange={setViewportFitSort}
+                        onViewportFitSortChange={(direction) => {
+                            if (direction === "none") {
+                                clearOrderingKind("viewportFit");
+                                return;
+                            }
+                            setOrdering({ kind: "viewportFit", direction });
+                        }}
                         uploadedAtSort={uploadedAtSort}
-                        onUploadedAtSortChange={setUploadedAtSort}
+                        onUploadedAtSortChange={(direction) => {
+                            if (direction === "none") {
+                                clearOrderingKind("uploadedAt");
+                                return;
+                            }
+                            setOrdering({ kind: "uploadedAt", direction });
+                        }}
                         imageSizeSort={imageSizeSort}
-                        onImageSizeSortChange={setImageSizeSort}
+                        onImageSizeSortChange={(direction) => {
+                            if (direction === "none") {
+                                clearOrderingKind("imageSize");
+                                return;
+                            }
+                            setOrdering({ kind: "imageSize", direction });
+                        }}
                         imageQualitySort={imageQualitySort}
-                        onImageQualitySortChange={setImageQualitySort}
+                        onImageQualitySortChange={(direction) => {
+                            if (direction === "none") {
+                                clearOrderingKind("imageQuality");
+                                return;
+                            }
+                            setOrdering({ kind: "imageQuality", direction });
+                        }}
                         tagFilterFitSort={tagFilterFitSort}
                         onTagFilterFitSortChange={
                             tagFilterFitAvailable ?
-                                setTagFilterFitSort :
+                                (direction) => {
+                                    if (direction === "none") {
+                                        clearOrderingKind("tagFilterFit");
+                                        return;
+                                    }
+                                    setOrdering({
+                                        kind: "tagFilterFit",
+                                        direction,
+                                    });
+                                } :
                                 undefined
                         }
                         relativeSort={relativeSort}
-                        onRelativeSortChange={setRelativeSort}
+                        onRelativeSortChange={(direction) => {
+                            if (direction === "none") {
+                                clearOrderingKind("relative");
+                                return;
+                            }
+                            // New random tip only when turning relative on.
+                            setOrdering({
+                                kind: "relative",
+                                direction,
+                                seed:
+                                    ordering?.kind === "relative" ?
+                                        ordering.seed :
+                                        Date.now(),
+                                startFileId:
+                                    ordering?.kind === "relative" ?
+                                        ordering.startFileId :
+                                        undefined,
+                            });
+                        }}
                         onRelativeReapply={reapplyRelativeSort}
                         nearnessFilter={nearnessFilter}
                         onNearnessFilterChange={handleFilterNearnessChange}
@@ -481,11 +538,15 @@ export function TagFilterBar({
                         aria-label={isShuffled ? "Disable random order" : "Randomise"}
                         aria-pressed={isShuffled}
                         onClick={() => {
-                            if (isShuffled) {
-                                setMediaDefaultOrder();
-                            } else {
-                                setMediaShuffled(Date.now());
-                            }
+                            setOrdering(
+                                isShuffled ?
+                                    undefined :
+                                    {
+                                        kind: "shuffled",
+                                        seed: Date.now(),
+                                        fileIds: [],
+                                    },
+                            );
                         }}
                     >
                         <Shuffle className="size-3.5 shrink-0" />
@@ -615,3 +676,11 @@ export function TagFilterBar({
         </>
     );
 }
+
+/** Turn the ordering off, but only if it is currently of {@link kind}. */
+const clearOrderingKind = (kind: GalleryOrdering["kind"]): void => {
+    const { ordering, setOrdering } = useUIStore.getState();
+    if (ordering?.kind === kind) {
+        setOrdering(undefined);
+    }
+};

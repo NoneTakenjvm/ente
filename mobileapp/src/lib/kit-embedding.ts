@@ -16,7 +16,7 @@ import { registerReset } from "@/lib/session-lifecycle";
  * nearness only embeds missing seed thumbnails for the selected kit.
  *
  * Videos are never embedded (poster thumbnail ≠ content). Candidates come from
- * {@link imageFilesForPhash}; any stale video vectors in {@link existing} are
+ * {@link eligibleImageFiles}; any stale video vectors in {@link existing} are
  * dropped at job start.
  */
 import {
@@ -41,10 +41,11 @@ import {
     type PersistedEmbeddingMeta,
 } from "@/db/kv";
 import {
-    imageFilesForPhash,
+    eligibleImageFiles,
+    progressReporter,
     runWithConcurrency,
     waitIfPaused,
-} from "@/lib/similarity-job";
+} from "@/lib/job-utils";
 import { isEnteVideoFile } from "@/lib/media-kind";
 import { waitWhileGalleryScrolling } from "@/lib/gallery-scroll-activity";
 import type { EnteFile } from "ente-media/file";
@@ -427,7 +428,7 @@ export const runKitEmbeddingJob = async (
     });
     const chunkSize = Math.max(batchSize * 3, 12);
 
-    let candidates = imageFilesForPhash([...options.files], options.userId);
+    let candidates = eligibleImageFiles(options.files, options.userId);
     if (options.onlyFileIds) {
         candidates = candidates.filter((file) =>
             options.onlyFileIds!.has(file.id));
@@ -451,18 +452,8 @@ export const runKitEmbeddingJob = async (
     const writeQueue = new EmbeddingWriteQueue(meta, cacheKey);
 
     let completed = 0;
-    let lastProgressAt = 0;
 
-    const noteProgress = (force = false): void => {
-        const now = performance.now();
-        if (
-            !force &&
-            now - lastProgressAt < progressMinIntervalMs &&
-            completed < total
-        ) {
-            return;
-        }
-        lastProgressAt = now;
+    const reportProgress = progressReporter(progressMinIntervalMs, () => {
         options.onProgress?.({
             completed,
             total,
@@ -472,6 +463,9 @@ export const runKitEmbeddingJob = async (
             batchSize,
             batchMode: activeBatchMode,
         });
+    });
+    const noteProgress = (force = false): void => {
+        reportProgress(force || completed >= total);
     };
 
     /** Fetch one chunk of thumbnails; files without bytes count as skipped. */

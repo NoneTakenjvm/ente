@@ -7,105 +7,77 @@ import { registerReset } from "@/lib/session-lifecycle";
 /** How the stamp tool picks what to apply: a whole kit, or individual tags. */
 export type StampPickMode = "kit" | "tag";
 
+/** Which grid tool is active; the tools are mutually exclusive. */
+export type SelectionMode = "none" | "select" | "stamp" | "rotate" | "crop";
+
 interface SelectionState {
-    enabled: boolean;
+    mode: SelectionMode;
     selectedIds: number[];
-    /**
-     * Stamp tool: pick tags/kits, then tap photos to apply.
-     * Mutually exclusive with selection, rotate and crop modes.
-     */
-    stampActive: boolean;
     stampTags: string[];
     /** Kit list vs individual tag picker in the stamp footer. */
     stampPickMode: StampPickMode;
     /** Tag picker sheet for the stamp tool (opened on enter when empty in tag mode). */
     stampSheetOpen: boolean;
-    /**
-     * Quick rotate: tap images to draft +90° CW; Apply uploads.
-     * Mutually exclusive with selection, stamp and crop.
-     */
-    rotateActive: boolean;
     /** Pending clockwise degrees per file id (omitted when 0°). */
     pendingRotations: Record<number, RotationDegrees>;
-    /** True while Apply is uploading rotations (locks the grid). */
-    rotateBusy: boolean;
-    /**
-     * Quick crop: tap images to draft a crop box; Apply uploads.
-     * Mutually exclusive with selection, stamp and rotate.
-     */
-    cropActive: boolean;
     /** Draft crop box per file id. */
     pendingCrops: Record<number, PendingCrop>;
-    /** True while Apply is uploading crops (locks the grid). */
-    cropBusy: boolean;
-    setEnabled: (enabled: boolean) => void;
+    /** True while rotate/crop Apply is uploading (locks the grid). */
+    applyBusy: boolean;
+    /**
+     * Switch tool. Always drops every tool's drafts and, unless entering
+     * select, the selection.
+     */
+    setMode: (mode: SelectionMode) => void;
     toggle: (fileId: number) => void;
     selectMany: (fileIds: number[], mode: "add" | "toggle" | "set") => void;
     selectAll: (fileIds: number[]) => void;
     clear: () => void;
     pruneToVisible: (visibleIds: Set<number>) => void;
-    setStampActive: (active: boolean) => void;
     setStampTags: (tags: string[]) => void;
     toggleStampTag: (tag: string) => void;
     setStampPickMode: (mode: StampPickMode) => void;
     setStampSheetOpen: (open: boolean) => void;
-    setRotateActive: (active: boolean) => void;
     bumpRotate: (fileId: number) => void;
     clearPendingRotations: () => void;
     removePendingRotation: (fileId: number) => void;
-    setRotateBusy: (busy: boolean) => void;
-    setCropActive: (active: boolean) => void;
     /** Add a draft crop; does nothing when the file already has one. */
     addPendingCrop: (fileId: number, crop: PendingCrop) => void;
     setPendingCropRect: (fileId: number, rect: NormalizedCropRect) => void;
     removePendingCrop: (fileId: number) => void;
     clearPendingCrops: () => void;
-    setCropBusy: (busy: boolean) => void;
+    setApplyBusy: (busy: boolean) => void;
     reset: () => void;
 }
 
 const selectedIdSets = new WeakMap<number[], Set<number>>();
 
-/** Crop fields with the tool off; spread into any set() that leaves crop mode. */
-const cropOff = {
-    cropActive: false,
-    pendingCrops: {} as Record<number, PendingCrop>,
-    cropBusy: false,
-};
-
-/** Rotate fields with the tool off; spread into any set() that leaves rotate mode. */
-const rotateOff = {
-    rotateActive: false,
-    pendingRotations: {} as Record<number, RotationDegrees>,
-    rotateBusy: false,
-};
-
-/** Stamp fields with the tool off; spread into any set() that leaves stamp mode. */
-const stampOff = {
-    stampActive: false,
-    stampSheetOpen: false,
-};
-
 const initialState = {
-    enabled: false,
+    mode: "none" as SelectionMode,
     selectedIds: [] as number[],
     stampTags: [] as string[],
     stampPickMode: "kit" as StampPickMode,
-    ...stampOff,
-    ...rotateOff,
-    ...cropOff,
+    stampSheetOpen: false,
+    pendingRotations: {} as Record<number, RotationDegrees>,
+    pendingCrops: {} as Record<number, PendingCrop>,
+    applyBusy: false,
 };
 
 export const useSelectionStore = create<SelectionState>((set, get) => ({
     ...initialState,
 
-    setEnabled: (enabled: boolean): void => {
+    setMode: (mode: SelectionMode): void => {
+        const { selectedIds, stampTags, stampPickMode } = get();
         set({
-            enabled,
-            ...(enabled ? {} : { selectedIds: [] }),
-            ...stampOff,
-            ...rotateOff,
-            ...cropOff,
+            mode,
+            selectedIds: mode === "select" ? selectedIds : [],
+            stampSheetOpen:
+                mode === "stamp" &&
+                stampTags.length === 0 &&
+                stampPickMode === "tag",
+            pendingRotations: {},
+            pendingCrops: {},
+            applyBusy: false,
         });
     },
 
@@ -149,13 +121,8 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
     },
 
     selectAll: (fileIds: number[]): void => {
-        set({
-            enabled: true,
-            ...stampOff,
-            ...rotateOff,
-            ...cropOff,
-            selectedIds: [...new Set(fileIds)],
-        });
+        get().setMode("select");
+        set({ selectedIds: [...new Set(fileIds)] });
     },
 
     clear: (): void => {
@@ -170,23 +137,6 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
             }
             return { selectedIds: pruned };
         });
-    },
-
-    setStampActive: (active: boolean): void => {
-        if (active) {
-            const { stampTags, stampPickMode } = get();
-            set({
-                enabled: false,
-                selectedIds: [],
-                ...rotateOff,
-                ...cropOff,
-                stampActive: true,
-                stampSheetOpen:
-                    stampTags.length === 0 && stampPickMode === "tag",
-            });
-            return;
-        }
-        set(stampOff);
     },
 
     setStampTags: (tags: string[]): void => {
@@ -226,25 +176,6 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
         set({ stampSheetOpen: open });
     },
 
-    setRotateActive: (active: boolean): void => {
-        if (active) {
-            set({
-                enabled: false,
-                selectedIds: [],
-                ...stampOff,
-                ...rotateOff,
-                ...cropOff,
-                rotateActive: true,
-            });
-            return;
-        }
-        set(rotateOff);
-    },
-
-    setRotateBusy: (busy: boolean): void => {
-        set({ rotateBusy: busy });
-    },
-
     bumpRotate: (fileId: number): void => {
         set((state) => {
             const nextDegrees = nextPendingRotation(
@@ -275,23 +206,8 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
         });
     },
 
-    setCropActive: (active: boolean): void => {
-        if (active) {
-            set({
-                enabled: false,
-                selectedIds: [],
-                ...stampOff,
-                ...rotateOff,
-                ...cropOff,
-                cropActive: true,
-            });
-            return;
-        }
-        set(cropOff);
-    },
-
-    setCropBusy: (busy: boolean): void => {
-        set({ cropBusy: busy });
+    setApplyBusy: (busy: boolean): void => {
+        set({ applyBusy: busy });
     },
 
     addPendingCrop: (fileId: number, crop: PendingCrop): void => {

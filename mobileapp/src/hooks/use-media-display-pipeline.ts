@@ -6,12 +6,13 @@ import {
     useRef,
     useState,
 } from "react";
-import { sortFilesByUploadedAt } from "@/lib/uploaded-at-sort";
+import { fileUploadSortTime } from "@/core/metadata";
+import { filePixelArea } from "@/lib/file-aspect-ratio";
+import { sortFilesByScore } from "@/lib/sort-files";
 import {
     sortFilesByViewportFit,
     viewportTargetAspectRatio,
 } from "@/lib/viewport-fit";
-import { sortFilesByImageSize } from "@/lib/image-size-sort";
 import { sortFilesByImageQuality } from "@/lib/image-quality";
 import {
     packEmbeddings,
@@ -37,7 +38,7 @@ import {
     type KitMarginsRankingInput,
 } from "@/lib/kit-nearness-margins-job";
 import { matchNearnessFilterToKitPreset } from "@/lib/tag-presets";
-import { imageFilesForPhash } from "@/lib/similarity-job";
+import { eligibleImageFiles } from "@/lib/job-utils";
 import { runKitEmbeddingJob } from "@/lib/kit-embedding";
 import { reconcileShuffledIds } from "@/lib/shuffle-files";
 import {
@@ -126,23 +127,12 @@ export function useMediaDisplayPipeline({
     );
     const lastTagTouchFileIds = useTagStore((s) => s.lastTagTouchFileIds);
 
-    const mediaViewOrder = useUIStore((s) => s.mediaViewOrder);
-    const mediaShuffleSeed = useUIStore((s) => s.mediaShuffleSeed);
-    const mediaShuffledFileIds = useUIStore((s) => s.mediaShuffledFileIds);
     const reconcileMediaShuffle = useUIStore((s) => s.reconcileMediaShuffle);
-    const viewportFitSort = useUIStore((s) => s.viewportFitSort);
+    const ordering = useUIStore((s) => s.ordering);
+    const setOrdering = useUIStore((s) => s.setOrdering);
     const viewportTargetWidth = useUIStore((s) => s.viewportTargetWidth);
     const viewportTargetHeight = useUIStore((s) => s.viewportTargetHeight);
-    const uploadedAtSort = useUIStore((s) => s.uploadedAtSort);
-    const imageSizeSort = useUIStore((s) => s.imageSizeSort);
-    const imageQualitySort = useUIStore((s) => s.imageQualitySort);
-    const tagFilterFitSort = useUIStore((s) => s.tagFilterFitSort);
-    const relativeSort = useUIStore((s) => s.relativeSort);
-    const relativeSeed = useUIStore((s) => s.relativeSeed);
-    const relativeStartFileId = useUIStore((s) => s.relativeStartFileId);
-    const nearnessFilter = useUIStore((s) => s.nearnessFilter);
     const nearnessEpoch = useUIStore((s) => s.nearnessEpoch);
-    const setNearnessFilter = useUIStore((s) => s.setNearnessFilter);
 
     const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
     const embeddingCount = useEmbeddingIndexStore((s) => s.entries.size);
@@ -151,8 +141,17 @@ export function useMediaDisplayPipeline({
     const qualityHydrated = useQualityIndexStore((s) => s.isHydrated);
     const hydrateQuality = useQualityIndexStore((s) => s.ensureHydrated);
 
+    const nearnessFilter =
+        ordering?.kind === "nearness" ? ordering.filter : undefined;
     const nearnessActive =
         nearnessFilter !== undefined && isTagFilterActive(nearnessFilter);
+    const imageQualityActive = ordering?.kind === "imageQuality";
+    const relativeDirection =
+        ordering?.kind === "relative" ? ordering.direction : undefined;
+    const relativeSeed =
+        ordering?.kind === "relative" ? ordering.seed : undefined;
+    const relativeStartFileId =
+        ordering?.kind === "relative" ? ordering.startFileId : undefined;
 
     const baseFiles = filterWithinFiles ?? libraryFiles;
     const seedFiles = seedWithinFiles ?? filterWithinFiles ?? libraryFiles;
@@ -166,15 +165,15 @@ export function useMediaDisplayPipeline({
     );
 
     useEffect(() => {
-        if (imageQualitySort === "none" || qualityHydrated) {
+        if (!imageQualityActive || qualityHydrated) {
             return;
         }
         void hydrateQuality();
-    }, [hydrateQuality, imageQualitySort, qualityHydrated]);
+    }, [hydrateQuality, imageQualityActive, qualityHydrated]);
 
     useEffect(() => {
         if (
-            imageQualitySort === "none" ||
+            !imageQualityActive ||
             !qualityHydrated ||
             qualityEntries.size > 0
         ) {
@@ -183,11 +182,11 @@ export function useMediaDisplayPipeline({
         toast.message(
             "Run Manage → Settings → Scan image quality to score the library.",
         );
-    }, [imageQualitySort, qualityEntries.size, qualityHydrated]);
+    }, [imageQualityActive, qualityEntries.size, qualityHydrated]);
 
     const needsEmbeddings =
-        tagFilterFitSort !== "none" ||
-        (relativeSort !== "none" && initialLoadDone) ||
+        ordering?.kind === "tagFilterFit" ||
+        (ordering?.kind === "relative" && initialLoadDone) ||
         nearnessActive;
 
     useEffect(() => {
@@ -206,15 +205,19 @@ export function useMediaDisplayPipeline({
         if (!nearnessFilter || isTagFilterActive(nearnessFilter)) {
             return;
         }
-        setNearnessFilter(undefined);
-    }, [nearnessFilter, setNearnessFilter]);
+        setOrdering(undefined);
+    }, [nearnessFilter, setOrdering]);
 
     useEffect(() => {
         if (!clearNearnessOnUnmount) {
             return;
         }
         return (): void => {
-            useUIStore.getState().setNearnessFilter(undefined);
+            const { ordering: current, setOrdering: clearOrdering } =
+                useUIStore.getState();
+            if (current?.kind === "nearness") {
+                clearOrdering(undefined);
+            }
         };
     }, [clearNearnessOnUnmount]);
 
@@ -239,7 +242,7 @@ export function useMediaDisplayPipeline({
                         tagState.typeConfig.includeInEffectsPresenceByName,
                 },
             );
-            const seeds = imageFilesForPhash(seedMatches, userId)
+            const seeds = eligibleImageFiles(seedMatches, userId)
                 .sort((a, b) => a.id - b.id)
                 .slice(0, MAX_KIT_SEEDS);
             if (seeds.length === 0) {
@@ -328,7 +331,9 @@ export function useMediaDisplayPipeline({
         orderIds: number[];
         marginsInput?: KitMarginsRankingInput;
     } => {
-        const filter = useUIStore.getState().nearnessFilter;
+        const current = useUIStore.getState().ordering;
+        const filter =
+            current?.kind === "nearness" ? current.filter : undefined;
         if (!filter || !isTagFilterActive(filter) || !embeddingHydrated) {
             return { orderIds: [] };
         }
@@ -366,7 +371,9 @@ export function useMediaDisplayPipeline({
         const ui = useUIStore.getState();
         const useRivalPenalty =
             matchedKit !== undefined &&
-            (ui.nearnessSource !== "kit" || ui.kitLikenessRivalPenalty);
+            (ui.ordering?.kind !== "nearness" ||
+                ui.ordering.source !== "kit" ||
+                ui.kitLikenessRivalPenalty);
         const seedFileById: ReadonlyMap<number, EnteFile> = useRivalPenalty ?
             new Map(seedFiles.map((file) => [file.id, file])) :
             new Map();
@@ -485,7 +492,11 @@ export function useMediaDisplayPipeline({
     const relativeInsufficientToastKeyRef = useRef("");
 
     useEffect(() => {
-        if (relativeSort === "none" || !embeddingHydrated) {
+        if (
+            relativeDirection === undefined ||
+            relativeSeed === undefined ||
+            !embeddingHydrated
+        ) {
             relativeJobRef.current += 1;
             relativeInsufficientToastKeyRef.current = "";
             setFrozenRelativeOrderIds([]);
@@ -522,7 +533,7 @@ export function useMediaDisplayPipeline({
         };
 
         if (withEmbeddingIds.length < 2) {
-            const toastKey = `${relativeSort}:${withEmbeddingIds.length}:${embeddingCount}`;
+            const toastKey = `${relativeDirection}:${withEmbeddingIds.length}:${embeddingCount}`;
             if (relativeInsufficientToastKeyRef.current !== toastKey) {
                 relativeInsufficientToastKeyRef.current = toastKey;
                 toast.message(
@@ -541,7 +552,7 @@ export function useMediaDisplayPipeline({
             applyOrder(
                 sortFilesByRelative(
                     filtered,
-                    relativeSort,
+                    relativeDirection,
                     embeddings,
                     relativeSeed,
                     relativeStartFileId,
@@ -559,7 +570,7 @@ export function useMediaDisplayPipeline({
         void sortRelativeIdsInWorker(
             withEmbeddingIds,
             packed,
-            relativeSort,
+            relativeDirection,
             relativeSeed,
             relativeStartFileId,
         )
@@ -571,8 +582,8 @@ export function useMediaDisplayPipeline({
     }, [
         embeddingCount,
         embeddingHydrated,
+        relativeDirection,
         relativeSeed,
-        relativeSort,
         relativeStartFileId,
     ]);
 
@@ -651,36 +662,16 @@ export function useMediaDisplayPipeline({
     ]);
 
     const tagFilterFitActive =
-        tagFilterFitSort !== "none" &&
+        ordering?.kind === "tagFilterFit" &&
         countTagFilterClauses(fitSortFilter.root) > 0;
-    const relativeActive = relativeSort !== "none";
+    const isShuffled = ordering?.kind === "shuffled";
 
     useEffect(() => {
-        if (
-            mediaViewOrder !== "shuffled" ||
-            viewportFitSort !== "none" ||
-            uploadedAtSort !== "none" ||
-            imageSizeSort !== "none" ||
-            imageQualitySort !== "none" ||
-            tagFilterFitActive ||
-            relativeActive ||
-            nearnessActive
-        ) {
+        if (!isShuffled) {
             return;
         }
         reconcileMediaShuffle(filteredFiles.map((file) => file.id));
-    }, [
-        filteredFiles,
-        imageQualitySort,
-        imageSizeSort,
-        mediaViewOrder,
-        nearnessActive,
-        reconcileMediaShuffle,
-        relativeActive,
-        tagFilterFitActive,
-        uploadedAtSort,
-        viewportFitSort,
-    ]);
+    }, [filteredFiles, isShuffled, reconcileMediaShuffle]);
 
     const computedOrderCacheRef = useRef<{
         kind: string;
@@ -710,99 +701,109 @@ export function useMediaDisplayPipeline({
             return sorted;
         };
 
-        if (nearnessActive) {
-            return reconcileFrozenFileOrder(filteredFiles, frozenNearnessOrderIds);
-        }
-        if (relativeActive) {
-            return reconcileFrozenFileOrder(
-                filteredFiles,
-                frozenRelativeOrderIds,
-            );
-        }
-        if (tagFilterFitActive) {
-            return reuseComputedOrder(
-                `fit:${tagFilterFitSort}:${embeddingHydrated ? "1" : "0"}`,
-                () =>
-                    sortFilesByTagFilterFit(
+        switch (ordering?.kind) {
+            case "nearness":
+                return nearnessActive ?
+                    reconcileFrozenFileOrder(
                         filteredFiles,
-                        tagFilterFitSort,
-                        useEmbeddingIndexStore.getState().entries,
-                    ),
-            );
-        }
-        if (imageSizeSort !== "none") {
-            return reuseComputedOrder(
-                `size:${imageSizeSort}`,
-                () => sortFilesByImageSize(filteredFiles, imageSizeSort),
-            );
-        }
-        if (imageQualitySort !== "none") {
-            return reuseComputedOrder(
-                `quality:${imageQualitySort}:${qualityHydrated ? "1" : "0"}:${qualityEntries.size}`,
-                () =>
-                    sortFilesByImageQuality(
-                        filteredFiles,
-                        imageQualitySort,
-                        qualityEntries,
-                    ),
-            );
-        }
-        if (uploadedAtSort !== "none") {
-            return reuseComputedOrder(
-                `uploaded:${uploadedAtSort}`,
-                () => sortFilesByUploadedAt(filteredFiles, uploadedAtSort),
-            );
-        }
-        if (viewportFitSort !== "none") {
-            return reuseComputedOrder(
-                `viewport:${viewportFitSort}:${viewportTargetWidth}x${viewportTargetHeight}`,
-                () =>
-                    sortFilesByViewportFit(
-                        filteredFiles,
-                        viewportFitSort,
-                        viewerAspect,
-                    ),
-            );
-        }
-        if (mediaViewOrder !== "shuffled") {
-            return filteredFiles;
-        }
-        const fileIds = filteredFiles.map((file) => file.id);
-        const orderedIds = reconcileShuffledIds(
-            fileIds,
-            mediaShuffleSeed,
-            mediaShuffledFileIds.length > 0 ?
-                mediaShuffledFileIds :
-                undefined,
-        );
-        const byId = new Map(filteredFiles.map((file) => [file.id, file]));
-        const ordered: EnteFile[] = [];
-        for (const id of orderedIds) {
-            const file = byId.get(id);
-            if (file) {
-                ordered.push(file);
+                        frozenNearnessOrderIds,
+                    ) :
+                    filteredFiles;
+            case "relative":
+                return reconcileFrozenFileOrder(
+                    filteredFiles,
+                    frozenRelativeOrderIds,
+                );
+            case "tagFilterFit": {
+                const { direction } = ordering;
+                return tagFilterFitActive ?
+                    reuseComputedOrder(
+                        `fit:${direction}:${embeddingHydrated ? "1" : "0"}`,
+                        () =>
+                            sortFilesByTagFilterFit(
+                                filteredFiles,
+                                direction,
+                                useEmbeddingIndexStore.getState().entries,
+                            ),
+                    ) :
+                    filteredFiles;
             }
+            case "imageSize": {
+                const { direction } = ordering;
+                return reuseComputedOrder(`size:${direction}`, () =>
+                    sortFilesByScore(
+                        filteredFiles,
+                        filePixelArea,
+                        direction === "smallest",
+                        false,
+                    ));
+            }
+            case "imageQuality": {
+                const { direction } = ordering;
+                return reuseComputedOrder(
+                    `quality:${direction}:${qualityHydrated ? "1" : "0"}:${qualityEntries.size}`,
+                    () =>
+                        sortFilesByImageQuality(
+                            filteredFiles,
+                            direction,
+                            qualityEntries,
+                        ),
+                );
+            }
+            case "uploadedAt": {
+                const { direction } = ordering;
+                return reuseComputedOrder(`uploaded:${direction}`, () =>
+                    sortFilesByScore(
+                        filteredFiles,
+                        fileUploadSortTime,
+                        direction === "oldest",
+                        false,
+                    ));
+            }
+            case "viewportFit": {
+                const { direction } = ordering;
+                return reuseComputedOrder(
+                    `viewport:${direction}:${viewportTargetWidth}x${viewportTargetHeight}`,
+                    () =>
+                        sortFilesByViewportFit(
+                            filteredFiles,
+                            direction,
+                            viewerAspect,
+                        ),
+                );
+            }
+            case "shuffled": {
+                const orderedIds = reconcileShuffledIds(
+                    filteredFiles.map((file) => file.id),
+                    ordering.seed,
+                    ordering.fileIds.length > 0 ? ordering.fileIds : undefined,
+                );
+                const byId = new Map(
+                    filteredFiles.map((file) => [file.id, file]),
+                );
+                const ordered: EnteFile[] = [];
+                for (const id of orderedIds) {
+                    const file = byId.get(id);
+                    if (file) {
+                        ordered.push(file);
+                    }
+                }
+                return ordered;
+            }
+            default:
+                return filteredFiles;
         }
-        return ordered;
     }, [
         embeddingHydrated,
         filteredFiles,
         frozenNearnessOrderIds,
         frozenRelativeOrderIds,
-        imageQualitySort,
-        imageSizeSort,
-        mediaShuffledFileIds,
-        mediaShuffleSeed,
-        mediaViewOrder,
         nearnessActive,
+        ordering,
         qualityEntries,
         qualityHydrated,
-        relativeActive,
         tagFilter,
         tagFilterFitActive,
-        tagFilterFitSort,
-        uploadedAtSort,
-        viewportFitSort,
         viewportTargetHeight,
         viewportTargetWidth,
         viewerAspect,

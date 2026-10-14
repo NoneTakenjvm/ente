@@ -1,6 +1,7 @@
 import type { Crop } from "react-image-crop";
 import type { EnteFile } from "ente-media/file";
 import { fileAspectRatio } from "@/lib/file-aspect-ratio";
+import { sortFilesByScore } from "@/lib/sort-files";
 
 /** Gallery reorder by how well each file matches the viewer aspect. */
 export type ViewportFitSort = "none" | "best" | "worst";
@@ -93,33 +94,18 @@ export const viewportBlankFraction = (
  *
  * - `best`: closest aspect match first (least blank / crop).
  * - `worst`: farthest aspect match first (most blank / crop).
- * - `none`: returns a shallow copy unchanged.
  *
  * Mismatch uses {@link viewportBlankFraction} (equal to cover-crop fraction for
  * a given aspect pair).
  */
 export const sortFilesByViewportFit = (
     files: EnteFile[],
-    mode: ViewportFitSort,
+    direction: Exclude<ViewportFitSort, "none">,
     viewportAspect: number,
-): EnteFile[] => {
-    if (mode === "none") {
-        return [...files];
-    }
-    const ascending = mode === "best";
-    const scoreById = new Map<number, number>();
-    for (const file of files) {
-        scoreById.set(
-            file.id,
-            viewportBlankFraction(fileAspectRatio(file), viewportAspect),
-        );
-    }
-    return [...files].sort((a, b) => {
-        const scoreA = scoreById.get(a.id) ?? 0;
-        const scoreB = scoreById.get(b.id) ?? 0;
-        if (scoreA !== scoreB) {
-            return ascending ? scoreA - scoreB : scoreB - scoreA;
-        }
-        return a.id - b.id;
-    });
-};
+): EnteFile[] =>
+    sortFilesByScore(
+        files,
+        (file) => viewportBlankFraction(fileAspectRatio(file), viewportAspect),
+        direction === "best",
+        false,
+    );

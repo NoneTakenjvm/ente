@@ -69,12 +69,7 @@ export function AppShell({
     const uploadStatus = useUploadJobStore((s) => s.status);
     const mountUploadPanel =
         uploadPanelOpen || uploadStatus === "running";
-    const selectionEnabled = useSelectionStore((s) => s.enabled);
-    const stampActive = useSelectionStore((s) => s.stampActive);
-    const rotateActive = useSelectionStore((s) => s.rotateActive);
-    const cropActive = useSelectionStore((s) => s.cropActive);
-    const hideBottomNav =
-        selectionEnabled || stampActive || rotateActive || cropActive;
+    const hideBottomNav = useSelectionStore((s) => s.mode !== "none");
     const viewportHeight = useVisualViewportHeight();
 
     // Optimistic tab: keep pending highlight until pathname catches up.

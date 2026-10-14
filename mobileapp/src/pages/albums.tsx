@@ -202,7 +202,7 @@ export default function AlbumsPage(): JSX.Element {
         clearAlbumViewFilter();
     }, [clearAlbumViewFilter, mode]);
 
-    const setSelectionEnabled = useSelectionStore((s) => s.setEnabled);
+    const setSelectionMode = useSelectionStore((s) => s.setMode);
     const selectionFilterRef = useRef(albumViewFilter);
     useEffect(() => {
         if (mode !== "view") {
@@ -212,17 +212,11 @@ export default function AlbumsPage(): JSX.Element {
             return;
         }
         selectionFilterRef.current = albumViewFilter;
-        const state = useSelectionStore.getState();
-        if (state.enabled) {
-            setSelectionEnabled(false);
+        const { mode: activeMode } = useSelectionStore.getState();
+        if (activeMode !== "none" && activeMode !== "stamp") {
+            setSelectionMode("none");
         }
-        if (state.rotateActive) {
-            state.setRotateActive(false);
-        }
-        if (state.cropActive) {
-            state.setCropActive(false);
-        }
-    }, [albumViewFilter, mode, setSelectionEnabled]);
+    }, [albumViewFilter, mode, setSelectionMode]);
 
     const handleBack = useCallback((): void => {
         useSelectionStore.getState().reset();

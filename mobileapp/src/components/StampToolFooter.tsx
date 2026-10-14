@@ -42,11 +42,11 @@ const tagsMatchPreset = (tags: string[], preset: TagPreset): boolean => {
  * Collapsed by default (session-only expand); summary + Close always visible.
  */
 export function StampToolFooter(): JSX.Element | null {
-    const stampActive = useSelectionStore((s) => s.stampActive);
+    const stampActive = useSelectionStore((s) => s.mode === "stamp");
     const stampTags = useSelectionStore((s) => s.stampTags);
     const stampPickMode = useSelectionStore((s) => s.stampPickMode);
     const stampSheetOpen = useSelectionStore((s) => s.stampSheetOpen);
-    const setStampActive = useSelectionStore((s) => s.setStampActive);
+    const setMode = useSelectionStore((s) => s.setMode);
     const setStampTags = useSelectionStore((s) => s.setStampTags);
     const toggleStampTag = useSelectionStore((s) => s.toggleStampTag);
     const setStampPickMode = useSelectionStore((s) => s.setStampPickMode);
@@ -103,8 +103,8 @@ export function StampToolFooter(): JSX.Element | null {
     const exitStamp = useCallback((): void => {
         setExpandedKitKey(null);
         setExpanded(false);
-        setStampActive(false);
-    }, [setStampActive]);
+        setMode("none");
+    }, [setMode]);
 
     const handlePickModeChange = useCallback(
         (next: unknown): void => {

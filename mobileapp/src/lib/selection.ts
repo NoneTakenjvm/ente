@@ -5,6 +5,7 @@ import { defaultNormalizedCrop, type PendingCrop } from "@/lib/crop-draft";
 import { fileAspectRatio } from "@/lib/file-aspect-ratio";
 import { bulkAddTags } from "@/lib/tag-bulk-actions";
 import { viewportTargetAspectRatio } from "@/lib/viewport-fit";
+import type { SelectionMode } from "@/stores/selection-store";
 import { useUIStore } from "@/stores/ui-store";
 import type { EnteFile } from "ente-media/file";
 import { toast } from "sonner";
@@ -19,14 +20,11 @@ export const SELECTION_FOOTER_INSET_PX = 104;
 const EMPTY_SELECTED_IDS: ReadonlySet<number> = new Set();
 
 interface BuildMediaGridSelectionArgs {
-    selectionEnabled: boolean;
+    mode: SelectionMode;
     /** Prefer a memoized Set from the caller so grid `itemData` stays stable across taps. */
     selectedIds: ReadonlySet<number> | readonly number[];
-    stampActive: boolean;
     stampTags: string[];
-    rotateActive?: boolean;
     bumpRotate?: (fileId: number) => void;
-    cropActive?: boolean;
     addPendingCrop?: (fileId: number, crop: PendingCrop) => void;
     toggleSelection: (fileId: number) => void;
     selectMany: (fileIds: number[], mode: "add" | "toggle" | "set") => void;
@@ -41,7 +39,7 @@ interface BuildMediaGridSelectionArgs {
 export function buildMediaGridSelection(
     args: BuildMediaGridSelectionArgs,
 ): ThumbnailGridSelection | undefined {
-    if (args.rotateActive) {
+    if (args.mode === "rotate") {
         const bump = args.bumpRotate;
         return {
             selectedIds: EMPTY_SELECTED_IDS as Set<number>,
@@ -57,7 +55,7 @@ export function buildMediaGridSelection(
             onSelectMany: undefined,
         };
     }
-    if (args.cropActive) {
+    if (args.mode === "crop") {
         const addPendingCrop = args.addPendingCrop;
         return {
             selectedIds: EMPTY_SELECTED_IDS as Set<number>,
@@ -90,7 +88,7 @@ export function buildMediaGridSelection(
             onSelectMany: undefined,
         };
     }
-    if (args.stampActive) {
+    if (args.mode === "stamp") {
         const tags = args.stampTags;
         return {
             selectedIds: EMPTY_SELECTED_IDS as Set<number>,
@@ -106,7 +104,7 @@ export function buildMediaGridSelection(
             onSelectMany: undefined,
         };
     }
-    if (!args.selectionEnabled) {
+    if (args.mode !== "select") {
         return undefined;
     }
     const selectedIds =

@@ -211,16 +211,12 @@ function GalleryMediaBody(): JSX.Element {
         { fileId: number; files: EnteFile[] } | undefined
     >();
 
-    const selectionEnabled = useSelectionStore((s) => s.enabled);
+    const selectionMode = useSelectionStore((s) => s.mode);
     const pruneToVisible = useSelectionStore((s) => s.pruneToVisible);
-    const setSelectionEnabled = useSelectionStore((s) => s.setEnabled);
+    const setMode = useSelectionStore((s) => s.setMode);
     const resetSelection = useSelectionStore((s) => s.reset);
-    const stampActive = useSelectionStore((s) => s.stampActive);
-    const rotateActive = useSelectionStore((s) => s.rotateActive);
     const pendingRotations = useSelectionStore((s) => s.pendingRotations);
-    const rotateBusy = useSelectionStore((s) => s.rotateBusy);
-    const cropActive = useSelectionStore((s) => s.cropActive);
-    const cropBusy = useSelectionStore((s) => s.cropBusy);
+    const applyBusy = useSelectionStore((s) => s.applyBusy);
 
     useEffect(() => {
         pruneToVisible(new Set(displayFiles.map((file) => file.id)));
@@ -232,17 +228,11 @@ function GalleryMediaBody(): JSX.Element {
             return;
         }
         selectionFilterRef.current = tagFilter;
-        const state = useSelectionStore.getState();
-        if (state.enabled) {
-            setSelectionEnabled(false);
+        const { mode: activeMode } = useSelectionStore.getState();
+        if (activeMode !== "none" && activeMode !== "stamp") {
+            setMode("none");
         }
-        if (state.rotateActive) {
-            state.setRotateActive(false);
-        }
-        if (state.cropActive) {
-            state.setCropActive(false);
-        }
-    }, [setSelectionEnabled, tagFilter]);
+    }, [setMode, tagFilter]);
 
     useEffect(() => {
         return (): void => {
@@ -250,23 +240,13 @@ function GalleryMediaBody(): JSX.Element {
         };
     }, [resetSelection]);
 
-    const gridSelection = useMediaGridSelection({
-        disabled: rotateBusy || cropBusy,
-    });
+    const gridSelection = useMediaGridSelection({ disabled: applyBusy });
 
     const footerInsetPx =
-        stampActive || rotateActive || cropActive || selectionEnabled ?
-            SELECTION_FOOTER_INSET_PX :
-            0;
+        selectionMode !== "none" ? SELECTION_FOOTER_INSET_PX : 0;
 
     const handleOpenFile = useCallback((file: EnteFile): void => {
-        const {
-            enabled,
-            stampActive: stamping,
-            rotateActive: rotating,
-            cropActive: cropping,
-        } = useSelectionStore.getState();
-        if (enabled || stamping || rotating || cropping) {
+        if (useSelectionStore.getState().mode !== "none") {
             return;
         }
         setViewer({ fileId: file.id, files: displayFiles });
@@ -294,17 +274,12 @@ function GalleryMediaBody(): JSX.Element {
                 <ThumbnailGrid
                     files={displayFiles}
                     onOpenFile={
-                        selectionEnabled ||
-                        stampActive ||
-                        rotateActive ||
-                        cropActive ?
-                            undefined :
-                            handleOpenFile
+                        selectionMode !== "none" ? undefined : handleOpenFile
                     }
                     selection={gridSelection}
                     footerInsetPx={footerInsetPx}
                     previewRotationById={
-                        rotateActive ? pendingRotations : undefined
+                        selectionMode === "rotate" ? pendingRotations : undefined
                     }
                 />
             )}

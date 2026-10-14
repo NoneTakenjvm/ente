@@ -295,13 +295,7 @@ export const mergeCropMatches = async (
         stage1Clusters,
     } = options;
 
-    const throwIfAborted = (): void => {
-        if (signal?.aborted) {
-            throw new DOMException("Crop merge aborted", "AbortError");
-        }
-    };
-
-    throwIfAborted();
+    signal?.throwIfAborted();
 
     const indexed = indexableFiles(entries, filesById, collections, userId);
     const cropEligible = indexed.filter(
@@ -509,7 +503,7 @@ export const mergeCropMatches = async (
     let groupsDirty = false;
 
     for (let start = 0; start < candidates.length; start += batchSize) {
-        throwIfAborted();
+        signal?.throwIfAborted();
         const batch = candidates.slice(start, start + batchSize);
         const activePairs: Array<[number, number]> = [];
         for (const [a, b] of batch) {
@@ -566,7 +560,7 @@ export const mergeCropMatches = async (
                     batchEntries,
                     keyPairs,
                 );
-                throwIfAborted();
+                signal?.throwIfAborted();
                 verdicts.forEach((match, index) => {
                     const [a, b] = uncachedPairs[index]!;
                     setCachedCropVerdict(
@@ -610,7 +604,7 @@ export const mergeCropMatches = async (
         await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
-    throwIfAborted();
+    signal?.throwIfAborted();
     return emitGroups(true);
 };
 

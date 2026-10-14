@@ -41,14 +41,10 @@ export function FilteredMediaView({
 }: FilteredMediaViewProps): JSX.Element {
     const [viewerFileId, setViewerFileId] = useState<number | undefined>();
 
-    const selectionEnabled = useSelectionStore((s) => s.enabled);
+    const mode = useSelectionStore((s) => s.mode);
     const pruneToVisible = useSelectionStore((s) => s.pruneToVisible);
-    const stampActive = useSelectionStore((s) => s.stampActive);
-    const rotateActive = useSelectionStore((s) => s.rotateActive);
     const pendingRotations = useSelectionStore((s) => s.pendingRotations);
-    const rotateBusy = useSelectionStore((s) => s.rotateBusy);
-    const cropActive = useSelectionStore((s) => s.cropActive);
-    const cropBusy = useSelectionStore((s) => s.cropBusy);
+    const applyBusy = useSelectionStore((s) => s.applyBusy);
 
     const visibleFileIds = useMemo(
         () => new Set(files.map((file) => file.id)),
@@ -59,22 +55,13 @@ export function FilteredMediaView({
         pruneToVisible(visibleFileIds);
     }, [pruneToVisible, visibleFileIds]);
 
-    const gridSelection = useMediaGridSelection({
-        disabled: rotateBusy || cropBusy,
-    });
+    const gridSelection = useMediaGridSelection({ disabled: applyBusy });
 
-    const toolActive =
-        selectionEnabled || stampActive || rotateActive || cropActive;
+    const toolActive = mode !== "none";
     const footerInsetPx = toolActive ? SELECTION_FOOTER_INSET_PX : 0;
 
     const handleOpenFile = useCallback((file: EnteFile): void => {
-        const {
-            enabled,
-            stampActive: stamping,
-            rotateActive: rotating,
-            cropActive: cropping,
-        } = useSelectionStore.getState();
-        if (enabled || stamping || rotating || cropping) {
+        if (useSelectionStore.getState().mode !== "none") {
             return;
         }
         setViewerFileId(file.id);
@@ -96,7 +83,7 @@ export function FilteredMediaView({
                 selection={gridSelection}
                 footerInsetPx={footerInsetPx}
                 previewRotationById={
-                    rotateActive ? pendingRotations : undefined
+                    mode === "rotate" ? pendingRotations : undefined
                 }
             />
             {viewerFileId !== undefined ? (

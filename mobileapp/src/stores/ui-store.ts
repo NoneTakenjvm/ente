@@ -2,21 +2,44 @@ import { create } from "zustand";
 import type { StateCreator } from "zustand";
 import { reconcileShuffledIds } from "@/lib/shuffle-files";
 import type { ImageQualitySort } from "@/lib/image-quality";
-import type { ImageSizeSort } from "@/lib/image-size-sort";
 import type { RelativeSort } from "@/lib/relative-sort";
+import type { ImageSizeSort, UploadedAtSort } from "@/lib/sort-files";
 import type { TagFilterFitSort } from "@/lib/tag-filter-fit-sort";
 import type { TagFilterSelection } from "@/lib/tag-filter";
-import type { UploadedAtSort } from "@/lib/uploaded-at-sort";
 import {
     deviceViewerSize,
     type ViewportFitSort,
 } from "@/lib/viewport-fit";
 import { registerReset } from "@/lib/session-lifecycle";
 
-export type MediaViewOrder = "default" | "shuffled";
-
 /** How the active nearness sort was entered (kit picker vs custom filter). */
 export type NearnessSource = "kit" | "filter";
+
+/**
+ * The gallery's session-only reorder. At most one is active; `undefined` is
+ * the library's default order.
+ *
+ * - `tagFilterFit`: CLIP fit to the active tag filter; needs tag clauses.
+ * - `relative`: greedy CLIP nearest/farthest-neighbor chain. `seed` picks the
+ *   random first tip; `startFileId` (viewer "Set Relative") overrides it while
+ *   it is still in the filtered set.
+ * - `nearness`: CLIP nearness to seeds matching `filter`, independent of the
+ *   gallery filter.
+ */
+export type GalleryOrdering =
+    { kind: "viewportFit"; direction: Exclude<ViewportFitSort, "none"> } |
+    { kind: "uploadedAt"; direction: Exclude<UploadedAtSort, "none"> } |
+    { kind: "imageSize"; direction: Exclude<ImageSizeSort, "none"> } |
+    { kind: "imageQuality"; direction: Exclude<ImageQualitySort, "none"> } |
+    { kind: "tagFilterFit"; direction: Exclude<TagFilterFitSort, "none"> } |
+    {
+        kind: "relative";
+        direction: Exclude<RelativeSort, "none">;
+        seed: number;
+        startFileId: number | undefined;
+    } |
+    { kind: "nearness"; filter: TagFilterSelection; source: NearnessSource } |
+    { kind: "shuffled"; seed: number; fileIds: number[] };
 
 export type BackgroundJobStatus =
     | "idle" |
@@ -175,14 +198,9 @@ export const useUploadJobStore = create<UploadJobState>((set) => ({
 }));
 
 interface UIState {
-    dedupDryRun: boolean;
-    setDedupDryRun: (value: boolean) => void;
-    mediaViewOrder: MediaViewOrder;
-    mediaShuffleSeed: number;
-    mediaShuffledFileIds: number[];
-    /** Gallery reorder by viewer viewport fit (session-only; device-specific). */
-    viewportFitSort: ViewportFitSort;
-    setViewportFitSort: (mode: ViewportFitSort) => void;
+    ordering: GalleryOrdering | undefined;
+    /** Replace the active ordering; `undefined` returns to the default order. */
+    setOrdering: (next: GalleryOrdering | undefined) => void;
     /**
      * Target viewport size (CSS px) for fit sort + crop defaults (session-only).
      * Initialized once from the live device; not updated on rotate/resize.
@@ -198,49 +216,10 @@ interface UIState {
      */
     cropLockAspect: boolean;
     setCropLockAspect: (locked: boolean) => void;
-    /** Gallery reorder by last update time (session-only). */
-    uploadedAtSort: UploadedAtSort;
-    setUploadedAtSort: (mode: UploadedAtSort) => void;
-    /** Gallery reorder by pixel area (session-only). */
-    imageSizeSort: ImageSizeSort;
-    setImageSizeSort: (mode: ImageSizeSort) => void;
-    /** Gallery reorder by persisted image quality score (session-only). */
-    imageQualitySort: ImageQualitySort;
-    setImageQualitySort: (mode: ImageQualitySort) => void;
-    /**
-     * Gallery reorder by CLIP fit to the active tag filter (session-only).
-     * Requires tag clauses; mutually exclusive with fit/size/nearness/relative/shuffle.
-     */
-    tagFilterFitSort: TagFilterFitSort;
-    setTagFilterFitSort: (mode: TagFilterFitSort) => void;
-    /**
-     * Gallery reorder by greedy CLIP nearest/farthest-neighbor chain
-     * (session-only). Mutually exclusive with fit/size/tag-filter-fit/nearness/shuffle.
-     */
-    relativeSort: RelativeSort;
-    /** Seed for the random first tip when relative sort is active. */
-    relativeSeed: number;
-    /**
-     * Explicit chain tip (from viewer "Set Relative"). When set and still in
-     * the filtered set, overrides {@link relativeSeed}. Cleared by New start.
-     */
-    relativeStartFileId: number | undefined;
-    setRelativeSort: (mode: RelativeSort) => void;
     /** Pin the relative snake tip to this file id (requires relative sort on). */
     setRelativeStartFileId: (fileId: number) => void;
     /** Pick a new random start and rebuild the relative chain. */
     reapplyRelativeSort: () => void;
-    /**
-     * Gallery reorder by CLIP nearness to seeds matching this filter.
-     * `undefined` = off. Session-only; independent of the main gallery filter;
-     * mutually exclusive with fit/size/tag-filter-fit/relative/shuffle.
-     */
-    nearnessFilter: TagFilterSelection | undefined;
-    /**
-     * Whether nearness was set from Kit likeness or Filter nearness.
-     * Cleared with the filter. Drives which Sort panel shows as active.
-     */
-    nearnessSource: NearnessSource | undefined;
     /**
      * When kit likeness is on, soft-penalize files closer to other kits.
      * Session-only; ignored for Filter nearness. Default on.
@@ -258,52 +237,22 @@ interface UIState {
      * order once — library/tag edits must not rebuild until reapply.
      */
     nearnessEpoch: number;
-    setNearnessFilter: (
-        filter: TagFilterSelection | undefined,
-        source?: NearnessSource,
-    ) => void;
     /** Rebuild nearness order from the current library (same filter). */
     reapplyNearness: () => void;
-    setMediaShuffled: (seed: number) => void;
-    setMediaDefaultOrder: () => void;
-    reshuffleMedia: () => void;
     reconcileMediaShuffle: (fileIds: readonly number[]) => void;
     substituteMediaShuffleFileId: (oldId: number, newId: number) => void;
 }
 
-/** Patch that switches off every ordering so the caller can enable exactly one. */
-const clearOrderings = (
-    state: Pick<UIState, "mediaViewOrder">,
-): Partial<UIState> => ({
-    viewportFitSort: "none",
-    uploadedAtSort: "none",
-    imageSizeSort: "none",
-    imageQualitySort: "none",
-    tagFilterFitSort: "none",
-    relativeSort: "none",
-    relativeStartFileId: undefined,
-    nearnessFilter: undefined,
-    nearnessSource: undefined,
-    ...(state.mediaViewOrder === "shuffled" ?
-        { mediaViewOrder: "default" as const, mediaShuffledFileIds: [] } :
-        {}),
-});
-
 export const useUIStore = create<UIState>((set) => {
     const initialViewportTarget = deviceViewerSize();
     return {
-        dedupDryRun: false,
-        setDedupDryRun: (value: boolean): void => {
-            set({ dedupDryRun: value });
-        },
-        mediaViewOrder: "default",
-        mediaShuffleSeed: 1,
-        mediaShuffledFileIds: [],
-        viewportFitSort: "none",
-        setViewportFitSort: (mode: ViewportFitSort): void => {
+        ordering: undefined,
+        setOrdering: (next: GalleryOrdering | undefined): void => {
             set((state) => ({
-                ...(mode !== "none" ? clearOrderings(state) : {}),
-                viewportFitSort: mode,
+                ordering: next,
+                ...(next?.kind === "nearness" ?
+                    { nearnessEpoch: state.nearnessEpoch + 1 } :
+                    {}),
             }));
         },
         viewportTargetWidth: initialViewportTarget.width,
@@ -327,81 +276,35 @@ export const useUIStore = create<UIState>((set) => {
         setCropLockAspect: (locked: boolean): void => {
             set({ cropLockAspect: locked });
         },
-        uploadedAtSort: "none",
-        setUploadedAtSort: (mode: UploadedAtSort): void => {
-            set((state) => ({
-                ...(mode !== "none" ? clearOrderings(state) : {}),
-                uploadedAtSort: mode,
-            }));
-        },
-        imageSizeSort: "none",
-        setImageSizeSort: (mode: ImageSizeSort): void => {
-            set((state) => ({
-                ...(mode !== "none" ? clearOrderings(state) : {}),
-                imageSizeSort: mode,
-            }));
-        },
-        imageQualitySort: "none",
-        setImageQualitySort: (mode: ImageQualitySort): void => {
-            set((state) => ({
-                ...(mode !== "none" ? clearOrderings(state) : {}),
-                imageQualitySort: mode,
-            }));
-        },
-        tagFilterFitSort: "none",
-        setTagFilterFitSort: (mode: TagFilterFitSort): void => {
-            set((state) => ({
-                ...(mode !== "none" ? clearOrderings(state) : {}),
-                tagFilterFitSort: mode,
-            }));
-        },
-        relativeSort: "none",
-        relativeSeed: 1,
-        relativeStartFileId: undefined,
-        setRelativeSort: (mode: RelativeSort): void => {
-            set((state) => {
-                if (mode === "none") {
-                    return { relativeSort: mode, relativeStartFileId: undefined };
-                }
-                // New random tip only when turning relative on from off.
-                const turningOn = state.relativeSort === "none";
-                return {
-                    ...clearOrderings(state),
-                    relativeSort: mode,
-                    relativeSeed: turningOn ? Date.now() : state.relativeSeed,
-                    relativeStartFileId: turningOn ?
-                        undefined :
-                        state.relativeStartFileId,
-                };
-            });
-        },
         setRelativeStartFileId: (fileId: number): void => {
             set((state) => {
-                if (state.relativeSort === "none") {
+                if (state.ordering?.kind !== "relative") {
                     return state;
                 }
-                return { relativeStartFileId: fileId };
+                return { ordering: { ...state.ordering, startFileId: fileId } };
             });
         },
         reapplyRelativeSort: (): void => {
             set((state) => {
-                if (state.relativeSort === "none") {
+                if (state.ordering?.kind !== "relative") {
                     return state;
                 }
                 return {
-                    relativeSeed: Date.now(),
-                    relativeStartFileId: undefined,
+                    ordering: {
+                        ...state.ordering,
+                        seed: Date.now(),
+                        startFileId: undefined,
+                    },
                 };
             });
         },
-        nearnessFilter: undefined,
-        nearnessSource: undefined,
         kitLikenessRivalPenalty: true,
         setKitLikenessRivalPenalty: (enabled: boolean): void => {
             set((state) => ({
                 kitLikenessRivalPenalty: enabled,
                 // Rebuild frozen kit-likeness order when the toggle changes.
-                ...(state.nearnessSource === "kit" && state.nearnessFilter ?
+                ...(state.ordering?.kind === "nearness" &&
+                state.ordering.source === "kit" ?
                     { nearnessEpoch: state.nearnessEpoch + 1 } :
                     {}),
             }));
@@ -417,8 +320,8 @@ export const useUIStore = create<UIState>((set) => {
                 }
                 return {
                     excludedKitLikenessIds: next,
-                    ...(state.nearnessSource === "kit" &&
-                    state.nearnessFilter &&
+                    ...(state.ordering?.kind === "nearness" &&
+                    state.ordering.source === "kit" &&
                     state.kitLikenessRivalPenalty ?
                         { nearnessEpoch: state.nearnessEpoch + 1 } :
                         {}),
@@ -426,81 +329,47 @@ export const useUIStore = create<UIState>((set) => {
             });
         },
         nearnessEpoch: 0,
-        setNearnessFilter: (
-            filter: TagFilterSelection | undefined,
-            source: NearnessSource = "filter",
-        ): void => {
-            set((state) => ({
-                ...(filter !== undefined ?
-                    {
-                        ...clearOrderings(state),
-                        nearnessEpoch: state.nearnessEpoch + 1,
-                    } :
-                    {}),
-                nearnessFilter: filter,
-                nearnessSource: filter !== undefined ? source : undefined,
-            }));
-        },
         reapplyNearness: (): void => {
             set((state) => {
-                if (!state.nearnessFilter) {
+                if (state.ordering?.kind !== "nearness") {
                     return state;
                 }
                 return { nearnessEpoch: state.nearnessEpoch + 1 };
             });
         },
-        setMediaShuffled: (seed: number): void => {
-            set((state) => ({
-                ...clearOrderings(state),
-                mediaViewOrder: "shuffled",
-                mediaShuffleSeed: seed,
-                mediaShuffledFileIds: [],
-            }));
-        },
-        setMediaDefaultOrder: (): void => {
-            set({ mediaViewOrder: "default", mediaShuffledFileIds: [] });
-        },
-        reshuffleMedia: (): void => {
-            set((state) => ({
-                ...clearOrderings(state),
-                mediaViewOrder: "shuffled",
-                mediaShuffleSeed: Date.now(),
-                mediaShuffledFileIds: [],
-            }));
-        },
         reconcileMediaShuffle: (fileIds: readonly number[]): void => {
             set((state) => {
-                if (state.mediaViewOrder !== "shuffled") {
+                const { ordering } = state;
+                if (ordering?.kind !== "shuffled") {
                     return state;
                 }
                 const nextIds = reconcileShuffledIds(
                     fileIds,
-                    state.mediaShuffleSeed,
-                    state.mediaShuffledFileIds.length > 0 ?
-                        state.mediaShuffledFileIds :
-                        undefined,
+                    ordering.seed,
+                    ordering.fileIds.length > 0 ? ordering.fileIds : undefined,
                 );
                 if (
-                    nextIds.length === state.mediaShuffledFileIds.length &&
-                nextIds.every((id, index) => id === state.mediaShuffledFileIds[index])
+                    nextIds.length === ordering.fileIds.length &&
+                    nextIds.every((id, index) => id === ordering.fileIds[index])
                 ) {
                     return state;
                 }
-                return { mediaShuffledFileIds: nextIds };
+                return { ordering: { ...ordering, fileIds: nextIds } };
             });
         },
         substituteMediaShuffleFileId: (oldId: number, newId: number): void => {
             set((state) => {
-                if (state.mediaViewOrder !== "shuffled") {
+                const { ordering } = state;
+                if (ordering?.kind !== "shuffled") {
                     return state;
                 }
-                const index = state.mediaShuffledFileIds.indexOf(oldId);
+                const index = ordering.fileIds.indexOf(oldId);
                 if (index === -1) {
                     return state;
                 }
-                const next = [...state.mediaShuffledFileIds];
+                const next = [...ordering.fileIds];
                 next[index] = newId;
-                return { mediaShuffledFileIds: next };
+                return { ordering: { ...ordering, fileIds: next } };
             });
         },
     };
@@ -510,8 +379,5 @@ registerReset(() => {
     usePhashJobStore.getState().reset();
     useCompressJobStore.getState().reset();
     useUploadJobStore.getState().reset();
-    useUIStore.setState({
-        ...clearOrderings(useUIStore.getState()),
-        dedupDryRun: false,
-    });
+    useUIStore.setState({ ordering: undefined });
 });

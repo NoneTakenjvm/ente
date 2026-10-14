@@ -1,4 +1,5 @@
 import type { EnteFile } from "ente-media/file";
+import { sortFilesByScore } from "@/lib/sort-files";
 
 /** Long-edge cap for analysis bitmaps (same idea as compress-classify). */
 export const QUALITY_ANALYSIS_MAX = 512;
@@ -208,33 +209,17 @@ export const scoreImageQuality = (
  *
  * - `worst`: lowest score first.
  * - `best`: highest score first.
- * - `none`: shallow copy unchanged.
  *
  * Unscanned files (missing from {@link scores}) always sort last.
  */
 export const sortFilesByImageQuality = (
     files: EnteFile[],
-    mode: ImageQualitySort,
+    direction: Exclude<ImageQualitySort, "none">,
     scores: ReadonlyMap<number, number>,
-): EnteFile[] => {
-    if (mode === "none") {
-        return [...files];
-    }
-    const ascending = mode === "worst";
-    return [...files].sort((a, b) => {
-        const scoreA = scores.get(a.id);
-        const scoreB = scores.get(b.id);
-        const knownA = scoreA !== undefined;
-        const knownB = scoreB !== undefined;
-        if (knownA !== knownB) {
-            return knownA ? -1 : 1;
-        }
-        if (!knownA || !knownB) {
-            return a.id - b.id;
-        }
-        if (scoreA !== scoreB) {
-            return ascending ? scoreA - scoreB : scoreB - scoreA;
-        }
-        return a.id - b.id;
-    });
-};
+): EnteFile[] =>
+    sortFilesByScore(
+        files,
+        (file) => scores.get(file.id),
+        direction === "worst",
+        true,
+    );

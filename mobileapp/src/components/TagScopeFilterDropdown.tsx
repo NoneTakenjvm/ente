@@ -30,10 +30,9 @@ import {
 } from "@/lib/tag-filter";
 import type { ViewportFitSort } from "@/lib/viewport-fit";
 import type { ImageQualitySort } from "@/lib/image-quality";
-import type { ImageSizeSort } from "@/lib/image-size-sort";
 import type { RelativeSort } from "@/lib/relative-sort";
 import type { TagFilterFitSort } from "@/lib/tag-filter-fit-sort";
-import type { UploadedAtSort } from "@/lib/uploaded-at-sort";
+import type { ImageSizeSort, UploadedAtSort } from "@/lib/sort-files";
 import type { TagPreset } from "@/lib/tag-presets";
 import { cn } from "@/lib/utils";
 import { useUIStore } from "@/stores/ui-store";

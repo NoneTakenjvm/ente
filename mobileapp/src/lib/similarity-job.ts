@@ -1,4 +1,3 @@
-import { FileType } from "ente-media/file-type";
 import type { EnteFile } from "ente-media/file";
 import type { PhashEntry } from "@/lib/crop-match";
 import {
@@ -12,8 +11,12 @@ import {
     getDecryptedThumbnailBytes,
     isThumbnailCachedLocally,
 } from "@/lib/thumbnail-bytes";
-import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 import { waitWhileGalleryScrolling } from "@/lib/gallery-scroll-activity";
+import {
+    runWithConcurrency,
+    waitIfPaused,
+    workerCount,
+} from "@/lib/job-utils";
 import type {
     Stage1Cluster,
     Stage1FileEdge,
@@ -41,13 +44,6 @@ export interface PhashJobOptions {
     signal?: AbortSignal;
 }
 
-const phashWorkerCount = (): number => {
-    if (typeof navigator === "undefined") {
-        return 4;
-    }
-    return Math.min(8, Math.max(2, navigator.hardwareConcurrency ?? 4));
-};
-
 /** Shared hash / crop-check pool. */
 const phashWorkers = createWorkerClient<
     PhashWorkerRequest | CropCheckBatchMessage,
@@ -55,7 +51,7 @@ const phashWorkers = createWorkerClient<
 >({
     createWorker: () =>
         new Worker(new URL("../workers/phash.worker.ts", import.meta.url)),
-    poolSize: phashWorkerCount(),
+    poolSize: workerCount(),
 });
 
 const hashBytesInWorker = async (
@@ -96,7 +92,7 @@ export const checkCropMatchBatchInWorkers = (
         return Promise.resolve([]);
     }
 
-    const chunkCount = Math.min(phashWorkerCount(), pairs.length);
+    const chunkCount = Math.min(workerCount(), pairs.length);
     const matches = new Array<boolean>(pairs.length).fill(false);
 
     const runChunk = async (
@@ -146,21 +142,6 @@ export const checkCropMatchBatchInWorkers = (
     ).then(() => matches);
 };
 
-/**
- * Owned still images only. Used for dHash scan and CLIP embed — videos and
- * archived files are excluded (archived = long-term storage, not active gallery).
- */
-export const imageFilesForPhash = (
-    files: EnteFile[],
-    userId: number,
-): EnteFile[] =>
-    files.filter(
-        (file) =>
-            file.ownerID === userId &&
-            file.metadata.fileType === FileType.image &&
-            !isFileArchivedLocally(file),
-    );
-
 /** Serializes phash index writes so chunk ids are allocated one at a time. */
 let phashWriteChain: Promise<void> = Promise.resolve();
 
@@ -202,38 +183,6 @@ const maxExtraChunks = 64;
 const cacheCheckConcurrency = 32;
 const cachedThumbnailConcurrency = 32;
 const networkThumbnailConcurrency = 8;
-
-export const runWithConcurrency = async <T>(
-    items: readonly T[],
-    limit: number,
-    worker: (item: T) => Promise<void>,
-): Promise<void> => {
-    let index = 0;
-    const runners = Array.from(
-        { length: Math.min(limit, items.length) },
-        async (): Promise<void> => {
-            while (index < items.length) {
-                const current = items[index];
-                index += 1;
-                await worker(current);
-            }
-        },
-    );
-    await Promise.all(runners);
-};
-
-export const waitIfPaused = async (
-    shouldPause?: () => boolean,
-    signal?: AbortSignal,
-): Promise<boolean> => {
-    while (shouldPause?.()) {
-        await new Promise((resolve) => setTimeout(resolve, 200));
-        if (signal?.aborted) {
-            return true;
-        }
-    }
-    return signal?.aborted ?? false;
-};
 
 /**
  * Compute dHash + crop signals for image files missing from the index,
@@ -301,7 +250,7 @@ export const runPhashJob = async (
     // Workers decode concurrently (their handler awaits `createImageBitmap`),
     // so every posted hash holds a bitmap and canvas until it finishes. Cap
     // the in-flight count; fetched thumbnails wait here as small byte buffers.
-    const maxInFlightHashes = 2 * phashWorkerCount();
+    const maxInFlightHashes = 2 * workerCount();
     let inFlightHashes = 0;
     const hashSlotWaiters: Array<() => void> = [];
 

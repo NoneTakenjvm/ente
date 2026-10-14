@@ -14,58 +14,30 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-export type ManageToolSection =
-    "exact" |
-    "similar" |
-    "compress" |
-    "auto-crop";
+interface ManageCategory {
+    id: string;
+    title: string;
+    description: string;
+    icon: typeof Copy;
+}
+
+export type ManageToolSection = (typeof toolCategories)[number]["id"];
 
 export type ManageSection =
     "hub" |
-    "tools" |
-    ManageToolSection |
-    "archived" |
-    "trash" |
-    "tags" |
-    "usage" |
-    "settings";
-
-const toolSections: ManageToolSection[] = [
-    "exact",
-    "similar",
-    "compress",
-    "auto-crop",
-];
+    (typeof hubCategories)[number]["id"] |
+    ManageToolSection;
 
 export const isManageToolSection = (
     section: ManageSection,
 ): section is ManageToolSection =>
-    (toolSections as string[]).includes(section);
-
-/** Parse a `?section=` query value, falling back to the hub. */
-export const parseManageSection = (
-    value: string | string[] | undefined,
-): ManageSection => {
-    const sectionIds: string[] = [
-        ...hubCategories.map(({ id }) => id),
-        ...toolCategories.map(({ id }) => id),
-    ];
-    if (typeof value === "string" && sectionIds.includes(value)) {
-        return value as ManageSection;
-    }
-    return "hub";
-};
+    toolCategories.some(({ id }) => id === section);
 
 const CategoryList = <T extends string>({
     categories,
     onSelect,
 }: {
-    categories: {
-        id: T;
-        title: string;
-        description: string;
-        icon: typeof Copy;
-    }[];
+    categories: readonly (ManageCategory & { id: T })[];
     onSelect: (id: T) => void;
 }): JSX.Element => (
     <div className="flex flex-col gap-3 px-4 py-4">
@@ -90,12 +62,7 @@ const CategoryList = <T extends string>({
     </div>
 );
 
-const hubCategories: {
-    id: Exclude<ManageSection, "hub" | ManageToolSection>;
-    title: string;
-    description: string;
-    icon: typeof Copy;
-}[] = [
+const hubCategories = [
     {
         id: "tools",
         title: "Tools",
@@ -132,14 +99,9 @@ const hubCategories: {
         description: "App-wide preferences that sync across devices.",
         icon: Settings,
     },
-];
+] as const satisfies readonly ManageCategory[];
 
-const toolCategories: {
-    id: ManageToolSection;
-    title: string;
-    description: string;
-    icon: typeof Copy;
-}[] = [
+const toolCategories = [
     {
         id: "exact",
         title: "Exact duplicates",
@@ -164,20 +126,25 @@ const toolCategories: {
         description: "Find black borders and crop them away.",
         icon: Crop,
     },
+] as const satisfies readonly ManageCategory[];
+
+const allCategories: readonly ManageCategory[] = [
+    ...hubCategories,
+    ...toolCategories,
 ];
 
-const sectionTitles: Record<Exclude<ManageSection, "hub">, string> = {
-    tools: "Tools",
-    exact: "Exact duplicates",
-    similar: "Similar photos",
-    compress: "Compress",
-    "auto-crop": "Auto-crop",
-    archived: "Archived images",
-    trash: "Trash",
-    tags: "Tags",
-    usage: "Usage",
-    settings: "Settings",
-};
+const allSections: readonly string[] = [
+    "hub",
+    ...allCategories.map(({ id }) => id),
+];
+
+const sectionTitles = Object.fromEntries(
+    allCategories.map(({ id, title }) => [id, title]),
+) as Record<Exclude<ManageSection, "hub">, string>;
+
+/** Whether a `?section=` query value names a Manage section. */
+export const isManageSection = (value: unknown): value is ManageSection =>
+    typeof value === "string" && allSections.includes(value);
 
 export const manageSectionTitle = (
     section: Exclude<ManageSection, "hub">,

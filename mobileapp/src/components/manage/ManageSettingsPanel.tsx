@@ -28,7 +28,7 @@ import {
     runKitEmbeddingJob,
     stripVideoEmbeddings,
 } from "@/lib/kit-embedding";
-import { imageFilesForPhash } from "@/lib/similarity-job";
+import { eligibleImageFiles } from "@/lib/job-utils";
 import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useQualityIndexStore } from "@/stores/quality-index-store";
@@ -108,7 +108,7 @@ export function ManageSettingsPanel(): JSX.Element {
     const setQualityEntries = useQualityIndexStore((s) => s.setEntries);
 
     const clipCandidateCount = useMemo(
-        () => imageFilesForPhash(allFiles, userId).length,
+        () => eligibleImageFiles(allFiles, userId).length,
         [allFiles, userId],
     );
     const clipIndexedCount = embeddingEntries.size;
@@ -166,7 +166,7 @@ export function ManageSettingsPanel(): JSX.Element {
         clipBatchFallbackToastShown.current = false;
         setClipJobStatus("running");
         setClipRuntime("");
-        const candidates = imageFilesForPhash(allFiles, userId);
+        const candidates = eligibleImageFiles(allFiles, userId);
         const existing = stripVideoEmbeddings(embeddingEntries, allFiles);
         if (existing !== embeddingEntries) {
             setEmbeddingEntries(existing);
@@ -284,7 +284,7 @@ export function ManageSettingsPanel(): JSX.Element {
         qualityAbort.current = controller;
         qualityPaused.current = false;
         setQualityJobStatus("running");
-        const candidates = imageFilesForPhash(allFiles, userId);
+        const candidates = eligibleImageFiles(allFiles, userId);
         const pending = candidates.filter((file) => !qualityEntries.has(file.id));
         setQualityProgress({ current: 0, total: pending.length });
         if (pending.length === 0) {

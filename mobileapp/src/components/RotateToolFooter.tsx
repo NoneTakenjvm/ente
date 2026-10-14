@@ -18,17 +18,17 @@ const APPLY_CONCURRENCY = 3;
  * Footer for quick-rotate mode: draft taps, then Apply uploads a few at a time.
  */
 export function RotateToolFooter(): JSX.Element | null {
-    const rotateActive = useSelectionStore((s) => s.rotateActive);
+    const rotateActive = useSelectionStore((s) => s.mode === "rotate");
     const pendingRotations = useSelectionStore((s) => s.pendingRotations);
-    const setRotateActive = useSelectionStore((s) => s.setRotateActive);
+    const setMode = useSelectionStore((s) => s.setMode);
     const clearPendingRotations = useSelectionStore(
         (s) => s.clearPendingRotations,
     );
     const removePendingRotation = useSelectionStore(
         (s) => s.removePendingRotation,
     );
-    const setRotateBusy = useSelectionStore((s) => s.setRotateBusy);
-    const rotateBusy = useSelectionStore((s) => s.rotateBusy);
+    const setApplyBusy = useSelectionStore((s) => s.setApplyBusy);
+    const applyBusy = useSelectionStore((s) => s.applyBusy);
     const rotateAndUploadFile = useLibraryStore((s) => s.rotateAndUploadFile);
 
     const pendingCount = useMemo(
@@ -46,27 +46,27 @@ export function RotateToolFooter(): JSX.Element | null {
     );
 
     const exitRotate = useCallback((): void => {
-        if (rotateBusy) {
+        if (applyBusy) {
             return;
         }
         if (!confirmDiscardPendingRotations(pendingRotations)) {
             return;
         }
-        setRotateActive(false);
-    }, [pendingRotations, rotateBusy, setRotateActive]);
+        setMode("none");
+    }, [pendingRotations, applyBusy, setMode]);
 
     const handleDiscard = useCallback((): void => {
-        if (rotateBusy) {
+        if (applyBusy) {
             return;
         }
         clearPendingRotations();
-    }, [clearPendingRotations, rotateBusy]);
+    }, [clearPendingRotations, applyBusy]);
 
     const handleApply = useCallback(async (): Promise<void> => {
-        if (rotateBusy || pendingEntries.length === 0) {
+        if (applyBusy || pendingEntries.length === 0) {
             return;
         }
-        setRotateBusy(true);
+        setApplyBusy(true);
         const total = pendingEntries.length;
         let done = 0;
         let failed = 0;
@@ -96,7 +96,7 @@ export function RotateToolFooter(): JSX.Element | null {
                     `Rotated ${plural(done, "photo")}`,
                     { id: progress },
                 );
-                setRotateActive(false);
+                setMode("none");
             } else {
                 toast.error(
                     `Rotated ${done}, ${failed} failed — retry remaining`,
@@ -104,15 +104,15 @@ export function RotateToolFooter(): JSX.Element | null {
                 );
             }
         } finally {
-            setRotateBusy(false);
+            setApplyBusy(false);
         }
     }, [
         pendingEntries,
         removePendingRotation,
         rotateAndUploadFile,
-        rotateBusy,
-        setRotateActive,
-        setRotateBusy,
+        applyBusy,
+        setMode,
+        setApplyBusy,
     ]);
 
     if (!rotateActive) {
@@ -135,7 +135,7 @@ export function RotateToolFooter(): JSX.Element | null {
                         type="button"
                         variant="ghost"
                         size="sm"
-                        disabled={rotateBusy || pendingCount === 0}
+                        disabled={applyBusy || pendingCount === 0}
                         onClick={handleDiscard}
                     >
                         Discard
@@ -144,7 +144,7 @@ export function RotateToolFooter(): JSX.Element | null {
                         type="button"
                         variant="outline"
                         size="sm"
-                        disabled={rotateBusy}
+                        disabled={applyBusy}
                         onClick={exitRotate}
                     >
                         Close
@@ -153,12 +153,12 @@ export function RotateToolFooter(): JSX.Element | null {
                         type="button"
                         variant="default"
                         size="sm"
-                        disabled={rotateBusy || pendingCount === 0}
+                        disabled={applyBusy || pendingCount === 0}
                         onClick={() => {
                             void handleApply();
                         }}
                     >
-                        {rotateBusy ? <Spinner className="size-3.5" /> : null}
+                        {applyBusy ? <Spinner className="size-3.5" /> : null}
                         Apply
                     </Button>
                 </div>

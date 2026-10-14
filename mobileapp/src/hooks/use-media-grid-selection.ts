@@ -13,20 +13,16 @@ import { useSelectionStore } from "@/stores/selection-store";
 export function useMediaGridSelection(options?: {
     disabled?: boolean;
 }): ThumbnailGridSelection | undefined {
-    const selectionEnabled = useSelectionStore((s) => s.enabled);
-    const stampActive = useSelectionStore((s) => s.stampActive);
+    const mode = useSelectionStore((s) => s.mode);
     const stampTags = useSelectionStore((s) => s.stampTags);
-    const rotateActive = useSelectionStore((s) => s.rotateActive);
-    const rotateBusy = useSelectionStore((s) => s.rotateBusy);
-    const cropActive = useSelectionStore((s) => s.cropActive);
-    const cropBusy = useSelectionStore((s) => s.cropBusy);
+    const applyBusy = useSelectionStore((s) => s.applyBusy);
     const toggleSelection = useSelectionStore((s) => s.toggle);
     const selectMany = useSelectionStore((s) => s.selectMany);
     const bumpRotate = useSelectionStore((s) => s.bumpRotate);
     const addPendingCrop = useSelectionStore((s) => s.addPendingCrop);
 
-    const disabled = options?.disabled ?? (rotateBusy || cropBusy);
-    const modeKey = `${selectionEnabled}|${stampActive}|${rotateActive}|${cropActive}|${disabled}|${stampTags.join("\0")}`;
+    const disabled = options?.disabled ?? applyBusy;
+    const modeKey = `${mode}|${disabled}|${stampTags.join("\0")}`;
 
     const stableRef = useRef<{
         modeKey: string;
@@ -35,13 +31,10 @@ export function useMediaGridSelection(options?: {
 
     const selectedIds = new Set(useSelectionStore.getState().selectedIds);
     const built = buildMediaGridSelection({
-        selectionEnabled,
+        mode,
         selectedIds,
-        stampActive,
         stampTags,
-        rotateActive,
         bumpRotate,
-        cropActive,
         addPendingCrop,
         toggleSelection,
         selectMany,
@@ -53,7 +46,7 @@ export function useMediaGridSelection(options?: {
         return undefined;
     }
 
-    const withStoreObserve: ThumbnailGridSelection = selectionEnabled ?
+    const withStoreObserve: ThumbnailGridSelection = mode === "select" ?
         { ...built, observeStoreSelection: true } :
         built;
 

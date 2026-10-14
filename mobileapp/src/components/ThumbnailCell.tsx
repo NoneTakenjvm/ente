@@ -99,7 +99,7 @@ export const ThumbnailCell = memo(function ThumbnailCell({
         objectFit === "contain" ? "object-contain" : "object-cover";
     const sizeBytes = fileByteSize(file);
     const selectedFromStore = useSelectionStore((s) =>
-        observeStoreSelection && s.enabled ?
+        observeStoreSelection && s.mode === "select" ?
             selectedIdSet(s.selectedIds).has(file.id) :
             false);
     const pendingCrop = useSelectionStore((s) =>

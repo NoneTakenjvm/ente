@@ -48,21 +48,19 @@ export function GalleryToolsMenu({
     query,
     filterTarget = "gallery",
 }: GalleryToolsMenuProps): JSX.Element {
-    const selectionEnabled = useSelectionStore((s) => s.enabled);
-    const stampActive = useSelectionStore((s) => s.stampActive);
-    const rotateActive = useSelectionStore((s) => s.rotateActive);
-    const cropActive = useSelectionStore((s) => s.cropActive);
-    const setEnabled = useSelectionStore((s) => s.setEnabled);
-    const setStampActive = useSelectionStore((s) => s.setStampActive);
+    const selectionMode = useSelectionStore((s) => s.mode);
+    const setMode = useSelectionStore((s) => s.setMode);
     const setStampTags = useSelectionStore((s) => s.setStampTags);
     const setStampPickMode = useSelectionStore((s) => s.setStampPickMode);
     const setStampSheetOpen = useSelectionStore((s) => s.setStampSheetOpen);
-    const setRotateActive = useSelectionStore((s) => s.setRotateActive);
-    const setCropActive = useSelectionStore((s) => s.setCropActive);
 
     const [menuOpen, setMenuOpen] = useState(false);
 
-    const anyToolActive = selectionEnabled || stampActive || rotateActive || cropActive;
+    const selectionEnabled = selectionMode === "select";
+    const stampActive = selectionMode === "stamp";
+    const rotateActive = selectionMode === "rotate";
+    const cropActive = selectionMode === "crop";
+    const anyToolActive = selectionMode !== "none";
     const triggerActive = anyToolActive || Boolean(query?.hasQueryContent);
 
     /** Exit rotate after confirming discard when drafts exist. */
@@ -71,9 +69,9 @@ export function GalleryToolsMenu({
         if (!confirmDiscardPendingRotations(pending)) {
             return false;
         }
-        setRotateActive(false);
+        setMode("none");
         return true;
-    }, [setRotateActive]);
+    }, [setMode]);
 
     /** Exit crop after confirming discard when drafts exist. */
     const exitCrop = useCallback((): boolean => {
@@ -81,9 +79,9 @@ export function GalleryToolsMenu({
         if (!confirmDiscardPendingCrops(pending)) {
             return false;
         }
-        setCropActive(false);
+        setMode("none");
         return true;
-    }, [setCropActive]);
+    }, [setMode]);
 
     /** Exit whichever tool is active (wrench re-tap). */
     const exitActiveTool = useCallback((): void => {
@@ -95,36 +93,21 @@ export function GalleryToolsMenu({
             exitCrop();
             return;
         }
-        if (stampActive) {
-            setStampActive(false);
-            return;
-        }
-        if (selectionEnabled) {
-            setEnabled(false);
-        }
-    }, [
-        cropActive,
-        exitCrop,
-        exitRotate,
-        rotateActive,
-        selectionEnabled,
-        setEnabled,
-        setStampActive,
-        stampActive,
-    ]);
+        setMode("none");
+    }, [cropActive, exitCrop, exitRotate, rotateActive, setMode]);
 
     const activateStamp = (): void => {
         if (stampActive) {
-            setStampActive(false);
+            setMode("none");
             return;
         }
-        const nearnessFilter = useUIStore.getState().nearnessFilter;
+        const ordering = useUIStore.getState().ordering;
         if (
-            nearnessFilter !== undefined &&
-            isTagFilterActive(nearnessFilter)
+            ordering?.kind === "nearness" &&
+            isTagFilterActive(ordering.filter)
         ) {
             const from = stampTagsFromNearnessFilter(
-                nearnessFilter,
+                ordering.filter,
                 useTagSpeedStore.getState().presets,
             );
             if (from) {
@@ -133,7 +116,7 @@ export function GalleryToolsMenu({
                 setStampSheetOpen(false);
             }
         }
-        setStampActive(true);
+        setMode("stamp");
     };
 
     const toggleRotate = (): void => {
@@ -141,7 +124,7 @@ export function GalleryToolsMenu({
             exitRotate();
             return;
         }
-        setRotateActive(true);
+        setMode("rotate");
     };
 
     const toggleCrop = (): void => {
@@ -149,7 +132,7 @@ export function GalleryToolsMenu({
             exitCrop();
             return;
         }
-        setCropActive(true);
+        setMode("crop");
     };
 
     return (
@@ -221,7 +204,7 @@ export function GalleryToolsMenu({
                                 label="Select"
                                 active={selectionEnabled}
                                 onSelect={() => {
-                                    setEnabled(!selectionEnabled);
+                                    setMode(selectionEnabled ? "none" : "select");
                                 }}
                             >
                                 <Check />
@@ -292,7 +275,7 @@ export function GalleryToolsMenu({
                     activeLabel="Exit selection mode"
                     inactiveLabel="Select media"
                     onClick={() => {
-                        setEnabled(!selectionEnabled);
+                        setMode(selectionEnabled ? "none" : "select");
                     }}
                 >
                     <Check />

@@ -6,7 +6,12 @@ import {
     getDecryptedThumbnailBytes,
     isThumbnailCachedLocally,
 } from "@/lib/thumbnail-bytes";
-import { imageFilesForPhash } from "@/lib/similarity-job";
+import {
+    eligibleImageFiles,
+    runWithConcurrency,
+    waitIfPaused,
+    workerCount,
+} from "@/lib/job-utils";
 import { waitWhileGalleryScrolling } from "@/lib/gallery-scroll-activity";
 import { createWorkerClient } from "@/lib/worker-client";
 import type {
@@ -32,13 +37,6 @@ const persistIndex = async (entries: Map<number, number>): Promise<void> => {
     await saveKv("qualityIndex", indexFromMap(entries));
 };
 
-const qualityWorkerCount = (): number => {
-    if (typeof navigator === "undefined") {
-        return 4;
-    }
-    return Math.min(8, Math.max(2, navigator.hardwareConcurrency ?? 4));
-};
-
 const qualityWorkers = createWorkerClient<
     ImageQualityWorkerRequest,
     ImageQualityWorkerResponse
@@ -47,7 +45,7 @@ const qualityWorkers = createWorkerClient<
         new Worker(
             new URL("../workers/image-quality.worker.ts", import.meta.url),
         ),
-    poolSize: qualityWorkerCount(),
+    poolSize: workerCount(),
 });
 
 const scoreBytesInWorker = async (
@@ -95,38 +93,6 @@ const cacheCheckConcurrency = 32;
 const cachedThumbnailConcurrency = 32;
 const networkThumbnailConcurrency = 8;
 
-const runWithConcurrency = async <T>(
-    items: T[],
-    limit: number,
-    worker: (item: T) => Promise<void>,
-): Promise<void> => {
-    let index = 0;
-    const runners = Array.from(
-        { length: Math.min(limit, items.length) },
-        async (): Promise<void> => {
-            while (index < items.length) {
-                const current = items[index];
-                index += 1;
-                await worker(current);
-            }
-        },
-    );
-    await Promise.all(runners);
-};
-
-const waitIfPaused = async (
-    shouldPause?: () => boolean,
-    signal?: AbortSignal,
-): Promise<boolean> => {
-    while (shouldPause?.()) {
-        await new Promise((resolve) => setTimeout(resolve, 200));
-        if (signal?.aborted) {
-            return true;
-        }
-    }
-    return signal?.aborted ?? false;
-};
-
 const originalDimensions = (
     file: EnteFile,
 ): { width: number; height: number } => {
@@ -142,7 +108,7 @@ const originalDimensions = (
 export const runImageQualityJob = async (
     options: ImageQualityJobOptions,
 ): Promise<Map<number, number>> => {
-    const candidates = imageFilesForPhash([...options.files], options.userId)
+    const candidates = eligibleImageFiles(options.files, options.userId)
         .filter((file) => !options.entries.has(file.id))
         .sort((a, b) => a.id - b.id);
 

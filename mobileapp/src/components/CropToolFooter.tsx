@@ -23,13 +23,13 @@ const APPLY_CONCURRENCY = 2;
  * Footer for quick-crop mode: draft crop boxes, then Apply crops a few at a time.
  */
 export function CropToolFooter(): JSX.Element | null {
-    const cropActive = useSelectionStore((s) => s.cropActive);
+    const cropActive = useSelectionStore((s) => s.mode === "crop");
     const pendingCrops = useSelectionStore((s) => s.pendingCrops);
-    const setCropActive = useSelectionStore((s) => s.setCropActive);
+    const setMode = useSelectionStore((s) => s.setMode);
     const clearPendingCrops = useSelectionStore((s) => s.clearPendingCrops);
     const removePendingCrop = useSelectionStore((s) => s.removePendingCrop);
-    const setCropBusy = useSelectionStore((s) => s.setCropBusy);
-    const cropBusy = useSelectionStore((s) => s.cropBusy);
+    const setApplyBusy = useSelectionStore((s) => s.setApplyBusy);
+    const applyBusy = useSelectionStore((s) => s.applyBusy);
 
     const pendingCount = useMemo(
         () => countPendingCrops(pendingCrops),
@@ -46,27 +46,27 @@ export function CropToolFooter(): JSX.Element | null {
     );
 
     const exitCrop = useCallback((): void => {
-        if (cropBusy) {
+        if (applyBusy) {
             return;
         }
         if (!confirmDiscardPendingCrops(pendingCrops)) {
             return;
         }
-        setCropActive(false);
-    }, [cropBusy, pendingCrops, setCropActive]);
+        setMode("none");
+    }, [applyBusy, pendingCrops, setMode]);
 
     const handleDiscard = useCallback((): void => {
-        if (cropBusy) {
+        if (applyBusy) {
             return;
         }
         clearPendingCrops();
-    }, [clearPendingCrops, cropBusy]);
+    }, [clearPendingCrops, applyBusy]);
 
     const handleApply = useCallback(async (): Promise<void> => {
-        if (cropBusy || pendingEntries.length === 0) {
+        if (applyBusy || pendingEntries.length === 0) {
             return;
         }
-        setCropBusy(true);
+        setApplyBusy(true);
         const total = pendingEntries.length;
         let done = 0;
         let failed = 0;
@@ -101,7 +101,7 @@ export function CropToolFooter(): JSX.Element | null {
                     `Cropped ${plural(done, "photo")}`,
                     { id: progress },
                 );
-                setCropActive(false);
+                setMode("none");
             } else {
                 toast.error(
                     `Cropped ${done}, ${failed} failed — retry remaining`,
@@ -109,14 +109,14 @@ export function CropToolFooter(): JSX.Element | null {
                 );
             }
         } finally {
-            setCropBusy(false);
+            setApplyBusy(false);
         }
     }, [
-        cropBusy,
+        applyBusy,
         pendingEntries,
         removePendingCrop,
-        setCropActive,
-        setCropBusy,
+        setMode,
+        setApplyBusy,
     ]);
 
     if (!cropActive) {
@@ -139,7 +139,7 @@ export function CropToolFooter(): JSX.Element | null {
                         type="button"
                         variant="ghost"
                         size="sm"
-                        disabled={cropBusy || pendingCount === 0}
+                        disabled={applyBusy || pendingCount === 0}
                         onClick={handleDiscard}
                     >
                         Discard
@@ -148,7 +148,7 @@ export function CropToolFooter(): JSX.Element | null {
                         type="button"
                         variant="outline"
                         size="sm"
-                        disabled={cropBusy}
+                        disabled={applyBusy}
                         onClick={exitCrop}
                     >
                         Close
@@ -157,12 +157,12 @@ export function CropToolFooter(): JSX.Element | null {
                         type="button"
                         variant="default"
                         size="sm"
-                        disabled={cropBusy || pendingCount === 0}
+                        disabled={applyBusy || pendingCount === 0}
                         onClick={() => {
                             void handleApply();
                         }}
                     >
-                        {cropBusy ? <Spinner className="size-3.5" /> : null}
+                        {applyBusy ? <Spinner className="size-3.5" /> : null}
                         Apply
                     </Button>
                 </div>

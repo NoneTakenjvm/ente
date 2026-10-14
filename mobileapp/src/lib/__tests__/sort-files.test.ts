@@ -4,6 +4,7 @@ import {
     fileEditSortTime,
     remapSortedFilesIfSameIds,
     sortFilesByEdit,
+    sortFilesByScore,
     sortFilesByUpload,
 } from "@/lib/sort-files";
 import { fileUploadSortTime } from "@/core/metadata";
@@ -133,5 +134,50 @@ describe("sortFilesNewestFirst tiebreak", () => {
         const ids = (list: EnteFile[]) => list.map((file) => file.id);
         expect(ids(sortFilesByUpload(files))).toEqual([3, 2, 1]);
         expect(ids(sortFilesByUpload([...files].reverse()))).toEqual([3, 2, 1]);
+    });
+});
+
+describe("sortFilesByScore", () => {
+    const files = [1, 2, 3, 4].map((id) => stubFile({ id }));
+    const scores = new Map<number, number>([
+        [1, 10],
+        [2, 30],
+        [3, 20],
+    ]);
+    const scoreOf = (file: EnteFile): number | undefined => scores.get(file.id);
+
+    it("sorts descending and puts unknown last", () => {
+        expect(
+            sortFilesByScore(files, scoreOf, false, true).map((f) => f.id),
+        ).toEqual([2, 3, 1, 4]);
+    });
+
+    it("keeps unknown last when ascending", () => {
+        expect(
+            sortFilesByScore(files, scoreOf, true, true).map((f) => f.id),
+        ).toEqual([1, 3, 2, 4]);
+    });
+
+    it("scores unknown as 0 when unknownLast is off", () => {
+        expect(
+            sortFilesByScore(files, scoreOf, true, false).map((f) => f.id),
+        ).toEqual([4, 1, 3, 2]);
+        expect(
+            sortFilesByScore(files, scoreOf, false, false).map((f) => f.id),
+        ).toEqual([2, 3, 1, 4]);
+    });
+
+    it("breaks ties by ascending id in both directions", () => {
+        const tied = [stubFile({ id: 5 }), stubFile({ id: 2 }), stubFile({ id: 9 })];
+        expect(
+            sortFilesByScore(tied, () => 1, false, false).map((f) => f.id),
+        ).toEqual([2, 5, 9]);
+        expect(
+            sortFilesByScore(tied, () => 1, true, true).map((f) => f.id),
+        ).toEqual([2, 5, 9]);
+    });
+
+    it("returns a copy", () => {
+        expect(sortFilesByScore(files, scoreOf, true, true)).not.toBe(files);
     });
 });

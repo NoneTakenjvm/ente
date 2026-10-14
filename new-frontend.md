@@ -7,12 +7,19 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-10-14 |
-| **Last agent / session** | Simplification plan Phase 3 wave 1 (`mobileapp/simplification-plan.md`): copy-on-write library patches + library-store cleanup, tag-store `typeConfig`, index-store factory, `createWorkerClient`, CLIP transport (`0.3.198`) |
+| **Last agent / session** | Simplification plan Phase 3 wave 2a (`mobileapp/simplification-plan.md`): gallery `ordering` union + `sortFilesByScore`, selection `mode` union, `job-utils`, manage.tsx section router with Duplicates/Similar panels (`0.3.199`) |
 | **Current milestone** | Post-M8 UX / upload performance |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
-| **Next recommended action** | Phone QA of `0.3.198` (QA lists for `0.3.195`–`0.3.198` below). Then Phase 3 wave 2 (ordering unions, job utils → manage router → `useJob`, merged phash/quality scan). Rotate the test-account password. |
+| **Next recommended action** | Phone QA of `0.3.199` (QA lists for `0.3.195`–`0.3.199` below). Then the rest of Phase 3 (`useJob` / `<JobControls>`, merged phash/quality scan). Rotate the test-account password. |
 
-**This session (committed locally, not pushed, `0.3.198`): simplification plan Phase 3 wave 1**
+**This session (committed locally, not pushed, `0.3.199`): simplification plan Phase 3 wave 2a**
+1. **Gallery ordering** — ui-store holds one `ordering: GalleryOrdering | undefined` (viewport fit, uploaded at, image size, quality, tag fit, relative, nearness, shuffled) with `setOrdering`; the per-kind fields, setters and `clearOrderings` are gone. One `sortFilesByScore` in `lib/sort-files.ts`; `image-size-sort.ts` and `uploaded-at-sort.ts` deleted.
+2. **Selection tools** — selection-store has `mode: "none" | "select" | "stamp" | "rotate" | "crop"` and one `applyBusy`; switching mode clears pending rotations/crops.
+3. **Job helpers** — `lib/job-utils.ts` (`workerCount`, `eligibleImageFiles`, `runWithConcurrency`, `waitIfPaused`, `progressReporter`); copies in image-quality-job and kit-embedding removed.
+4. **Manage router** — `pages/manage.tsx` is a 150-line section router; sections derive from ManageHub's category arrays. New `ManageDuplicatesPanel`, `ManageSimilarPanel` and shared `DedupGroupReview` (dry-run is local state). Leaving Similar mid-scan now pauses the phash scan.
+5. **QA** — each Sort menu option replaces the previous one and None resets; shuffle on/off (None in Sort keeps the shuffle); relative closest/furthest keeps the start, New start reshuffles, Set Relative from the viewer; kit likeness starts Stamp, rival penalty/exclusion rebuild the order; Select/Stamp/Rotate/Crop are mutually exclusive, Apply locks then exits, a tag-filter change exits Select/Rotate/Crop but not Stamp; bottom nav hides with any tool; Manage → Exact duplicates (stats, keeper, Show more, dry run, cleanup); Manage → Similar (scan, pause/resume, leave mid-scan and return shows Resume, threshold, cleanup); back navigation from tools and `/manage?section=tags`; logout resets the ordering.
+
+**Previous session (committed locally, `0.3.198`): simplification plan Phase 3 wave 1**
 1. **Library store** — file patches are copy-on-write (`commitFilePatches`); `filesRevision`, `patchFileInPlace` and the gallery remap are gone. Single-file favourite/archive go through `batchSetFavorite` / `batchSetArchived`. Trash, duplicate prune and compress-replace share `removeFilesFromLibrary` (prune now clears the same outbox state as trash). Bootstrap and sync share `applyOrganizerConfig`, so cold start also hydrates tag types, registered tags and query albums from the cached config. The visibility drain writes on a clone of the file.
 2. **Tag store** — one `typeConfig` field and one rewrite path for rename/delete/merge; filter-tree helpers delegate to lib. Renaming an included tag onto an excluded one now leaves it included (same OR rule as merge).
 3. **Index stores** — embedding, phash and quality stores are `createIndexStore` instances with `ensureHydrated`.
