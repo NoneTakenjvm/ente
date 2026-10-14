@@ -35,7 +35,11 @@ import { useQualityIndexStore } from "@/stores/quality-index-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import type { BackgroundJobStatus } from "@/stores/ui-store";
-import { runImageQualityJob } from "@/lib/image-quality-job";
+import {
+    filesNeedingAnalysis,
+    runThumbnailAnalysisJob,
+} from "@/lib/similarity-job";
+import { usePhashIndexStore } from "@/stores/phash-index-store";
 import { errorMessage } from "@/lib/format";
 
 const columnOptions: number[] = Array.from(
@@ -106,6 +110,10 @@ export function ManageSettingsPanel(): JSX.Element {
     const qualityHydrated = useQualityIndexStore((s) => s.isHydrated);
     const hydrateQuality = useQualityIndexStore((s) => s.ensureHydrated);
     const setQualityEntries = useQualityIndexStore((s) => s.setEntries);
+    const phashEntries = usePhashIndexStore((s) => s.entries);
+    const phashHydrated = usePhashIndexStore((s) => s.isHydrated);
+    const hydratePhash = usePhashIndexStore((s) => s.ensureHydrated);
+    const setPhashEntries = usePhashIndexStore((s) => s.setEntries);
 
     const clipCandidateCount = useMemo(
         () => eligibleImageFiles(allFiles, userId).length,
@@ -139,6 +147,13 @@ export function ManageSettingsPanel(): JSX.Element {
         }
         void hydrateQuality();
     }, [qualityHydrated, hydrateQuality]);
+
+    useEffect(() => {
+        if (phashHydrated) {
+            return;
+        }
+        void hydratePhash();
+    }, [phashHydrated, hydratePhash]);
 
     // Drop any stale video poster vectors once the library is known. Keyed on
     // the library, not every embeddings write, so each CLIP batch skips the scan.
@@ -284,18 +299,24 @@ export function ManageSettingsPanel(): JSX.Element {
         qualityAbort.current = controller;
         qualityPaused.current = false;
         setQualityJobStatus("running");
-        const candidates = eligibleImageFiles(allFiles, userId);
-        const pending = candidates.filter((file) => !qualityEntries.has(file.id));
+        // The scan also hashes the same thumbnails for Similar photos.
+        const pending = filesNeedingAnalysis(
+            allFiles,
+            userId,
+            phashEntries,
+            qualityEntries,
+        );
         setQualityProgress({ current: 0, total: pending.length });
         if (pending.length === 0) {
             setQualityJobStatus("done");
             toast.message("Image quality scan already complete");
             return;
         }
-        void runImageQualityJob({
+        void runThumbnailAnalysisJob({
             files: allFiles,
             userId,
-            entries: qualityEntries,
+            phashEntries: new Map(phashEntries),
+            qualityEntries,
             signal,
             shouldPause: () => qualityPaused.current,
             onProgress: (current, total) => {
@@ -304,18 +325,19 @@ export function ManageSettingsPanel(): JSX.Element {
                 }
             },
         })
-            .then((entries) => {
+            .then((result) => {
                 if (qualityAbort.current !== controller) {
                     return;
                 }
-                setQualityEntries(entries);
+                setQualityEntries(result.qualityEntries);
+                setPhashEntries(result.phashEntries);
                 if (signal.aborted) {
                     setQualityJobStatus("paused");
                     return;
                 }
                 setQualityJobStatus("done");
                 toast.success(
-                    `Image quality scan complete — ${entries.size} scored`,
+                    `Image quality scan complete — ${result.qualityEntries.size} scored`,
                 );
             })
             .catch((error: unknown) => {
@@ -658,18 +680,14 @@ export function ManageSettingsPanel(): JSX.Element {
                         resolution from thumbnails. Used by Options → Sort →
                         Image quality. After an app update that changes the
                         formula, run the scan again (old scores are discarded).
-                        Videos are never scanned.
+                        The same pass also hashes photos for Similar. Videos
+                        are never scanned.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-3">
                     <p className="text-sm text-muted-foreground">
                         {qualityHydrated ?
-                            `${(
-                                qualityJobStatus === "running" ?
-                                    qualityIndexedCount +
-                                    qualityProgress.current :
-                                    qualityIndexedCount
-                            ).toLocaleString()} / ${qualityCandidateCount.toLocaleString()} images scored` :
+                            `${qualityIndexedCount.toLocaleString()} / ${qualityCandidateCount.toLocaleString()} images scored` :
                             "Loading quality index…"}
                         {qualityJobStatus === "running" &&
                         qualityProgress.total > 0 ?
@@ -684,6 +702,7 @@ export function ManageSettingsPanel(): JSX.Element {
                             disabled={
                                 qualityJobStatus === "running" ||
                                 !qualityHydrated ||
+                                !phashHydrated ||
                                 (qualityIndexedCount >= qualityCandidateCount &&
                                     qualityCandidateCount > 0)
                             }

@@ -1,5 +1,6 @@
 import { isTagIncludedInEffectsPresence } from "@/lib/tag-types";
 import {
+    emptyTagFilter,
     isTagFilterClause,
     isTagFilterGroup,
     isTagFilterKit,
@@ -10,6 +11,7 @@ import {
     type TagFilterKitNode,
     type TagFilterMode,
     type TagFilterNode,
+    type ScopeKey,
     type TagFilterSelection,
     type TagScope,
 } from "@/lib/tag-filter";
@@ -635,3 +637,99 @@ export const findKitModeInGroup = (
     }
     return null;
 };
+
+/** Every edit the tag-filter UI can make to a {@link TagFilterSelection}. */
+export interface TagFilterActions {
+    /** Set one scope (`"all"` clears it). The tag scope also prunes clauses. */
+    setScope: (key: ScopeKey, value: string) => void;
+    setTagFilterMode: (tag: string, mode: TagFilterMode | null) => void;
+    setClauseMode: (clauseId: string, mode: TagFilterMode) => void;
+    setClauseInGroup: (
+        groupId: string,
+        tag: string,
+        mode: TagFilterMode | null,
+    ) => void;
+    setKitMode: (kit: KitFilterInput, mode: TagFilterMode | null) => void;
+    setKitInGroup: (
+        groupId: string,
+        kit: KitFilterInput,
+        mode: TagFilterMode | null,
+    ) => void;
+    setGroupOp: (groupId: string, op: TagFilterJoin) => void;
+    wrapInGroup: (nodeIds: string[], op: TagFilterJoin) => void;
+    ungroup: (groupId: string) => void;
+    removeNode: (nodeId: string) => void;
+    clearFilters: () => void;
+}
+
+/**
+ * Build the filter edit actions on top of one `apply` function that runs an
+ * update against the filter being edited (a store slice or local state).
+ */
+export const tagFilterActions = (
+    apply: (update: (filter: TagFilterSelection) => TagFilterSelection) => void,
+    includeInEffectsPresenceByName?: EffectsPresenceMap,
+): TagFilterActions => ({
+    setScope: (key, value) =>
+        apply((filter) =>
+            key === "tagScope" ?
+                setTagFilterScope(
+                    filter,
+                    value as TagScope,
+                    includeInEffectsPresenceByName,
+                ) :
+                setTagFilterScopes(filter, {
+                    [key]: value,
+                } as TagFilterScopePatch)),
+    setTagFilterMode: (tag, mode) =>
+        apply((filter) =>
+            setTagFilterModeOnFilter(
+                filter,
+                tag,
+                mode,
+                includeInEffectsPresenceByName,
+            )),
+    setClauseMode: (clauseId, mode) =>
+        apply((filter) =>
+            setClauseModeOnFilter(
+                filter,
+                clauseId,
+                mode,
+                includeInEffectsPresenceByName,
+            )),
+    setClauseInGroup: (groupId, tag, mode) =>
+        apply((filter) =>
+            setClauseInGroupOnFilter(
+                filter,
+                groupId,
+                tag,
+                mode,
+                includeInEffectsPresenceByName,
+            )),
+    setKitMode: (kit, mode) =>
+        apply((filter) =>
+            setKitModeOnFilter(
+                filter,
+                kit,
+                mode,
+                includeInEffectsPresenceByName,
+            )),
+    setKitInGroup: (groupId, kit, mode) =>
+        apply((filter) =>
+            setKitInGroupOnFilter(
+                filter,
+                groupId,
+                kit,
+                mode,
+                includeInEffectsPresenceByName,
+            )),
+    setGroupOp: (groupId, op) =>
+        apply((filter) => setTagFilterGroupOp(filter, groupId, op)),
+    wrapInGroup: (nodeIds, op) =>
+        apply((filter) => wrapTagFilterNodesInGroup(filter, nodeIds, op)),
+    ungroup: (groupId) =>
+        apply((filter) => ungroupTagFilterNode(filter, groupId)),
+    removeNode: (nodeId) =>
+        apply((filter) => removeTagFilterNode(filter, nodeId)),
+    clearFilters: () => apply(emptyTagFilter),
+});

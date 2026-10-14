@@ -21,40 +21,26 @@ import {
     SheetTitle,
 } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
-import { getEnteCore } from "@/core/instance";
-import {
-    beginUploadCryptoPool,
-    endUploadCryptoPool,
-    getUploadCryptoWorker,
-    type UploadCryptoWorker,
-} from "@/core/upload/upload-crypto-pool";
-import {
-    beginUploadBatch,
-    endUploadBatch,
-} from "@/core/upload/upload-url-pool";
-import {
-    abortUploadBatch,
-    beginUploadAbort,
-    endUploadAbort,
-} from "@/core/upload/remote";
-import { prepareLocalImage } from "@/lib/prepare-local-image";
-import { withTimeout } from "@/lib/with-timeout";
+import { runUploadBatch } from "@/core/upload/run-upload-batch";
 import {
     ACCEPT_LOCAL_MEDIA,
     isUploadableLocalFile,
     isVideoFile,
-    sanitizeUploadImageTitle,
-    sanitizeUploadVideoTitle,
 } from "@/lib/local-media";
 import { isOrganizerConfigCollection } from "@/lib/organizer-config";
-import { prepareLocalVideo } from "@/lib/transcode/prepare-local-video";
 import { cn } from "@/lib/utils";
 import { useLibraryStore } from "@/stores/library-store";
 import { useUploadJobStore } from "@/stores/ui-store";
 import type { Collection } from "ente-media/collection";
 import { errorMessage, plural } from "@/lib/format";
 
-type PanelPhase = "idle" | "staging" | "review" | "uploading" | "done" | "error";
+type PanelState =
+    | { phase: "idle" } |
+    { phase: "staging"; current: number; total: number } |
+    { phase: "review" } |
+    { phase: "uploading"; inFlight: number } |
+    { phase: "done"; message: string } |
+    { phase: "error"; error?: string; message?: string };
 
 interface UploadPanelProps {
     onUploaded?: () => void;
@@ -68,7 +54,6 @@ interface StagedFile {
 }
 
 const UPLOAD_FOOTER_INSET_PX = 120;
-const maxConcurrentUploads = 4;
 
 const uploadableCollections = (collections: Collection[]): Collection[] =>
     collections.filter(
@@ -168,7 +153,6 @@ export function UploadPanel({
     const resetUploadJob = useUploadJobStore((s) => s.resetJob);
     const panelOpen = useUploadJobStore((s) => s.panelOpen);
     const setPanelOpen = useUploadJobStore((s) => s.setPanelOpen);
-    const requestCancel = useUploadJobStore((s) => s.requestCancel);
     const uploadProgress = useUploadJobStore((s) => s.progress);
 
     const albums = useMemo(
@@ -178,22 +162,25 @@ export function UploadPanel({
 
     const selectedCollectionId = defaultUploadCollectionId(albums);
 
-    const [phase, setPhase] = useState<PanelPhase>("idle");
-    const [error, setError] = useState<string | undefined>();
+    const [state, setState] = useState<PanelState>({ phase: "idle" });
     const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-    const [stagingProgress, setStagingProgress] = useState<{ current: number; total: number }>({
-        current: 0,
-        total: 0,
-    });
-    const [uploadInFlight, setUploadInFlight] = useState<number>(0);
-    const [resultMessage, setResultMessage] = useState<string | undefined>();
     const stagedFilesRef = useRef<StagedFile[]>([]);
     const stagingGenerationRef = useRef<number>(0);
     const uploadStartedRef = useRef<boolean>(false);
+    const uploadAbortRef = useRef<AbortController | undefined>(undefined);
 
+    const { phase } = state;
     const staging = phase === "staging";
     const uploading = phase === "uploading";
+    const stagingProgress =
+        state.phase === "staging" ? state : { current: 0, total: 0 };
+    const uploadInFlight = state.phase === "uploading" ? state.inFlight : 0;
+    const resultMessage =
+        state.phase === "done" || state.phase === "error" ?
+            state.message :
+            undefined;
+    const error = state.phase === "error" ? state.error : undefined;
     const selectionLocked = staging || uploading;
 
     useEffect(() => {
@@ -219,166 +206,57 @@ export function UploadPanel({
             }
 
             uploadStartedRef.current = true;
-            useUploadJobStore.setState({ cancelRequested: false });
-            setPhase("uploading");
-            setError(undefined);
-            setResultMessage(undefined);
-            setUploadInFlight(0);
+            const abortController = new AbortController();
+            uploadAbortRef.current = abortController;
+            setState({ phase: "uploading", inFlight: 0 });
             setUploadJobStatus("running");
             setUploadJobProgress(0, filesToUpload.length);
 
-            let completed = 0;
-            let failed = 0;
-            let inFlight = 0;
-            const errors: string[] = [];
-            let nextIndex = 0;
-
-            const throwIfCancelled = (): void => {
-                if (useUploadJobStore.getState().cancelRequested) {
-                    throw new Error("Upload cancelled");
-                }
-            };
-
-            const uploadStagedFile = async (
-                entry: StagedFile,
-                crypto: UploadCryptoWorker,
-            ): Promise<void> => {
-                throwIfCancelled();
-                if (entry.kind === "video") {
-                    const prepared = await prepareLocalVideo(entry.file);
-                    throwIfCancelled();
-                    await uploadVideoFile(
-                        selectedCollectionId,
-                        prepared.file,
-                        {
-                            width: prepared.width,
-                            height: prepared.height,
-                        },
-                        prepared.duration,
-                        sanitizeUploadVideoTitle(entry.file.name),
-                        entry.file.lastModified * 1000,
-                        prepared.mimeType,
-                        crypto,
-                    );
-                    return;
-                }
-
-                const prepared = await prepareLocalImage(entry.file);
-                throwIfCancelled();
-                await uploadImageFile(
-                    selectedCollectionId,
-                    prepared.bytes,
-                    {
-                        width: prepared.width,
-                        height: prepared.height,
-                    },
-                    sanitizeUploadImageTitle(entry.file.name),
-                    entry.file.lastModified * 1000,
-                    crypto,
-                );
-            };
-
-            const reportProgress = (): void => {
-                setUploadInFlight(inFlight);
-                setUploadJobProgress(completed + failed, filesToUpload.length);
-            };
-
-            const worker = async (slotIndex: number): Promise<void> => {
-                const crypto = await getUploadCryptoWorker(slotIndex);
-                while (true) {
-                    if (useUploadJobStore.getState().cancelRequested) {
-                        return;
-                    }
-                    const index = nextIndex;
-                    nextIndex += 1;
-                    if (index >= filesToUpload.length) {
-                        return;
-                    }
-                    const entry = filesToUpload[index]!;
-                    inFlight += 1;
-                    reportProgress();
-                    try {
-                        await uploadStagedFile(entry, crypto);
-                        completed += 1;
-                    } catch (uploadError: unknown) {
-                        const message =
-                            errorMessage(uploadError, "upload failed");
-                        if (/upload cancelled/i.test(message)) {
-                            return;
-                        }
-                        failed += 1;
-                        errors.push(`${entry.file.name}: ${message}`);
-                    } finally {
-                        inFlight -= 1;
-                        reportProgress();
-                    }
-                }
-            };
-
             try {
-                beginUploadAbort();
-                await withTimeout(
-                    beginUploadBatch(
-                        getEnteCore().getHttpClient(),
-                        filesToUpload.length,
-                    ),
-                    30_000,
-                    "Timed out fetching upload URLs",
+                const result = await runUploadBatch(
+                    filesToUpload,
+                    selectedCollectionId,
+                    { uploadImageFile, uploadVideoFile },
+                    abortController.signal,
+                    ({ finished, total, inFlight }) => {
+                        setState({ phase: "uploading", inFlight });
+                        setUploadJobProgress(finished, total);
+                    },
                 );
 
-                const workerCount = Math.min(
-                    maxConcurrentUploads,
-                    filesToUpload.length,
-                );
-                beginUploadCryptoPool(workerCount);
-                await Promise.all(
-                    Array.from({ length: workerCount }, (_, slotIndex) =>
-                        worker(slotIndex)),
-                );
-
-                const cancelled = useUploadJobStore.getState().cancelRequested;
-                const skipped = filesToUpload.length - completed - failed;
-
-                if (cancelled) {
-                    setPhase("done");
-                    setResultMessage(
-                        completed > 0 ?
-                            `Cancelled after ${plural(completed, "upload")}. ${skipped} skipped.` :
-                            "Upload cancelled.",
-                    );
+                if (result.cancelled) {
+                    setState({
+                        phase: "done",
+                        message:
+                            result.completed > 0 ?
+                                `Cancelled after ${plural(result.completed, "upload")}. ${result.skipped} skipped.` :
+                                "Upload cancelled.",
+                    });
                     toast.message("Upload cancelled");
-                    return;
-                }
-
-                if (failed === 0) {
-                    setPhase("done");
-                    setResultMessage(
-                        `Uploaded ${plural(completed, "file")}.`,
-                    );
+                } else if (result.failed === 0) {
+                    setState({
+                        phase: "done",
+                        message: `Uploaded ${plural(result.completed, "file")}.`,
+                    });
                     toast.success(
-                        `Uploaded ${plural(completed, "file")}`,
+                        `Uploaded ${plural(result.completed, "file")}`,
                     );
                     onUploaded?.();
-                    return;
+                } else {
+                    setState({
+                        phase: "error",
+                        error: result.errors[0],
+                        message: `Uploaded ${result.completed} · ${result.failed} failed`,
+                    });
+                    toast.error(result.errors[0] ?? "Some uploads failed");
                 }
-
-                setPhase("error");
-                setError(errors[0]);
-                setResultMessage(
-                    `Uploaded ${completed} · ${failed} failed`,
-                );
-                toast.error(errors[0] ?? "Some uploads failed");
             } catch (batchError: unknown) {
-                const message =
-                    errorMessage(batchError, "Upload failed");
-                setPhase("error");
-                setError(message);
+                const message = errorMessage(batchError, "Upload failed");
+                setState({ phase: "error", error: message });
                 toast.error(message);
             } finally {
-                endUploadAbort();
-                endUploadBatch();
-                endUploadCryptoPool();
                 resetUploadJob();
+                uploadAbortRef.current = undefined;
                 uploadStartedRef.current = false;
             }
         },
@@ -422,16 +300,13 @@ export function UploadPanel({
                 toast.message(`Skipped ${plural(skipped, "unsupported file")}`);
             }
 
-            setError(undefined);
-            setResultMessage(undefined);
-            setPhase("staging");
-            setStagingProgress({ current: 0, total: files.length });
+            setState({ phase: "staging", current: 0, total: files.length });
 
             void stageFilesAsync(files, (current, total) => {
                 if (generation !== stagingGenerationRef.current) {
                     return;
                 }
-                setStagingProgress({ current, total });
+                setState({ phase: "staging", current, total });
             })
                 .then((nextStaged) => {
                     if (generation !== stagingGenerationRef.current) {
@@ -454,7 +329,7 @@ export function UploadPanel({
                     const merged = [...stagedFilesRef.current, ...newStaged];
                     setStagedFiles(merged);
                     setSelectedIds(new Set(merged.map((entry) => entry.id)));
-                    setPhase("review");
+                    setState({ phase: "review" });
                     void runUpload(merged);
                 })
                 .catch((stagingError: unknown) => {
@@ -463,8 +338,9 @@ export function UploadPanel({
                     }
                     const message =
                         errorMessage(stagingError, "Could not prepare selected files");
-                    setPhase(stagedFilesRef.current.length > 0 ? "review" : "idle");
-                    setError(message);
+                    setState({
+                        phase: stagedFilesRef.current.length > 0 ? "review" : "idle",
+                    });
                     toast.error(message);
                 });
         },
@@ -560,9 +436,8 @@ export function UploadPanel({
         if (!uploading) {
             return;
         }
-        requestCancel();
-        abortUploadBatch();
-    }, [requestCancel, uploading]);
+        uploadAbortRef.current?.abort();
+    }, [uploading]);
 
     const handleSheetOpenChange = useCallback(
         (nextOpen: boolean): void => {

@@ -1,66 +1,28 @@
-import { memo, useState, type JSX, type ReactNode } from "react";
+import { memo, useMemo, useState, type JSX, type ReactNode } from "react";
+import { ScopeFilterMenu } from "@/components/ScopeFilterMenu";
 import { TagClausePicker } from "@/components/TagClausePicker";
-import { TagScopeFilterDropdown } from "@/components/TagScopeFilterDropdown";
+import { MatchJoinToggle, ModeButtons } from "@/components/TagFilterControls";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { X } from "lucide-react";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import type { KitFilterInput } from "@/lib/tag-filter-mutations";
+import type { ScopeCounts } from "@/hooks/use-scope-counts";
+import type { TagFilterActions } from "@/lib/tag-filter-mutations";
 import {
     describeTagFilterClause,
     describeTagFilterKit,
     isTagFilterClause,
     isTagFilterKit,
-    type CroppedScope,
-    type FavoritesScope,
-    type MediaScope,
-    type RotatedScope,
     type TagFilterGroup,
     type TagFilterJoin,
     type TagFilterMode,
     type TagFilterNode,
     type TagFilterSelection,
-    type TagScope,
 } from "@/lib/tag-filter";
-import { cn } from "@/lib/utils";
-
-const isTagFilterJoin = (value: unknown): value is TagFilterJoin =>
-    value === "and" || value === "or" || value === "only";
-
-export interface TagQueryEditorActions {
-    setTagScope: (scope: TagScope) => void;
-    setFavoritesScope: (scope: FavoritesScope) => void;
-    setMediaScope: (scope: MediaScope) => void;
-    setCroppedScope: (scope: CroppedScope) => void;
-    setRotatedScope: (scope: RotatedScope) => void;
-    setGroupOp: (groupId: string, op: TagFilterJoin) => void;
-    wrapInGroup: (nodeIds: string[], op: TagFilterJoin) => void;
-    ungroup: (groupId: string) => void;
-    removeNode: (nodeId: string) => void;
-    setClauseMode: (clauseId: string, mode: TagFilterMode) => void;
-    setClauseInGroup: (
-        groupId: string,
-        tag: string,
-        mode: TagFilterMode | null,
-    ) => void;
-    setKitInGroup: (
-        groupId: string,
-        kit: KitFilterInput,
-        mode: TagFilterMode | null,
-    ) => void;
-}
 
 interface TagQueryEditorProps {
     filter: TagFilterSelection;
-    actions: TagQueryEditorActions;
-    taggedCount: number;
-    untaggedCount: number;
-    favoritesCount: number;
-    notFavoritesCount: number;
-    photoCount: number;
-    videoCount: number;
-    croppedCount: number;
-    notCroppedCount: number;
+    actions: TagFilterActions;
+    counts: ScopeCounts;
     emptyHint?: string;
 }
 
@@ -70,65 +32,7 @@ interface NodeRowProps {
     filter: TagFilterSelection;
     selectedIds: Set<string>;
     onToggleSelect: (nodeId: string) => void;
-    onRemove: (nodeId: string) => void;
-    onSetClauseMode: (clauseId: string, mode: TagFilterMode) => void;
-    onSetClauseInGroup: (
-        groupId: string,
-        tag: string,
-        mode: TagFilterMode | null,
-    ) => void;
-    onSetKitInGroup: (
-        groupId: string,
-        kit: KitFilterInput,
-        mode: TagFilterMode | null,
-    ) => void;
-    onSetGroupOp: (groupId: string, op: TagFilterJoin) => void;
-    onUngroup: (groupId: string) => void;
-}
-
-function MatchJoinToggle({
-    value,
-    onChange,
-}: {
-    value: TagFilterJoin;
-    onChange: (op: TagFilterJoin) => void;
-}): JSX.Element {
-    return (
-        <ToggleGroup
-            value={[value]}
-            spacing={0}
-            className="shrink-0"
-            onValueChange={(next) => {
-                const nextValue = Array.isArray(next) ? next[0] : next;
-                if (isTagFilterJoin(nextValue)) {
-                    onChange(nextValue);
-                }
-            }}
-        >
-            <ToggleGroupItem
-                value="and"
-                size="sm"
-                className="h-7 px-2 text-xs"
-            >
-                AND
-            </ToggleGroupItem>
-            <ToggleGroupItem
-                value="or"
-                size="sm"
-                className="h-7 px-2 text-xs"
-            >
-                OR
-            </ToggleGroupItem>
-            <ToggleGroupItem
-                value="only"
-                size="sm"
-                className="h-7 px-2 text-xs"
-                title="Photos whose tags are exactly the selected Has tags"
-            >
-                ONLY
-            </ToggleGroupItem>
-        </ToggleGroup>
-    );
+    actions: TagFilterActions;
 }
 
 function FilterLeafRow({
@@ -163,33 +67,7 @@ function FilterLeafRow({
                 aria-label={selectLabel}
             />
             <span className="min-w-0 flex-1 truncate text-sm">{children}</span>
-            <div className="flex shrink-0 items-center gap-1">
-                <Button
-                    type="button"
-                    size="xs"
-                    variant={mode === "include" ? "default" : "outline"}
-                    className="h-7 px-2"
-                    onClick={() => {
-                        onSetMode("include");
-                    }}
-                >
-                    Has
-                </Button>
-                <Button
-                    type="button"
-                    size="xs"
-                    variant={mode === "exclude" ? "destructive" : "outline"}
-                    className={cn(
-                        "h-7 px-2",
-                        mode === "exclude" && "text-destructive-foreground",
-                    )}
-                    onClick={() => {
-                        onSetMode("exclude");
-                    }}
-                >
-                    Not
-                </Button>
-            </div>
+            <ModeButtons mode={mode} onChange={onSetMode} />
             <Button
                 type="button"
                 variant="ghost"
@@ -209,12 +87,7 @@ const FilterNodeRow = memo(function FilterNodeRow({
     filter,
     selectedIds,
     onToggleSelect,
-    onRemove,
-    onSetClauseMode,
-    onSetClauseInGroup,
-    onSetKitInGroup,
-    onSetGroupOp,
-    onUngroup,
+    actions,
 }: NodeRowProps): JSX.Element {
     if (isTagFilterClause(node)) {
         return (
@@ -225,8 +98,8 @@ const FilterNodeRow = memo(function FilterNodeRow({
                 removeLabel={`Remove ${node.tag}`}
                 mode={node.mode}
                 onToggleSelect={() => onToggleSelect(node.id)}
-                onSetMode={(mode) => onSetClauseMode(node.id, mode)}
-                onRemove={() => onRemove(node.id)}
+                onSetMode={(mode) => actions.setClauseMode(node.id, mode)}
+                onRemove={() => actions.removeNode(node.id)}
             >
                 {node.tag}
             </FilterLeafRow>
@@ -242,8 +115,8 @@ const FilterNodeRow = memo(function FilterNodeRow({
                 removeLabel={`Remove kit ${node.name}`}
                 mode={node.mode}
                 onToggleSelect={() => onToggleSelect(node.id)}
-                onSetMode={(mode) => onSetClauseMode(node.id, mode)}
-                onRemove={() => onRemove(node.id)}
+                onSetMode={(mode) => actions.setClauseMode(node.id, mode)}
+                onRemove={() => actions.removeNode(node.id)}
             >
                 <span className="font-medium">{node.name}</span>
                 <span className="block truncate text-xs text-muted-foreground">
@@ -272,14 +145,14 @@ const FilterNodeRow = memo(function FilterNodeRow({
                 <MatchJoinToggle
                     value={node.op}
                     onChange={(op) => {
-                        onSetGroupOp(node.id, op);
+                        actions.setGroupOp(node.id, op);
                     }}
                 />
                 <TagClausePicker
                     filter={filter}
                     targetGroupId={node.id}
-                    onSetClauseInGroup={onSetClauseInGroup}
-                    onSetKitInGroup={onSetKitInGroup}
+                    onSetClauseInGroup={actions.setClauseInGroup}
+                    onSetKitInGroup={actions.setKitInGroup}
                     triggerLabel="Add tag"
                     triggerVariant="ghost"
                     triggerSize="xs"
@@ -290,7 +163,7 @@ const FilterNodeRow = memo(function FilterNodeRow({
                     size="xs"
                     className="ml-auto"
                     onClick={() => {
-                        onUngroup(node.id);
+                        actions.ungroup(node.id);
                     }}
                 >
                     Ungroup
@@ -305,12 +178,7 @@ const FilterNodeRow = memo(function FilterNodeRow({
                         filter={filter}
                         selectedIds={selectedIds}
                         onToggleSelect={onToggleSelect}
-                        onRemove={onRemove}
-                        onSetClauseMode={onSetClauseMode}
-                        onSetClauseInGroup={onSetClauseInGroup}
-                        onSetKitInGroup={onSetKitInGroup}
-                        onSetGroupOp={onSetGroupOp}
-                        onUngroup={onUngroup}
+                        actions={actions}
                     />
                 ))}
             </ul>
@@ -324,12 +192,7 @@ function RootGroupSection({
     selectedIds,
     emptyHint,
     onToggleSelect,
-    onRemove,
-    onSetClauseMode,
-    onSetClauseInGroup,
-    onSetKitInGroup,
-    onSetGroupOp,
-    onUngroup,
+    actions,
 }: {
     group: TagFilterGroup;
     emptyHint: string;
@@ -343,8 +206,8 @@ function RootGroupSection({
                 <TagClausePicker
                     filter={filter}
                     targetGroupId={group.id}
-                    onSetClauseInGroup={onSetClauseInGroup}
-                    onSetKitInGroup={onSetKitInGroup}
+                    onSetClauseInGroup={actions.setClauseInGroup}
+                    onSetKitInGroup={actions.setKitInGroup}
                     triggerLabel="Add tag"
                     triggerSize="sm"
                 />
@@ -361,14 +224,14 @@ function RootGroupSection({
                 <MatchJoinToggle
                     value={group.op}
                     onChange={(op) => {
-                        onSetGroupOp(group.id, op);
+                        actions.setGroupOp(group.id, op);
                     }}
                 />
                 <TagClausePicker
                     filter={filter}
                     targetGroupId={group.id}
-                    onSetClauseInGroup={onSetClauseInGroup}
-                    onSetKitInGroup={onSetKitInGroup}
+                    onSetClauseInGroup={actions.setClauseInGroup}
+                    onSetKitInGroup={actions.setKitInGroup}
                     triggerLabel="Add tag"
                     triggerVariant="ghost"
                     triggerSize="xs"
@@ -383,12 +246,7 @@ function RootGroupSection({
                         filter={filter}
                         selectedIds={selectedIds}
                         onToggleSelect={onToggleSelect}
-                        onRemove={onRemove}
-                        onSetClauseMode={onSetClauseMode}
-                        onSetClauseInGroup={onSetClauseInGroup}
-                        onSetKitInGroup={onSetKitInGroup}
-                        onSetGroupOp={onSetGroupOp}
-                        onUngroup={onUngroup}
+                        actions={actions}
                     />
                 ))}
             </ul>
@@ -402,20 +260,13 @@ function RootGroupSection({
 export function TagQueryEditor({
     filter,
     actions,
-    taggedCount,
-    untaggedCount,
-    favoritesCount,
-    notFavoritesCount,
-    photoCount,
-    videoCount,
-    croppedCount,
-    notCroppedCount,
+    counts,
     emptyHint = "No tag steps yet. Add tags below, then group steps with AND, OR, or ONLY.",
 }: TagQueryEditorProps): JSX.Element {
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [wrapGroupOp, setWrapGroupOp] = useState<TagFilterJoin>("and");
 
-    const selectedList = [...selectedIds];
+    const selectedList = useMemo((): string[] => [...selectedIds], [selectedIds]);
 
     const handleToggleSelect = (nodeId: string): void => {
         setSelectedIds((prev) => {
@@ -440,25 +291,10 @@ export function TagQueryEditor({
     return (
         <div className="flex flex-col gap-3">
             <div className="flex shrink-0 flex-wrap gap-2">
-                <TagScopeFilterDropdown
-                    taggedCount={taggedCount}
-                    untaggedCount={untaggedCount}
-                    favoritesCount={favoritesCount}
-                    notFavoritesCount={notFavoritesCount}
-                    photoCount={photoCount}
-                    videoCount={videoCount}
-                    croppedCount={croppedCount}
-                    notCroppedCount={notCroppedCount}
-                    tagScope={filter.tagScope}
-                    onTagScopeChange={actions.setTagScope}
-                    favoritesScope={filter.favoritesScope}
-                    onFavoritesScopeChange={actions.setFavoritesScope}
-                    mediaScope={filter.mediaScope}
-                    onMediaScopeChange={actions.setMediaScope}
-                    croppedScope={filter.croppedScope}
-                    onCroppedScopeChange={actions.setCroppedScope}
-                    rotatedScope={filter.rotatedScope}
-                    onRotatedScopeChange={actions.setRotatedScope}
+                <ScopeFilterMenu
+                    filter={filter}
+                    setScope={actions.setScope}
+                    counts={counts}
                 />
             </div>
 
@@ -468,12 +304,7 @@ export function TagQueryEditor({
                 selectedIds={selectedIds}
                 emptyHint={emptyHint}
                 onToggleSelect={handleToggleSelect}
-                onRemove={actions.removeNode}
-                onSetClauseMode={actions.setClauseMode}
-                onSetClauseInGroup={actions.setClauseInGroup}
-                onSetKitInGroup={actions.setKitInGroup}
-                onSetGroupOp={actions.setGroupOp}
-                onUngroup={actions.ungroup}
+                actions={actions}
             />
 
             {selectedList.length >= 2 ? (

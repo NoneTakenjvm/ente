@@ -5,8 +5,8 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { TagClausePicker } from "@/components/TagClausePicker";
-import { TagQueryEditor } from "@/components/TagQueryEditor";
+import { TagFilterEditor } from "@/components/TagFilterEditor";
+import { useScopeCounts } from "@/hooks/use-scope-counts";
 import { useTagFilterDraft } from "@/hooks/use-tag-filter-draft";
 import {
     resolveAlbumCoverFile,
@@ -16,21 +16,13 @@ import { queryAlbumFilter, type QueryAlbum } from "@/lib/query-albums";
 import { dedupeFilesById } from "@/lib/sync/merge-files";
 import { sortFilesByUpload } from "@/lib/sort-files";
 import {
-    countFavoritesInCandidates,
-    countFileKindsInCandidates,
-    countTaggedInCandidates,
-    countUntaggedInCandidates,
-    describeTagFilter,
     emptyTagFilter,
     filterFilesByTags,
-    GROUPED_TAG_FILTER_DROPDOWN_HINT,
-    isFlatTagFilterRoot,
 } from "@/lib/tag-filter";
 import { useAlbumStore } from "@/stores/album-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useTagStore } from "@/stores/tag-store";
-import { plural } from "@/lib/format";
 
 interface AlbumEditorPanelProps {
     album: QueryAlbum | undefined;
@@ -67,11 +59,6 @@ export function AlbumEditorPanel({
         [allFiles],
     );
 
-    const libraryFileIds = useMemo(
-        (): Set<number> => new Set(libraryFiles.map((file) => file.id)),
-        [libraryFiles],
-    );
-
     const matchFiles = useMemo(
         () =>
             filterFilesByTags(
@@ -104,40 +91,7 @@ export function AlbumEditorPanel({
         [matchFiles, previewAlbum],
     );
 
-    // Same candidates and filter as matchFiles, so no second match pass.
-    const matchCount = matchFiles.length;
-
-    const taggedCount = useMemo(
-        () =>
-            countTaggedInCandidates(
-                libraryFileIds,
-                fileIdsByTag,
-                includeInEffectsPresenceByName,
-            ),
-        [includeInEffectsPresenceByName, libraryFileIds, fileIdsByTag],
-    );
-
-    const untaggedCount = useMemo(
-        () =>
-            countUntaggedInCandidates(
-                libraryFileIds,
-                fileIdsByTag,
-                includeInEffectsPresenceByName,
-            ),
-        [includeInEffectsPresenceByName, libraryFileIds, fileIdsByTag],
-    );
-
-    const favoritesCount = useMemo(
-        () => countFavoritesInCandidates(libraryFileIds, favoriteFileIds),
-        [favoriteFileIds, libraryFileIds],
-    );
-
-    const notFavoritesCount = libraryFileIds.size - favoritesCount;
-
-    const { photos, videos, cropped, notCropped } = useMemo(
-        () => countFileKindsInCandidates(libraryFileIds, libraryFiles),
-        [libraryFileIds, libraryFiles],
-    );
+    const counts = useScopeCounts(libraryFiles);
 
     const handleSubmit = (event: FormEvent): void => {
         event.preventDefault();
@@ -202,46 +156,14 @@ export function AlbumEditorPanel({
                 </div>
             </div>
 
-            <div className="flex flex-col gap-1">
-                <div className="flex flex-wrap items-center gap-2">
-                    <TagClausePicker
-                        filter={filter}
-                        onSetTagFilterMode={actions.setTagFilterMode}
-                        onSetKitMode={actions.setKitMode}
-                        onSetRootOp={(op) => {
-                            actions.setGroupOp(filter.root.id, op);
-                        }}
-                        disabled={!isFlatTagFilterRoot(filter.root)}
-                    />
-                    <span className="text-xs text-muted-foreground">
-                        {plural(matchCount, "photo")} match
-                    </span>
-                </div>
-                {!isFlatTagFilterRoot(filter.root) ? (
-                    <p className="text-xs text-muted-foreground">
-                        {GROUPED_TAG_FILTER_DROPDOWN_HINT}
-                    </p>
-                ) : null}
-            </div>
-
-            <div className="rounded-lg border border-border/60 p-3">
-                <TagQueryEditor
-                    filter={filter}
-                    actions={actions}
-                    taggedCount={taggedCount}
-                    untaggedCount={untaggedCount}
-                    favoritesCount={favoritesCount}
-                    notFavoritesCount={notFavoritesCount}
-                    photoCount={photos}
-                    videoCount={videos}
-                    croppedCount={cropped}
-                    notCroppedCount={notCropped}
-                />
-            </div>
-
-            <p className="text-xs text-muted-foreground">
-                {describeTagFilter(filter) || "All photos in your library"}
-            </p>
+            <TagFilterEditor
+                filter={filter}
+                actions={actions}
+                counts={counts}
+                emptyDescription="All photos in your library"
+                matchCount={matchFiles.length}
+                className="gap-4"
+            />
 
             <div className="mt-auto flex flex-col gap-2 border-t border-border pt-4">
                 <Button type="submit" disabled={!name.trim()}>

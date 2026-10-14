@@ -1,5 +1,6 @@
 import { useMemo, useState, type JSX, type WheelEvent } from "react";
 import { Tags } from "lucide-react";
+import { MatchJoinToggle, ModeButtons } from "@/components/TagFilterControls";
 import { TagTypeTabBar } from "@/components/TagTypeTabBar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,7 +11,6 @@ import {
     DropdownMenuLabel,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
     ALL_TAG_TYPES_TAB,
     tagsForTypeView,
@@ -37,13 +37,9 @@ import {
     type TagFilterMode,
     type TagFilterSelection,
 } from "@/lib/tag-filter";
-import { cn } from "@/lib/utils";
 import { useLibraryStore } from "@/stores/library-store";
 import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
-
-const isTagFilterJoin = (value: unknown): value is TagFilterJoin =>
-    value === "and" || value === "or" || value === "only";
 
 interface TagClausePickerProps {
     filter: TagFilterSelection;
@@ -73,54 +69,6 @@ interface TagClausePickerProps {
 
 const ONLY_MODE_NOT_TITLE =
     "Not is unavailable in ONLY mode — exact tag set only";
-
-/** Has / Not buttons; pressing the active one clears the mode. */
-function ModeButtons({
-    mode,
-    notDisabled,
-    hasTitle,
-    notTitle,
-    onChange,
-}: {
-    mode: TagFilterMode | null;
-    notDisabled: boolean;
-    hasTitle?: string;
-    notTitle?: string;
-    onChange: (mode: TagFilterMode | null) => void;
-}): JSX.Element {
-    return (
-        <div className="flex shrink-0 items-center gap-1">
-            <Button
-                type="button"
-                size="xs"
-                variant={mode === "include" ? "default" : "outline"}
-                className="h-7 px-2"
-                title={hasTitle}
-                onClick={() => {
-                    onChange(mode === "include" ? null : "include");
-                }}
-            >
-                Has
-            </Button>
-            <Button
-                type="button"
-                size="xs"
-                variant={mode === "exclude" ? "destructive" : "outline"}
-                className={cn(
-                    "h-7 px-2",
-                    mode === "exclude" && "text-destructive-foreground",
-                )}
-                disabled={notDisabled}
-                title={notTitle}
-                onClick={() => {
-                    onChange(mode === "exclude" ? null : "exclude");
-                }}
-            >
-                Not
-            </Button>
-        </div>
-    );
-}
 
 /**
  * Dropdown to add include/exclude tag clauses or kit units at the root or
@@ -276,42 +224,10 @@ export function TagClausePicker({
                             <span className="text-xs text-muted-foreground">
                                 Match
                             </span>
-                            <ToggleGroup
-                                value={[filter.root.op]}
-                                spacing={0}
-                                size="sm"
-                                onValueChange={(next) => {
-                                    const value = Array.isArray(next) ?
-                                        next[0] :
-                                        next;
-                                    if (isTagFilterJoin(value)) {
-                                        onSetRootOp(value);
-                                    }
-                                }}
-                            >
-                                <ToggleGroupItem
-                                    value="and"
-                                    size="sm"
-                                    className="h-7 px-2.5 text-xs"
-                                >
-                                    AND
-                                </ToggleGroupItem>
-                                <ToggleGroupItem
-                                    value="or"
-                                    size="sm"
-                                    className="h-7 px-2.5 text-xs"
-                                >
-                                    OR
-                                </ToggleGroupItem>
-                                <ToggleGroupItem
-                                    value="only"
-                                    size="sm"
-                                    className="h-7 px-2.5 text-xs"
-                                    title="Photos whose tags are exactly the selected Has tags"
-                                >
-                                    ONLY
-                                </ToggleGroupItem>
-                            </ToggleGroup>
+                            <MatchJoinToggle
+                                value={filter.root.op}
+                                onChange={onSetRootOp}
+                            />
                         </div>
                     ) : null}
                     <TagTypeTabBar
@@ -364,10 +280,12 @@ export function TagClausePicker({
                                                         ONLY_MODE_NOT_TITLE :
                                                         "Not this kit (missing at least one tag)"
                                                 }
-                                                onChange={(nextMode) => {
+                                                onChange={(pressed) => {
                                                     handleKitModeChange(
                                                         preset,
-                                                        nextMode,
+                                                        pressed === mode ?
+                                                            null :
+                                                            pressed,
                                                     );
                                                 }}
                                             />
@@ -410,8 +328,13 @@ export function TagClausePicker({
                                                     ONLY_MODE_NOT_TITLE :
                                                     undefined
                                             }
-                                            onChange={(nextMode) => {
-                                                handleModeChange(tag, nextMode);
+                                            onChange={(pressed) => {
+                                                handleModeChange(
+                                                    tag,
+                                                    pressed === mode ?
+                                                        null :
+                                                        pressed,
+                                                );
                                             }}
                                         />
                                     </li>

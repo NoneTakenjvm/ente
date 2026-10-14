@@ -7,12 +7,15 @@ import {
     loadPhashMeta,
 } from "@/db/kv";
 import { getSessionCacheKey } from "@/lib/cache-key";
+import { fileByteSize } from "@/lib/compress";
+import { persistQualityIndex } from "@/lib/quality-index";
 import {
     getDecryptedThumbnailBytes,
     isThumbnailCachedLocally,
 } from "@/lib/thumbnail-bytes";
 import { waitWhileGalleryScrolling } from "@/lib/gallery-scroll-activity";
 import {
+    eligibleImageFiles,
     runWithConcurrency,
     waitIfPaused,
     workerCount,
@@ -25,56 +28,63 @@ import type {
 } from "@/lib/similarity-stage1-core";
 import type { ReadonlyEmbeddingMap } from "@/lib/kit-embedding";
 import type {
+    AnalyzeThumbnailRequest,
+    AnalyzeThumbnailResponse,
     CropCheckBatchMessage,
     CropCheckBatchResult,
     PhashWorkerOutbound,
-    PhashWorkerRequest,
-    PhashWorkerResponse,
+    QualityScoreInputs,
     Stage1Message,
 } from "@/workers/phash-worker-types";
 import { registerReset } from "@/lib/session-lifecycle";
 import { createWorkerClient } from "@/lib/worker-client";
 
-export interface PhashJobOptions {
-    /** Every file the index should cover; entries for other ids are dropped. */
+export interface ThumbnailAnalysisOptions {
+    /** Library files; only owned, non-archived stills are analysed. */
     files: EnteFile[];
-    entries: Map<number, PhashEntry>;
+    userId: number;
+    phashEntries: Map<number, PhashEntry>;
+    qualityEntries: Map<number, number>;
     onProgress?: (current: number, total: number) => void;
     shouldPause?: () => boolean;
     signal?: AbortSignal;
 }
 
-/** Shared hash / crop-check pool. */
+export interface ThumbnailAnalysisResult {
+    phashEntries: Map<number, PhashEntry>;
+    qualityEntries: Map<number, number>;
+}
+
+/** Shared thumbnail-analysis / crop-check pool. */
 const phashWorkers = createWorkerClient<
-    PhashWorkerRequest | CropCheckBatchMessage,
-    PhashWorkerResponse | CropCheckBatchResult
+    AnalyzeThumbnailRequest | CropCheckBatchMessage,
+    AnalyzeThumbnailResponse | CropCheckBatchResult
 >({
     createWorker: () =>
         new Worker(new URL("../workers/phash.worker.ts", import.meta.url)),
     poolSize: workerCount(),
 });
 
-const hashBytesInWorker = async (
+/** Decode `bytes` once in a worker and compute only the requested signals. */
+const analyzeThumbnailInWorker = async (
     fileId: number,
     bytes: Uint8Array,
-): Promise<PhashEntry> => {
+    needsPhash: boolean,
+    quality: QualityScoreInputs | undefined,
+): Promise<AnalyzeThumbnailResponse> => {
     // Thumbnail bytes are a fresh decrypt per call, so hand the buffer over.
-    const response = (await phashWorkers.request({ kind: "hash", fileId, bytes }, [
-        bytes.buffer as ArrayBuffer,
-    ])) as PhashWorkerResponse;
+    const response = (await phashWorkers.request(
+        { kind: "analyze-thumbnail", fileId, bytes, needsPhash, quality },
+        [bytes.buffer as ArrayBuffer],
+    )) as AnalyzeThumbnailResponse;
     if (
         response.error ||
-        !response.hashes ||
-        !response.color ||
-        !response.grid
+        (needsPhash && !response.phashEntry) ||
+        (quality && response.qualityScore === undefined)
     ) {
-        throw new Error(response.error ?? "Hash failed");
+        throw new Error(response.error ?? "Thumbnail analysis failed");
     }
-    return {
-        hashes: response.hashes,
-        color: response.color,
-        grid: response.grid,
-    };
+    return response;
 };
 
 export type CropBatchEntry = { color: string; grid: string };
@@ -184,49 +194,71 @@ const cacheCheckConcurrency = 32;
 const cachedThumbnailConcurrency = 32;
 const networkThumbnailConcurrency = 8;
 
+/** Eligible stills missing from the phash index, the quality index, or both. */
+export const filesNeedingAnalysis = (
+    files: readonly EnteFile[],
+    userId: number,
+    phashEntries: ReadonlyMap<number, PhashEntry>,
+    qualityEntries: ReadonlyMap<number, number>,
+): EnteFile[] =>
+    eligibleImageFiles(files, userId).filter(
+        (file) => !phashEntries.has(file.id) || !qualityEntries.has(file.id),
+    );
+
 /**
- * Compute dHash + crop signals for image files missing from the index,
- * persisting new entries in small encrypted chunks. Entries for files not in
- * `files` (deleted, archived, or no longer owned) are dropped.
+ * Decode each eligible thumbnail once and fill in whichever of its dHash +
+ * crop signals and quality score are missing. The two indexes stay persisted
+ * and versioned separately, so a file missing only one signal does not
+ * recompute the other. New hashes are persisted in small encrypted chunks and
+ * quality scores as a whole index, both incrementally. Phash entries for
+ * files no longer eligible (deleted, archived, or not owned) are dropped.
  */
-export const runPhashJob = async (
-    options: PhashJobOptions,
-): Promise<Map<number, PhashEntry>> => {
+export const runThumbnailAnalysisJob = async (
+    options: ThumbnailAnalysisOptions,
+): Promise<ThumbnailAnalysisResult> => {
     const cacheKey = getSessionCacheKey();
-    const liveIds = new Set(options.files.map((file) => file.id));
-    const entries = new Map<number, PhashEntry>();
+    const liveIds = new Set(
+        eligibleImageFiles(options.files, options.userId).map(
+            (file) => file.id,
+        ),
+    );
+    const phashEntries = new Map<number, PhashEntry>();
     const prunedIds: number[] = [];
-    for (const [fileId, entry] of options.entries) {
+    for (const [fileId, entry] of options.phashEntries) {
         if (liveIds.has(fileId)) {
-            entries.set(fileId, entry);
+            phashEntries.set(fileId, entry);
         } else {
             prunedIds.push(fileId);
         }
     }
+    const qualityEntries = new Map(options.qualityEntries);
 
     const meta = await loadPhashMeta(cacheKey);
-    const compactedChunkCount = Math.ceil(entries.size / compactChunkSize);
+    const compactedChunkCount = Math.ceil(phashEntries.size / compactChunkSize);
     if (
         !meta ||
         meta.nextChunkId > 2 * compactedChunkCount + maxExtraChunks
     ) {
-        const snapshot = new Map(entries);
+        const snapshot = new Map(phashEntries);
         void queuePhashWrite(() => rewritePhashChunks(snapshot, cacheKey));
     } else if (prunedIds.length > 0) {
         const removals = new Map(prunedIds.map((id) => [id, null] as const));
         void queuePhashWrite(() => appendPhashChunk(removals, cacheKey));
     }
 
-    const candidates = options.files
-        .filter((file) => !entries.has(file.id))
-        .sort((a, b) => a.id - b.id);
+    const candidates = filesNeedingAnalysis(
+        options.files,
+        options.userId,
+        phashEntries,
+        qualityEntries,
+    ).sort((a, b) => a.id - b.id);
 
     const total = candidates.length;
     let completed = 0;
 
     if (total === 0) {
         await phashWriteChain;
-        return entries;
+        return { phashEntries, qualityEntries };
     }
 
     const cachedFiles: EnteFile[] = [];
@@ -240,19 +272,32 @@ export const runPhashJob = async (
         }
     });
 
-    const pending = new Map<number, PhashEntry>();
-    const flushPending = (): void => {
-        const chunk = new Map(pending);
-        pending.clear();
+    const pendingPhash = new Map<number, PhashEntry>();
+    const flushPendingPhash = (): void => {
+        const chunk = new Map(pendingPhash);
+        pendingPhash.clear();
         void queuePhashWrite(() => appendPhashChunk(chunk, cacheKey));
+    };
+    let qualityScoresSincePersist = 0;
+    let qualityDirty = false;
+    let qualityPersistChain = Promise.resolve();
+    const persistQuality = (): Promise<void> => {
+        qualityScoresSincePersist = 0;
+        qualityPersistChain = qualityPersistChain
+            .then(() => persistQualityIndex(qualityEntries))
+            .catch((error: unknown) => {
+                console.warn("Image quality index persist failed", error);
+            });
+        return qualityPersistChain;
     };
 
     // Workers decode concurrently (their handler awaits `createImageBitmap`),
-    // so every posted hash holds a bitmap and canvas until it finishes. Cap
-    // the in-flight count; fetched thumbnails wait here as small byte buffers.
-    const maxInFlightHashes = 2 * workerCount();
-    let inFlightHashes = 0;
-    const hashSlotWaiters: Array<() => void> = [];
+    // so every posted analysis holds a bitmap and canvas until it finishes.
+    // Cap the in-flight count; fetched thumbnails wait here as small byte
+    // buffers.
+    const maxInFlightAnalyses = 2 * workerCount();
+    let inFlightAnalyses = 0;
+    const slotWaiters: Array<() => void> = [];
 
     const processOne = async (file: EnteFile): Promise<void> => {
         if (options.signal?.aborted) {
@@ -268,27 +313,44 @@ export const runPhashJob = async (
 
         const bytes = await getDecryptedThumbnailBytes(file);
         if (bytes) {
-            while (inFlightHashes >= maxInFlightHashes) {
+            while (inFlightAnalyses >= maxInFlightAnalyses) {
                 await new Promise<void>((resolve) => {
-                    hashSlotWaiters.push(resolve);
+                    slotWaiters.push(resolve);
                 });
             }
             if (options.signal?.aborted) {
                 return;
             }
-            inFlightHashes += 1;
+            inFlightAnalyses += 1;
             try {
-                const entry = await hashBytesInWorker(file.id, bytes);
-                entries.set(file.id, entry);
-                pending.set(file.id, entry);
-                if (pending.size >= flushEvery) {
-                    flushPending();
+                const response = await analyzeThumbnailInWorker(
+                    file.id,
+                    bytes,
+                    !phashEntries.has(file.id),
+                    qualityEntries.has(file.id) ?
+                        undefined :
+                        qualityScoreInputs(file),
+                );
+                if (response.phashEntry) {
+                    phashEntries.set(file.id, response.phashEntry);
+                    pendingPhash.set(file.id, response.phashEntry);
+                    if (pendingPhash.size >= flushEvery) {
+                        flushPendingPhash();
+                    }
+                }
+                if (response.qualityScore !== undefined) {
+                    qualityEntries.set(file.id, response.qualityScore);
+                    qualityDirty = true;
+                    qualityScoresSincePersist += 1;
+                    if (qualityScoresSincePersist >= flushEvery) {
+                        await persistQuality();
+                    }
                 }
             } catch {
-                // Skip files we cannot hash.
+                // Skip files we cannot analyse.
             } finally {
-                inFlightHashes -= 1;
-                hashSlotWaiters.shift()?.();
+                inFlightAnalyses -= 1;
+                slotWaiters.shift()?.();
             }
         }
 
@@ -301,15 +363,18 @@ export const runPhashJob = async (
         runWithConcurrency(networkFiles, networkThumbnailConcurrency, processOne),
     ]);
 
-    if (pending.size > 0) {
-        flushPending();
+    if (pendingPhash.size > 0) {
+        flushPendingPhash();
+    }
+    if (qualityDirty) {
+        await persistQuality();
     }
     await phashWriteChain;
-    return entries;
+    return { phashEntries, qualityEntries };
 };
 
 /**
- * Terminate the shared hash / crop-check pool. Requests still in flight
+ * Terminate the shared thumbnail-analysis / crop-check pool. Requests still in flight
  * reject so their callers (and the job's in-flight cap) settle.
  */
 export const terminatePhashWorker = (): void => {
@@ -496,6 +561,16 @@ const packStage1Embeddings = (
         fileIds[row] = fileId;
     });
     return { vectors, fileIds, dims };
+};
+
+/** Original dimensions and size the quality score compares the thumbnail against. */
+const qualityScoreInputs = (file: EnteFile): QualityScoreInputs => {
+    const data = file.pubMagicMetadata?.data;
+    return {
+        originalWidth: typeof data?.w === "number" ? data.w : 0,
+        originalHeight: typeof data?.h === "number" ? data.h : 0,
+        fileBytes: fileByteSize(file),
+    };
 };
 
 registerReset(terminatePhashWorker);

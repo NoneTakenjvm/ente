@@ -24,29 +24,10 @@ import {
     isTagFilterActive,
     isReservedTag,
     type TagFilterGroup,
-    type TagFilterJoin,
-    type TagFilterMode,
     type TagFilterSelection,
-    type TagScope,
 } from "@/lib/tag-filter";
 import { normalizeTagName } from "@/lib/tag-writes";
-import {
-    removeTagFilterNode,
-    removeTagFromTree,
-    renameTagInTree,
-    setClauseInGroupOnFilter,
-    setClauseModeOnFilter,
-    setKitInGroupOnFilter,
-    setKitModeOnFilter,
-    setTagFilterGroupOp,
-    setTagFilterModeOnFilter,
-    setTagFilterScope,
-    setTagFilterScopes,
-    ungroupTagFilterNode,
-    wrapTagFilterNodesInGroup,
-    type KitFilterInput,
-    type TagFilterScopePatch,
-} from "@/lib/tag-filter-mutations";
+import { removeTagFromTree, renameTagInTree } from "@/lib/tag-filter-mutations";
 
 import type { EnteFile } from "ente-media/file";
 
@@ -71,49 +52,11 @@ interface TagState {
     hydrateTagTypes: (config: PersistedTagTypeConfig | undefined) => void;
     hydrateRegisteredTags: (names: string[] | undefined) => void;
     rebuildFromFiles: (files: EnteFile[]) => void;
-    setTagScope: (scope: TagScope, target?: TagFilterTarget) => void;
-    /** Set the favourites, media, crop or rotate scopes in one step. */
-    patchFilter: (patch: TagFilterScopePatch, target?: TagFilterTarget) => void;
-    setTagFilterMode: (
-        tag: string,
-        mode: TagFilterMode | null,
-        target?: TagFilterTarget,
+    /** Apply {@link update} to the gallery or album-view filter. */
+    updateTagFilter: (
+        target: TagFilterTarget,
+        update: (filter: TagFilterSelection) => TagFilterSelection,
     ) => void;
-    setClauseMode: (
-        clauseId: string,
-        mode: TagFilterMode,
-        target?: TagFilterTarget,
-    ) => void;
-    setClauseInGroup: (
-        groupId: string,
-        tag: string,
-        mode: TagFilterMode | null,
-        target?: TagFilterTarget,
-    ) => void;
-    setKitMode: (
-        kit: KitFilterInput,
-        mode: TagFilterMode | null,
-        target?: TagFilterTarget,
-    ) => void;
-    setKitInGroup: (
-        groupId: string,
-        kit: KitFilterInput,
-        mode: TagFilterMode | null,
-        target?: TagFilterTarget,
-    ) => void;
-    setGroupOp: (
-        groupId: string,
-        op: TagFilterJoin,
-        target?: TagFilterTarget,
-    ) => void;
-    wrapInGroup: (
-        nodeIds: string[],
-        op: TagFilterJoin,
-        target?: TagFilterTarget,
-    ) => void;
-    ungroup: (groupId: string, target?: TagFilterTarget) => void;
-    removeNode: (nodeId: string, target?: TagFilterTarget) => void;
-    clearFilters: (target?: TagFilterTarget) => void;
     clearAlbumViewFilter: () => void;
     ensureTagType: (typeName: string) => void;
     setTagType: (tagName: string, typeName: string) => void;
@@ -176,15 +119,6 @@ const patchFilterForTarget = (
     target === "gallery" ?
         { tagFilter: filter } :
         { albumViewFilter: filter };
-
-const updateTagFilter = (
-    set: (partial: Partial<TagState>) => void,
-    get: () => TagState,
-    target: TagFilterTarget,
-    update: (filter: TagFilterSelection) => TagFilterSelection,
-): void => {
-    set(patchFilterForTarget(target, update(filterForTarget(get(), target))));
-};
 
 const indexFromMaps = (
     tags: string[],
@@ -680,127 +614,11 @@ const createTagStore: StateCreator<TagState> = (set, get) => ({
         persistCurrentIndexNow(merged.tags, merged.fileIdsByTag);
     },
 
-    setTagScope: (scope: TagScope, target: TagFilterTarget = "gallery"): void => {
-        updateTagFilter(set, get, target, (tagFilter) =>
-            setTagFilterScope(
-                tagFilter,
-                scope,
-                get().typeConfig.includeInEffectsPresenceByName,
-            ));
-    },
-
-    patchFilter: (
-        patch: TagFilterScopePatch,
-        target: TagFilterTarget = "gallery",
+    updateTagFilter: (
+        target: TagFilterTarget,
+        update: (filter: TagFilterSelection) => TagFilterSelection,
     ): void => {
-        updateTagFilter(set, get, target, (tagFilter) =>
-            setTagFilterScopes(tagFilter, patch));
-    },
-
-    setTagFilterMode: (
-        tag: string,
-        mode: TagFilterMode | null,
-        target: TagFilterTarget = "gallery",
-    ): void => {
-        updateTagFilter(set, get, target, (tagFilter) =>
-            setTagFilterModeOnFilter(
-                tagFilter,
-                tag,
-                mode,
-                get().typeConfig.includeInEffectsPresenceByName,
-            ));
-    },
-
-    setClauseMode: (
-        clauseId: string,
-        mode: TagFilterMode,
-        target: TagFilterTarget = "gallery",
-    ): void => {
-        updateTagFilter(set, get, target, (tagFilter) =>
-            setClauseModeOnFilter(
-                tagFilter,
-                clauseId,
-                mode,
-                get().typeConfig.includeInEffectsPresenceByName,
-            ));
-    },
-
-    setClauseInGroup: (
-        groupId: string,
-        tag: string,
-        mode: TagFilterMode | null,
-        target: TagFilterTarget = "gallery",
-    ): void => {
-        updateTagFilter(set, get, target, (tagFilter) =>
-            setClauseInGroupOnFilter(
-                tagFilter,
-                groupId,
-                tag,
-                mode,
-                get().typeConfig.includeInEffectsPresenceByName,
-            ));
-    },
-
-    setKitMode: (
-        kit: KitFilterInput,
-        mode: TagFilterMode | null,
-        target: TagFilterTarget = "gallery",
-    ): void => {
-        updateTagFilter(set, get, target, (tagFilter) =>
-            setKitModeOnFilter(
-                tagFilter,
-                kit,
-                mode,
-                get().typeConfig.includeInEffectsPresenceByName,
-            ));
-    },
-
-    setKitInGroup: (
-        groupId: string,
-        kit: KitFilterInput,
-        mode: TagFilterMode | null,
-        target: TagFilterTarget = "gallery",
-    ): void => {
-        updateTagFilter(set, get, target, (tagFilter) =>
-            setKitInGroupOnFilter(
-                tagFilter,
-                groupId,
-                kit,
-                mode,
-                get().typeConfig.includeInEffectsPresenceByName,
-            ));
-    },
-
-    setGroupOp: (
-        groupId: string,
-        op: TagFilterJoin,
-        target: TagFilterTarget = "gallery",
-    ): void => {
-        updateTagFilter(set, get, target, (tagFilter) =>
-            setTagFilterGroupOp(tagFilter, groupId, op));
-    },
-
-    wrapInGroup: (
-        nodeIds: string[],
-        op: TagFilterJoin,
-        target: TagFilterTarget = "gallery",
-    ): void => {
-        updateTagFilter(set, get, target, (tagFilter) =>
-            wrapTagFilterNodesInGroup(tagFilter, nodeIds, op));
-    },
-
-    ungroup: (groupId: string, target: TagFilterTarget = "gallery"): void => {
-        updateTagFilter(set, get, target, (tagFilter) =>
-            ungroupTagFilterNode(tagFilter, groupId));
-    },
-
-    removeNode: (nodeId: string, target: TagFilterTarget = "gallery"): void => {
-        updateTagFilter(set, get, target, (tagFilter) =>
-            removeTagFilterNode(tagFilter, nodeId));
-    },
-
-    clearFilters: (target: TagFilterTarget = "gallery"): void => {
-        set(patchFilterForTarget(target, emptyTagFilter()));
+        set(patchFilterForTarget(target, update(filterForTarget(get(), target))));
     },
 
     clearAlbumViewFilter: (): void => {

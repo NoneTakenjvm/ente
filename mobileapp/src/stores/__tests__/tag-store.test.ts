@@ -6,6 +6,7 @@ vi.mock("@/lib/organizer-config-save-queue", () => ({
 }));
 
 import { enqueueOrganizerConfigPatch } from "@/lib/organizer-config-save-queue";
+import { setTagFilterModeOnFilter } from "@/lib/tag-filter-mutations";
 import { useTagStore } from "../tag-store";
 
 const seed = (options: {
@@ -53,7 +54,8 @@ describe("applyTagRename", () => {
             tagTypeByName: { old: "genre" },
             kitNearness: ["old"],
         });
-        useTagStore.getState().setTagFilterMode("old", "include");
+        useTagStore.getState().updateTagFilter("gallery", (filter) =>
+            setTagFilterModeOnFilter(filter, "old", "include"));
         useTagStore.getState().applyTagRename("old", "fresh");
 
         const state = useTagStore.getState();
@@ -147,7 +149,8 @@ describe("applyTagDelete", () => {
             effectsExcluded: ["doomed"],
             registered: ["doomed"],
         });
-        useTagStore.getState().setTagFilterMode("doomed", "include");
+        useTagStore.getState().updateTagFilter("gallery", (filter) =>
+            setTagFilterModeOnFilter(filter, "doomed", "include"));
         useTagStore.getState().applyTagDelete("doomed");
 
         const state = useTagStore.getState();
@@ -183,7 +186,8 @@ describe("applyTagMerge", () => {
 
     it("removes source clauses from the filter", () => {
         seed({ fileIdsByTag: { a: [1], target: [3] } });
-        useTagStore.getState().setTagFilterMode("a", "include");
+        useTagStore.getState().updateTagFilter("gallery", (filter) =>
+            setTagFilterModeOnFilter(filter, "a", "include"));
         useTagStore.getState().applyTagMerge(["a"], "target");
 
         expect(useTagStore.getState().tagFilter.root.children).toEqual([]);

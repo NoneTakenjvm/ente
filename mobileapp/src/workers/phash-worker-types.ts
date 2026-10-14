@@ -1,25 +1,35 @@
+import type { PhashEntry } from "@/lib/crop-match";
 import type {
     Stage1FileEdge,
     Stage1Item,
     Stage1ProgressUpdate,
 } from "@/lib/similarity-stage1-core";
 
-export interface PhashWorkerRequest {
-    kind: "hash";
+/** Original-image facts the quality score needs besides the thumbnail pixels. */
+export interface QualityScoreInputs {
+    originalWidth: number;
+    originalHeight: number;
+    fileBytes: number;
+}
+
+/**
+ * Decode one thumbnail once and compute only what the caller is missing:
+ * the phash entry (`needsPhash`) and/or the quality score (`quality` present).
+ */
+export interface AnalyzeThumbnailRequest {
+    kind: "analyze-thumbnail";
     id: number;
     fileId: number;
     bytes: Uint8Array;
+    needsPhash: boolean;
+    quality?: QualityScoreInputs;
 }
 
-export interface PhashWorkerResponse {
+export interface AnalyzeThumbnailResponse {
     id: number;
     fileId: number;
-    /** The 8 rotation/mirror-variant dHash hex strings for the image (stage 1). */
-    hashes?: string[];
-    /** 64-bit color-palette signature (hex) used as the crop candidate gate. */
-    color?: string;
-    /** Base64 48x48 luminance grid used for crop template-match verification. */
-    grid?: string;
+    phashEntry?: PhashEntry;
+    qualityScore?: number;
     error?: string;
 }
 
@@ -76,13 +86,13 @@ export interface Stage1ResultMessage {
 }
 
 export type PhashWorkerInbound =
-    PhashWorkerRequest |
+    AnalyzeThumbnailRequest |
     CropCheckBatchMessage |
     Stage1Message |
     Stage1AbortMessage;
 
 export type PhashWorkerOutbound =
-    PhashWorkerResponse |
+    AnalyzeThumbnailResponse |
     CropCheckBatchResult |
     Stage1ProgressMessage |
     Stage1ResultMessage;

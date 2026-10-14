@@ -282,6 +282,14 @@ export const sortPresetsByMatchCount = (
 export const tagSetKey = (tags: string[]): string =>
     [...tags].sort((a, b) => a.localeCompare(b)).join("\0");
 
+const WORKING_SET_LIMIT = 16;
+
+/**
+ * Quick-access tag chips: the lists concatenated, de-duplicated, capped.
+ */
+export const workingSetTags = (...lists: readonly string[][]): string[] =>
+    [...new Set(lists.flat())].slice(0, WORKING_SET_LIMIT);
+
 /**
  * Display name for a suggested kit: `"beach + vietnam"`.
  */

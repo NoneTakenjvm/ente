@@ -253,7 +253,8 @@ interface FilterContext extends TagIndexContext, TagFilterOptions {
     fileById?: Map<number, EnteFile>;
 }
 
-const hasActiveScope = (filter: TagFilterSelection): boolean =>
+/** Whether any scope (tag presence, favourites, media, crop, rotate) is set. */
+export const hasActiveScope = (filter: TagFilterSelection): boolean =>
     SCOPES.some((scope) => filter[scope.key] !== "all");
 
 export const isTagFilterActive = (filter: TagFilterSelection): boolean =>

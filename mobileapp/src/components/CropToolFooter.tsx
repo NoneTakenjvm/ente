@@ -1,43 +1,36 @@
 import { useCallback, useMemo, type JSX } from "react";
 import { Crop } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
-import { getEnteCore } from "@/core";
-import { mapBatched } from "@/lib/batched";
+import { PendingBatchFooter } from "@/components/PendingBatchFooter";
 import { clampCropRect, encodeCroppedJpeg } from "@/lib/crop";
 import {
     confirmDiscardPendingCrops,
-    countPendingCrops,
     normalizedToPixelRect,
     type PendingCrop,
 } from "@/lib/crop-draft";
-import { getLocalMediaOverride } from "@/lib/local-media-overrides";
+import { loadMediaBytesForEdit } from "@/lib/load-media-bytes";
 import { useLibraryStore } from "@/stores/library-store";
 import { useSelectionStore } from "@/stores/selection-store";
-import { toast } from "sonner";
-import { plural } from "@/lib/format";
 
 const APPLY_CONCURRENCY = 2;
+const VERB = { active: "Cropping", past: "Cropped" };
+
+interface PendingCropEntry {
+    fileId: number;
+    pending: PendingCrop;
+}
 
 /**
  * Footer for quick-crop mode: draft crop boxes, then Apply crops a few at a time.
+ * A few files in flight overlaps download, encode and upload while still
+ * bounding the image and undo-history bytes held in memory.
  */
 export function CropToolFooter(): JSX.Element | null {
-    const cropActive = useSelectionStore((s) => s.mode === "crop");
     const pendingCrops = useSelectionStore((s) => s.pendingCrops);
-    const setMode = useSelectionStore((s) => s.setMode);
     const clearPendingCrops = useSelectionStore((s) => s.clearPendingCrops);
     const removePendingCrop = useSelectionStore((s) => s.removePendingCrop);
-    const setApplyBusy = useSelectionStore((s) => s.setApplyBusy);
-    const applyBusy = useSelectionStore((s) => s.applyBusy);
 
-    const pendingCount = useMemo(
-        () => countPendingCrops(pendingCrops),
-        [pendingCrops],
-    );
-
-    const pendingEntries = useMemo(
-        () =>
+    const entries = useMemo(
+        (): PendingCropEntry[] =>
             Object.entries(pendingCrops).map(([id, pending]) => ({
                 fileId: Number(id),
                 pending,
@@ -45,129 +38,34 @@ export function CropToolFooter(): JSX.Element | null {
         [pendingCrops],
     );
 
-    const exitCrop = useCallback((): void => {
-        if (applyBusy) {
-            return;
-        }
-        if (!confirmDiscardPendingCrops(pendingCrops)) {
-            return;
-        }
-        setMode("none");
-    }, [applyBusy, pendingCrops, setMode]);
+    const applyOne = useCallback(
+        async (entry: PendingCropEntry): Promise<{ finalize: Promise<unknown> }> => {
+            const result = await cropFile(entry.fileId, entry.pending);
+            // Committed and queued for retry: re-applying would crop twice.
+            removePendingCrop(entry.fileId);
+            return result;
+        },
+        [removePendingCrop],
+    );
 
-    const handleDiscard = useCallback((): void => {
-        if (applyBusy) {
-            return;
-        }
-        clearPendingCrops();
-    }, [clearPendingCrops, applyBusy]);
-
-    const handleApply = useCallback(async (): Promise<void> => {
-        if (applyBusy || pendingEntries.length === 0) {
-            return;
-        }
-        setApplyBusy(true);
-        const total = pendingEntries.length;
-        let done = 0;
-        let failed = 0;
-        const progress = toast.loading(`Cropping 0 of ${total}…`);
-        try {
-            // A few files in flight overlaps download, encode and upload while
-            // still bounding the image and undo-history bytes held in memory.
-            await mapBatched(
-                pendingEntries,
-                async (entry) => {
-                    try {
-                        const { finalize } = await cropFile(
-                            entry.fileId,
-                            entry.pending,
-                        );
-                        // Committed and queued for retry: re-applying would crop twice.
-                        removePendingCrop(entry.fileId);
-                        done += 1;
-                        toast.loading(`Cropping ${done} of ${total}…`, {
-                            id: progress,
-                        });
-                        await finalize.catch(() => undefined);
-                    } catch (error) {
-                        failed += 1;
-                        console.warn("Quick crop failed", entry.fileId, error);
-                    }
-                },
-                { concurrency: APPLY_CONCURRENCY },
-            );
-            if (failed === 0) {
-                toast.success(
-                    `Cropped ${plural(done, "photo")}`,
-                    { id: progress },
-                );
-                setMode("none");
-            } else {
-                toast.error(
-                    `Cropped ${done}, ${failed} failed — retry remaining`,
-                    { id: progress },
-                );
-            }
-        } finally {
-            setApplyBusy(false);
-        }
-    }, [
-        applyBusy,
-        pendingEntries,
-        removePendingCrop,
-        setMode,
-        setApplyBusy,
-    ]);
-
-    if (!cropActive) {
-        return null;
-    }
+    const confirmDiscard = useCallback(
+        (): boolean => confirmDiscardPendingCrops(pendingCrops),
+        [pendingCrops],
+    );
 
     return (
-        <footer className="fixed inset-x-0 bottom-0 z-30 flex flex-col gap-2 border-t border-border bg-background/95 px-3 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] backdrop-blur">
-            <div className="flex items-center justify-between gap-2">
-                <p className="flex min-w-0 items-center gap-1.5 truncate text-sm text-muted-foreground">
-                    <Crop className="size-3.5 shrink-0" />
-                    <span className="truncate">
-                        {pendingCount === 0 ?
-                            "Tap photos to add a crop box" :
-                            `${pendingCount} pending · drag to adjust`}
-                    </span>
-                </p>
-                <div className="flex shrink-0 items-center gap-1.5">
-                    <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        disabled={applyBusy || pendingCount === 0}
-                        onClick={handleDiscard}
-                    >
-                        Discard
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={applyBusy}
-                        onClick={exitCrop}
-                    >
-                        Close
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="default"
-                        size="sm"
-                        disabled={applyBusy || pendingCount === 0}
-                        onClick={() => {
-                            void handleApply();
-                        }}
-                    >
-                        {applyBusy ? <Spinner className="size-3.5" /> : null}
-                        Apply
-                    </Button>
-                </div>
-            </div>
-        </footer>
+        <PendingBatchFooter
+            mode="crop"
+            icon={<Crop className="size-3.5 shrink-0" />}
+            emptyHint="Tap photos to add a crop box"
+            pendingHint="drag to adjust"
+            verb={VERB}
+            entries={entries}
+            applyOne={applyOne}
+            concurrency={APPLY_CONCURRENCY}
+            confirmDiscard={confirmDiscard}
+            clearPending={clearPendingCrops}
+        />
     );
 }
 
@@ -180,15 +78,13 @@ const cropFile = async (
     fileId: number,
     pending: PendingCrop,
 ): Promise<{ finalize: Promise<unknown> }> => {
-    const { allFiles, cropAndReplaceFileOptimistic } =
+    const { getFileById, cropAndReplaceFileOptimistic } =
         useLibraryStore.getState();
-    const file = allFiles.find((entry) => entry.id === fileId);
+    const file = getFileById(fileId);
     if (!file) {
         throw new Error(`File ${fileId} not found`);
     }
-    const bytes =
-        getLocalMediaOverride(fileId) ??
-        (await getEnteCore().getDecryptedFile(file));
+    const bytes = await loadMediaBytesForEdit(file);
     const { toRenderableImageBlob } = await import("@/lib/renderable-image");
     const blob = await toRenderableImageBlob(file, bytes);
     const bitmap = await createImageBitmap(blob);

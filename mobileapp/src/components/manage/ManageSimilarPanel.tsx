@@ -24,8 +24,9 @@ import {
     type SimilarityGroup,
 } from "@/lib/similarity-groups";
 import {
-    runPhashJob,
+    filesNeedingAnalysis,
     runStage1InWorker,
+    runThumbnailAnalysisJob,
     terminatePhashWorker,
 } from "@/lib/similarity-job";
 import {
@@ -73,6 +74,8 @@ export function ManageSimilarPanel({
     const setPhashEntries = usePhashIndexStore((s) => s.setEntries);
     const embeddingEntries = useEmbeddingIndexStore((s) => s.entries);
     const qualityById = useQualityIndexStore((s) => s.entries);
+    const qualityHydrated = useQualityIndexStore((s) => s.isHydrated);
+    const setQualityEntries = useQualityIndexStore((s) => s.setEntries);
     const favoriteFileIds = useFavoritesStore((s) => s.favoriteFileIds);
 
     const phashJobStatus = usePhashJobStore((s) => s.status);
@@ -393,13 +396,20 @@ export function ManageSimilarPanel({
         jobPaused.current = false;
         setPhashJobStatus("running");
 
-        const candidates = eligibleImageFiles(allFiles, userId);
-        const pending = candidates.filter((file) => !phashEntries.has(file.id));
+        // The scan also scores image quality for the same thumbnails.
+        const pending = filesNeedingAnalysis(
+            allFiles,
+            userId,
+            phashEntries,
+            qualityById,
+        );
         setPhashProgress(0, pending.length);
 
-        void runPhashJob({
-            files: candidates,
-            entries: new Map(phashEntries),
+        void runThumbnailAnalysisJob({
+            files: allFiles,
+            userId,
+            phashEntries: new Map(phashEntries),
+            qualityEntries: qualityById,
             signal,
             shouldPause: () => jobPaused.current,
             onProgress: (current, total) => {
@@ -408,13 +418,14 @@ export function ManageSimilarPanel({
                 }
             },
         })
-            .then((entries) => {
+            .then((result) => {
                 // An aborted run returns partial entries; the pause handler
                 // already set the status and a newer run owns the state now.
                 if (signal.aborted) {
                     return;
                 }
-                setPhashEntries(entries);
+                setPhashEntries(result.phashEntries);
+                setQualityEntries(result.qualityEntries);
                 setPhashJobStatus("done");
             })
             .catch(() => {
@@ -483,6 +494,7 @@ export function ManageSimilarPanel({
                             disabled={
                                 phashJobStatus === "running" ||
                                 !phashHydrated ||
+                                !qualityHydrated ||
                                 phashIndexedCount >= phashCandidateCount
                             }
                         >

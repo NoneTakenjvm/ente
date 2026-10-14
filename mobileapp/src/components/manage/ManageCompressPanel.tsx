@@ -11,7 +11,7 @@ import { CompressionPanel } from "@/components/CompressionPanel";
 import { BatchCompressPreviewSheet } from "@/components/manage/BatchCompressPreviewSheet";
 import { TagClausePicker } from "@/components/TagClausePicker";
 import { TagQueryEditor } from "@/components/TagQueryEditor";
-import { TagScopeFilterDropdown } from "@/components/TagScopeFilterDropdown";
+import { ScopeFilterMenu } from "@/components/ScopeFilterMenu";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,6 +31,7 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import { useScopeCounts } from "@/hooks/use-scope-counts";
 import { useTagFilterDraft } from "@/hooks/use-tag-filter-draft";
 import {
     compressManageCandidates,
@@ -47,10 +48,7 @@ import {
 import { runCompressJob } from "@/lib/compress-job";
 import { mediaKindForFile } from "@/lib/media-kind";
 import {
-    countFavoritesInCandidates,
-    countFileKindsInCandidates,
     countTagFilterClauses,
-    countTaggedInCandidates,
     describeTagFilter,
     emptyTagFilter,
     filterFilesByTags,
@@ -135,32 +133,7 @@ export function ManageCompressPanel({
         };
     }, []);
 
-    const libraryFileIds = useMemo(
-        (): Set<number> => new Set(files.map((file) => file.id)),
-        [files],
-    );
-
-    const taggedCount = useMemo(
-        (): number =>
-            countTaggedInCandidates(
-                libraryFileIds,
-                fileIdsByTag,
-                includeInEffectsPresenceByName,
-            ),
-        [fileIdsByTag, includeInEffectsPresenceByName, libraryFileIds],
-    );
-    const untaggedCount = libraryFileIds.size - taggedCount;
-    const favoritesCount = useMemo(
-        (): number =>
-            countFavoritesInCandidates(libraryFileIds, favoriteFileIds),
-        [favoriteFileIds, libraryFileIds],
-    );
-    const notFavoritesCount = libraryFileIds.size - favoritesCount;
-    const fileKindCounts = useMemo(
-        (): ReturnType<typeof countFileKindsInCandidates> =>
-            countFileKindsInCandidates(libraryFileIds, files),
-        [files, libraryFileIds],
-    );
+    const scopeCounts = useScopeCounts(files);
 
     const tagFiltered = useMemo(
         () =>
@@ -480,16 +453,6 @@ export function ManageCompressPanel({
     const clauseCount = countTagFilterClauses(filter.root);
     const filterActive = isTagFilterActive(filter);
     const isFlat = isFlatTagFilterRoot(filter.root);
-    const scopeCounts = {
-        taggedCount,
-        untaggedCount,
-        favoritesCount,
-        notFavoritesCount,
-        photoCount: fileKindCounts.photos,
-        videoCount: fileKindCounts.videos,
-        croppedCount: fileKindCounts.cropped,
-        notCroppedCount: fileKindCounts.notCropped,
-    };
     const hasQueryContent =
         clauseCount > 0 ||
         filter.tagScope !== "all" ||
@@ -511,18 +474,10 @@ export function ManageCompressPanel({
         <>
             <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-3">
                 <div className="flex shrink-0 flex-wrap items-center gap-2">
-                    <TagScopeFilterDropdown
-                        {...scopeCounts}
-                        tagScope={filter.tagScope}
-                        onTagScopeChange={actions.setTagScope}
-                        favoritesScope={filter.favoritesScope}
-                        onFavoritesScopeChange={actions.setFavoritesScope}
-                        mediaScope={filter.mediaScope}
-                        onMediaScopeChange={actions.setMediaScope}
-                        croppedScope={filter.croppedScope}
-                        onCroppedScopeChange={actions.setCroppedScope}
-                        rotatedScope={filter.rotatedScope}
-                        onRotatedScopeChange={actions.setRotatedScope}
+                    <ScopeFilterMenu
+                        filter={filter}
+                        setScope={actions.setScope}
+                        counts={scopeCounts}
                     />
                     <TagClausePicker
                         filter={filter}
@@ -564,7 +519,7 @@ export function ManageCompressPanel({
                                 <TagQueryEditor
                                     filter={filter}
                                     actions={actions}
-                                    {...scopeCounts}
+                                    counts={scopeCounts}
                                 />
                             </DropdownMenuGroup>
                         </DropdownMenuContent>

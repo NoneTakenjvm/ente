@@ -7,12 +7,19 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-10-14 |
-| **Last agent / session** | Simplification plan Phase 3 wave 2a (`mobileapp/simplification-plan.md`): gallery `ordering` union + `sortFilesByScore`, selection `mode` union, `job-utils`, manage.tsx section router with Duplicates/Similar panels (`0.3.199`) |
+| **Last agent / session** | Simplification plan batch 3 (`mobileapp/simplification-plan.md`): merged phash/quality thumbnail scan, tag-filter family collapse, tool/pending footers, upload orchestration out of UploadPanel (`0.3.200`) |
 | **Current milestone** | Post-M8 UX / upload performance |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
-| **Next recommended action** | Phone QA of `0.3.199` (QA lists for `0.3.195`–`0.3.199` below). Then the rest of Phase 3 (`useJob` / `<JobControls>`, merged phash/quality scan). Rotate the test-account password. |
+| **Next recommended action** | Phone QA of `0.3.200` (QA lists for `0.3.195`–`0.3.200` below). Then §3.1 `useJob` / `<JobControls>` (jobs abort on unmount) and the rest of Phase 4. Rotate the test-account password. |
 
-**This session (committed locally, not pushed, `0.3.199`): simplification plan Phase 3 wave 2a**
+**This session (committed locally, not pushed, `0.3.200`): simplification plan Phase 3 §5.4 + Phase 4 §2.1b–f, §1.3/§1.7, §2.6**
+1. **Merged scan** — the phash worker also scores quality (`analyze-thumbnail`); `runThumbnailAnalysisJob` in `similarity-job.ts` decodes each thumbnail once and fills whichever index is missing or stale. `image-quality-job.ts` and `image-quality.worker.ts` deleted; `lib/quality-index.ts` holds hydrate/persist. Both index formats and versions are unchanged. Known gap until §3.1: the Settings scan does not abort on unmount.
+2. **Tag filter UI** — 9 files → 5: `SortMenu` (one Options dropdown with Sort/Filter tabs), `ScopeFilterMenu`, `TagFilterControls`, `TagFilterEditor`, plus `use-scope-counts`. `TagFilterBar` 686 → 281 lines; `GalleryToolsMenu` is a `tools` array. Binding and draft hooks share `tagFilterActions`; tag-store's 12 per-op filter setters are replaced by one `updateTagFilter(target, update)`.
+3. **Footers** — `ToolFooter` shell and `PendingBatchFooter`; Crop and Rotate are thin wrappers; Stamp shares the kit list/chips; SelectionActionFooter has one busy state and toasts errors.
+4. **Upload** — `core/upload/run-upload-batch.ts` owns the worker pool, cancel and teardown (tested); `UploadPanel` holds one `PanelState` union. Upload store lost the unused cancel flag.
+5. **QA** — Manage → Similar and Settings scan each fill both phash and quality (quality sort works after either); Options menu Sort/Filter tabs and active dot, None keeps the shuffle, nearness kit picker and custom filter; scope counts in gallery, album bar, compress panel and album editor; tag include/exclude/groups/kits in gallery and album view; crop/rotate apply, discard and a failed apply; Stamp kit list; selection actions show a toast on error; upload progress, cancel, a failing file, success, and closing the panel mid-upload.
+
+**Previous session (committed locally, `0.3.199`): simplification plan Phase 3 wave 2a**
 1. **Gallery ordering** — ui-store holds one `ordering: GalleryOrdering | undefined` (viewport fit, uploaded at, image size, quality, tag fit, relative, nearness, shuffled) with `setOrdering`; the per-kind fields, setters and `clearOrderings` are gone. One `sortFilesByScore` in `lib/sort-files.ts`; `image-size-sort.ts` and `uploaded-at-sort.ts` deleted.
 2. **Selection tools** — selection-store has `mode: "none" | "select" | "stamp" | "rotate" | "crop"` and one `applyBusy`; switching mode clears pending rotations/crops.
 3. **Job helpers** — `lib/job-utils.ts` (`workerCount`, `eligibleImageFiles`, `runWithConcurrency`, `waitIfPaused`, `progressReporter`); copies in image-quality-job and kit-embedding removed.

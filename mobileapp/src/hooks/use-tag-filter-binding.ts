@@ -1,15 +1,9 @@
 import { useMemo } from "react";
-import type { KitFilterInput } from "@/lib/tag-filter-mutations";
-import type {
-    CroppedScope,
-    FavoritesScope,
-    MediaScope,
-    RotatedScope,
-    TagFilterJoin,
-    TagFilterMode,
-    TagFilterSelection,
-    TagScope,
-} from "@/lib/tag-filter";
+import {
+    tagFilterActions,
+    type TagFilterActions,
+} from "@/lib/tag-filter-mutations";
+import type { TagFilterSelection } from "@/lib/tag-filter";
 import {
     type TagFilterTarget,
     useTagStore,
@@ -17,29 +11,7 @@ import {
 
 export interface TagFilterBinding {
     filter: TagFilterSelection;
-    setTagScope: (scope: TagScope) => void;
-    setFavoritesScope: (favoritesScope: FavoritesScope) => void;
-    setMediaScope: (mediaScope: MediaScope) => void;
-    setCroppedScope: (croppedScope: CroppedScope) => void;
-    setRotatedScope: (rotatedScope: RotatedScope) => void;
-    setTagFilterMode: (tag: string, mode: TagFilterMode | null) => void;
-    setClauseMode: (clauseId: string, mode: TagFilterMode) => void;
-    setClauseInGroup: (
-        groupId: string,
-        tag: string,
-        mode: TagFilterMode | null,
-    ) => void;
-    setKitMode: (kit: KitFilterInput, mode: TagFilterMode | null) => void;
-    setKitInGroup: (
-        groupId: string,
-        kit: KitFilterInput,
-        mode: TagFilterMode | null,
-    ) => void;
-    setGroupOp: (groupId: string, op: TagFilterJoin) => void;
-    wrapInGroup: (nodeIds: string[], op: TagFilterJoin) => void;
-    ungroup: (groupId: string) => void;
-    removeNode: (nodeId: string) => void;
-    clearFilters: () => void;
+    actions: TagFilterActions;
 }
 
 /**
@@ -50,39 +22,21 @@ export function useTagFilterBinding(
 ): TagFilterBinding {
     const filter = useTagStore((s) =>
         target === "gallery" ? s.tagFilter : s.albumViewFilter);
+    const includeInEffectsPresenceByName = useTagStore(
+        (s) => s.typeConfig.includeInEffectsPresenceByName,
+    );
 
-    const actions = useMemo((): Omit<TagFilterBinding, "filter"> => {
-        const store = useTagStore.getState;
-        return {
-            setTagScope: (scope) => store().setTagScope(scope, target),
-            setFavoritesScope: (favoritesScope) =>
-                store().patchFilter({ favoritesScope }, target),
-            setMediaScope: (mediaScope) =>
-                store().patchFilter({ mediaScope }, target),
-            setCroppedScope: (croppedScope) =>
-                store().patchFilter({ croppedScope }, target),
-            setRotatedScope: (rotatedScope) =>
-                store().patchFilter({ rotatedScope }, target),
-            setTagFilterMode: (tag, mode) =>
-                store().setTagFilterMode(tag, mode, target),
-            setClauseMode: (clauseId, mode) =>
-                store().setClauseMode(clauseId, mode, target),
-            setClauseInGroup: (groupId, tag, mode) =>
-                store().setClauseInGroup(groupId, tag, mode, target),
-            setKitMode: (kit, mode) => store().setKitMode(kit, mode, target),
-            setKitInGroup: (groupId, kit, mode) =>
-                store().setKitInGroup(groupId, kit, mode, target),
-            setGroupOp: (groupId, op) => store().setGroupOp(groupId, op, target),
-            wrapInGroup: (nodeIds, op) =>
-                store().wrapInGroup(nodeIds, op, target),
-            ungroup: (groupId) => store().ungroup(groupId, target),
-            removeNode: (nodeId) => store().removeNode(nodeId, target),
-            clearFilters: () => store().clearFilters(target),
-        };
-    }, [target]);
+    const actions = useMemo(
+        (): TagFilterActions =>
+            tagFilterActions(
+                (update) => useTagStore.getState().updateTagFilter(target, update),
+                includeInEffectsPresenceByName,
+            ),
+        [target, includeInEffectsPresenceByName],
+    );
 
     return useMemo(
-        (): TagFilterBinding => ({ filter, ...actions }),
+        (): TagFilterBinding => ({ filter, actions }),
         [filter, actions],
     );
 }

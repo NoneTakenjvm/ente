@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { TagPickerSheet } from "@/components/TagPickerSheet";
+import { ToolFooter } from "@/components/ToolFooter";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -33,6 +34,7 @@ import {
     tagPresenceAcrossFiles,
     type TagDraft,
 } from "@/lib/tag-bulk";
+import { workingSetTags } from "@/lib/tag-presets";
 import { extractUserTags } from "@/lib/tags";
 import { cn } from "@/lib/utils";
 import { useLibraryStore } from "@/stores/library-store";
@@ -41,6 +43,8 @@ import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
 import { toast } from "sonner";
 import { errorMessage, plural } from "@/lib/format";
+
+type BusyAction = "tag" | "favorite" | "archive" | "trash";
 
 const isFullyApplied = (
     info: { count: number; total: number } | undefined,
@@ -65,12 +69,10 @@ export function SelectionActionFooter(): JSX.Element | null {
 
     const [tagsOpen, setTagsOpen] = useState<boolean>(false);
     const [tagDraft, setTagDraft] = useState<TagDraft>(emptyTagDraft);
-    const [tagBusy, setTagBusy] = useState<boolean>(false);
+    const [busy, setBusy] = useState<BusyAction | undefined>();
+    /** Sheet-only: staged-edit write failures, shown inside the tag sheet. */
     const [tagError, setTagError] = useState<string | undefined>();
-    const [favoriteBusy, setFavoriteBusy] = useState<boolean>(false);
-    const [archiveBusy, setArchiveBusy] = useState<boolean>(false);
     const [trashOpen, setTrashOpen] = useState<boolean>(false);
-    const [trashBusy, setTrashBusy] = useState<boolean>(false);
     const tagFlushLockRef = useRef<boolean>(false);
 
     const selectedFiles = useMemo(
@@ -112,18 +114,10 @@ export function SelectionActionFooter(): JSX.Element | null {
         return extra.length ? [...knownTags, ...extra] : knownTags;
     }, [draftView.unionTags, knownTags, tagDraft.adds]);
 
-    const workingSetTags = useMemo((): string[] => {
-        const seen = new Set<string>();
-        const result: string[] = [];
-        for (const tag of [...pinnedTags, ...recentTags]) {
-            if (seen.has(tag)) {
-                continue;
-            }
-            seen.add(tag);
-            result.push(tag);
-        }
-        return result.slice(0, 16);
-    }, [pinnedTags, recentTags]);
+    const chipTags = useMemo(
+        () => workingSetTags(pinnedTags, recentTags),
+        [pinnedTags, recentTags],
+    );
 
     const exitSelection = useCallback((): void => {
         setMode("none");
@@ -138,23 +132,35 @@ export function SelectionActionFooter(): JSX.Element | null {
         [livePresence.presence],
     );
 
-    /** Runs a footer tag write and leaves selection mode once it succeeds. */
-    const runTagAction = useCallback(
-        async (task: () => Promise<{ failed: number }>): Promise<void> => {
-            setTagBusy(true);
-            setTagError(undefined);
+    /** Runs one footer action under the shared busy state; toasts on failure. */
+    const runAction = useCallback(
+        async (
+            kind: BusyAction,
+            task: () => Promise<unknown>,
+            failText: string,
+        ): Promise<boolean> => {
+            setBusy(kind);
             try {
                 await task();
-                exitSelection();
+                return true;
             } catch (error) {
-                setTagError(
-                    errorMessage(error, "Could not update tags"),
-                );
+                toast.error(errorMessage(error, failText));
+                return false;
             } finally {
-                setTagBusy(false);
+                setBusy(undefined);
             }
         },
-        [exitSelection],
+        [],
+    );
+
+    /** Runs a footer tag write and leaves selection mode once it succeeds. */
+    const runTagAction = useCallback(
+        async (task: () => Promise<unknown>): Promise<void> => {
+            if (await runAction("tag", task, "Could not update tags")) {
+                exitSelection();
+            }
+        },
+        [exitSelection, runAction],
     );
 
     /** Flush staged sheet edits. `"applied"` means tags were written. */
@@ -169,7 +175,7 @@ export function SelectionActionFooter(): JSX.Element | null {
             return "empty";
         }
         tagFlushLockRef.current = true;
-        setTagBusy(true);
+        setBusy("tag");
         setTagError(undefined);
         try {
             const result = await bulkApplyTagDraft(selectedIds, tagDraft);
@@ -188,7 +194,7 @@ export function SelectionActionFooter(): JSX.Element | null {
             return "failed";
         } finally {
             tagFlushLockRef.current = false;
-            setTagBusy(false);
+            setBusy(undefined);
         }
     }, [selectedIds, tagDraft]);
 
@@ -204,7 +210,7 @@ export function SelectionActionFooter(): JSX.Element | null {
                 openTagSheet();
                 return;
             }
-            if (tagBusy || tagFlushLockRef.current) {
+            if (busy === "tag" || tagFlushLockRef.current) {
                 return;
             }
             void (async () => {
@@ -219,11 +225,11 @@ export function SelectionActionFooter(): JSX.Element | null {
                 }
             })();
         },
-        [exitSelection, flushTagDraft, openTagSheet, tagBusy],
+        [busy, exitSelection, flushTagDraft, openTagSheet],
     );
 
     const handleApplyTagDraft = useCallback((): void => {
-        if (tagBusy || tagFlushLockRef.current) {
+        if (busy === "tag" || tagFlushLockRef.current) {
             return;
         }
         void (async () => {
@@ -233,7 +239,7 @@ export function SelectionActionFooter(): JSX.Element | null {
                 exitSelection();
             }
         })();
-    }, [exitSelection, flushTagDraft, tagBusy]);
+    }, [busy, exitSelection, flushTagDraft]);
 
     const handleDraftAddTag = useCallback(
         (tagName: string): void => {
@@ -293,98 +299,85 @@ export function SelectionActionFooter(): JSX.Element | null {
 
     const handleFavorite = useCallback(
         async (isFavorite: boolean): Promise<void> => {
-            if (!selectedIds.length || favoriteBusy) {
+            if (!selectedIds.length || busy) {
                 return;
             }
-            setFavoriteBusy(true);
-            try {
-                await batchSetFavorite(selectedIds, isFavorite);
+            const ok = await runAction(
+                "favorite",
+                () => batchSetFavorite(selectedIds, isFavorite),
+                "Could not update favourites",
+            );
+            if (ok) {
                 exitSelection();
-            } catch (error) {
-                toast.error(
-                    errorMessage(error, "Could not update favourites"),
-                );
-            } finally {
-                setFavoriteBusy(false);
             }
         },
-        [batchSetFavorite, exitSelection, favoriteBusy, selectedIds],
+        [batchSetFavorite, busy, exitSelection, runAction, selectedIds],
     );
 
     const handleArchive = useCallback(async (): Promise<void> => {
-        if (!selectedIds.length || archiveBusy) {
+        if (!selectedIds.length || busy) {
             return;
         }
         const ids = [...selectedIds];
-        setArchiveBusy(true);
-        try {
-            await batchSetArchived(ids, true);
+        const ok = await runAction(
+            "archive",
+            () => batchSetArchived(ids, true),
+            "Could not archive",
+        );
+        if (ok) {
             exitSelection();
-            toast.success(
-                `Archived ${plural(ids.length, "photo")}`,
-            );
-        } catch (error) {
-            toast.error(
-                errorMessage(error, "Could not archive"),
-            );
-        } finally {
-            setArchiveBusy(false);
+            toast.success(`Archived ${plural(ids.length, "photo")}`);
         }
-    }, [archiveBusy, batchSetArchived, exitSelection, selectedIds]);
+    }, [batchSetArchived, busy, exitSelection, runAction, selectedIds]);
 
     const handleTrash = useCallback(async (): Promise<void> => {
         if (!selectedIds.length) {
             return;
         }
-        setTrashBusy(true);
-        try {
-            await moveFilesToTrash(selectedIds);
+        const ok = await runAction(
+            "trash",
+            () => moveFilesToTrash(selectedIds),
+            "Could not move to trash",
+        );
+        if (ok) {
             setTrashOpen(false);
             exitSelection();
-        } catch (error) {
-            toast.error(
-                errorMessage(error, "Could not move to trash"),
-            );
-        } finally {
-            setTrashBusy(false);
         }
-    }, [exitSelection, moveFilesToTrash, selectedIds]);
+    }, [exitSelection, moveFilesToTrash, runAction, selectedIds]);
 
     if (!enabled) {
         return null;
     }
 
     const count = selectedIds.length;
-    const actionsBusy = tagBusy || favoriteBusy || archiveBusy || trashBusy;
+    const actionsBusy = busy !== undefined;
     const draftPending = tagDraftHasChanges(tagDraft);
     /** Avoid footer chips fighting a staged sheet draft. */
     const footerTagActionsDisabled = actionsBusy || tagsOpen;
 
     if (count === 0) {
         return (
-            <footer className="fixed inset-x-0 bottom-0 z-30 flex items-center justify-between gap-2 border-t border-border bg-background/95 px-3 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] backdrop-blur">
-                <p className="min-w-0 truncate text-sm text-muted-foreground">
-                    Select · tap photos
-                </p>
-                <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={exitSelection}
-                >
-                    Done
-                </Button>
-            </footer>
+            <ToolFooter
+                title="Select · tap photos"
+                actions={
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={exitSelection}
+                    >
+                        Done
+                    </Button>
+                }
+            />
         );
     }
 
     return (
         <>
-            <footer className="fixed inset-x-0 bottom-0 z-30 flex flex-col gap-2 border-t border-border bg-background/95 px-3 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] backdrop-blur">
-                <div className="flex items-center justify-between gap-2">
-                    <p className="min-w-0 truncate text-sm text-muted-foreground">
-                        {count} selected
-                    </p>
+            <ToolFooter
+                title={`${count} selected`}
+                actions={
                     <Button
                         type="button"
                         variant="outline"
@@ -394,11 +387,11 @@ export function SelectionActionFooter(): JSX.Element | null {
                     >
                         Done
                     </Button>
-                </div>
-
-                {workingSetTags.length > 0 || presets.length > 0 ? (
+                }
+            >
+                {chipTags.length > 0 || presets.length > 0 ? (
                     <div className="flex gap-1.5 overflow-x-auto pb-0.5">
-                        {workingSetTags.map((tag) => {
+                        {chipTags.map((tag) => {
                             const info = presence.get(tag);
                             const fullyOn = isFullyApplied(info);
                             const partial =
@@ -461,7 +454,7 @@ export function SelectionActionFooter(): JSX.Element | null {
                         disabled={actionsBusy}
                         onClick={openTagSheet}
                     >
-                        {tagBusy ? (
+                        {busy === "tag" ? (
                             <Spinner />
                         ) : (
                             <Tag className="size-3.5 shrink-0" />
@@ -494,7 +487,7 @@ export function SelectionActionFooter(): JSX.Element | null {
                             void handleFavorite(true);
                         }}
                     >
-                        {favoriteBusy ? (
+                        {busy === "favorite" ? (
                             <Spinner />
                         ) : (
                             <Heart className="size-3.5 shrink-0" />
@@ -511,7 +504,7 @@ export function SelectionActionFooter(): JSX.Element | null {
                             void handleFavorite(false);
                         }}
                     >
-                        {favoriteBusy ? (
+                        {busy === "favorite" ? (
                             <Spinner />
                         ) : (
                             <HeartOff className="size-3.5 shrink-0" />
@@ -528,7 +521,7 @@ export function SelectionActionFooter(): JSX.Element | null {
                             void handleArchive();
                         }}
                     >
-                        {archiveBusy ? (
+                        {busy === "archive" ? (
                             <Spinner />
                         ) : (
                             <Archive className="size-3.5 shrink-0" />
@@ -547,7 +540,7 @@ export function SelectionActionFooter(): JSX.Element | null {
                         <Trash2 />
                     </Button>
                 </div>
-            </footer>
+            </ToolFooter>
 
             <TagPickerSheet
                 open={tagsOpen}
@@ -560,7 +553,7 @@ export function SelectionActionFooter(): JSX.Element | null {
                 defaultToKits={presets.length > 0}
                 pinnedTags={pinnedTags}
                 pendingChanges={draftPending}
-                applyBusy={tagBusy}
+                applyBusy={busy === "tag"}
                 batchSelectionHint="Tap tags or kits to stage changes. Apply once, or close the sheet to save."
                 onOpenChange={handleTagSheetOpenChange}
                 onAddTag={handleDraftAddTag}
@@ -576,7 +569,7 @@ export function SelectionActionFooter(): JSX.Element | null {
                 description="They can be restored from the Ente app."
                 confirmLabel="Move to trash"
                 destructive
-                isWorking={trashBusy}
+                isWorking={busy === "trash"}
                 onCancel={() => setTrashOpen(false)}
                 onConfirm={() => {
                     void handleTrash();

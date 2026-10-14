@@ -6,16 +6,19 @@ import {
     decodeLuminanceGrid,
     encodeLuminanceGrid,
     luminanceGridFromImageData,
+    type PhashEntry,
 } from "@/lib/crop-match";
+import { QUALITY_ANALYSIS_MAX, scoreImageQuality } from "@/lib/image-quality";
 import { dHashVariantsFromImageData } from "@/lib/phash";
 import { runStage1Clustering } from "@/lib/similarity-stage1-core";
 import type { Stage1ClipOptions } from "@/lib/similarity-stage1-core";
 import type {
+    AnalyzeThumbnailRequest,
+    AnalyzeThumbnailResponse,
     CropCheckBatchMessage,
     CropCheckBatchResult,
     PhashWorkerInbound,
-    PhashWorkerRequest,
-    PhashWorkerResponse,
+    QualityScoreInputs,
     Stage1AbortMessage,
     Stage1Message,
     Stage1ProgressMessage,
@@ -146,53 +149,101 @@ self.onmessage = async (
         return;
     }
 
-    const { id, fileId, bytes }: PhashWorkerRequest = message;
+    await handleAnalyzeThumbnail(message);
+};
+
+/** Decode the thumbnail once, then compute only the requested signals. */
+const handleAnalyzeThumbnail = async (
+    request: AnalyzeThumbnailRequest,
+): Promise<void> => {
+    const { id, fileId, bytes, needsPhash, quality } = request;
     try {
-        const blob: Blob = new Blob([bytes as BlobPart], {
-            type: "image/jpeg",
-        });
-        const bitmap: ImageBitmap = await createImageBitmap(blob);
-
-        const uprightCanvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-        const uprightContext = uprightCanvas.getContext("2d");
-        if (!uprightContext) {
-            throw new Error("Canvas 2D unavailable in phash worker");
+        const bitmap = await createImageBitmap(
+            new Blob([bytes as BlobPart], { type: "image/jpeg" }),
+        );
+        const response: AnalyzeThumbnailResponse = { id, fileId };
+        try {
+            if (needsPhash) {
+                response.phashEntry = phashEntryFromBitmap(bitmap);
+            }
+            if (quality) {
+                response.qualityScore = qualityScoreFromBitmap(bitmap, quality);
+            }
+        } finally {
+            bitmap.close();
         }
-        uprightContext.drawImage(bitmap, 0, 0);
-        const uprightData = uprightContext.getImageData(
-            0,
-            0,
-            bitmap.width,
-            bitmap.height,
-        );
-        bitmap.close();
-        const color = colorHashFromImageData(
-            uprightData.data,
-            uprightData.width,
-            uprightData.height,
-        );
-        const grid = encodeLuminanceGrid(
-            luminanceGridFromImageData(
-                uprightData.data,
-                uprightData.width,
-                uprightData.height,
-            ),
-        );
-
-        const hashes = dHashVariantsFromImageData(
-            uprightData.data,
-            uprightData.width,
-            uprightData.height,
-        );
-
-        const response: PhashWorkerResponse = { id, fileId, hashes, color, grid };
         self.postMessage(response);
     } catch (error: unknown) {
-        const response: PhashWorkerResponse = {
+        const response: AnalyzeThumbnailResponse = {
             id,
             fileId,
-            error: errorMessage(error, "Hash failed"),
+            error: errorMessage(error, "Thumbnail analysis failed"),
         };
         self.postMessage(response);
     }
+};
+
+const phashEntryFromBitmap = (bitmap: ImageBitmap): PhashEntry => {
+    const upright = rasterize(bitmap, bitmap.width, bitmap.height);
+    return {
+        hashes: dHashVariantsFromImageData(
+            upright.data,
+            upright.width,
+            upright.height,
+        ),
+        color: colorHashFromImageData(
+            upright.data,
+            upright.width,
+            upright.height,
+        ),
+        grid: encodeLuminanceGrid(
+            luminanceGridFromImageData(
+                upright.data,
+                upright.width,
+                upright.height,
+            ),
+        ),
+    };
+};
+
+const qualityScoreFromBitmap = (
+    bitmap: ImageBitmap,
+    quality: QualityScoreInputs,
+): number => {
+    const size = qualityAnalysisSize(bitmap.width, bitmap.height);
+    // Prefer metadata dimensions; fall back to thumbnail size if missing.
+    return scoreImageQuality(
+        rasterize(bitmap, size.width, size.height),
+        quality.originalWidth > 0 ? quality.originalWidth : bitmap.width,
+        quality.originalHeight > 0 ? quality.originalHeight : bitmap.height,
+        quality.fileBytes,
+    );
+};
+
+const qualityAnalysisSize = (
+    width: number,
+    height: number,
+): { width: number; height: number } => {
+    const longEdge = Math.max(width, height);
+    if (longEdge <= QUALITY_ANALYSIS_MAX) {
+        return { width, height };
+    }
+    const scale = QUALITY_ANALYSIS_MAX / longEdge;
+    return {
+        width: Math.max(1, Math.round(width * scale)),
+        height: Math.max(1, Math.round(height * scale)),
+    };
+};
+
+const rasterize = (
+    bitmap: ImageBitmap,
+    width: number,
+    height: number,
+): ImageData => {
+    const context = new OffscreenCanvas(width, height).getContext("2d");
+    if (!context) {
+        throw new Error("Canvas 2D unavailable in phash worker");
+    }
+    context.drawImage(bitmap, 0, 0, width, height);
+    return context.getImageData(0, 0, width, height);
 };

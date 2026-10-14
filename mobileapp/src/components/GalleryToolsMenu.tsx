@@ -7,10 +7,7 @@ import {
     Stamp,
     Wrench,
 } from "lucide-react";
-import {
-    TagQueryBuilderContent,
-    type TagQueryBuilderContentProps,
-} from "@/components/TagQueryBuilderContent";
+import { TagQueryEditor } from "@/components/TagQueryEditor";
 import { Button } from "@/components/ui/button";
 import {
     DropdownMenu,
@@ -24,6 +21,8 @@ import {
     DropdownMenuSubTrigger,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import type { ScopeCounts } from "@/hooks/use-scope-counts";
+import { useTagFilterBinding } from "@/hooks/use-tag-filter-binding";
 import { confirmDiscardPendingCrops } from "@/lib/crop-draft";
 import { confirmDiscardPendingRotations } from "@/lib/rotate-draft";
 import { cn } from "@/lib/utils";
@@ -36,18 +35,30 @@ import { useUIStore } from "@/stores/ui-store";
 
 type GalleryToolsMenuProps = {
     filterTarget?: TagFilterTarget;
-    /** When set, include Query builder (gallery filter bar). */
-    query?: TagQueryBuilderContentProps & { hasQueryContent: boolean };
+    counts: ScopeCounts;
 };
+
+interface Tool {
+    label: string;
+    icon: ReactNode;
+    active: boolean;
+    onToggle: () => void;
+    activeLabel: string;
+    inactiveLabel: string;
+    activeTitle: string;
+    inactiveTitle: string;
+}
 
 /**
  * Gallery/album tools: wrench dropdown below `md`, individual icon buttons at `md+`.
  * Mobile: re-tap wrench exits the active tool; opens the menu only when none is active.
  */
 export function GalleryToolsMenu({
-    query,
+    counts,
     filterTarget = "gallery",
 }: GalleryToolsMenuProps): JSX.Element {
+    const { filter, actions } = useTagFilterBinding(filterTarget);
+    const hasQueryContent = isTagFilterActive(filter);
     const selectionMode = useSelectionStore((s) => s.mode);
     const setMode = useSelectionStore((s) => s.setMode);
     const setStampTags = useSelectionStore((s) => s.setStampTags);
@@ -61,7 +72,7 @@ export function GalleryToolsMenu({
     const rotateActive = selectionMode === "rotate";
     const cropActive = selectionMode === "crop";
     const anyToolActive = selectionMode !== "none";
-    const triggerActive = anyToolActive || Boolean(query?.hasQueryContent);
+    const triggerActive = anyToolActive || hasQueryContent;
 
     /** Exit rotate after confirming discard when drafts exist. */
     const exitRotate = useCallback((): boolean => {
@@ -135,6 +146,55 @@ export function GalleryToolsMenu({
         setMode("crop");
     };
 
+    const tools: Tool[] = [
+        {
+            label: "Select",
+            icon: <Check />,
+            active: selectionEnabled,
+            onToggle: () => {
+                setMode(selectionEnabled ? "none" : "select");
+            },
+            activeLabel: "Exit selection mode",
+            inactiveLabel: "Select media",
+            activeTitle: "Exit selection mode",
+            inactiveTitle: "Select media",
+        },
+        {
+            label: "Stamp",
+            icon: <Stamp />,
+            active: stampActive,
+            onToggle: activateStamp,
+            activeLabel: "Exit stamp tool",
+            inactiveLabel: "Stamp tags onto photos",
+            activeTitle: "Exit stamp",
+            inactiveTitle: "Stamp — pick tags, tap photos",
+        },
+        {
+            label: "Rotate",
+            icon: <RotateCw />,
+            active: rotateActive,
+            onToggle: toggleRotate,
+            activeLabel: "Exit rotate tool",
+            inactiveLabel: "Quick rotate photos",
+            activeTitle: "Exit rotate",
+            inactiveTitle: "Rotate — tap photos +90°, then Apply",
+        },
+        {
+            label: "Crop",
+            icon: <Crop />,
+            active: cropActive,
+            onToggle: toggleCrop,
+            activeLabel: "Exit crop tool",
+            inactiveLabel: "Quick crop photos",
+            activeTitle: "Exit crop",
+            inactiveTitle: "Crop — tap photos, drag boxes, then Apply",
+        },
+    ];
+
+    const queryEditor = (
+        <TagQueryEditor filter={filter} actions={actions} counts={counts} />
+    );
+
     return (
         <>
             <div className="md:hidden">
@@ -173,204 +233,93 @@ export function GalleryToolsMenu({
                     <DropdownMenuContent align="end" className="min-w-48">
                         <DropdownMenuGroup>
                             <DropdownMenuLabel>Tools</DropdownMenuLabel>
-                            {query ? (
-                                <DropdownMenuSub>
-                                    <DropdownMenuSubTrigger
-                                        className={cn(
-                                            query.hasQueryContent &&
-                                                "font-medium",
-                                        )}
-                                    >
-                                        <ListFilter />
+                            <DropdownMenuSub>
+                                <DropdownMenuSubTrigger
+                                    className={cn(
+                                        hasQueryContent && "font-medium",
+                                    )}
+                                >
+                                    <ListFilter />
+                                    Query builder
+                                </DropdownMenuSubTrigger>
+                                <DropdownMenuSubContent
+                                    className="flex max-h-[min(80dvh,28rem)] w-[min(100vw-2rem,24rem)] flex-col overflow-x-hidden overflow-y-auto overscroll-contain p-2"
+                                    side="bottom"
+                                    align="end"
+                                >
+                                    <DropdownMenuLabel className="shrink-0 px-0">
                                         Query builder
-                                    </DropdownMenuSubTrigger>
-                                    <DropdownMenuSubContent
-                                        className="flex max-h-[min(80dvh,28rem)] w-[min(100vw-2rem,24rem)] flex-col overflow-x-hidden overflow-y-auto overscroll-contain p-2"
-                                        side="bottom"
-                                        align="end"
-                                    >
-                                        <DropdownMenuLabel className="shrink-0 px-0">
-                                            Query builder
-                                        </DropdownMenuLabel>
-                                        <TagQueryBuilderContent
-                                            {...query}
-                                            filterTarget={filterTarget}
-                                        />
-                                    </DropdownMenuSubContent>
-                                </DropdownMenuSub>
-                            ) : null}
-                            {query ? <DropdownMenuSeparator /> : null}
-                            <ToolMenuItem
-                                label="Select"
-                                active={selectionEnabled}
-                                onSelect={() => {
-                                    setMode(selectionEnabled ? "none" : "select");
-                                }}
-                            >
-                                <Check />
-                            </ToolMenuItem>
-                            <ToolMenuItem
-                                label="Stamp"
-                                active={stampActive}
-                                onSelect={activateStamp}
-                            >
-                                <Stamp />
-                            </ToolMenuItem>
-                            <ToolMenuItem
-                                label="Rotate"
-                                active={rotateActive}
-                                onSelect={toggleRotate}
-                            >
-                                <RotateCw />
-                            </ToolMenuItem>
-                            <ToolMenuItem
-                                label="Crop"
-                                active={cropActive}
-                                onSelect={toggleCrop}
-                            >
-                                <Crop />
-                            </ToolMenuItem>
+                                    </DropdownMenuLabel>
+                                    {queryEditor}
+                                </DropdownMenuSubContent>
+                            </DropdownMenuSub>
+                            <DropdownMenuSeparator />
+                            {tools.map((tool) => (
+                                <DropdownMenuItem
+                                    key={tool.label}
+                                    onClick={tool.onToggle}
+                                >
+                                    {tool.icon}
+                                    {tool.label}
+                                    {tool.active ? (
+                                        <span className="ml-auto text-xs text-muted-foreground">
+                                            On
+                                        </span>
+                                    ) : null}
+                                </DropdownMenuItem>
+                            ))}
                         </DropdownMenuGroup>
                     </DropdownMenuContent>
                 </DropdownMenu>
             </div>
 
             <div className="hidden items-center gap-1 md:flex">
-                {query ? (
-                    <DropdownMenu>
-                        <DropdownMenuTrigger
-                            render={
-                                <Button
-                                    type="button"
-                                    variant={
-                                        query.hasQueryContent ?
-                                            "secondary" :
-                                            "outline"
-                                    }
-                                    size="icon-sm"
-                                    aria-label="Edit tag query"
-                                >
-                                    <ListFilter />
-                                </Button>
-                            }
-                        />
-                        <DropdownMenuContent
-                            align="start"
-                            className="flex max-h-[min(80dvh,28rem)] w-[min(100vw-2rem,24rem)] flex-col overflow-x-hidden overflow-y-auto overscroll-contain p-2"
-                        >
-                            <DropdownMenuGroup className="flex min-h-0 flex-1 flex-col gap-3">
-                                <DropdownMenuLabel className="shrink-0 px-0">
-                                    Query builder
-                                </DropdownMenuLabel>
-                                <TagQueryBuilderContent
-                                    {...query}
-                                    filterTarget={filterTarget}
-                                />
-                            </DropdownMenuGroup>
-                        </DropdownMenuContent>
-                    </DropdownMenu>
-                ) : null}
-                <ToolButton
-                    active={selectionEnabled}
-                    activeLabel="Exit selection mode"
-                    inactiveLabel="Select media"
-                    onClick={() => {
-                        setMode(selectionEnabled ? "none" : "select");
-                    }}
-                >
-                    <Check />
-                </ToolButton>
-                <ToolButton
-                    active={stampActive}
-                    activeLabel="Exit stamp tool"
-                    inactiveLabel="Stamp tags onto photos"
-                    activeTitle="Exit stamp"
-                    inactiveTitle="Stamp — pick tags, tap photos"
-                    onClick={activateStamp}
-                >
-                    <Stamp />
-                </ToolButton>
-                <ToolButton
-                    active={rotateActive}
-                    activeLabel="Exit rotate tool"
-                    inactiveLabel="Quick rotate photos"
-                    activeTitle="Exit rotate"
-                    inactiveTitle="Rotate — tap photos +90°, then Apply"
-                    onClick={toggleRotate}
-                >
-                    <RotateCw />
-                </ToolButton>
-                <ToolButton
-                    active={cropActive}
-                    activeLabel="Exit crop tool"
-                    inactiveLabel="Quick crop photos"
-                    activeTitle="Exit crop"
-                    inactiveTitle="Crop — tap photos, drag boxes, then Apply"
-                    onClick={toggleCrop}
-                >
-                    <Crop />
-                </ToolButton>
+                <DropdownMenu>
+                    <DropdownMenuTrigger
+                        render={
+                            <Button
+                                type="button"
+                                variant={
+                                    hasQueryContent ? "secondary" : "outline"
+                                }
+                                size="icon-sm"
+                                aria-label="Edit tag query"
+                            >
+                                <ListFilter />
+                            </Button>
+                        }
+                    />
+                    <DropdownMenuContent
+                        align="start"
+                        className="flex max-h-[min(80dvh,28rem)] w-[min(100vw-2rem,24rem)] flex-col overflow-x-hidden overflow-y-auto overscroll-contain p-2"
+                    >
+                        <DropdownMenuGroup className="flex min-h-0 flex-1 flex-col gap-3">
+                            <DropdownMenuLabel className="shrink-0 px-0">
+                                Query builder
+                            </DropdownMenuLabel>
+                            {queryEditor}
+                        </DropdownMenuGroup>
+                    </DropdownMenuContent>
+                </DropdownMenu>
+                {tools.map((tool) => (
+                    <Button
+                        key={tool.label}
+                        type="button"
+                        variant={tool.active ? "secondary" : "outline"}
+                        size="icon-sm"
+                        aria-label={
+                            tool.active ? tool.activeLabel : tool.inactiveLabel
+                        }
+                        aria-pressed={tool.active}
+                        title={
+                            tool.active ? tool.activeTitle : tool.inactiveTitle
+                        }
+                        onClick={tool.onToggle}
+                    >
+                        {tool.icon}
+                    </Button>
+                ))}
             </div>
         </>
-    );
-}
-
-interface ToolMenuItemProps {
-    label: string;
-    active: boolean;
-    onSelect: () => void;
-    children: ReactNode;
-}
-
-function ToolMenuItem({
-    label,
-    active,
-    onSelect,
-    children,
-}: ToolMenuItemProps): JSX.Element {
-    return (
-        <DropdownMenuItem onClick={onSelect}>
-            {children}
-            {label}
-            {active ? (
-                <span className="ml-auto text-xs text-muted-foreground">
-                    On
-                </span>
-            ) : null}
-        </DropdownMenuItem>
-    );
-}
-
-interface ToolButtonProps {
-    active: boolean;
-    activeLabel: string;
-    inactiveLabel: string;
-    activeTitle?: string;
-    inactiveTitle?: string;
-    onClick: () => void;
-    children: ReactNode;
-}
-
-function ToolButton({
-    active,
-    activeLabel,
-    inactiveLabel,
-    activeTitle,
-    inactiveTitle,
-    onClick,
-    children,
-}: ToolButtonProps): JSX.Element {
-    return (
-        <Button
-            type="button"
-            variant={active ? "secondary" : "outline"}
-            size="icon-sm"
-            aria-label={active ? activeLabel : inactiveLabel}
-            aria-pressed={active}
-            title={active ? activeTitle : inactiveTitle}
-            onClick={onClick}
-        >
-            {children}
-        </Button>
     );
 }
