@@ -54,8 +54,8 @@ export interface ViewerGestures {
         style: CSSProperties;
         onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
         onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
-        onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
-        onPointerCancel: (event: ReactPointerEvent<HTMLElement>) => void;
+        onPointerUp: (event: ReactPointerEvent<HTMLDivElement>) => void;
+        onPointerCancel: (event: ReactPointerEvent<HTMLDivElement>) => void;
         ref: (element: HTMLElement | null) => (() => void) | undefined;
     };
     /** Point the zoom hook at the active slide's loaded media element. */
@@ -558,6 +558,10 @@ export function useViewerGestures({
     ): void => {
         const pointerCountBefore = getPointerCount();
         pinchZoom.onPointerDown(event);
+        // While zoomed the zoom layer stops propagation, so the viewport never sees this pointer.
+        if (event.isPropagationStopped()) {
+            startTapCandidate(event);
+        }
         if (getPointerCount() >= 2 && pointerCountBefore < 2) {
             if (pointerCountBefore === 0) {
                 // Feed the carousel's first finger into the pinch.
@@ -577,6 +581,16 @@ export function useViewerGestures({
             }
             cancelCarouselDrag();
             event.currentTarget.setPointerCapture(event.pointerId);
+        }
+    };
+
+    const handleZoomPointerUp = (
+        event: ReactPointerEvent<HTMLDivElement>,
+    ): void => {
+        pinchZoom.onPointerUp(event);
+        // Zoomed: the viewport won't see this pointer up, so detect the tap here.
+        if (event.isPropagationStopped() && endTapCandidate(event)) {
+            handleTap(event.clientX, event.clientY);
         }
     };
 
@@ -651,8 +665,8 @@ export function useViewerGestures({
             style: pinchZoom.transformStyle,
             onPointerDown: handleZoomPointerDown,
             onPointerMove: pinchZoom.onPointerMove,
-            onPointerUp: pinchZoom.onPointerUp,
-            onPointerCancel: pinchZoom.onPointerUp,
+            onPointerUp: handleZoomPointerUp,
+            onPointerCancel: handleZoomPointerUp,
             ref: pinchZoom.wheelTargetRef,
         },
         registerActiveMedia,
