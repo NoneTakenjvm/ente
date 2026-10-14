@@ -6,14 +6,8 @@ import {
     type JSX,
     type SyntheticEvent,
 } from "react";
-import ReactCrop, {
-    convertToPixelCrop,
-    makeAspectCrop,
-    type Crop,
-    type PixelCrop,
-} from "react-image-crop";
-import "react-image-crop/dist/ReactCrop.css";
 import { RotateCcw, RotateCw } from "lucide-react";
+import { CropBox } from "@/components/CropBox";
 import { formatTime } from "@/components/VideoPlaybackControls";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -21,18 +15,20 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
 import { Spinner } from "@/components/ui/spinner";
+import { encodeNormalizedCroppedJpeg } from "@/lib/crop";
+import {
+    defaultNormalizedCrop,
+    fitRectToRatio,
+    type NormalizedCropRect,
+} from "@/lib/crop-draft";
 import {
     containedDisplaySize,
     cropRectForVideoSave,
-    encodeBakedCrop,
     trimRangeChanged,
     videoCropChanged,
 } from "@/lib/crop-editor";
 import { rotateImageBytes } from "@/lib/rotate";
-import {
-    maxAspectRatioCrop,
-    viewportTargetAspectRatio,
-} from "@/lib/viewport-fit";
+import { viewportTargetAspectRatio } from "@/lib/viewport-fit";
 import { loadMediaBytesForEdit } from "@/lib/load-media-bytes";
 import { logJsHeap } from "@/lib/memory-probe";
 import {
@@ -97,9 +93,7 @@ export function MediaEditorOverlay({
 
     const [workingBytes, setWorkingBytes] = useState<Uint8Array | undefined>();
     const [workingUrl, setWorkingUrl] = useState<string | undefined>();
-    const [crop, setCrop] = useState<Crop>();
-    const [completedCrop, setCompletedCrop] = useState<PixelCrop>();
-    const [cropAspect, setCropAspect] = useState<number | undefined>();
+    const [crop, setCrop] = useState<NormalizedCropRect>();
     const [loading, setLoading] = useState<boolean>(true);
     const [rotating, setRotating] = useState<boolean>(false);
     const [saving, setSaving] = useState<boolean>(false);
@@ -211,7 +205,6 @@ export function MediaEditorOverlay({
             setWorkingUrl(url);
             setDisplayLayout(undefined);
             setCrop(undefined);
-            setCompletedCrop(undefined);
             setMediaReady(false);
         },
         [],
@@ -229,16 +222,12 @@ export function MediaEditorOverlay({
                 workspaceSize.width,
                 workspaceSize.height,
             );
-            const nextCrop = maxAspectRatioCrop(
-                layout.width,
-                layout.height,
-                targetAspect,
-            );
-            setCropAspect(targetAspect);
             setDisplayLayout(layout);
-            setCrop(nextCrop);
-            setCompletedCrop(
-                convertToPixelCrop(nextCrop, layout.width, layout.height),
+            setCrop(
+                defaultNormalizedCrop(
+                    layout.width / layout.height,
+                    targetAspect,
+                ),
             );
             setMediaReady(true);
         },
@@ -313,7 +302,6 @@ export function MediaEditorOverlay({
             setError(undefined);
             setMediaReady(false);
             setCrop(undefined);
-            setCompletedCrop(undefined);
 
             const rotate = async (): Promise<void> => {
                 if (!isVideo || !sourceDimensions) {
@@ -374,17 +362,12 @@ export function MediaEditorOverlay({
     );
 
     const saveImage = useCallback((): void => {
-        const image = mediaRef.current;
-        if (
-            !workingBytes ||
-            !(image instanceof HTMLImageElement) ||
-            !completedCrop
-        ) {
+        if (!workingBytes || !crop) {
             return;
         }
         setSaving(true);
         setError(undefined);
-        void encodeBakedCrop(workingBytes, completedCrop, image)
+        void encodeNormalizedCroppedJpeg(workingBytes, crop)
             .then((encoded) => {
                 const { optimisticFile, finalize } =
                     cropAndReplaceFileOptimistic(file.id, encoded.bytes, {
@@ -402,7 +385,7 @@ export function MediaEditorOverlay({
                 setError(errorMessage(saveError, "Could not save crop"));
             });
     }, [
-        completedCrop,
+        crop,
         cropAndReplaceFileOptimistic,
         file.id,
         onSaved,
@@ -413,8 +396,7 @@ export function MediaEditorOverlay({
         if (
             !workingBytes ||
             !mediaRef.current ||
-            !completedCrop ||
-            !displayLayout ||
+            !crop ||
             !sourceDimensions
         ) {
             return;
@@ -429,15 +411,9 @@ export function MediaEditorOverlay({
         ) ?
             { startSec: trimStartSec, endSec: trimEndSec } :
             undefined;
-        const videoCrop = videoCropChanged(
-            completedCrop,
-            displayLayout.width,
-            displayLayout.height,
-        ) ?
+        const videoCrop = videoCropChanged(crop) ?
             cropRectForVideoSave(
-                completedCrop,
-                displayLayout.width,
-                displayLayout.height,
+                crop,
                 sourceDimensions.width,
                 sourceDimensions.height,
             ) :
@@ -508,8 +484,7 @@ export function MediaEditorOverlay({
                 );
             });
     }, [
-        completedCrop,
-        displayLayout,
+        crop,
         durationSec,
         editVideoAndReplaceFileOptimistic,
         file.id,
@@ -550,40 +525,21 @@ export function MediaEditorOverlay({
     const trimEndPercent =
         durationSec > 0 ? (trimEndSec / durationSec) * 100 : 100;
 
+    /** Normalized width / height of a crop with the target's pixel aspect. */
+    const targetRatio =
+        displayLayout ?
+            (targetAspect * displayLayout.height) / displayLayout.width :
+            undefined;
+    const lockedRatio = !isVideo && lockAspect ? targetRatio : undefined;
+
     const handleLockAspectChange = useCallback(
         (checked: boolean): void => {
             setCropLockAspect(checked);
-            if (!checked) {
-                return;
+            if (checked && crop && targetRatio !== undefined) {
+                setCrop(fitRectToRatio(crop, targetRatio));
             }
-            const image = mediaRef.current;
-            const aspect = cropAspect ?? targetAspect;
-            if (!image || !crop || aspect <= 0) {
-                return;
-            }
-            const nextCrop = makeAspectCrop(
-                {
-                    unit: "px",
-                    x: crop.x,
-                    y: crop.y,
-                    width: crop.width,
-                    height: crop.height,
-                },
-                aspect,
-                image.clientWidth,
-                image.clientHeight,
-            );
-            setCropAspect(aspect);
-            setCrop(nextCrop);
-            setCompletedCrop(
-                convertToPixelCrop(
-                    nextCrop,
-                    image.clientWidth,
-                    image.clientHeight,
-                ),
-            );
         },
-        [crop, cropAspect, setCropLockAspect, targetAspect],
+        [crop, setCropLockAspect, targetRatio],
     );
 
     const handleTrimChange = useCallback(
@@ -645,7 +601,7 @@ export function MediaEditorOverlay({
                     type="button"
                     size="sm"
                     onClick={handleSave}
-                    disabled={isBusy || !completedCrop || !mediaReady}
+                    disabled={isBusy || !crop || !mediaReady}
                 >
                     {saving ? (
                         <>
@@ -680,7 +636,7 @@ export function MediaEditorOverlay({
                 ) : (
                     <div
                         ref={workspaceRef}
-                        className="relative flex min-h-0 w-full flex-1 touch-none select-none items-center justify-center [-webkit-touch-callout:none]"
+                        className="relative flex min-h-0 w-full flex-1 touch-none overflow-hidden select-none items-center justify-center [-webkit-touch-callout:none]"
                         style={{ padding: CROP_WORKSPACE_INSET_PX }}
                     >
                         {!workspaceSize ? (
@@ -692,32 +648,9 @@ export function MediaEditorOverlay({
                                         <Spinner />
                                     </div>
                                 ) : null}
-                                <ReactCrop
-                                    crop={crop}
-                                    keepSelection
-                                    aspect={
-                                        !isVideo && lockAspect && cropAspect ?
-                                            cropAspect :
-                                            undefined
-                                    }
-                                    disabled={isBusy || !mediaReady}
-                                    onChange={(nextCrop) => {
-                                        setCrop(nextCrop);
-                                    }}
-                                    onComplete={(nextCrop) => {
-                                        const element = mediaRef.current;
-                                        if (!element) {
-                                            return;
-                                        }
-                                        setCompletedCrop(
-                                            convertToPixelCrop(
-                                                nextCrop,
-                                                element.clientWidth,
-                                                element.clientHeight,
-                                            ),
-                                        );
-                                    }}
-                                    className="max-h-full max-w-full select-none [-webkit-touch-callout:none]"
+                                <div
+                                    className="relative shrink-0"
+                                    style={displayLayout}
                                 >
                                     {isVideo ? (
                                         <video
@@ -748,7 +681,21 @@ export function MediaEditorOverlay({
                                             draggable={false}
                                         />
                                     )}
-                                </ReactCrop>
+                                    {crop && displayLayout ? (
+                                        <CropBox
+                                            imageBox={{
+                                                left: 0,
+                                                top: 0,
+                                                ...displayLayout,
+                                            }}
+                                            rect={crop}
+                                            onCommit={setCrop}
+                                            disabled={isBusy || !mediaReady}
+                                            lockedRatio={lockedRatio}
+                                            edgeHandles
+                                        />
+                                    ) : null}
+                                </div>
                             </>
                         )}
                     </div>

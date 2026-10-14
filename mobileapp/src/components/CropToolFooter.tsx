@@ -1,10 +1,9 @@
 import { useCallback, useMemo, type JSX } from "react";
 import { Crop } from "lucide-react";
 import { PendingBatchFooter } from "@/components/PendingBatchFooter";
-import { clampCropRect, encodeCroppedJpeg } from "@/lib/crop";
+import { encodeNormalizedCroppedJpeg } from "@/lib/crop";
 import {
     confirmDiscardPendingCrops,
-    normalizedToPixelRect,
     type PendingCrop,
 } from "@/lib/crop-draft";
 import { loadMediaBytesForEdit } from "@/lib/load-media-bytes";
@@ -87,16 +86,9 @@ const cropFile = async (
     const bytes = await loadMediaBytesForEdit(file);
     const { toRenderableImageBlob } = await import("@/lib/renderable-image");
     const blob = await toRenderableImageBlob(file, bytes);
-    const bitmap = await createImageBitmap(blob);
-    const { width, height } = bitmap;
-    bitmap.close();
-    const encoded = await encodeCroppedJpeg(
+    const encoded = await encodeNormalizedCroppedJpeg(
         new Uint8Array(await blob.arrayBuffer()),
-        clampCropRect(
-            normalizedToPixelRect(pending.rect, width, height),
-            width,
-            height,
-        ),
+        pending.rect,
     );
     return cropAndReplaceFileOptimistic(
         fileId,

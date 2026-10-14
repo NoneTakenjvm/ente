@@ -14,8 +14,17 @@ export interface PendingCrop {
     imageAspect: number;
 }
 
-/** Which part of the crop box a drag grabbed: the body or one corner. */
-export type CropDragHandle = "move" | "nw" | "ne" | "sw" | "se";
+/** Which part of the crop box a drag grabbed: the body, a corner or an edge. */
+export type CropDragHandle =
+    | "move" |
+    "nw" |
+    "n" |
+    "ne" |
+    "e" |
+    "se" |
+    "s" |
+    "sw" |
+    "w";
 
 /** Where the image sits inside a tile, in tile pixels. */
 export interface ContainedBox {
@@ -27,7 +36,7 @@ export interface ContainedBox {
 
 /**
  * Largest centered crop of `targetAspect` that fits the image, as the
- * normalized form of `maxAspectRatioCrop`. Falls back to the whole image.
+ * Falls back to the whole image.
  */
 export const defaultNormalizedCrop = (
     imageAspect: number,
@@ -77,9 +86,11 @@ export const containedBox = (
 /**
  * Apply a drag of (`dx`, `dy`) normalized units to the crop box.
  *
- * `move` shifts the box inside the image. A corner moves its two edges, kept
- * inside the image and at least `minWidth` x `minHeight` so the box cannot
- * flip. A box already smaller than the minimum keeps its own size as the floor.
+ * `move` shifts the box inside the image. A corner moves its two edges and an
+ * edge moves one, kept inside the image and at least `minWidth` x `minHeight`
+ * so the box cannot flip. A box already smaller than the minimum keeps its own
+ * size as the floor. With `lockedRatio` (normalized width / height) a resize
+ * keeps that shape, anchored on the opposite corner or edge midpoint.
  */
 export const dragCropRect = (
     start: NormalizedCropRect,
@@ -88,6 +99,7 @@ export const dragCropRect = (
     dy: number,
     minWidth: number,
     minHeight: number,
+    lockedRatio?: number,
 ): NormalizedCropRect => {
     if (handle === "move") {
         return {
@@ -98,21 +110,56 @@ export const dragCropRect = (
     }
     const floorWidth = Math.min(minWidth, start.width);
     const floorHeight = Math.min(minHeight, start.height);
+    const west = handle.includes("w");
+    const east = handle.includes("e");
+    const north = handle.includes("n");
+    const south = handle.includes("s");
+    if (lockedRatio !== undefined && lockedRatio > 0) {
+        return dragLockedCropRect(
+            start,
+            { west, east, north, south },
+            dx,
+            dy,
+            Math.max(floorWidth, floorHeight * lockedRatio),
+            lockedRatio,
+        );
+    }
     let left = start.x;
     let top = start.y;
     let right = start.x + start.width;
     let bottom = start.y + start.height;
-    if (handle === "nw" || handle === "sw") {
+    if (west) {
         left = clamp(left + dx, 0, right - floorWidth);
-    } else {
+    } else if (east) {
         right = clamp(right + dx, left + floorWidth, 1);
     }
-    if (handle === "nw" || handle === "ne") {
+    if (north) {
         top = clamp(top + dy, 0, bottom - floorHeight);
-    } else {
+    } else if (south) {
         bottom = clamp(bottom + dy, top + floorHeight, 1);
     }
     return { x: left, y: top, width: right - left, height: bottom - top };
+};
+
+/**
+ * Shrink `rect` about its center to the largest box of `ratio`
+ * (normalized width / height) that fits inside it.
+ */
+export const fitRectToRatio = (
+    rect: NormalizedCropRect,
+    ratio: number,
+): NormalizedCropRect => {
+    if (ratio <= 0) {
+        return rect;
+    }
+    const width = Math.min(rect.width, rect.height * ratio);
+    const height = width / ratio;
+    return {
+        x: rect.x + (rect.width - width) / 2,
+        y: rect.y + (rect.height - height) / 2,
+        width,
+        height,
+    };
 };
 
 /**
@@ -149,6 +196,54 @@ export const confirmDiscardPendingCrops = (
             "Discard 1 pending crop?" :
             `Discard ${count} pending crops?`,
     );
+};
+
+interface MovedSides {
+    west: boolean;
+    east: boolean;
+    north: boolean;
+    south: boolean;
+}
+
+/**
+ * Resize keeping `ratio`: the width follows the drag (the smaller of the two
+ * axes for a corner), then is limited by the room left on the anchored sides.
+ */
+const dragLockedCropRect = (
+    start: NormalizedCropRect,
+    moved: MovedSides,
+    dx: number,
+    dy: number,
+    floorWidth: number,
+    ratio: number,
+): NormalizedCropRect => {
+    const { west, east, north, south } = moved;
+    const horizontal = west ? -dx : east ? dx : undefined;
+    const vertical = north ? -dy : south ? dy : undefined;
+    const requestedWidth =
+        horizontal !== undefined && vertical !== undefined ?
+            Math.min(start.width + horizontal, (start.height + vertical) * ratio) :
+            horizontal !== undefined ? start.width + horizontal :
+                (start.height + (vertical ?? 0)) * ratio;
+    const anchorX =
+        west ? start.x + start.width :
+            east ? start.x :
+                start.x + start.width / 2;
+    const anchorY =
+        north ? start.y + start.height :
+            south ? start.y :
+                start.y + start.height / 2;
+    const roomX = west ? anchorX : east ? 1 - anchorX : 2 * Math.min(anchorX, 1 - anchorX);
+    const roomY = north ? anchorY : south ? 1 - anchorY : 2 * Math.min(anchorY, 1 - anchorY);
+    const maxWidth = Math.min(roomX, roomY * ratio);
+    const width = clamp(requestedWidth, Math.min(floorWidth, maxWidth), maxWidth);
+    const height = width / ratio;
+    return {
+        x: west ? anchorX - width : east ? anchorX : anchorX - width / 2,
+        y: north ? anchorY - height : south ? anchorY : anchorY - height / 2,
+        width,
+        height,
+    };
 };
 
 const clamp = (value: number, min: number, max: number): number =>

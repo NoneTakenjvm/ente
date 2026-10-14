@@ -3,23 +3,16 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { PixelCrop } from "react-image-crop";
 import { beforeAll, describe, expect, it } from "vitest";
 import { installCanvasPolyfill } from "@/lib/__tests__/canvas-setup";
-import { encodeCroppedJpeg } from "@/lib/crop";
-import { encodeBakedCrop } from "@/lib/crop-editor";
+import {
+    encodeCroppedJpeg,
+    encodeNormalizedCroppedJpeg,
+} from "@/lib/crop";
 import { rotateImageBytes } from "@/lib/rotate";
 
 beforeAll(() => {
     installCanvasPolyfill();
-});
-
-const fullFramePixelCrop = (width: number, height: number): PixelCrop => ({
-    unit: "px",
-    x: 0,
-    y: 0,
-    width,
-    height,
 });
 
 const quadrantFixturePng = (): Uint8Array =>
@@ -77,15 +70,9 @@ describe("baked rotate + crop pipeline (editor path)", () => {
         const source = quadrantFixturePng();
         const rotated = await rotateImageBytes(source, "image/png", 90);
 
-        const cropped = await encodeBakedCrop(
+        const cropped = await encodeNormalizedCroppedJpeg(
             rotated.bytes,
-            fullFramePixelCrop(1, 2),
-            {
-                width: 2,
-                height: 4,
-                naturalWidth: 2,
-                naturalHeight: 4,
-            },
+            { x: 0, y: 0, width: 0.5, height: 0.5 },
         );
 
         expect(cropped.width).toBe(1);
@@ -96,15 +83,9 @@ describe("baked rotate + crop pipeline (editor path)", () => {
         const source = quadrantFixturePng();
         const rotated = await rotateImageBytes(source, "image/png", 90);
 
-        const cropped = await encodeBakedCrop(
+        const cropped = await encodeNormalizedCroppedJpeg(
             rotated.bytes,
-            fullFramePixelCrop(rotated.width, rotated.height),
-            {
-                width: rotated.width,
-                height: rotated.height,
-                naturalWidth: rotated.width,
-                naturalHeight: rotated.height,
-            },
+            { x: 0, y: 0, width: 1, height: 1 },
         );
 
         expect(cropped.width).toBe(2);
@@ -122,15 +103,9 @@ describe("baked rotate + crop pipeline (editor path)", () => {
 
     it("partial crop on unrotated source matches requested region size", async () => {
         const source = quadrantFixturePng();
-        const cropped = await encodeBakedCrop(
+        const cropped = await encodeNormalizedCroppedJpeg(
             source,
-            fullFramePixelCrop(2, 1),
-            {
-                width: 4,
-                height: 2,
-                naturalWidth: 4,
-                naturalHeight: 2,
-            },
+            { x: 0, y: 0, width: 0.5, height: 0.5 },
         );
 
         expect(cropped.width).toBe(2);
@@ -142,15 +117,9 @@ describe("CSS-rotate encode regression (old broken path)", () => {
     it("encodeCroppedJpeg with rotation=90 misaligns crop rect from display space", async () => {
         const source = quadrantFixturePng();
 
-        const baked = await encodeBakedCrop(
+        const baked = await encodeNormalizedCroppedJpeg(
             (await rotateImageBytes(source, "image/png", 90)).bytes,
-            fullFramePixelCrop(1, 2),
-            {
-                width: 2,
-                height: 4,
-                naturalWidth: 2,
-                naturalHeight: 4,
-            },
+            { x: 0, y: 0, width: 0.5, height: 0.5 },
         );
 
         const cssStyle = await encodeCroppedJpeg(
@@ -168,17 +137,11 @@ describe("CSS-rotate encode regression (old broken path)", () => {
 });
 
 describe("decode sanity", () => {
-    it("encodeBakedCrop output is a valid JPEG", async () => {
+    it("encodeNormalizedCroppedJpeg output is a valid JPEG", async () => {
         const source = quadrantFixturePng();
-        const cropped = await encodeBakedCrop(
+        const cropped = await encodeNormalizedCroppedJpeg(
             source,
-            fullFramePixelCrop(4, 2),
-            {
-                width: 4,
-                height: 2,
-                naturalWidth: 4,
-                naturalHeight: 2,
-            },
+            { x: 0, y: 0, width: 1, height: 1 },
         );
 
         const size = await decodeJpegSize(cropped.bytes);

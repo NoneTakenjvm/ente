@@ -7,12 +7,19 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-10-14 |
-| **Last agent / session** | Simplification plan batch 4 (`mobileapp/simplification-plan.md`): `useJob` / `<JobControls>` (job stores deleted), shared Manage panel pieces, grid marquee/scroll hooks, `MediaListCard`, `MediaEditorOverlay`, one session restore, pages on FilteredMediaView + AppShell session gate, PhotoViewer deduped and split (`0.3.201`) |
+| **Last agent / session** | Simplification plan batch 5 (`mobileapp/simplification-plan.md`): react-image-crop replaced by a shared `CropBox`, single-decode quick crop, zero tsc errors, CI runs lint/typecheck/tests before deploy, `SortMenu` split (`0.3.202`) |
 | **Current milestone** | Post-M8 UX / upload performance |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
-| **Next recommended action** | Phone QA of `0.3.201` (QA lists for `0.3.195`–`0.3.201` below; the PhotoViewer gestures and Manage scans need the most attention). Then optional Phase 5 (drop react-image-crop, knip + `typecheck:scripts` in CI). Rotate the test-account password. |
+| **Next recommended action** | Phone QA of `0.3.202` (QA lists for `0.3.195`–`0.3.202` below; crop editor, PhotoViewer gestures and Manage scans need the most attention). Watch the first CI run on push (new lint/typecheck/test steps). Rotate the test-account password. |
 
-**This session (committed locally, not pushed, `0.3.201`): simplification plan Phase 3 §3.1 + rest of Phase 4**
+**This session (committed locally, not pushed, `0.3.202`): simplification plan Phase 5 + follow-ups**
+1. **Crop UI** — react-image-crop removed. `components/CropBox.tsx` (pointer drag, corner handles, edge handles in the full editor, `lockedRatio`, 32 px minimum, stays inside the media) is shared by QuickCropOverlay and MediaEditorOverlay; crop state is one normalized rect. Lock on shrinks the box to the viewport aspect about its centre; video stays free-form. `maxAspectRatioCrop`, `encodeBakedCrop` and `pixelCropToSourceRect` deleted.
+2. **Quick crop decode** — `encodeNormalizedCroppedJpeg` sends the normalized rect to the compress worker, which resolves it against its single decode (the size-probe `createImageBitmap` is gone).
+3. **Type checks and CI** — `tsc --noEmit` now has 0 errors (test fixtures fixed); `scripts/tsconfig.json` lib ES2022 + WebWorker and the global electron types, so `typecheck:scripts` passes; new `npm run typecheck`. The deploy workflow runs lint, typecheck, typecheck:scripts and tests before the build (Linux runner untested; `@napi-rs/canvas` is the likeliest snag).
+4. **Sort menu** — `SortMenu.tsx` 947 → 196 lines; `sort-menu/` holds SortPanel (one table-driven direction section), NearnessSection, KitPicker (+ `KitPickerList`) and ViewportTargetInputs; data hooks in `hooks/use-sort-menu-data.ts`.
+5. **QA** — full editor: default box at the viewport aspect, move, corner/edge resize locked and unlocked, re-lock snaps, rotate resets the box, save gives the boxed region; video editor crop + trim + save; quick crop on tiles (incl. HEIC) applies the boxed region; Options menu every sort, viewport W/H edit + Use device, nearness kit/tags flows, None with shuffle active, deleting the active nearness kit drops the ordering.
+
+**Previous session (committed locally, `0.3.201`): simplification plan Phase 3 §3.1 + rest of Phase 4**
 1. **Jobs** — `hooks/use-job.ts` (`useJob`: status, progress, start/pause/reset, supersede check, abort on unmount; partial results still applied after pause) and `manage/JobControls.tsx`; `jobPercent` in job-utils. `usePhashJobStore` / `useCompressJobStore` deleted, plus the unused `shouldPause` / `waitIfPaused`. Auto-crop scan/apply loops moved to `lib/auto-crop-job.ts`. Scans with nothing pending toast "already complete" without starting. Similar now applies a paused scan's partial results (like Settings).
 2. **Manage pieces** — `useGridSelection` (Trash, Archived), `TagPickerSelect`, `NumberToggleField`, video switches as a config array. Trash's restore target follows the default until picked. Tune cancel toasts from the button, not on unmount.
 3. **Grid and cards** — `useGridMarquee`, `useListScrollController`, shared `useThumbnailEntry` / `ThumbnailImage`, `TileFrame`, `MediaListCard` for album and session cards. Covers and dedup thumbs now retry after a failed thumbnail.

@@ -67,6 +67,7 @@ export const installCanvasPolyfill = (): void => {
     };
 
     HTMLCanvasElement.prototype.getContext = function getContext(
+        this: HTMLCanvasElement,
         type: string,
     ): CanvasRenderingContext2D | null {
         if (type !== "2d") {
@@ -75,7 +76,7 @@ export const installCanvasPolyfill = (): void => {
         syncBackingSize(this);
         const backing = canvasBacking.get(this);
         return backing?.context as unknown as CanvasRenderingContext2D;
-    };
+    } as typeof HTMLCanvasElement.prototype.getContext;
 
     HTMLCanvasElement.prototype.toBlob = function toBlob(
         callback: BlobCallback,
@@ -93,7 +94,7 @@ export const installCanvasPolyfill = (): void => {
             mime === "image/jpeg" ?
                 backing.canvas.toBuffer("image/jpeg", quality ?? 0.92) :
                 backing.canvas.toBuffer("image/png");
-        callback(new Blob([buffer], { type: mime }));
+        callback(new Blob([new Uint8Array(buffer)], { type: mime }));
     };
 
     URL.createObjectURL = (blob: Blob): string => {
@@ -114,9 +115,11 @@ export const installCanvasPolyfill = (): void => {
         throw new Error("Canvas 2D unavailable in test polyfill");
     }
     const contextPrototype = Object.getPrototypeOf(probeContext) as SKRSContext2D;
-    const originalDrawImage = contextPrototype.drawImage.bind(probeContext);
+    const originalDrawImage = contextPrototype.drawImage.bind(
+        probeContext,
+    ) as (image: CanvasImage | Canvas, ...args: number[]) => void;
     contextPrototype.drawImage = function drawImage(
-        image: CanvasImage | HTMLCanvasElement,
+        image: CanvasImage | Canvas,
         ...args: number[]
     ): void {
         if (image instanceof HTMLCanvasElement) {

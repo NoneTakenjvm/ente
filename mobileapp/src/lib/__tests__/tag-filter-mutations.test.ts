@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { TagFilterSelection } from "@/lib/tag-filter";
 import {
     findKitModeInGroup,
     removeTagFilterNode,
@@ -81,7 +82,7 @@ describe("tag-filter-mutations", () => {
 
     it("setClauseModeOnFilter updates one clause by id", () => {
         const clause = includeClause("selfie");
-        let filter = {
+        let filter: TagFilterSelection = {
             ...emptyTagFilter(),
             root: andRoot(clause),
         };
@@ -115,7 +116,7 @@ describe("tag-filter-mutations", () => {
     });
 
     it("setTagFilterModeOnFilter clears tagged scope when adding include", () => {
-        let filter = {
+        let filter: TagFilterSelection = {
             ...emptyTagFilter(),
             tagScope: "tagged" as const,
         };
@@ -125,7 +126,7 @@ describe("tag-filter-mutations", () => {
     });
 
     it("setTagFilterModeOnFilter keeps tagged scope when adding exclude", () => {
-        let filter = {
+        let filter: TagFilterSelection = {
             ...emptyTagFilter(),
             tagScope: "tagged" as const,
         };
@@ -135,7 +136,7 @@ describe("tag-filter-mutations", () => {
     });
 
     it("setTagFilterModeOnFilter keeps untagged scope when removing a clause", () => {
-        let filter = {
+        let filter: TagFilterSelection = {
             ...emptyTagFilter(),
             tagScope: "untagged" as const,
         };
@@ -145,7 +146,7 @@ describe("tag-filter-mutations", () => {
 
     it("setClauseModeOnFilter clears tagged scope when switching to include", () => {
         const clause = includeClause("selfie");
-        let filter = {
+        let filter: TagFilterSelection = {
             ...emptyTagFilter(),
             tagScope: "tagged" as const,
             root: andRoot({ ...clause, mode: "exclude" }),
@@ -157,7 +158,7 @@ describe("tag-filter-mutations", () => {
     });
 
     it("presence-off include keeps tagged and untagged scopes", () => {
-        let tagged = {
+        let tagged: TagFilterSelection = {
             ...emptyTagFilter(),
             tagScope: "tagged" as const,
         };
@@ -170,7 +171,7 @@ describe("tag-filter-mutations", () => {
         expect(tagged.tagScope).toBe("tagged");
         expect(findClauseInGroup(tagged.root, "junk")?.mode).toBe("include");
 
-        let untagged = {
+        let untagged: TagFilterSelection = {
             ...emptyTagFilter(),
             tagScope: "untagged" as const,
         };
@@ -209,7 +210,7 @@ describe("tag-filter-mutations", () => {
 
     it("setClauseInGroupOnFilter drops a nested group emptied by removing its last clause", () => {
         const inner = andRoot(includeClause("a"));
-        let filter = {
+        let filter: TagFilterSelection = {
             ...emptyTagFilter(),
             root: andRoot(inner, includeClause("b")),
         };

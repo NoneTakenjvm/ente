@@ -7,9 +7,11 @@ import {
 
 const http = {} as HttpClient;
 
-const mockFetchUploadURLWithMetadata = vi.fn();
-const mockPutFile = vi.fn();
-const mockComputeMd5 = vi.fn(() => "md5-b64");
+type AnyArgs = (...args: unknown[]) => unknown;
+
+const mockFetchUploadURLWithMetadata = vi.fn<AnyArgs>();
+const mockPutFile = vi.fn<AnyArgs>();
+const mockComputeMd5 = vi.fn<AnyArgs>(() => "md5-b64");
 
 vi.mock("@/core/upload/remote", () => ({
     fetchUploadURLWithMetadata: (...args: unknown[]) =>

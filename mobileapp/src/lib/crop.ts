@@ -15,6 +15,7 @@ import {
     encodeJpegInWorker,
     type EncodeJpegResult,
 } from "@/lib/compress";
+import { normalizedToPixelRect, type NormalizedCropRect } from "@/lib/crop-draft";
 import type { CropRect } from "@/workers/compress-worker-types";
 import type { RotationDegrees } from "@/lib/rotate";
 
@@ -81,23 +82,6 @@ export const clampCropRect = (
     const x = Math.max(0, Math.min(Math.round(rect.x), imageWidth - width));
     const y = Math.max(0, Math.min(Math.round(rect.y), imageHeight - height));
     return { x, y, width, height };
-};
-
-/**
- * Map a pixel crop from displayed image dimensions to source image pixels.
- */
-export const pixelCropToSourceRect = (
-    pixelCrop: { x: number; y: number; width: number; height: number },
-    image: Pick<HTMLImageElement, "width" | "height" | "naturalWidth" | "naturalHeight">,
-): CropRect => {
-    const scaleX = image.naturalWidth / image.width;
-    const scaleY = image.naturalHeight / image.height;
-    return {
-        x: Math.round(pixelCrop.x * scaleX),
-        y: Math.round(pixelCrop.y * scaleY),
-        width: Math.round(pixelCrop.width * scaleX),
-        height: Math.round(pixelCrop.height * scaleY),
-    };
 };
 
 const rotationRadians = (degrees: number): number => (degrees * Math.PI) / 180;
@@ -174,20 +158,8 @@ const encodeCroppedJpegWithRotation = async (
     );
 };
 
-const encodeCroppedJpegMainThread = async (
-    bytes: Uint8Array,
-    cropRect: CropRect,
-    quality: number,
-): Promise<EncodeJpegResult> => {
-    const image = await decodeImageElement(bytes);
-    return encodeCroppedCanvasJpeg(
-        image,
-        image.width,
-        image.height,
-        cropRect,
-        quality,
-    );
-};
+const clampJpegQuality = (quality: number): number =>
+    Math.min(MAX_JPEG_QUALITY, Math.max(MIN_JPEG_QUALITY, quality));
 
 /**
  * Crop image bytes to the given rectangle and encode as JPEG.
@@ -198,10 +170,7 @@ export const encodeCroppedJpeg = async (
     quality = DEFAULT_JPEG_QUALITY,
     rotationDegrees: RotationDegrees | 0 = 0,
 ): Promise<EncodeJpegResult> => {
-    const clampedQuality = Math.min(
-        MAX_JPEG_QUALITY,
-        Math.max(MIN_JPEG_QUALITY, quality),
-    );
+    const clampedQuality = clampJpegQuality(quality);
     if (rotationDegrees !== 0) {
         return encodeCroppedJpegWithRotation(
             bytes,
@@ -221,6 +190,43 @@ export const encodeCroppedJpeg = async (
         if (error instanceof CompressWorkerTimeoutError) {
             throw error;
         }
-        return encodeCroppedJpegMainThread(bytes, cropRect, clampedQuality);
+        const image = await decodeImageElement(bytes);
+        return encodeCroppedCanvasJpeg(
+            image,
+            image.width,
+            image.height,
+            cropRect,
+            clampedQuality,
+        );
+    }
+};
+
+/**
+ * Like {@link encodeCroppedJpeg}, but the rectangle is in 0-1 units of the
+ * image, so the caller needs no decode of its own to learn the image size.
+ */
+export const encodeNormalizedCroppedJpeg = async (
+    bytes: Uint8Array,
+    normalizedCropRect: NormalizedCropRect,
+    quality = DEFAULT_JPEG_QUALITY,
+): Promise<EncodeJpegResult> => {
+    const clampedQuality = clampJpegQuality(quality);
+    try {
+        return await encodeJpegInWorker(bytes, {
+            quality: clampedQuality,
+            normalizedCropRect,
+        });
+    } catch (error: unknown) {
+        if (error instanceof CompressWorkerTimeoutError) {
+            throw error;
+        }
+        const image = await decodeImageElement(bytes);
+        return encodeCroppedCanvasJpeg(
+            image,
+            image.width,
+            image.height,
+            normalizedToPixelRect(normalizedCropRect, image.width, image.height),
+            clampedQuality,
+        );
     }
 };

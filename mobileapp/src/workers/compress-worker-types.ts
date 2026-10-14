@@ -12,6 +12,8 @@ export interface CompressWorkerRequest {
     bytes: Uint8Array;
     quality: number;
     cropRect?: CropRect;
+    /** Crop in 0-1 units of the decoded image; resolved against its size in the worker. */
+    normalizedCropRect?: CropRect;
     /** JPEG only: try lower mozjpeg qualities until output is smaller than input. */
     preferSmaller?: boolean;
     /** jpeg = crop path; auto = PhotoHoard classify + AVIF/WebP. */

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EnteFile } from "ente-media/file";
 import {
-    maxAspectRatioCrop,
     sortFilesByViewportFit,
     viewportBlankFraction,
     viewportTargetAspectRatio,
@@ -23,38 +22,6 @@ describe("viewport-fit", () => {
         expect(viewportTargetAspectRatio(0, 100)).toBe(1);
         expect(viewportTargetAspectRatio(100, 0)).toBe(1);
         expect(viewportTargetAspectRatio(-1, 10)).toBe(1);
-    });
-
-    it("maxAspectRatioCrop fills height when the image is wider than the target", () => {
-        // Display 400×300 (4:3), target 9:16 portrait ≈ 0.5625
-        expect(maxAspectRatioCrop(400, 300, 9 / 16)).toEqual({
-            unit: "px",
-            x: 116,
-            y: 0,
-            width: 169,
-            height: 300,
-        });
-    });
-
-    it("maxAspectRatioCrop fills width when the image is taller than the target", () => {
-        // Display 300×400 (3:4), target 16:9 landscape
-        expect(maxAspectRatioCrop(300, 400, 16 / 9)).toEqual({
-            unit: "px",
-            x: 0,
-            y: 116,
-            width: 300,
-            height: 169,
-        });
-    });
-
-    it("maxAspectRatioCrop matches the full frame when aspects are equal", () => {
-        expect(maxAspectRatioCrop(360, 640, 360 / 640)).toEqual({
-            unit: "px",
-            x: 0,
-            y: 0,
-            width: 360,
-            height: 640,
-        });
     });
 
     it("viewportBlankFraction is 0 for a perfect match", () => {

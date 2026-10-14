@@ -16,7 +16,7 @@ const fileWithTags = (id: number, tags: string[]): EnteFile =>
                 _organizer_v1: { tags, updatedAt: 1 },
             },
         },
-    }) as EnteFile;
+    }) as unknown as EnteFile;
 
 describe("rotate helpers", () => {
     it("buildRotatedOrganizerTags merges source tags", () => {

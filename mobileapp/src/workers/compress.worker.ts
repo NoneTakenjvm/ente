@@ -297,14 +297,25 @@ self.onmessage = async (
         bytes,
         quality,
         cropRect,
+        normalizedCropRect,
         preferSmaller = false,
-        output = cropRect ? "jpeg" : "auto",
+        output = cropRect || normalizedCropRect ? "jpeg" : "auto",
         minSizeBytes = 0,
     }: CompressWorkerRequest = event.data;
     try {
         const format = detectImageFormatFromBytes(bytes);
         let imageData = await decodeToImageData(bytes, format);
-        if (cropRect) {
+        if (normalizedCropRect) {
+            imageData = await cropImageData(imageData, {
+                x: normalizedCropRect.x * imageData.width,
+                y: normalizedCropRect.y * imageData.height,
+                width: Math.max(1, normalizedCropRect.width * imageData.width),
+                height: Math.max(
+                    1,
+                    normalizedCropRect.height * imageData.height,
+                ),
+            });
+        } else if (cropRect) {
             imageData = await cropImageData(imageData, cropRect);
         }
 

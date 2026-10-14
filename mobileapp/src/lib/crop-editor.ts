@@ -1,9 +1,5 @@
-import type { PixelCrop } from "react-image-crop";
-import {
-    encodeCroppedJpeg,
-    pixelCropToSourceRect,
-    type CropRect,
-} from "@/lib/crop";
+import { clampCropRect, type CropRect } from "@/lib/crop";
+import { normalizedToPixelRect, type NormalizedCropRect } from "@/lib/crop-draft";
 
 export interface PixelRect {
     x: number;
@@ -15,6 +11,8 @@ export interface PixelRect {
 const CONTENT_DETECT_MAX_EDGE = 512;
 const DEFAULT_CONTENT_THRESHOLD = 12;
 const DEFAULT_ALPHA_THRESHOLD = 8;
+/** Normalized crops within this of the full frame count as uncropped. */
+const CROP_EPSILON = 1e-4;
 
 /** Fit natural pixels into a max box (object-contain) for the crop UI. */
 export const containedDisplaySize = (
@@ -579,46 +577,24 @@ export const hasMeaningfulBorder = (
     return trimmed >= 8;
 };
 
+/** Source-pixel crop for a video edit, clamped to the frame. */
 export const cropRectForVideoSave = (
-    completedCrop: PixelCrop,
-    displayWidth: number,
-    displayHeight: number,
+    crop: NormalizedCropRect,
     sourceWidth: number,
     sourceHeight: number,
 ): CropRect =>
-    pixelCropToSourceRect(completedCrop, {
-        width: displayWidth,
-        height: displayHeight,
-        naturalWidth: sourceWidth,
-        naturalHeight: sourceHeight,
-    });
-
-/**
- * Encode a crop from baked working bytes using display-space crop coordinates.
- */
-export const encodeBakedCrop = (
-    workingBytes: Uint8Array,
-    completedCrop: PixelCrop,
-    image: Pick<
-        HTMLImageElement,
-        "width" | "height" | "naturalWidth" | "naturalHeight"
-    >,
-): ReturnType<typeof encodeCroppedJpeg> => {
-    return encodeCroppedJpeg(
-        workingBytes,
-        pixelCropToSourceRect(completedCrop, image),
+    clampCropRect(
+        normalizedToPixelRect(crop, sourceWidth, sourceHeight),
+        sourceWidth,
+        sourceHeight,
     );
-};
 
-export const videoCropChanged = (
-    completedCrop: PixelCrop,
-    displayWidth: number,
-    displayHeight: number,
-): boolean =>
-    completedCrop.x > 0 ||
-    completedCrop.y > 0 ||
-    completedCrop.width < displayWidth ||
-    completedCrop.height < displayHeight;
+/** True when the crop is smaller than the whole frame. */
+export const videoCropChanged = (crop: NormalizedCropRect): boolean =>
+    crop.x > CROP_EPSILON ||
+    crop.y > CROP_EPSILON ||
+    crop.width < 1 - CROP_EPSILON ||
+    crop.height < 1 - CROP_EPSILON;
 
 export const trimRangeChanged = (
     trim: { startSec: number; endSec: number },

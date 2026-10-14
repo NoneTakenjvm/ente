@@ -1,4 +1,3 @@
-import type { Crop } from "react-image-crop";
 import type { EnteFile } from "ente-media/file";
 import { fileAspectRatio } from "@/lib/file-aspect-ratio";
 import { sortFilesByScore } from "@/lib/sort-files";
@@ -39,40 +38,6 @@ export const viewportTargetAspectRatio = (
         return 1;
     }
     return width / height;
-};
-
-/**
- * Largest centered crop of {@link aspectRatio} that fits inside the display box.
- */
-export const maxAspectRatioCrop = (
-    displayWidth: number,
-    displayHeight: number,
-    aspectRatio: number,
-): Crop => {
-    if (displayWidth <= 0 || displayHeight <= 0 || aspectRatio <= 0) {
-        return { unit: "px", x: 0, y: 0, width: 0, height: 0 };
-    }
-    const boxAspect = displayWidth / displayHeight;
-    if (boxAspect > aspectRatio) {
-        const height = displayHeight;
-        const width = Math.max(1, Math.round(height * aspectRatio));
-        return {
-            unit: "px",
-            x: Math.round((displayWidth - width) / 2),
-            y: 0,
-            width,
-            height,
-        };
-    }
-    const width = displayWidth;
-    const height = Math.max(1, Math.round(width / aspectRatio));
-    return {
-        unit: "px",
-        x: 0,
-        y: Math.round((displayHeight - height) / 2),
-        width,
-        height,
-    };
 };
 
 /**

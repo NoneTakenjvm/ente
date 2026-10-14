@@ -10,7 +10,7 @@ import {
 import { fileWithOrganizerTags } from "@/lib/tag-writes";
 import { axis, toEmb } from "@/test-utils/fixtures";
 
-const file = (id: number, tags: string[], fileType = FileType.image): EnteFile =>
+const file = (id: number, tags: string[], fileType: FileType = FileType.image): EnteFile =>
     fileWithOrganizerTags(
         { id, metadata: { fileType } } as unknown as EnteFile,
         tags,

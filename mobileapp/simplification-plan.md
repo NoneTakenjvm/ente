@@ -1,6 +1,6 @@
 # mobileapp simplification plan
 
-**Status:** Phases 0–1 committed (`f41698ef32`, APP_VERSION 0.3.195). Phase 2 committed (0.3.196–0.3.197). Phase 3 wave 1 committed (0.3.198); wave 2a (§3.9/§5.6, §5.3, §3.2) committed (0.3.199); §5.4 merged scan plus Phase 4 §2.1b–f, §1.3+§1.7 and §2.6 committed (0.3.200); §3.1 `useJob` and the rest of Phase 4 committed (0.3.201). Phase 5 (optional) next. Written 2026-10-14 against `ntphotos` @ `81946e8e48` (APP_VERSION 0.3.194).
+**Status:** Phases 0–1 committed (`f41698ef32`, APP_VERSION 0.3.195). Phase 2 committed (0.3.196–0.3.197). Phase 3 wave 1 committed (0.3.198); wave 2a (§3.9/§5.6, §5.3, §3.2) committed (0.3.199); §5.4 merged scan plus Phase 4 §2.1b–f, §1.3+§1.7 and §2.6 committed (0.3.200); §3.1 `useJob` and the rest of Phase 4 committed (0.3.201). Phase 5 §1.6, clean typecheck and CI checks committed (0.3.202); knip next. Written 2026-10-14 against `ntphotos` @ `81946e8e48` (APP_VERSION 0.3.194).
 
 **Purpose:** make `mobileapp/` smaller and easier to change safely, without changing what the app does. The work covers:
 - removing duplicated mechanisms
@@ -234,7 +234,7 @@ Each phase leaves the app shippable. Phases 0–1 are mostly independent PRs tha
 - [x] §2.6 Move upload orchestration out of UploadPanel.
 
 ### Phase 5: Optional
-- [ ] §1.6 Drop react-image-crop (D5).
+- [x] §1.6 Drop react-image-crop (D5).
 - [ ] Add `knip` and `typecheck:scripts` to CI, so CI runs more than `npm run build`.
 
 ---

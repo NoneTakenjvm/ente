@@ -97,6 +97,9 @@ describe("crypto", () => {
             file: { decryptionHeader: "" },
             thumbnail: { decryptionHeader: "" },
             isDeleted: false,
+            info: undefined,
+            magicMetadata: undefined,
+            pubMagicMetadata: undefined,
         };
 
         const file = await decryptRemoteFile(remoteFile, collectionKey);

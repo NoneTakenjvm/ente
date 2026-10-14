@@ -3,6 +3,7 @@ import {
     containedBox,
     defaultNormalizedCrop,
     dragCropRect,
+    fitRectToRatio,
     normalizedToPixelRect,
     type NormalizedCropRect,
 } from "@/lib/crop-draft";
@@ -179,5 +180,48 @@ describe("normalizedToPixelRect", () => {
                 300,
             ),
         ).toEqual({ x: 100, y: 30, width: 200, height: 240 });
+    });
+});
+
+describe("dragCropRect edges and locked ratio", () => {
+    const start: NormalizedCropRect = { x: 0.3, y: 0.3, width: 0.4, height: 0.4 };
+    const min = 0.1;
+
+    it("resizes from one edge only", () => {
+        expectRect(dragCropRect(start, "e", 0.1, 0.5, min, min), {
+            x: 0.3,
+            y: 0.3,
+            width: 0.5,
+            height: 0.4,
+        });
+        expectRect(dragCropRect(start, "n", 0.5, -0.1, min, min), {
+            x: 0.3,
+            y: 0.2,
+            width: 0.4,
+            height: 0.5,
+        });
+    });
+
+    it("keeps the ratio when a corner is dragged", () => {
+        const rect = dragCropRect(start, "se", 0.1, 0.3, min, min, 1);
+        expectRect(rect, { x: 0.3, y: 0.3, width: 0.5, height: 0.5 });
+    });
+
+    it("grows an edge drag about the center and stays inside the image", () => {
+        const rect = dragCropRect(start, "e", 1, 0, min, min, 1);
+        expect(rect.x).toBeCloseTo(0.3);
+        expect(rect.width).toBeCloseTo(0.7);
+        expect(rect.height).toBeCloseTo(0.7);
+        expect(rect.y).toBeGreaterThanOrEqual(0);
+        expect(rect.y + rect.height).toBeLessThanOrEqual(1 + 1e-9);
+    });
+});
+
+describe("fitRectToRatio", () => {
+    it("shrinks about the center to the ratio", () => {
+        expectRect(
+            fitRectToRatio({ x: 0.1, y: 0.2, width: 0.8, height: 0.4 }, 1),
+            { x: 0.3, y: 0.2, width: 0.4, height: 0.4 },
+        );
     });
 });

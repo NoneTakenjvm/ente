@@ -18,6 +18,7 @@ import {
     newTagPresetId,
     normalizePresetTags,
     presetsFromPersisted,
+    type PersistedTagPresets,
     sortPresetsByMatchCount,
     suggestTagKits,
 } from "@/lib/tag-presets";
@@ -63,7 +64,7 @@ describe("tag-presets", () => {
                     memberCount: 40,
                 },
             },
-        ]);
+        ] as unknown as PersistedTagPresets);
         expect(presets).toHaveLength(1);
         expect(presets[0]?.nearnessTune).toBeUndefined();
     });

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { EnteFile } from "ente-media/file";
+import { extractTags } from "@/lib/tags";
 import { fileWithOrganizerTags } from "@/lib/tag-writes";
 
 const saveKv = vi.fn(async (_key: string, _value: unknown) => {});
@@ -82,10 +83,10 @@ describe("tag-outbox", () => {
         ];
         const merged = applyOutboxTagsToFiles(files);
 
-        expect(merged[0].pubMagicMetadata?.data._organizer_v1?.tags).toEqual([
+        expect(extractTags(merged[0]!)).toEqual([
             "keep",
         ]);
-        expect(merged[1].pubMagicMetadata?.data._organizer_v1?.tags).toEqual([
+        expect(extractTags(merged[1]!)).toEqual([
             "pending",
         ]);
     });
@@ -217,7 +218,7 @@ describe("tag-outbox", () => {
         const merged = mergeAheadOrganizerTags([pulled], [live]);
 
         expect(merged[0]?.pubMagicMetadata?.version).toBe(2);
-        expect(merged[0]?.pubMagicMetadata?.data._organizer_v1?.tags).toEqual([
+        expect(extractTags(merged[0]!)).toEqual([
             "new",
         ]);
         expect(merged[0]?.pubMagicMetadata?.data.caption).toBe("keep-me");

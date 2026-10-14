@@ -9,7 +9,6 @@ import {
     clampCropRect,
     croppedReplaceTitle,
     CROPPED_TAG,
-    pixelCropToSourceRect,
 } from "@/lib/crop";
 
 const fileWithTags = (
@@ -98,19 +97,5 @@ describe("crop", () => {
         expect(
             clampCropRect({ x: -10, y: 5, width: 500, height: 400 }, 800, 600),
         ).toEqual({ x: 0, y: 5, width: 500, height: 400 });
-    });
-
-    it("pixelCropToSourceRect maps display pixels to natural pixels", () => {
-        expect(
-            pixelCropToSourceRect(
-                { x: 10, y: 20, width: 100, height: 50 },
-                {
-                    width: 400,
-                    height: 300,
-                    naturalWidth: 800,
-                    naturalHeight: 600,
-                },
-            ),
-        ).toEqual({ x: 20, y: 40, width: 200, height: 100 });
     });
 });

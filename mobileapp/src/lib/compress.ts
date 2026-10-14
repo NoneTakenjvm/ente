@@ -335,7 +335,7 @@ export const encodeJpegInWorker = async (
     bytes: Uint8Array,
     options: Pick<
         CompressWorkerRequest,
-        "quality" | "cropRect" | "preferSmaller"
+        "quality" | "cropRect" | "normalizedCropRect" | "preferSmaller"
     >,
 ): Promise<EncodeJpegResult> => {
     const buffer = arrayBufferFromUint8Array(bytes);
