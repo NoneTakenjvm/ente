@@ -79,7 +79,7 @@ import { extractTags, extractUserTags, isSystemTag } from "@/lib/tags";
 import { isReservedTag } from "@/lib/tag-filter";
 import { addTagNames, applyTagMutator, normalizeTagName, removeTagNames, tagsEqual } from "@/lib/tag-writes";
 import { enqueueTagOutboxEntries } from "@/lib/tag-outbox";
-import { requestTagOutboxFlush } from "@/lib/tag-outbox-runner";
+import { requestTagOutboxFlush } from "@/lib/outbox-runner";
 import {
     getThumbnailEntry,
     requestThumbnail,

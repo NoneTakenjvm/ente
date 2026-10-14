@@ -23,16 +23,25 @@ export const normalizeTagName = (name: string): string | undefined => {
     return trimmed;
 };
 
-const dedupeTags = (tags: string[]): string[] => {
+/**
+ * Normalize a tag name list: trimmed, unique, optionally capped at `max`.
+ */
+export const normalizeTagNameList = (
+    names: string[],
+    max = Infinity,
+): string[] => {
     const seen = new Set<string>();
     const result: string[] = [];
-    for (const tag of tags) {
-        const normalized = normalizeTagName(tag);
+    for (const name of names) {
+        const normalized = normalizeTagName(name);
         if (!normalized || seen.has(normalized)) {
             continue;
         }
         seen.add(normalized);
         result.push(normalized);
+        if (result.length >= max) {
+            break;
+        }
     }
     return result;
 };
@@ -44,7 +53,7 @@ export const buildOrganizerUpdate = (
     tags: string[],
 ): Pick<OrganizerPublicMetadata, "_organizer_v1"> => ({
     _organizer_v1: {
-        tags: dedupeTags(tags),
+        tags: normalizeTagNameList(tags),
         updatedAt: Date.now() * 1000,
     },
 });
@@ -52,10 +61,10 @@ export const buildOrganizerUpdate = (
 export const applyTagMutator = (
     mutator: TagMutator,
     currentTags: string[],
-): string[] => dedupeTags(mutator(currentTags));
+): string[] => normalizeTagNameList(mutator(currentTags));
 
 export const addTagNames = (currentTags: string[], ...names: string[]): string[] =>
-    dedupeTags([...currentTags, ...names]);
+    normalizeTagNameList([...currentTags, ...names]);
 
 export const removeTagNames = (
     currentTags: string[],
@@ -79,7 +88,7 @@ export const replaceTagName = (
     if (!normalizedOld || !normalizedNew) {
         return currentTags;
     }
-    return dedupeTags(
+    return normalizeTagNameList(
         currentTags.map((tag) => (tag === normalizedOld ? normalizedNew : tag)),
     );
 };
@@ -99,7 +108,7 @@ export const mergeTagNames = (
             .filter((name): name is string => name !== undefined),
     );
     const withoutSources = currentTags.filter((tag) => !sources.has(tag));
-    return dedupeTags([...withoutSources, target]);
+    return normalizeTagNameList([...withoutSources, target]);
 };
 
 export const tagsForFile = (file: EnteFile, mutator: TagMutator): string[] =>

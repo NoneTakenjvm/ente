@@ -7,12 +7,18 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-10-14 |
-| **Last agent / session** | Simplification plan Phase 2 part 1 (`mobileapp/simplification-plan.md`): generic outbox + session lifecycle, one HTTP error/retry path, shared LRU blob store (dbVersion 10), tag-filter `SCOPES` table and `tags.ts` split (`0.3.196`) |
+| **Last agent / session** | Simplification plan Phase 2 complete (`mobileapp/simplification-plan.md`): generic outbox + session lifecycle, one HTTP retry path, shared LRU blob store (dbVersion 10), tag-filter `SCOPES`, outbox runner + `queueTagMutation`, §4 findings (`0.3.196`–`0.3.197`) |
 | **Current milestone** | Post-M8 UX / upload performance |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
-| **Next recommended action** | Phone QA of `0.3.196` (see this session's QA list below), plus the `0.3.195` list if not yet done. Then continue Phase 2: §4.7 outbox runner + `queueTagMutation`, and the remaining §4 findings. Rotate the test-account password. |
+| **Next recommended action** | Phone QA of `0.3.197` (QA lists for `0.3.197`, `0.3.196` and `0.3.195` below). Then Phase 3 of the simplification plan (stores and jobs). Rotate the test-account password. |
 
-**This session (committed locally, not pushed, `0.3.196`): simplification plan Phase 2 part 1**
+**This session (committed locally, not pushed, `0.3.197`): simplification plan Phase 2 part 2**
+1. **Outbox runner** — `lib/tag-outbox-runner.ts` → `lib/outbox-runner.ts` (`startOutboxRunner`); the store-wired context moved out of `use-library-bootstrap` into `lib/library-outbox-context.ts` (by-id lookups, one trash-id set per chunk). Favourite and visibility drains run in parallel; derived-replace stays after them because it remaps their file ids.
+2. **Tag rewrites** — `lib/tag-batch.ts` deleted; `queueTagMutation(files, mutator, { wait })` in tag-outbox; library-store rename/delete/merge share one `rewriteTags` path (query-album rewrite order unchanged). Tag and visibility overlays share `overlayFiles` (private metadata spread unchanged).
+3. **§4 findings** — favourite derive builds the hash map once; `authFetch` has one 401 path; one shard write transaction and parallel shard decrypt; pull-files batches phash invalidation, loads trash ids once per pull and saves cursors in parallel; view sessions keep only `views` in memory (cloud payload still writes the aggregates); one `normalizeTagNameList`; site wipe steps in parallel.
+4. **QA** — rename, merge and delete a tag in Manage → Tags (gallery, query albums and tag counts update; works offline then syncs); favourite + archive several files quickly, then reload; Recents shows view counts and last-viewed thumbnails; cold start with a large library (shard decrypt); pull after editing files in the official app (changed thumbnails refresh, near-duplicate state recomputed); logout → login.
+
+**Previous session (committed locally, `0.3.196`): simplification plan Phase 2 part 1**
 1. **Outboxes** — `lib/outbox.ts` `createOutbox` (hydrate dedupe, coalesced persist, ack-if-unchanged by entry identity, remap) backs the tag, favourite, visibility and derived-replace outboxes; `favorite-membership` uses its `createCoalescedWriter`. `lib/session-lifecycle.ts` owns the single pagehide/visibilitychange flush and the logout reset registry (`registerFlush`/`registerReset`); per-module listeners and `resetDependentStores` are gone. `lib/debounced-persist.ts` replaces three store-local debouncers. Logout now also resets sort/nearness/shuffle ordering and view sessions.
 2. **HTTP** — core throws ente-base `HTTPError`; one `retryWithBackoff` (honours `Retry-After`) for downloads, uploads and tag writes. Tag writes are two layers: transport retry (429/5xx/network) and `retryOnConflict` (409). The verify-refetch double PUT is gone (D3). `core/metadata.ts` no longer imports `@/lib`; `putMetadata` + `encryptPubMagic` share the merge/version path.
 3. **Blob store** — `db/blob-store.ts` `createLruBlobStore` backs thumbnails and file ciphertexts (cached byte total, cursor-only eviction, internal touch coalescing). Thumbnails are stored as ArrayBuffer; dbVersion 10 clears the thumbnail cache.

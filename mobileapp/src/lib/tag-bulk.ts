@@ -1,5 +1,5 @@
 import { extractTags, extractUserTags } from "@/lib/tags";
-import { normalizeTagName } from "@/lib/tag-writes";
+import { normalizeTagName, normalizeTagNameList } from "@/lib/tag-writes";
 import type { EnteFile } from "ente-media/file";
 
 /** Per-file snapshot used to undo a bulk tag mutation. */
@@ -162,29 +162,6 @@ export const snapshotTagsForUndo = (
         });
     }
     return entries;
-};
-
-/**
- * Normalize pinned / recent tag lists: unique, trimmed, capped.
- */
-export const normalizeTagNameList = (
-    names: string[],
-    max: number,
-): string[] => {
-    const seen = new Set<string>();
-    const result: string[] = [];
-    for (const name of names) {
-        const trimmed = name.trim();
-        if (!trimmed || seen.has(trimmed)) {
-            continue;
-        }
-        seen.add(trimmed);
-        result.push(trimmed);
-        if (result.length >= max) {
-            break;
-        }
-    }
-    return result;
 };
 
 /**

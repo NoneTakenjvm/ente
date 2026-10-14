@@ -33,6 +33,10 @@ export interface ViewSession {
     /** Last qualifying view close — drives the 30m resume clock. */
     endTime: number;
     views: ViewRecord[];
+}
+
+/** A session as written to the cloud payload, with aggregates for other readers. */
+interface CloudViewSession extends ViewSession {
     totalViewTimeMs: number;
     totalViews: number;
     uniqueFileIds: number[];
@@ -67,10 +71,6 @@ export const createEmptySession = (
     startedAt,
     endTime: startedAt,
     views: [],
-    totalViewTimeMs: 0,
-    totalViews: 0,
-    uniqueFileIds: [],
-    lastViewedFileId: 0,
     persisted: false,
 });
 
@@ -101,31 +101,12 @@ export const pickResumeSession = (
 };
 
 /**
- * Recompute cached aggregates from `views`.
+ * Recompute `endTime` as the last view's close (or the start when empty).
  */
-export const recomputeSessionAggregates = (
-    session: ViewSession,
-): ViewSession => {
-    const unique: number[] = [];
-    const seen = new Set<number>();
-    let totalViewTimeMs = 0;
-    for (const view of session.views) {
-        totalViewTimeMs += Math.max(0, view.closedAt - view.openedAt);
-        if (!seen.has(view.fileId)) {
-            seen.add(view.fileId);
-            unique.push(view.fileId);
-        }
-    }
-    const last = session.views[session.views.length - 1];
-    return {
-        ...session,
-        totalViewTimeMs,
-        totalViews: session.views.length,
-        uniqueFileIds: unique,
-        lastViewedFileId: last?.fileId ?? 0,
-        endTime: last?.closedAt ?? session.startedAt,
-    };
-};
+export const recomputeSessionEndTime = (session: ViewSession): ViewSession => ({
+    ...session,
+    endTime: session.views.at(-1)?.closedAt ?? session.startedAt,
+});
 
 type BeginViewResult =
     | { kind: "appended"; session: ActiveViewSession } |
@@ -150,7 +131,7 @@ export const beginViewOnSession = (
         ...session.views,
         { fileId, openedAt, closedAt: openedAt },
     ];
-    const next = recomputeSessionAggregates({ ...session, views });
+    const next = recomputeSessionEndTime({ ...session, views });
     return {
         kind: "appended",
         session: {
@@ -188,7 +169,7 @@ export const endViewOnSession = (
     const views = session.views.slice(0, -1);
     views.push({ ...last, closedAt: Math.max(last.openedAt, closedAt) });
     return {
-        ...recomputeSessionAggregates({ ...session, views }),
+        ...recomputeSessionEndTime({ ...session, views }),
         persisted: true,
     };
 };
@@ -215,7 +196,7 @@ export const remapSessionFileId = (
     if (!changed) {
         return session;
     }
-    return recomputeSessionAggregates({ ...session, views });
+    return recomputeSessionEndTime({ ...session, views });
 };
 
 /**
@@ -278,7 +259,7 @@ export const sessionSpanMs = (session: ViewSession): number => {
  * Lore line under the session name.
  */
 export const formatSessionLore = (session: ViewSession): string => {
-    const n = session.totalViews;
+    const n = session.views.length;
     const images = n === 1 ? "1 image" : `${n} images`;
     return `${images} · ${formatSessionDuration(sessionSpanMs(session))}`;
 };
@@ -317,8 +298,8 @@ const preferViewSession = (
     if (a.endTime !== b.endTime) {
         return a.endTime >= b.endTime ? a : b;
     }
-    if (a.totalViews !== b.totalViews) {
-        return a.totalViews >= b.totalViews ? a : b;
+    if (a.views.length !== b.views.length) {
+        return a.views.length >= b.views.length ? a : b;
     }
     return a.startedAt >= b.startedAt ? a : b;
 };
@@ -341,6 +322,29 @@ const capViewSessionTombstones = (
     [...tombstones]
         .sort((a, b) => b.deletedAt - a.deletedAt)
         .slice(0, cap);
+
+/**
+ * Normalise a session for storage: fixed key order plus the derived aggregates
+ * (`totalViewTimeMs`, `totalViews`, `uniqueFileIds`, `lastViewedFileId`) that
+ * the cloud copy has always carried. Readers recompute them from `views`.
+ */
+const toCloudSession = (session: ViewSession): CloudViewSession => ({
+    id: session.id,
+    startedAt: session.startedAt,
+    endTime: session.endTime,
+    views: session.views.map(({ fileId, openedAt, closedAt }) => ({
+        fileId,
+        openedAt,
+        closedAt,
+    })),
+    totalViewTimeMs: session.views.reduce(
+        (total, view) => total + Math.max(0, view.closedAt - view.openedAt),
+        0,
+    ),
+    totalViews: session.views.length,
+    uniqueFileIds: [...new Set(session.views.map((view) => view.fileId))],
+    lastViewedFileId: session.views.at(-1)?.fileId ?? 0,
+});
 
 /**
  * LWW-merge two cloud payloads (sessions by id via endTime; tombstones by id).
@@ -383,7 +387,9 @@ export const mergeCloudViewSessions = (
     }
 
     return {
-        sessions: capViewSessions([...sessionMap.values()]),
+        sessions: capViewSessions([...sessionMap.values()]).map(
+            toCloudSession,
+        ),
         tombstones: capViewSessionTombstones(
             [...tombstoneMap.entries()].map(([id, deletedAt]) => ({
                 id,
@@ -439,15 +445,11 @@ export const parseCloudViewSessions = (
                 closedAt: v.closedAt,
             });
         }
-        const recomputed = recomputeSessionAggregates({
+        const recomputed = recomputeSessionEndTime({
             id: s.id,
             startedAt: s.startedAt,
             endTime: s.endTime,
             views,
-            totalViewTimeMs: 0,
-            totalViews: 0,
-            uniqueFileIds: [],
-            lastViewedFileId: 0,
         });
         // Consecutive re-views bump endTime without changing closedAt.
         sessions.push({
@@ -488,36 +490,6 @@ export const packCloudViewSessions = (
 export const cloudViewSessionsEqual = (
     a: CloudViewSessionsPayload | undefined,
     b: CloudViewSessionsPayload | undefined,
-): boolean => {
-    const left = mergeCloudViewSessions(a, undefined);
-    const right = mergeCloudViewSessions(b, undefined);
-    if (left.sessions.length !== right.sessions.length) {
-        return false;
-    }
-    if ((left.tombstones?.length ?? 0) !== (right.tombstones?.length ?? 0)) {
-        return false;
-    }
-    for (let i = 0; i < left.sessions.length; i += 1) {
-        const ls = left.sessions[i]!;
-        const rs = right.sessions[i]!;
-        if (
-            ls.id !== rs.id ||
-            ls.endTime !== rs.endTime ||
-            ls.totalViews !== rs.totalViews ||
-            ls.views.length !== rs.views.length
-        ) {
-            return false;
-        }
-    }
-    const leftTombs = left.tombstones ?? [];
-    const rightTombs = right.tombstones ?? [];
-    for (let i = 0; i < leftTombs.length; i += 1) {
-        if (
-            leftTombs[i]!.id !== rightTombs[i]!.id ||
-            leftTombs[i]!.deletedAt !== rightTombs[i]!.deletedAt
-        ) {
-            return false;
-        }
-    }
-    return true;
-};
+): boolean =>
+    JSON.stringify(mergeCloudViewSessions(a, undefined)) ===
+    JSON.stringify(mergeCloudViewSessions(b, undefined));

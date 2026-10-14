@@ -249,6 +249,8 @@ interface TagIndexContext {
 /** Everything {@link evaluateTagFilterNode} needs besides the node and candidates. */
 interface FilterContext extends TagIndexContext, TagFilterOptions {
     files: EnteFile[];
+    /** Built on first use by {@link exactUserTagSetIds}, then shared. */
+    fileById?: Map<number, EnteFile>;
 }
 
 const hasActiveScope = (filter: TagFilterSelection): boolean =>
@@ -518,11 +520,12 @@ const tagSetsEqual = (left: string[], right: string[]): boolean => {
  */
 const exactUserTagSetIds = (
     candidateIds: Set<number>,
-    files: EnteFile[],
+    ctx: FilterContext,
     includeTags: string[],
 ): Set<number> => {
     const required = [...new Set(includeTags)];
-    const fileById = new Map(files.map((file) => [file.id, file] as const));
+    ctx.fileById ??= new Map(ctx.files.map((file) => [file.id, file] as const));
+    const { fileById } = ctx;
     const matched = new Set<number>();
     for (const id of candidateIds) {
         const file = fileById.get(id);
@@ -561,7 +564,7 @@ const evaluateTagFilterNode = (
 
         let matchingIds = exactUserTagSetIds(
             candidateIds,
-            ctx.files,
+            ctx,
             includeTags,
         );
 

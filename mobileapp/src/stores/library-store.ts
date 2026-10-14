@@ -3,26 +3,18 @@ import type { StateCreator } from "zustand";
 import type { EnteFile } from "ente-media/file";
 import { getEnteCore, type Collection } from "@/core";
 import { bindOrganizerDB } from "@/db";
+import { loadKv, saveKv } from "@/db/kv";
 import {
-    loadKv,
-    saveKv,
-    loadEncryptedFiles,
+    loadEncryptedFilesSharded,
     markLibraryCacheFilesDirty,
-    saveEncryptedFiles,
-} from "@/db/kv";
+    saveEncryptedFilesSharded,
+} from "@/db/file-shards";
 import { initSessionCacheKey, getSessionCacheKey } from "@/lib/cache-key";
 import { createDebouncedPersist } from "@/lib/debounced-persist";
 import { registerFlush, registerReset } from "@/lib/session-lifecycle";
 import { pullCollections } from "@/lib/sync/pull-collections";
 import { pullFiles } from "@/lib/sync/pull-files";
 import { clearAllSyncCursors } from "@/db/cursors";
-import {
-    applyTagMutatorOnFiles,
-    deleteTagOnFiles,
-    mergeTagsOnFiles,
-    renameTagOnFiles,
-    type BatchTagResult,
-} from "@/lib/tag-batch";
 import {
     planDuplicateGroupPrune,
     pruneDuplicateGroups,
@@ -33,6 +25,7 @@ import { planLibraryFilePatches, patchFileInLibrary, patchFileInPlace, patchFile
 import { buildFileIndexById } from "@/lib/library-file-index";
 import { applyTagMutator, fileWithOrganizerTags, mergeTagNames, removeTagNames, replaceTagName, tagsForFile, type TagMutator } from "@/lib/tag-writes";
 import { extractTags } from "@/lib/tags";
+import type { TagFilterGroup } from "@/lib/tag-filter";
 import { removeTagFromTree, renameTagInTree } from "@/lib/tag-filter-mutations";
 import {
     applyOutboxTagsToFiles,
@@ -42,11 +35,13 @@ import {
     getTagOutboxEntry,
     hydrateTagOutbox,
     mergeAheadOrganizerTags,
+    queueTagMutation,
     reconcileTagOutboxWithFiles,
     remapTagOutboxFileId,
     removeTagOutboxEntries,
+    type BatchTagResult,
 } from "@/lib/tag-outbox";
-import { drainTagOutbox, flushTagOutboxNow, requestTagOutboxFlush } from "@/lib/tag-outbox-runner";
+import { drainTagOutbox, flushTagOutboxNow, requestTagOutboxFlush } from "@/lib/outbox-runner";
 import {
     enqueueDerivedReplace,
     type DerivedReplaceSave,
@@ -315,7 +310,7 @@ const ENCRYPTED_FILES_SAVE_DEBOUNCE_MS = 1500;
 
 const encryptedFilesSaver = createDebouncedPersist(
     (getAllFiles: () => EnteFile[]) =>
-        saveEncryptedFiles(getAllFiles(), getSessionCacheKey()),
+        saveEncryptedFilesSharded(getAllFiles(), getSessionCacheKey()),
     ENCRYPTED_FILES_SAVE_DEBOUNCE_MS,
 );
 
@@ -449,6 +444,42 @@ const rewritePresetTags = (
     });
 };
 
+/**
+ * Rewrite tags across the library: update the tag index, files, pinned/kit
+ * tags and query albums locally, then queue the file writes and wait for them.
+ * `applyToTagStore` must run after the affected files are collected, because
+ * it changes the tag index they come from.
+ */
+const rewriteTags = (
+    set: (partial: Partial<LibraryState>) => void,
+    get: () => LibraryState,
+    rewrite: {
+        sourceNames: string[];
+        mutator: TagMutator;
+        applyToTagStore: () => void;
+        rewriteTree: (root: TagFilterGroup) => TagFilterGroup;
+    },
+    onProgress?: (completed: number, total: number) => void,
+): Promise<BatchTagResult> => {
+    const { sourceNames, mutator, applyToTagStore, rewriteTree } = rewrite;
+    const { fileIdsByTag } = useTagStore.getState();
+    const affectedIds = new Set<number>();
+    for (const source of sourceNames) {
+        for (const id of fileIdsByTag.get(source) ?? []) {
+            affectedIds.add(id);
+        }
+    }
+    const files = get().allFiles.filter((file) => affectedIds.has(file.id));
+
+    applyToTagStore();
+    applyOptimisticBatchTags(set, get, affectedIds, (file) =>
+        tagsForFile(file, mutator));
+    rewritePresetTags(sourceNames, mutator);
+    useAlbumStore.getState().rewriteAlbumTags(sourceNames, rewriteTree);
+
+    return queueTagMutation(files, mutator, { wait: true, onProgress });
+};
+
 const initialState: Pick<
     LibraryState,
     | "collections" |
@@ -551,7 +582,7 @@ const replaceSourceWithCompressed = async (
             ] :
             [...withoutSource, uploaded];
     commitAllFiles(set, get, nextFiles);
-    await saveEncryptedFiles(nextFiles, getSessionCacheKey());
+    await saveEncryptedFilesSharded(nextFiles, getSessionCacheKey());
     useTagStore.getState().applyLibraryFilesChange({
         removedFileIds: [sourceId],
         addedFiles: [uploaded],
@@ -747,7 +778,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         // even for an empty cache so the bootstrap hook need not re-read them.
         const [collections, files, tagIndex] = await Promise.all([
             loadKv("collections"),
-            loadEncryptedFiles(cacheKey),
+            loadEncryptedFilesSharded(cacheKey),
             loadKv("tagIndex"),
             import("@/stores/view-sessions-store").then(
                 ({ useViewSessionsStore }) =>
@@ -960,7 +991,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                         syncStatus: "success",
                         syncProgress: { current: 0, total: 0 },
                     });
-                    await saveEncryptedFiles(allFiles, getSessionCacheKey());
+                    await saveEncryptedFilesSharded(allFiles, getSessionCacheKey());
                 }
 
                 void useTrashStore.getState().syncTrash(collections);
@@ -1112,93 +1143,54 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         requestTagOutboxFlush();
     },
 
-    renameTag: async (
-        oldName: string,
-        newName: string,
-        onProgress?: (completed: number, total: number) => void,
-    ): Promise<BatchTagResult> => {
-        const { allFiles } = get();
-        const fileIds =
-            useTagStore.getState().fileIdsByTag.get(oldName) ?? new Set();
-        const files = allFiles.filter((file) => fileIds.has(file.id));
-        const mutator: TagMutator = (tags) =>
-            replaceTagName(tags, oldName, newName);
-
-        useTagStore.getState().applyTagRename(oldName, newName);
-        applyOptimisticBatchTags(set, get, fileIds, (file) =>
-            tagsForFile(file, mutator));
-        rewritePresetTags([oldName], mutator);
-        useAlbumStore.getState().rewriteAlbumTags([oldName], (root) =>
-            renameTagInTree(root, oldName, newName));
-
-        return renameTagOnFiles(
-            files,
-            oldName,
-            newName,
+    renameTag: (oldName, newName, onProgress) =>
+        rewriteTags(
+            set,
+            get,
+            {
+                sourceNames: [oldName],
+                mutator: (tags) => replaceTagName(tags, oldName, newName),
+                applyToTagStore: () =>
+                    useTagStore.getState().applyTagRename(oldName, newName),
+                rewriteTree: (root) => renameTagInTree(root, oldName, newName),
+            },
             onProgress,
-        );
-    },
+        ),
 
-    deleteTag: async (
-        tagName: string,
-        onProgress?: (completed: number, total: number) => void,
-    ): Promise<BatchTagResult> => {
-        const { allFiles } = get();
-        const fileIds =
-            useTagStore.getState().fileIdsByTag.get(tagName) ?? new Set();
-        const files = allFiles.filter((file) => fileIds.has(file.id));
-        const mutator: TagMutator = (tags) => removeTagNames(tags, tagName);
-
-        useTagStore.getState().applyTagDelete(tagName);
-        applyOptimisticBatchTags(set, get, fileIds, (file) =>
-            tagsForFile(file, mutator));
-        rewritePresetTags([tagName], mutator);
-        useAlbumStore.getState().rewriteAlbumTags([tagName], (root) =>
-            removeTagFromTree(root, tagName));
-
-        return deleteTagOnFiles(
-            files,
-            tagName,
+    deleteTag: (tagName, onProgress) =>
+        rewriteTags(
+            set,
+            get,
+            {
+                sourceNames: [tagName],
+                mutator: (tags) => removeTagNames(tags, tagName),
+                applyToTagStore: () =>
+                    useTagStore.getState().applyTagDelete(tagName),
+                rewriteTree: (root) => removeTagFromTree(root, tagName),
+            },
             onProgress,
-        );
-    },
+        ),
 
-    mergeTags: async (
-        sourceNames: string[],
-        targetName: string,
-        onProgress?: (completed: number, total: number) => void,
-    ): Promise<BatchTagResult> => {
-        const { allFiles } = get();
-        const affectedIds = new Set<number>();
-        for (const source of sourceNames) {
-            const ids = useTagStore.getState().fileIdsByTag.get(source);
-            if (ids) {
-                for (const id of ids) {
-                    affectedIds.add(id);
-                }
-            }
-        }
-        const files = allFiles.filter((file) => affectedIds.has(file.id));
-        const mutator: TagMutator = (tags) =>
-            mergeTagNames(tags, sourceNames, targetName);
-
-        useTagStore.getState().applyTagMerge(sourceNames, targetName);
-        applyOptimisticBatchTags(set, get, affectedIds, (file) =>
-            tagsForFile(file, mutator));
-        rewritePresetTags(sourceNames, mutator);
-        useAlbumStore.getState().rewriteAlbumTags(sourceNames, (root) =>
-            sourceNames.reduce(
-                (next, source) => renameTagInTree(next, source, targetName),
-                root,
-            ));
-
-        return mergeTagsOnFiles(
-            files,
-            sourceNames,
-            targetName,
+    mergeTags: (sourceNames, targetName, onProgress) =>
+        rewriteTags(
+            set,
+            get,
+            {
+                sourceNames,
+                mutator: (tags) => mergeTagNames(tags, sourceNames, targetName),
+                applyToTagStore: () =>
+                    useTagStore
+                        .getState()
+                        .applyTagMerge(sourceNames, targetName),
+                rewriteTree: (root) =>
+                    sourceNames.reduce(
+                        (next, source) =>
+                            renameTagInTree(next, source, targetName),
+                        root,
+                    ),
+            },
             onProgress,
-        );
-    },
+        ),
 
     setFileFavorite: async (
         file: EnteFile,
@@ -1328,7 +1320,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                 (file) => !trashedIdSet.has(file.id),
             );
             commitAllFiles(set, get, nextFiles);
-            await saveEncryptedFiles(nextFiles, getSessionCacheKey());
+            await saveEncryptedFilesSharded(nextFiles, getSessionCacheKey());
             useTagStore.getState().applyLibraryFilesChange({
                 removedFileIds: trashedIdSet,
                 addedFiles: [],
@@ -1722,7 +1714,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             (file) => !trashedIds.has(file.id),
         );
         commitAllFiles(set, get, nextFiles);
-        await saveEncryptedFiles(nextFiles, getSessionCacheKey());
+        await saveEncryptedFilesSharded(nextFiles, getSessionCacheKey());
         useTagStore.getState().applyLibraryFilesChange({
             removedFileIds: trashedIds,
             addedFiles: [],
@@ -1745,7 +1737,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         }
         const nextFiles = [...byId.values()];
         commitAllFiles(set, get, nextFiles);
-        await saveEncryptedFiles(nextFiles, getSessionCacheKey());
+        await saveEncryptedFilesSharded(nextFiles, getSessionCacheKey());
         useTagStore.getState().applyLibraryFilesChange({
             removedFileIds: [],
             addedFiles: files,
@@ -1779,10 +1771,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         applyOptimisticBatchTags(set, get, idSet, (file) =>
             tagsForFile(file, mutator));
 
-        return applyTagMutatorOnFiles(
-            files,
-            mutator,
-        );
+        return queueTagMutation(files, mutator, { wait: false });
     },
 
     setTagsOnFiles: (tagsByFileId: Map<number, string[]>): number => {

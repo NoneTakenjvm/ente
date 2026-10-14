@@ -15,7 +15,11 @@ import {
     encryptCachePayload,
     type EncryptedPayload,
 } from "./crypto";
-import { getOrganizerDB, type FileShardRecord } from "./index";
+import {
+    getOrganizerDB,
+    onOrganizerDBUnbind,
+    type FileShardRecord,
+} from "./index";
 
 /** Fixed bucket count — ~500 files/shard around a 32k library. */
 export const FILE_LIBRARY_SHARD_COUNT = 64;
@@ -136,23 +140,39 @@ const snapshotUpdation = (
     return map;
 };
 
-const putShard = async (
-    shardId: number,
-    files: EnteFile[],
+/**
+ * Encrypt the dirty shards, then write them (and delete emptied ones) in one
+ * transaction so a failure leaves no half-written set.
+ */
+const writeShards = async (
+    dirty: ReadonlySet<number>,
+    groups: ReadonlyMap<number, EnteFile[]>,
     cacheKey: string,
 ): Promise<void> => {
-    const encrypted = await encryptCachePayload(files, cacheKey);
+    const writes = await Promise.all(
+        [...dirty].map(async (shardId) => {
+            const group = groups.get(shardId);
+            if (!group || group.length === 0) {
+                return { shardId, record: undefined };
+            }
+            const encrypted = await encryptCachePayload(group, cacheKey);
+            return {
+                shardId,
+                record: {
+                    shardId,
+                    encryptedData: encrypted.encryptedData,
+                    decryptionHeader: encrypted.decryptionHeader,
+                },
+            };
+        }),
+    );
     const db = await getOrganizerDB();
-    await db.put("fileShards", {
-        shardId,
-        encryptedData: encrypted.encryptedData,
-        decryptionHeader: encrypted.decryptionHeader,
-    });
-};
-
-const deleteShard = async (shardId: number): Promise<void> => {
-    const db = await getOrganizerDB();
-    await db.delete("fileShards", shardId);
+    const tx = db.transaction("fileShards", "readwrite");
+    await Promise.all([
+        ...writes.map(({ shardId, record }) =>
+            record ? tx.store.put(record) : tx.store.delete(shardId)),
+        tx.done,
+    ]);
 };
 
 const loadAllShardRecords = async (): Promise<FileShardRecord[]> => {
@@ -180,10 +200,11 @@ export const loadEncryptedFilesSharded = async (
 ): Promise<EnteFile[] | undefined> => {
     const records = await loadAllShardRecords();
     if (records.length > 0) {
-        const files: EnteFile[] = [];
-        for (const record of records) {
-            files.push(...(await decryptShardFiles(record, cacheKey)));
-        }
+        const files = (
+            await Promise.all(
+                records.map((record) => decryptShardFiles(record, cacheKey)),
+            )
+        ).flat();
         lastPersistedUpdation = snapshotUpdation(files);
         pendingDirtyFileIds = new Set();
         pendingDirtyAll = false;
@@ -248,14 +269,7 @@ const saveChangedShards = async (
     }
 
     try {
-        for (const shardId of dirty) {
-            const group = groups.get(shardId);
-            if (!group || group.length === 0) {
-                await deleteShard(shardId);
-            } else {
-                await putShard(shardId, group, cacheKey);
-            }
-        }
+        await writeShards(dirty, groups, cacheKey);
     } catch (error) {
         // Keep the marks so the next save retries these files.
         markLibraryCacheFilesDirty(marked);
@@ -265,3 +279,5 @@ const saveChangedShards = async (
 
     lastPersistedUpdation = snapshotUpdation(files);
 };
+
+onOrganizerDBUnbind(clearFileShardPersistState);

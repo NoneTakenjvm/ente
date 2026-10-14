@@ -126,9 +126,7 @@ export const removeDerivedReplaceOutboxEntries = async (
     }
     const idSet = new Set(fileIds);
     await outbox.removeWhere((entry) => idSet.has(entry.fileId));
-    for (const fileId of fileIds) {
-        await deleteDerivedReplacePayload(fileId);
-    }
+    await Promise.all(fileIds.map(deleteDerivedReplacePayload));
 };
 
 /**

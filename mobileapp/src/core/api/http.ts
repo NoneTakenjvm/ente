@@ -184,7 +184,9 @@ export class HttpClient {
         init?: RequestInit,
     ): Promise<Response> => {
         const res = await this.authFetchResponse(path, queryParams, init);
-        this.ensureOk(res);
+        if (!res.ok) {
+            throw new HTTPError(res);
+        }
         return res;
     };
 

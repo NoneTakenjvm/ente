@@ -269,10 +269,6 @@ async function recentsSection(page: Page): Promise<void> {
         startedAt: minutesAgo(10),
         endTime: minutesAgo(5),
         views,
-        totalViewTimeMs: views.reduce((sum, v) => sum + (v.closedAt - v.openedAt), 0),
-        totalViews: 4,
-        uniqueFileIds: [idA, idB, 999_999_001],
-        lastViewedFileId: idA,
     };
     await page.evaluate((session) => {
         window.__viewSessionsTest?.replaceSessions([session]);
@@ -336,7 +332,7 @@ async function recentsSection(page: Page): Promise<void> {
             const active = api.getActiveSession();
             return {
                 views: active?.views.map((v) => v.fileId) ?? [],
-                total: active?.totalViews ?? 0,
+                total: active?.views.length ?? 0,
             };
         },
         { a: idA, b: idB },
@@ -358,10 +354,6 @@ async function recentsSection(page: Page): Promise<void> {
             views: [
                 { fileId: 1, openedAt: t - 30 * 60_000, closedAt: t - 5 * 60_000 },
             ],
-            totalViewTimeMs: 25 * 60_000,
-            totalViews: 1,
-            uniqueFileIds: [1],
-            lastViewedFileId: 1,
         };
         api.replaceSessions([within]);
         api.ensureActiveSession(t);

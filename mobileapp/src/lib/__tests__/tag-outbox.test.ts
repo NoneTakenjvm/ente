@@ -18,6 +18,18 @@ vi.mock("@/lib/cache-key", () => ({
     getSessionCacheKey: () => "test-cache-key",
 }));
 
+const flushTagOutboxNow = vi.fn(async () => ({
+    verifiedIds: [] as number[],
+    pendingIds: [] as number[],
+    writeFailures: 0,
+}));
+const requestTagOutboxFlush = vi.fn();
+
+vi.mock("@/lib/outbox-runner", () => ({
+    flushTagOutboxNow,
+    requestTagOutboxFlush,
+}));
+
 const stubFile = (id: number, tags: string[] = []): EnteFile =>
     fileWithOrganizerTags({ id } as EnteFile, tags);
 
@@ -235,5 +247,48 @@ describe("tag-outbox", () => {
 
         const merged = mergeAheadOrganizerTags([pulled], [live]);
         expect(merged[0]).toBe(pulled);
+    });
+
+    it("queueTagMutation with wait upserts, drains and reports files still pending", async () => {
+        const { queueTagMutation, hydrateTagOutbox, getTagOutboxEntry, removeTagOutboxEntries } =
+            await import("@/lib/tag-outbox");
+        await hydrateTagOutbox();
+        flushTagOutboxNow.mockImplementationOnce(async () => {
+            await removeTagOutboxEntries([1]);
+            return { verifiedIds: [1], pendingIds: [2], writeFailures: 1 };
+        });
+        const onProgress = vi.fn();
+
+        const result = await queueTagMutation(
+            [stubFile(1, ["a"]), stubFile(2, ["a"])],
+            (tags) => [...tags, "b"],
+            { wait: true, onProgress },
+        );
+
+        expect(getTagOutboxEntry(2)?.intendedTags).toEqual(["a", "b"]);
+        expect(flushTagOutboxNow).toHaveBeenCalledWith({ notify: false });
+        expect(result).toEqual({
+            succeeded: 1,
+            failed: 1,
+            errors: ["2: sync pending"],
+        });
+        expect(onProgress).toHaveBeenLastCalledWith(1, 2);
+    });
+
+    it("queueTagMutation without wait enqueues and schedules a flush only", async () => {
+        const { queueTagMutation, hydrateTagOutbox, getTagOutboxEntry } =
+            await import("@/lib/tag-outbox");
+        await hydrateTagOutbox();
+
+        const result = await queueTagMutation(
+            [stubFile(3, ["a"])],
+            (tags) => [...tags, "c"],
+            { wait: false },
+        );
+
+        expect(getTagOutboxEntry(3)?.intendedTags).toEqual(["a", "c"]);
+        expect(requestTagOutboxFlush).toHaveBeenCalledTimes(1);
+        expect(flushTagOutboxNow).not.toHaveBeenCalled();
+        expect(result).toEqual({ succeeded: 1, failed: 0, errors: [] });
     });
 });

@@ -9,7 +9,7 @@ import {
     parseCloudViewSessions,
     pickResumeSession,
     remapSessionFileId,
-    recomputeSessionAggregates,
+    recomputeSessionEndTime,
     sessionSpanMs,
     shouldResumeSession,
     VIEW_SESSION_RESUME_MS,
@@ -28,7 +28,6 @@ describe("view-sessions", () => {
         expect(again.kind).toBe("consecutive");
         session = endViewOnSession(again.session, 10, 2500, "consecutive");
         expect(session.views).toHaveLength(1);
-        expect(session.totalViews).toBe(1);
         expect(session.endTime).toBe(2500);
     });
 
@@ -41,9 +40,6 @@ describe("view-sessions", () => {
         session = beginViewOnSession(session, 10, 1500).session;
         session = endViewOnSession(session, 10, 1600, "appended");
         expect(session.views.map((v) => v.fileId)).toEqual([10, 20, 10]);
-        expect(session.uniqueFileIds).toEqual([10, 20]);
-        expect(session.totalViews).toBe(3);
-        expect(session.lastViewedFileId).toBe(10);
     });
 
     it("does not treat empty sessions as persisted", () => {
@@ -61,10 +57,6 @@ describe("view-sessions", () => {
                 views: [
                     { fileId: 1, openedAt: 500, closedAt: 1000 },
                 ],
-                totalViewTimeMs: 500,
-                totalViews: 1,
-                uniqueFileIds: [1],
-                lastViewedFileId: 1,
             },
         ];
         expect(shouldResumeSession(1000, 1000 + VIEW_SESSION_RESUME_MS)).toBe(
@@ -82,7 +74,7 @@ describe("view-sessions", () => {
     });
 
     it("remaps file ids after replace", () => {
-        const session = recomputeSessionAggregates({
+        const session = recomputeSessionEndTime({
             id: "s1",
             startedAt: 1,
             endTime: 300,
@@ -91,15 +83,9 @@ describe("view-sessions", () => {
                 { fileId: 20, openedAt: 200, closedAt: 300 },
                 { fileId: 10, openedAt: 250, closedAt: 280 },
             ],
-            totalViewTimeMs: 0,
-            totalViews: 0,
-            uniqueFileIds: [],
-            lastViewedFileId: 0,
         });
         const remapped = remapSessionFileId(session, 10, 99);
         expect(remapped.views.map((v) => v.fileId)).toEqual([99, 20, 99]);
-        expect(remapped.uniqueFileIds).toEqual([99, 20]);
-        expect(remapped.lastViewedFileId).toBe(99);
     });
 
     it("formats lore and duration", () => {
@@ -111,10 +97,6 @@ describe("view-sessions", () => {
                 { fileId: 1, openedAt: 5_000, closedAt: 10_000 },
                 { fileId: 2, openedAt: 20_000, closedAt: 125_000 },
             ],
-            totalViewTimeMs: 110_000,
-            totalViews: 2,
-            uniqueFileIds: [1, 2],
-            lastViewedFileId: 2,
         };
         expect(sessionSpanMs(session)).toBe(120_000);
         expect(formatSessionDuration(120_000)).toBe("2m");
@@ -129,10 +111,6 @@ describe("view-sessions", () => {
             startedAt: 1,
             endTime: 100,
             views: [{ fileId: 1, openedAt: 50, closedAt: 100 }],
-            totalViewTimeMs: 50,
-            totalViews: 1,
-            uniqueFileIds: [1],
-            lastViewedFileId: 1,
         };
         const newer: ViewSession = {
             ...older,
@@ -141,20 +119,12 @@ describe("view-sessions", () => {
                 { fileId: 1, openedAt: 50, closedAt: 100 },
                 { fileId: 2, openedAt: 150, closedAt: 200 },
             ],
-            totalViewTimeMs: 100,
-            totalViews: 2,
-            uniqueFileIds: [1, 2],
-            lastViewedFileId: 2,
         };
         const other: ViewSession = {
             id: "b",
             startedAt: 10,
             endTime: 50,
             views: [{ fileId: 3, openedAt: 20, closedAt: 50 }],
-            totalViewTimeMs: 30,
-            totalViews: 1,
-            uniqueFileIds: [3],
-            lastViewedFileId: 3,
         };
         const merged = mergeCloudViewSessions(
             { sessions: [older, other] },
@@ -177,10 +147,6 @@ describe("view-sessions", () => {
             startedAt: 1,
             endTime: 500,
             views: [{ fileId: 1, openedAt: 100, closedAt: 500 }],
-            totalViewTimeMs: 400,
-            totalViews: 1,
-            uniqueFileIds: [1],
-            lastViewedFileId: 1,
         };
         const merged = mergeCloudViewSessions(
             { sessions: [session] },
@@ -188,6 +154,32 @@ describe("view-sessions", () => {
         );
         expect(merged.sessions).toHaveLength(1);
         expect(merged.tombstones ?? []).toHaveLength(0);
+    });
+
+    it("writes derived aggregates into the cloud copy", () => {
+        const merged = mergeCloudViewSessions(
+            {
+                sessions: [
+                    {
+                        id: "a",
+                        startedAt: 1,
+                        endTime: 300,
+                        views: [
+                            { fileId: 10, openedAt: 100, closedAt: 150 },
+                            { fileId: 20, openedAt: 200, closedAt: 300 },
+                            { fileId: 10, openedAt: 250, closedAt: 280 },
+                        ],
+                    },
+                ],
+            },
+            undefined,
+        );
+        expect(merged.sessions[0]).toMatchObject({
+            totalViewTimeMs: 180,
+            totalViews: 3,
+            uniqueFileIds: [10, 20],
+            lastViewedFileId: 10,
+        });
     });
 
     it("parse preserves consecutive endTime bumps", () => {

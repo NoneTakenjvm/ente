@@ -126,13 +126,20 @@ const drainDerivedReplaceQueue = async (
                 const waiters = stillPending?.waiters ?? entry.waiters;
                 const completionOptions =
                     stillPending?.options ?? entry.options ?? options;
+                /** Hand `waiters` to a newer enqueue, if one landed. */
+                const handOffToPending = (): boolean => {
+                    const revived = pendingByFileId.get(fileId);
+                    if (!revived) {
+                        return false;
+                    }
+                    revived.waiters = [...waiters, ...revived.waiters];
+                    replaceFileId = uploaded.id;
+                    return true;
+                };
                 pendingByFileId.delete(fileId);
                 // Let a same-tick enqueue land before we treat this as final.
                 await wait(0);
-                const revived = pendingByFileId.get(fileId);
-                if (revived) {
-                    revived.waiters = [...waiters, ...revived.waiters];
-                    replaceFileId = uploaded.id;
+                if (handOffToPending()) {
                     continue;
                 }
                 try {
@@ -144,13 +151,7 @@ const drainDerivedReplaceQueue = async (
                     }
                     return;
                 }
-                const revivedAfterComplete = pendingByFileId.get(fileId);
-                if (revivedAfterComplete) {
-                    revivedAfterComplete.waiters = [
-                        ...waiters,
-                        ...revivedAfterComplete.waiters,
-                    ];
-                    replaceFileId = uploaded.id;
+                if (handOffToPending()) {
                     continue;
                 }
                 for (const waiter of waiters) {

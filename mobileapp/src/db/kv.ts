@@ -153,23 +153,6 @@ export const saveKv = async <K extends keyof KvValues & KvKey>(
     await db.put("kv", { key, ...payload });
 };
 
-export const loadEncryptedFiles = async (
-    cacheKey: string,
-): Promise<EnteFile[] | undefined> => {
-    const { loadEncryptedFilesSharded } = await import("./file-shards");
-    return loadEncryptedFilesSharded(cacheKey);
-};
-
-export const saveEncryptedFiles = async (
-    files: EnteFile[],
-    cacheKey: string,
-): Promise<void> => {
-    const { saveEncryptedFilesSharded } = await import("./file-shards");
-    await saveEncryptedFilesSharded(files, cacheKey);
-};
-
-export { markLibraryCacheFilesDirty } from "./file-shards";
-
 /**
  * Encrypt `payload` and append it to a chunk store as row `record.chunkId`
  * (plus any extra plaintext fields on `record`). The caller updates its meta.

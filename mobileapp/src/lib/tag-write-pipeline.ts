@@ -15,7 +15,7 @@ export interface TagWriteItem {
     intendedTags: string[];
 }
 
-export interface TagBatchWriteResult {
+interface TagBatchWriteResult {
     verified: EnteFile[];
     pending: EnteFile[];
 }

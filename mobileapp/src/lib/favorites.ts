@@ -60,32 +60,43 @@ export const mergePendingFavoriteUpdates = (
     return merged;
 };
 
-/**
- * File IDs touched by one unsynced favourite intent.
- *
- * Owned files: just {@link UnsyncedFavoriteUpdate.fileID}. Shared files keyed
- * by hash: every non-owned library row with that hash/type (may scan
- * {@link allFiles}).
- */
-const fileIdsForFavoriteUpdate = (
-    update: UnsyncedFavoriteUpdate,
+/** Non-owned library file IDs grouped by hash/type key. */
+const nonOwnedFileIdsByHashKey = (
     userId: number,
     allFiles: EnteFile[],
-): number[] => {
-    if (!update.fileHashAndTypeKey) {
-        return [update.fileID];
-    }
-    const ids: number[] = [];
+): Map<string, number[]> => {
+    const idsByKey = new Map<string, number[]>();
     for (const file of allFiles) {
         if (file.ownerID === userId) {
             continue;
         }
-        if (hashAndTypeKey(file) === update.fileHashAndTypeKey) {
-            ids.push(file.id);
+        const key = hashAndTypeKey(file);
+        if (key) {
+            const ids = idsByKey.get(key);
+            if (ids) {
+                ids.push(file.id);
+            } else {
+                idsByKey.set(key, [file.id]);
+            }
         }
     }
-    return ids.length > 0 ? ids : [update.fileID];
+    return idsByKey;
 };
+
+/**
+ * File IDs touched by one unsynced favourite intent.
+ *
+ * Owned files: just {@link UnsyncedFavoriteUpdate.fileID}. Shared files keyed
+ * by hash: every non-owned library row with that hash/type.
+ */
+const fileIdsForFavoriteUpdate = (
+    update: UnsyncedFavoriteUpdate,
+    nonOwnedIdsByHashKey: Map<string, number[]>,
+): number[] =>
+    (update.fileHashAndTypeKey &&
+        nonOwnedIdsByHashKey.get(update.fileHashAndTypeKey)) || [
+        update.fileID,
+    ];
 
 /**
  * Patch an existing favourite-id set for one unsynced intent (no full-library
@@ -98,7 +109,13 @@ export const applyFavoriteUpdateToIds = (
     allFiles: EnteFile[],
 ): Set<number> => {
     const next = new Set(favoriteFileIds);
-    for (const fileID of fileIdsForFavoriteUpdate(update, userId, allFiles)) {
+    const nonOwnedIdsByHashKey = update.fileHashAndTypeKey ?
+        nonOwnedFileIdsByHashKey(userId, allFiles) :
+        new Map<string, number[]>();
+    for (const fileID of fileIdsForFavoriteUpdate(
+        update,
+        nonOwnedIdsByHashKey,
+    )) {
         if (update.isFavorite) {
             next.add(fileID);
         } else {
@@ -176,29 +193,17 @@ export const deriveFavoriteFileIDs = (
             favoriteFileHashAndTypeKeys.add(key);
         }
     }
-    // Membership ids may not be in the deduped library (same id, other album).
-    // Hash keys for those come only when we have a library row; shared matching
-    // still works once the owned favourite copy is present in allFiles under
-    // any collectionID, or when optimistic updates carry hash keys.
-
-    for (const file of allFiles) {
-        if (file.ownerID === userId) {
-            continue;
-        }
-        const key = hashAndTypeKey(file);
-        if (key && favoriteFileHashAndTypeKeys.has(key)) {
-            favoriteFileIds.add(file.id);
+    const nonOwnedIdsByHashKey = nonOwnedFileIdsByHashKey(userId, allFiles);
+    for (const key of favoriteFileHashAndTypeKeys) {
+        for (const fileId of nonOwnedIdsByHashKey.get(key) ?? []) {
+            favoriteFileIds.add(fileId);
         }
     }
-
-    // Also mark owned library rows whose id is in membership (explicit).
-    // Already covered by favoriteFileIds = Set(membershipFileIds).
 
     for (const update of unsyncedFavoriteUpdates.values()) {
         for (const fileID of fileIdsForFavoriteUpdate(
             update,
-            userId,
-            allFiles,
+            nonOwnedIdsByHashKey,
         )) {
             if (update.isFavorite) {
                 favoriteFileIds.add(fileID);

@@ -188,17 +188,19 @@ export default function RecentsPage(): JSX.Element {
                 ) : (
                     <div className="flex flex-col gap-3 px-4 py-4">
                         {sessions.map((session) => {
+                            const lastViewedFileId =
+                                session.views.at(-1)?.fileId;
                             const cover =
-                                session.lastViewedFileId ?
-                                    filesById.get(session.lastViewedFileId) ??
-                                    getFileById(session.lastViewedFileId) :
+                                lastViewedFileId ?
+                                    filesById.get(lastViewedFileId) ??
+                                    getFileById(lastViewedFileId) :
                                     undefined;
                             return (
                                 <SessionListCard
                                     key={session.id}
                                     name={formatSessionName(session.startedAt)}
                                     lore={formatSessionLore(session)}
-                                    viewCount={session.totalViews}
+                                    viewCount={session.views.length}
                                     coverFile={cover}
                                     onOpen={() => handleOpenSession(session.id)}
                                 />

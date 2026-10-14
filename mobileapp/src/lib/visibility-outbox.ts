@@ -1,6 +1,6 @@
 import type { EnteFile } from "ente-media/file";
 import { ItemVisibility, isArchivedFile } from "ente-media/file-metadata";
-import { createOutbox } from "@/lib/outbox";
+import { createOutbox, overlayFiles } from "@/lib/outbox";
 
 export interface VisibilityOutboxEntry {
     fileId: number;
@@ -96,30 +96,17 @@ export const applyOutboxVisibilityToFiles = (
     files: EnteFile[],
     entries: Iterable<VisibilityOutboxEntry> = outbox.entries(),
 ): EnteFile[] => {
-    const byFileId = new Map<number, VisibilityOutboxEntry>();
-    for (const entry of entries) {
-        byFileId.set(entry.fileId, entry);
-    }
-    if (byFileId.size === 0) {
-        return files;
-    }
-    return files.map((file) => {
-        const entry = byFileId.get(file.id);
-        if (!entry) {
-            return file;
-        }
-        return {
-            ...file,
-            magicMetadata: {
-                version: file.magicMetadata?.version ?? 1,
-                count: file.magicMetadata?.count ?? 0,
-                data: {
-                    ...file.magicMetadata?.data,
-                    visibility: entry.visibility,
-                },
+    return overlayFiles(files, entries, (file, entry) => ({
+        ...file,
+        magicMetadata: {
+            version: file.magicMetadata?.version ?? 1,
+            count: file.magicMetadata?.count ?? 0,
+            data: {
+                ...file.magicMetadata?.data,
+                visibility: entry.visibility,
             },
-        };
-    });
+        },
+    }));
 };
 
 export const clearVisibilityOutbox = outbox.clear;

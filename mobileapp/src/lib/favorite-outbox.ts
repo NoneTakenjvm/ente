@@ -3,7 +3,6 @@ import type { Collection } from "ente-media/collection";
 import { hashAndTypeKey } from "@/core/api/collection-files";
 import {
     deriveFavoriteFileIDs,
-    isFileFavorited,
     type UnsyncedFavoriteUpdate,
     type UnsyncedFavoriteUpdateKey,
 } from "@/lib/favorites";
@@ -131,21 +130,13 @@ export const reconcileFavoriteOutboxWithLibrary = async (
         collections,
         files,
     );
-    const filesById = new Map(files.map((file) => [file.id, file]));
+    const fileIds = new Set(files.map((file) => file.id));
     const verifiedKeys = new Set<string>();
     for (const entry of outbox.entries()) {
-        const file = filesById.get(entry.fileId);
-        if (!file) {
-            continue;
-        }
-        const isFavorite = isFileFavorited(
-            file,
-            userId,
-            collections,
-            files,
-        );
-        const matchesId = favoriteFileIds.has(entry.fileId) === entry.isFavorite;
-        if (isFavorite === entry.isFavorite || matchesId) {
+        if (
+            fileIds.has(entry.fileId) &&
+            favoriteFileIds.has(entry.fileId) === entry.isFavorite
+        ) {
             verifiedKeys.add(favoriteOutboxEntryKey(entry));
         }
     }

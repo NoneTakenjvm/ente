@@ -4,13 +4,13 @@ import {
     draftAddTags,
     draftRemoveTag,
     emptyTagDraft,
-    normalizeTagNameList,
     overlayTagDraftPresence,
     pruneTagDraft,
     pushRecentTags,
     tagDraftHasChanges,
     tagPresenceAcrossFiles,
 } from "@/lib/tag-bulk";
+import { normalizeTagNameList } from "@/lib/tag-writes";
 import {
     countFilesMatchingKit,
     countFilesMatchingKitExact,

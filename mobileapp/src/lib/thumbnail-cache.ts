@@ -162,15 +162,6 @@ const isEvictable = (fileId: number, entry: ThumbnailEntry): boolean =>
  * Visible (subscribed) cells are never evicted — virtualization bounds that set.
  */
 const evictSessionUntilFit = (incomingBytes: number): void => {
-    if (incomingBytes > SESSION_BUDGET_BYTES) {
-        for (const [fileId, entry] of cache) {
-            if (entry.status !== "ready" || hasSubscribers(fileId)) {
-                continue;
-            }
-            discardCacheEntry(fileId, entry);
-        }
-        return;
-    }
     // Called for every decoded thumb; skip the scan while scrolling under
     // budget.
     if (sessionReadyBytes + incomingBytes <= SESSION_BUDGET_BYTES) {

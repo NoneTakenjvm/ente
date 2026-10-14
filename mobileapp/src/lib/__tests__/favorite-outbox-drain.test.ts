@@ -20,9 +20,9 @@ describe("favourite outbox drain batching", () => {
     beforeEach(async () => {
         vi.resetModules();
         const { clearFavoriteOutbox } = await import("@/lib/favorite-outbox");
-        const { stopTagOutboxRunner } = await import("@/lib/tag-outbox-runner");
+        const { stopOutboxRunner } = await import("@/lib/outbox-runner");
         clearFavoriteOutbox();
-        stopTagOutboxRunner();
+        stopOutboxRunner();
     });
 
     it("drains many favourites in one remote batch instead of per file", async () => {
@@ -32,10 +32,10 @@ describe("favourite outbox drain batching", () => {
             getFavoriteOutboxEntries,
         } = await import("@/lib/favorite-outbox");
         const {
-            startTagOutboxRunner,
+            startOutboxRunner,
             flushTagOutboxNow,
-            stopTagOutboxRunner,
-        } = await import("@/lib/tag-outbox-runner");
+            stopOutboxRunner,
+        } = await import("@/lib/outbox-runner");
 
         await hydrateFavoriteOutbox();
         const files = Array.from({ length: 250 }, (_, i) => stubFile({ id: i + 1, collectionID: 10 }));
@@ -51,28 +51,22 @@ describe("favourite outbox drain batching", () => {
                 ),
             }),
         );
-        const applyFavoriteMutation = vi.fn(async () => {
-            throw new Error("per-file path should not run on batch success");
-        });
-
-        startTagOutboxRunner({
+        startOutboxRunner({
             getFileById: (fileId: number) =>
                 files.find((file) => file.id === fileId),
             getCollections: () => [],
-            patchFile: async () => undefined,
+            patchFiles: () => undefined,
             applyFavoriteMutations,
-            applyFavoriteMutation,
         });
 
         await flushTagOutboxNow({ notify: false });
-        stopTagOutboxRunner();
+        stopOutboxRunner();
 
         // 250 entries → chunks of 100 → 3 batch calls, zero per-file calls.
         expect(applyFavoriteMutations).toHaveBeenCalledTimes(3);
         expect(applyFavoriteMutations.mock.calls[0]?.[0]).toHaveLength(100);
         expect(applyFavoriteMutations.mock.calls[1]?.[0]).toHaveLength(100);
         expect(applyFavoriteMutations.mock.calls[2]?.[0]).toHaveLength(50);
-        expect(applyFavoriteMutation).not.toHaveBeenCalled();
         expect(getFavoriteOutboxEntries()).toHaveLength(0);
     });
 
@@ -83,37 +77,40 @@ describe("favourite outbox drain batching", () => {
             getFavoriteOutboxEntries,
         } = await import("@/lib/favorite-outbox");
         const {
-            startTagOutboxRunner,
+            startOutboxRunner,
             flushTagOutboxNow,
-            stopTagOutboxRunner,
-        } = await import("@/lib/tag-outbox-runner");
+            stopOutboxRunner,
+        } = await import("@/lib/outbox-runner");
 
         await hydrateFavoriteOutbox();
         await upsertFavoriteOutboxEntry(stubFile({ id: 1, collectionID: 10 }), 1, true);
         await upsertFavoriteOutboxEntry(stubFile({ id: 2, collectionID: 10 }), 1, true);
 
-        const applyFavoriteMutations = vi.fn(async () => {
-            throw new Error("batch failed");
-        });
-        const applyFavoriteMutation = vi.fn(async () => undefined);
+        const applyFavoriteMutations = vi.fn(
+            async (entries: FavoriteOutboxEntry[]) => {
+                if (entries.length > 1) {
+                    throw new Error("batch failed");
+                }
+                return { ackedKeys: entries.map((entry) => String(entry.fileId)) };
+            },
+        );
 
-        startTagOutboxRunner({
+        startOutboxRunner({
             getFileById: (fileId: number) =>
                 [
                     stubFile({ id: 1, collectionID: 10 }),
                     stubFile({ id: 2, collectionID: 10 }),
                 ].find((file) => file.id === fileId),
             getCollections: () => [],
-            patchFile: async () => undefined,
+            patchFiles: () => undefined,
             applyFavoriteMutations,
-            applyFavoriteMutation,
         });
 
         await flushTagOutboxNow({ notify: false });
-        stopTagOutboxRunner();
+        stopOutboxRunner();
 
-        expect(applyFavoriteMutations).toHaveBeenCalled();
-        expect(applyFavoriteMutation).toHaveBeenCalledTimes(2);
+        // One failed batch of two, then one call per entry.
+        expect(applyFavoriteMutations).toHaveBeenCalledTimes(3);
         expect(getFavoriteOutboxEntries()).toHaveLength(0);
     });
 
@@ -124,10 +121,10 @@ describe("favourite outbox drain batching", () => {
             getFavoriteOutboxEntries,
         } = await import("@/lib/favorite-outbox");
         const {
-            startTagOutboxRunner,
+            startOutboxRunner,
             flushTagOutboxNow,
-            stopTagOutboxRunner,
-        } = await import("@/lib/tag-outbox-runner");
+            stopOutboxRunner,
+        } = await import("@/lib/outbox-runner");
 
         await hydrateFavoriteOutbox();
         await upsertFavoriteOutboxEntry(stubFile({ id: 1, collectionID: 10 }), 1, true);
@@ -144,19 +141,16 @@ describe("favourite outbox drain batching", () => {
             },
         );
 
-        startTagOutboxRunner({
+        startOutboxRunner({
             getFileById: (fileId: number) =>
                 fileId === 1 ? stubFile({ id: 1, collectionID: 10 }) : undefined,
             getCollections: () => [],
-            patchFile: async () => undefined,
+            patchFiles: () => undefined,
             applyFavoriteMutations,
-            applyFavoriteMutation: vi.fn(async () => {
-                throw new Error("remote unavailable");
-            }),
         });
 
         await flushTagOutboxNow({ notify: false });
-        stopTagOutboxRunner();
+        stopOutboxRunner();
 
         expect(getFavoriteOutboxEntries()).toMatchObject([
             { fileId: 1, isFavorite: false },
@@ -170,9 +164,9 @@ describe("visibility outbox drain", () => {
         const { clearVisibilityOutbox } = await import(
             "@/lib/visibility-outbox"
         );
-        const { stopTagOutboxRunner } = await import("@/lib/tag-outbox-runner");
+        const { stopOutboxRunner } = await import("@/lib/outbox-runner");
         clearVisibilityOutbox();
-        stopTagOutboxRunner();
+        stopOutboxRunner();
     });
 
     it("keeps a newer archive intent queued while the older one was in flight", async () => {
@@ -182,18 +176,19 @@ describe("visibility outbox drain", () => {
             getVisibilityOutboxEntries,
         } = await import("@/lib/visibility-outbox");
         const {
-            startTagOutboxRunner,
+            startOutboxRunner,
             flushTagOutboxNow,
-            stopTagOutboxRunner,
-        } = await import("@/lib/tag-outbox-runner");
+            stopOutboxRunner,
+        } = await import("@/lib/outbox-runner");
 
         await hydrateVisibilityOutbox();
         await upsertVisibilityOutboxEntry(1, ItemVisibility.archived);
 
-        startTagOutboxRunner({
+        startOutboxRunner({
             getFileById: () => undefined,
             getCollections: () => [],
-            patchFile: async () => undefined,
+            patchFiles: () => undefined,
+            applyFavoriteMutations: async () => ({ ackedKeys: [] }),
             applyVisibilityMutation: async (entry) => {
                 if (entry.visibility !== ItemVisibility.archived) {
                     throw new Error("remote unavailable");
@@ -203,10 +198,51 @@ describe("visibility outbox drain", () => {
         });
 
         await flushTagOutboxNow({ notify: false });
-        stopTagOutboxRunner();
+        stopOutboxRunner();
 
         expect(getVisibilityOutboxEntries()).toMatchObject([
             { fileId: 1, visibility: ItemVisibility.visible },
         ]);
+    });
+
+    it("drains favourites and visibility concurrently", async () => {
+        const { hydrateFavoriteOutbox, upsertFavoriteOutboxEntry } =
+            await import("@/lib/favorite-outbox");
+        const { hydrateVisibilityOutbox, upsertVisibilityOutboxEntry } =
+            await import("@/lib/visibility-outbox");
+        const { startOutboxRunner, flushTagOutboxNow, stopOutboxRunner } =
+            await import("@/lib/outbox-runner");
+
+        await hydrateFavoriteOutbox();
+        await hydrateVisibilityOutbox();
+        await upsertFavoriteOutboxEntry(stubFile({ id: 1, collectionID: 10 }), 1, true);
+        await upsertVisibilityOutboxEntry(2, ItemVisibility.archived);
+
+        let releaseFavorite: () => void = () => undefined;
+        let visibilityStarted = false;
+        const applyFavoriteMutations = vi.fn(
+            (entries: FavoriteOutboxEntry[]) =>
+                new Promise<{ ackedKeys: string[] }>((resolve) => {
+                    releaseFavorite = () =>
+                        resolve({ ackedKeys: entries.map((e) => String(e.fileId)) });
+                }),
+        );
+
+        startOutboxRunner({
+            getFileById: () => undefined,
+            getCollections: () => [],
+            patchFiles: () => undefined,
+            applyFavoriteMutations,
+            applyVisibilityMutation: async () => {
+                visibilityStarted = true;
+                releaseFavorite();
+            },
+        });
+
+        // Would deadlock if visibility waited for the favourite drain.
+        await flushTagOutboxNow({ notify: false });
+        stopOutboxRunner();
+
+        expect(visibilityStarted).toBe(true);
     });
 });

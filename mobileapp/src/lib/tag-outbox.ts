@@ -1,12 +1,21 @@
 import type { EnteFile } from "ente-media/file";
 import type { FilePublicMagicMetadataData } from "ente-media/file-metadata";
-import { createOutbox } from "@/lib/outbox";
+import { createOutbox, overlayFiles } from "@/lib/outbox";
+import { flushTagOutboxNow, requestTagOutboxFlush } from "@/lib/outbox-runner";
 import { extractTags } from "@/lib/tags";
 import {
     fileWithOrganizerTags,
     tagsEqual,
+    tagsForFile,
     type OrganizerPublicMetadata,
+    type TagMutator,
 } from "@/lib/tag-writes";
+
+export interface BatchTagResult {
+    succeeded: number;
+    failed: number;
+    errors: string[];
+}
 
 interface TagOutboxEntry {
     fileId: number;
@@ -81,6 +90,55 @@ export const enqueueTagOutboxEntries = (
 };
 
 /**
+ * Queue `mutator`'s result as each file's intended tags.
+ *
+ * With `wait`, persists the intents and awaits a full outbox drain (batched
+ * PUTs), reporting files still pending afterwards; Manage rename/delete/merge
+ * use this because the UI waits on completion. Without it, enqueues in memory,
+ * schedules a debounced flush and returns at once; failures surface later via
+ * the runner toasts.
+ */
+export const queueTagMutation = async (
+    files: EnteFile[],
+    mutator: TagMutator,
+    options: {
+        wait: boolean;
+        onProgress?: (completed: number, total: number) => void;
+    },
+): Promise<BatchTagResult> => {
+    const { wait, onProgress } = options;
+    if (!files.length) {
+        return { succeeded: 0, failed: 0, errors: [] };
+    }
+    const entries = files.map((file) => ({
+        fileId: file.id,
+        intendedTags: tagsForFile(file, mutator),
+    }));
+    if (!wait) {
+        enqueueTagOutboxEntries(entries);
+        requestTagOutboxFlush();
+        onProgress?.(files.length, files.length);
+        return { succeeded: files.length, failed: 0, errors: [] };
+    }
+
+    await upsertTagOutboxEntries(entries);
+    onProgress?.(0, files.length);
+    await flushTagOutboxNow({ notify: false });
+
+    const targetIds = new Set(files.map((file) => file.id));
+    const pendingIds = outbox
+        .entries()
+        .map((entry) => entry.fileId)
+        .filter((fileId) => targetIds.has(fileId));
+    onProgress?.(files.length - pendingIds.length, files.length);
+    return {
+        succeeded: files.length - pendingIds.length,
+        failed: pendingIds.length,
+        errors: pendingIds.map((fileId) => `${fileId}: sync pending`),
+    };
+};
+
+/**
  * Remove one or more files from the outbox after pull confirms server tags.
  */
 export const removeTagOutboxEntries = async (
@@ -139,20 +197,8 @@ export const applyOutboxTagsToFiles = (
     files: EnteFile[],
     entries: Iterable<TagOutboxEntry> = outbox.entries(),
 ): EnteFile[] => {
-    const byFileId = new Map<number, TagOutboxEntry>();
-    for (const entry of entries) {
-        byFileId.set(entry.fileId, entry);
-    }
-    if (byFileId.size === 0) {
-        return files;
-    }
-    return files.map((file) => {
-        const entry = byFileId.get(file.id);
-        if (!entry) {
-            return file;
-        }
-        return fileWithOrganizerTags(file, entry.intendedTags);
-    });
+    return overlayFiles(files, entries, (file, entry) =>
+        fileWithOrganizerTags(file, entry.intendedTags));
 };
 
 const pubMagicVersion = (file: EnteFile): number =>

@@ -1,3 +1,4 @@
+import type { EnteFile } from "ente-media/file";
 import { loadKv, saveKv } from "@/db/kv";
 import { registerFlush, registerReset } from "@/lib/session-lifecycle";
 
@@ -232,4 +233,27 @@ export const createCoalescedWriter = (
             chain = Promise.resolve();
         },
     };
+};
+
+/**
+ * Overlay pending outbox entries onto `files` for local display: each file with
+ * an entry (the last one per file id wins) is replaced by `patch(file, entry)`.
+ * Returns `files` itself when there is nothing to overlay.
+ */
+export const overlayFiles = <E extends { fileId: number }>(
+    files: EnteFile[],
+    entries: Iterable<E>,
+    patch: (file: EnteFile, entry: E) => EnteFile,
+): EnteFile[] => {
+    const byFileId = new Map<number, E>();
+    for (const entry of entries) {
+        byFileId.set(entry.fileId, entry);
+    }
+    if (byFileId.size === 0) {
+        return files;
+    }
+    return files.map((file) => {
+        const entry = byFileId.get(file.id);
+        return entry ? patch(file, entry) : file;
+    });
 };

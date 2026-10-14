@@ -23,8 +23,6 @@ export interface PersistedSessionPayload {
     savedAt: number;
 }
 
-const isBrowser = (): boolean => typeof window !== "undefined";
-
 const getOrCreateWrapKey = async (): Promise<string> => {
     let key = localStorage.getItem(wrapKeyStorageKey);
     if (!key) {
@@ -40,13 +38,13 @@ const getOrCreateWrapKey = async (): Promise<string> => {
  *
  * [Note: Session blob] Master key is encrypted with a device-local wrap key in
  * localStorage — not plaintext, but recoverable on this browser without re-login.
+ *
+ * Every function here touches browser storage, so call them from effects or
+ * event handlers only, never during server pre-render.
  */
 export const savePersistedSession = async (
     payload: Omit<PersistedSessionPayload, "savedAt">,
 ): Promise<void> => {
-    if (!isBrowser()) {
-        return;
-    }
     const wrapKey = await getOrCreateWrapKey();
     const encrypted = await encryptMetadataJSON(
         { ...payload, savedAt: Date.now() },
@@ -57,9 +55,6 @@ export const savePersistedSession = async (
 
 export const loadPersistedSession =
     async (): Promise<PersistedSessionPayload | undefined> => {
-        if (!isBrowser()) {
-            return undefined;
-        }
         const raw = localStorage.getItem(sessionStorageKey);
         if (!raw) {
             return undefined;
@@ -84,53 +79,30 @@ export const loadPersistedSession =
         }
     };
 
-export const hasPersistedSession = (): boolean => {
-    if (!isBrowser()) {
-        return false;
-    }
-    return localStorage.getItem(sessionStorageKey) !== null;
-};
+export const hasPersistedSession = (): boolean =>
+    localStorage.getItem(sessionStorageKey) !== null;
 
 export const clearPersistedSession = (): void => {
-    if (!isBrowser()) {
-        return;
-    }
     localStorage.removeItem(sessionStorageKey);
 };
 
 export const clearPersistedWrapKey = (): void => {
-    if (!isBrowser()) {
-        return;
-    }
     localStorage.removeItem(wrapKeyStorageKey);
 };
 
 export const markSessionLocked = (email: string): void => {
-    if (!isBrowser()) {
-        return;
-    }
     sessionStorage.setItem(lockedFlagKey, "1");
     sessionStorage.setItem(lockedEmailKey, email);
 };
 
-export const isSessionLocked = (): boolean => {
-    if (!isBrowser()) {
-        return false;
-    }
-    return sessionStorage.getItem(lockedFlagKey) === "1";
-};
+export const isSessionLocked = (): boolean =>
+    sessionStorage.getItem(lockedFlagKey) === "1";
 
 export const getLockedSessionEmail = (): string | undefined => {
-    if (!isBrowser()) {
-        return undefined;
-    }
     return sessionStorage.getItem(lockedEmailKey) ?? undefined;
 };
 
 export const clearSessionLock = (): void => {
-    if (!isBrowser()) {
-        return;
-    }
     sessionStorage.removeItem(lockedFlagKey);
     sessionStorage.removeItem(lockedEmailKey);
 };

@@ -252,11 +252,19 @@ export const hydratePhashIndex = async (): Promise<Map<number, PhashEntry>> => {
 };
 
 /**
- * Drop a single file from the persisted phash index (e.g. after thumbnail change).
+ * Drop files from the persisted phash index in one chunk (e.g. after their
+ * thumbnails changed).
  */
-export const removePhashEntry = (fileId: number): Promise<void> =>
+export const removePhashEntries = (fileIds: readonly number[]): Promise<void> =>
     queuePhashWrite(() =>
-        appendPhashChunk(new Map([[fileId, null]]), getSessionCacheKey()));
+        appendPhashChunk(
+            new Map(fileIds.map((fileId) => [fileId, null])),
+            getSessionCacheKey(),
+        ));
+
+/** Drop a single file from the persisted phash index. */
+export const removePhashEntry = (fileId: number): Promise<void> =>
+    removePhashEntries([fileId]);
 
 /** New hashes are persisted in chunks this size so progress survives interruption. */
 const flushEvery = 64;

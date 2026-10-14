@@ -10,7 +10,7 @@ const ObjectUploadURL = z.object({
 
 export type ObjectUploadURL = z.infer<typeof ObjectUploadURL>;
 
-export interface UploadedFileObjectAttributes {
+interface UploadedFileObjectAttributes {
     objectKey: string;
     decryptionHeader: string;
     size: number;
@@ -160,7 +160,7 @@ const mapAbortError = (error: unknown): never => {
     throw error;
 };
 
-export interface PutFileOptions {
+interface PutFileOptions {
     contentMd5?: string;
     onProgress?: (loaded: number, total: number) => void;
 }
@@ -218,13 +218,8 @@ export const putFile = async (
             for (const [key, value] of Object.entries(headers)) {
                 xhr.setRequestHeader(key, value);
             }
-            const timer = setTimeout(() => {
-                xhr.abort();
-            }, timeoutMs);
-            const onBatchAbort = (): void => {
-                xhr.abort();
-            };
-            batchAbort?.signal.addEventListener("abort", onBatchAbort, {
+            const timeout = abortableTimeout(timeoutMs, batchAbort?.signal);
+            timeout.signal.addEventListener("abort", () => xhr.abort(), {
                 once: true,
             });
             xhr.upload.onprogress = (event: ProgressEvent): void => {
@@ -238,8 +233,7 @@ export const putFile = async (
                 }
             };
             xhr.onload = (): void => {
-                clearTimeout(timer);
-                batchAbort?.signal.removeEventListener("abort", onBatchAbort);
+                timeout.clear();
                 const res = new Response(null, {
                     status: xhr.status,
                     statusText: xhr.statusText,
@@ -255,13 +249,11 @@ export const putFile = async (
                 }
             };
             xhr.onerror = (): void => {
-                clearTimeout(timer);
-                batchAbort?.signal.removeEventListener("abort", onBatchAbort);
+                timeout.clear();
                 reject(new TypeError("Failed to fetch"));
             };
             xhr.onabort = (): void => {
-                clearTimeout(timer);
-                batchAbort?.signal.removeEventListener("abort", onBatchAbort);
+                timeout.clear();
                 if (batchAbort?.signal.aborted) {
                     reject(new Error("Upload cancelled"));
                 } else {
@@ -292,14 +284,14 @@ export const postEnteFile = async (
     return RemoteEnteFile.parse(await res.json());
 };
 
-export interface PutEnteFileUpdateRequest {
+interface PutEnteFileUpdateRequest {
     id: number;
     file: UploadedFileObjectAttributes;
     thumbnail: UploadedFileObjectAttributes;
     metadata: { encryptedData: string; decryptionHeader: string };
 }
 
-export interface PutEnteFileUpdateResponse {
+interface PutEnteFileUpdateResponse {
     id: number;
     updationTime: number;
 }

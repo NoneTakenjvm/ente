@@ -1,10 +1,7 @@
 import { create } from "zustand";
 import { enqueueOrganizerConfigPatch } from "@/lib/organizer-config-save-queue";
-import {
-    normalizeTagNameList,
-    pushRecentTags,
-    type TagBulkUndoEntry,
-} from "@/lib/tag-bulk";
+import { pushRecentTags, type TagBulkUndoEntry } from "@/lib/tag-bulk";
+import { normalizeTagNameList } from "@/lib/tag-writes";
 import {
     newTagPresetId,
     normalizePresetName,

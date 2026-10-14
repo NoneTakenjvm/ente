@@ -1,4 +1,4 @@
-import { deleteDB, openDB, type IDBPDatabase } from "idb";
+import { deleteDB, openDB, type IDBPDatabase, type StoreNames } from "idb";
 
 const dbVersion = 10;
 
@@ -130,40 +130,37 @@ interface OrganizerDB {
 const dbNameForUser = (userId: number): string =>
     `ente-organizer-${userId}`;
 
+/** Every object store with its key path (none has secondary indexes). */
+const objectStores: ReadonlyArray<
+    readonly [StoreNames<OrganizerDB>, IDBObjectStoreParameters | undefined]
+> = [
+    ["kv", { keyPath: "key" }],
+    ["thumbnails", { keyPath: "fileId" }],
+    ["fileCiphertexts", { keyPath: "fileId" }],
+    ["derivedReplacePayloads", { keyPath: "fileId" }],
+    ["syncCursors", { keyPath: "collectionId" }],
+    ["embeddingChunks", { keyPath: "chunkId" }],
+    ["fileShards", { keyPath: "shardId" }],
+    ["phashChunks", { keyPath: "chunkId" }],
+    ["meta", undefined],
+];
+
 let activeUserId: number | undefined;
 let dbPromise: Promise<IDBPDatabase<OrganizerDB>> | undefined;
+const unbindListeners: Array<() => void> = [];
+
+/** Run `listener` whenever the active DB binding is dropped (logout / wipe). */
+export const onOrganizerDBUnbind = (listener: () => void): void => {
+    unbindListeners.push(listener);
+};
 
 const openOrganizerDB = (userId: number): Promise<IDBPDatabase<OrganizerDB>> =>
     openDB<OrganizerDB>(dbNameForUser(userId), dbVersion, {
         upgrade(db, oldVersion, _newVersion, transaction) {
-            if (!db.objectStoreNames.contains("kv")) {
-                db.createObjectStore("kv", { keyPath: "key" });
-            }
-            if (!db.objectStoreNames.contains("thumbnails")) {
-                db.createObjectStore("thumbnails", { keyPath: "fileId" });
-            }
-            if (!db.objectStoreNames.contains("fileCiphertexts")) {
-                db.createObjectStore("fileCiphertexts", { keyPath: "fileId" });
-            }
-            if (!db.objectStoreNames.contains("derivedReplacePayloads")) {
-                db.createObjectStore("derivedReplacePayloads", {
-                    keyPath: "fileId",
-                });
-            }
-            if (!db.objectStoreNames.contains("syncCursors")) {
-                db.createObjectStore("syncCursors", { keyPath: "collectionId" });
-            }
-            if (!db.objectStoreNames.contains("embeddingChunks")) {
-                db.createObjectStore("embeddingChunks", { keyPath: "chunkId" });
-            }
-            if (!db.objectStoreNames.contains("fileShards")) {
-                db.createObjectStore("fileShards", { keyPath: "shardId" });
-            }
-            if (!db.objectStoreNames.contains("phashChunks")) {
-                db.createObjectStore("phashChunks", { keyPath: "chunkId" });
-            }
-            if (!db.objectStoreNames.contains("meta")) {
-                db.createObjectStore("meta");
+            for (const [name, options] of objectStores) {
+                if (!db.objectStoreNames.contains(name)) {
+                    db.createObjectStore(name, options);
+                }
             }
 
             // v9 dropped the tile-embeddings store and legacy row formats
@@ -214,7 +211,7 @@ export const wipeOrganizerDB = async (): Promise<void> => {
         return;
     }
     const userId = activeUserId;
-    await unbindOrganizerDB();
+    unbindOrganizerDB();
     await deleteDB(dbNameForUser(userId));
 };
 
@@ -223,7 +220,7 @@ export const wipeOrganizerDB = async (): Promise<void> => {
  */
 export const wipeOrganizerDBForUser = async (userId: number): Promise<void> => {
     if (activeUserId === userId) {
-        await unbindOrganizerDB();
+        unbindOrganizerDB();
     }
     await deleteDB(dbNameForUser(userId));
 };
@@ -232,12 +229,13 @@ export const wipeOrganizerDBForUser = async (userId: number): Promise<void> => {
  * Drop the active binding and close its connection — an open connection
  * blocks `deleteDB` indefinitely.
  */
-const unbindOrganizerDB = async (): Promise<void> => {
+const unbindOrganizerDB = (): void => {
     closeConnection(dbPromise);
     dbPromise = undefined;
     activeUserId = undefined;
-    const { clearFileShardPersistState } = await import("./file-shards");
-    clearFileShardPersistState();
+    for (const listener of unbindListeners) {
+        listener();
+    }
 };
 
 /** Close once in-flight transactions finish (IndexedDB close semantics). */

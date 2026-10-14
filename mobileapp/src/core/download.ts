@@ -98,7 +98,6 @@ const readResponseBytes = async (
  */
 const fetchEncryptedBytes = (
     http: HttpClient,
-    session: CoreSession,
     url: string,
     maxAttempts = 1,
     onProgress?: BytesProgressCallback,
@@ -145,7 +144,6 @@ export const fetchEncryptedThumbnail = async (
 
     const encryptedData = await fetchEncryptedBytes(
         http,
-        session,
         thumbnailUrl(http, session, file.id),
         4,
     );
@@ -198,27 +196,17 @@ export const fetchEncryptedFile = async (
     }
 
     const origin = http.apiOrigin();
-    const knownTotal = file.info?.fileSize;
-    const encryptedData =
-        isProductionEnteOrigin(origin) ?
-            await fetchEncryptedBytes(
-                http,
-                session,
-                `https://files.ente.com/?fileID=${file.id}`,
-                3,
-                onProgress,
-                knownTotal,
-                signal,
-            ) :
-            await fetchEncryptedBytes(
-                http,
-                session,
-                `${origin}/files/download/${file.id}?token=${encodeURIComponent(requireAuth(session).authToken)}`,
-                3,
-                onProgress,
-                knownTotal,
-                signal,
-            );
+    const url = isProductionEnteOrigin(origin) ?
+        `https://files.ente.com/?fileID=${file.id}` :
+        `${origin}/files/download/${file.id}?token=${encodeURIComponent(requireAuth(session).authToken)}`;
+    const encryptedData = await fetchEncryptedBytes(
+        http,
+        url,
+        3,
+        onProgress,
+        file.info?.fileSize,
+        signal,
+    );
 
     return {
         encryptedData,

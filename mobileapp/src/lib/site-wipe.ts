@@ -93,7 +93,9 @@ export const wipeSiteStorage = async (): Promise<void> => {
     } catch {
         // Ignore.
     }
-    await wipeOrganizerIndexedDatabases();
-    await wipeCaches();
-    await unregisterServiceWorkers();
+    await Promise.all([
+        wipeOrganizerIndexedDatabases(),
+        wipeCaches(),
+        unregisterServiceWorkers(),
+    ]);
 };
