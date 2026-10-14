@@ -3,6 +3,7 @@ import { Crop } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { getEnteCore } from "@/core";
+import { mapBatched } from "@/lib/batched";
 import { clampCropRect, encodeCroppedJpeg } from "@/lib/crop";
 import {
     confirmDiscardPendingCrops,
@@ -15,8 +16,10 @@ import { useLibraryStore } from "@/stores/library-store";
 import { useSelectionStore } from "@/stores/selection-store";
 import { toast } from "sonner";
 
+const APPLY_CONCURRENCY = 2;
+
 /**
- * Footer for quick-crop mode: draft crop boxes, then Apply crops sequentially.
+ * Footer for quick-crop mode: draft crop boxes, then Apply crops a few at a time.
  */
 export function CropToolFooter(): JSX.Element | null {
     const cropActive = useSelectionStore((s) => s.cropActive);
@@ -68,25 +71,30 @@ export function CropToolFooter(): JSX.Element | null {
         let failed = 0;
         const progress = toast.loading(`Cropping 0 of ${total}…`);
         try {
-            for (const entry of pendingEntries) {
-                try {
-                    const { finalize } = await cropFile(
-                        entry.fileId,
-                        entry.pending,
-                    );
-                    // Committed and queued for retry: re-applying would crop twice.
-                    removePendingCrop(entry.fileId);
-                    done += 1;
-                    toast.loading(`Cropping ${done} of ${total}…`, {
-                        id: progress,
-                    });
-                    // One upload at a time bounds the undo-history bytes held in memory.
-                    await finalize.catch(() => undefined);
-                } catch (error) {
-                    failed += 1;
-                    console.warn("Quick crop failed", entry.fileId, error);
-                }
-            }
+            // A few files in flight overlaps download, encode and upload while
+            // still bounding the image and undo-history bytes held in memory.
+            await mapBatched(
+                pendingEntries,
+                async (entry) => {
+                    try {
+                        const { finalize } = await cropFile(
+                            entry.fileId,
+                            entry.pending,
+                        );
+                        // Committed and queued for retry: re-applying would crop twice.
+                        removePendingCrop(entry.fileId);
+                        done += 1;
+                        toast.loading(`Cropping ${done} of ${total}…`, {
+                            id: progress,
+                        });
+                        await finalize.catch(() => undefined);
+                    } catch (error) {
+                        failed += 1;
+                        console.warn("Quick crop failed", entry.fileId, error);
+                    }
+                },
+                { concurrency: APPLY_CONCURRENCY },
+            );
             if (failed === 0) {
                 toast.success(
                     done === 1 ? "Cropped 1 photo" : `Cropped ${done} photos`,
@@ -193,8 +201,10 @@ const cropFile = async (
             height,
         ),
     );
-    return cropAndReplaceFileOptimistic(fileId, encoded.bytes, {
-        width: encoded.width,
-        height: encoded.height,
-    });
+    return cropAndReplaceFileOptimistic(
+        fileId,
+        encoded.bytes,
+        { width: encoded.width, height: encoded.height },
+        { sourceBytes: bytes },
+    );
 };

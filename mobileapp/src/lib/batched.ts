@@ -43,15 +43,23 @@ export const mapBatched = async <T>(
     let completed = 0;
 
     for (const chunk of batch(items, batchSize)) {
-        for (let i = 0; i < chunk.length; i += concurrency) {
-            const slice = chunk.slice(i, i + concurrency);
-            await Promise.all(
-                slice.map(async (item) => {
-                    await op(item);
-                    completed += 1;
-                    options?.onProgress?.(completed, total);
-                }),
-            );
-        }
+        // Each runner pulls the next item as soon as it finishes, so one slow
+        // item does not stall the others.
+        let next = 0;
+        const runner = async (): Promise<void> => {
+            while (next < chunk.length) {
+                const item = chunk[next] as T;
+                next += 1;
+                await op(item);
+                completed += 1;
+                options?.onProgress?.(completed, total);
+            }
+        };
+        await Promise.all(
+            Array.from(
+                { length: Math.min(concurrency, chunk.length) },
+                runner,
+            ),
+        );
     }
 };

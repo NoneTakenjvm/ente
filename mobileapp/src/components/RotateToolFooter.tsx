@@ -2,6 +2,7 @@ import { useCallback, useMemo, type JSX } from "react";
 import { RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { mapBatched } from "@/lib/batched";
 import {
     confirmDiscardPendingRotations,
     countPendingRotations,
@@ -10,8 +11,10 @@ import { useLibraryStore } from "@/stores/library-store";
 import { useSelectionStore } from "@/stores/selection-store";
 import { toast } from "sonner";
 
+const APPLY_CONCURRENCY = 3;
+
 /**
- * Footer for quick-rotate mode: draft taps, then Apply uploads sequentially.
+ * Footer for quick-rotate mode: draft taps, then Apply uploads a few at a time.
  */
 export function RotateToolFooter(): JSX.Element | null {
     const rotateActive = useSelectionStore((s) => s.rotateActive);
@@ -68,19 +71,25 @@ export function RotateToolFooter(): JSX.Element | null {
         let failed = 0;
         const progress = toast.loading(`Rotating 0 of ${total}…`);
         try {
-            for (const entry of pendingEntries) {
-                try {
-                    await rotateAndUploadFile(entry.fileId, entry.degrees);
-                    removePendingRotation(entry.fileId);
-                    done += 1;
-                    toast.loading(`Rotating ${done} of ${total}…`, {
-                        id: progress,
-                    });
-                } catch (error) {
-                    failed += 1;
-                    console.warn("Quick rotate failed", entry.fileId, error);
-                }
-            }
+            // Rotations update files in place and are mostly network-bound,
+            // so a few in flight overlap one file's upload with the next download.
+            await mapBatched(
+                pendingEntries,
+                async (entry) => {
+                    try {
+                        await rotateAndUploadFile(entry.fileId, entry.degrees);
+                        removePendingRotation(entry.fileId);
+                        done += 1;
+                        toast.loading(`Rotating ${done} of ${total}…`, {
+                            id: progress,
+                        });
+                    } catch (error) {
+                        failed += 1;
+                        console.warn("Quick rotate failed", entry.fileId, error);
+                    }
+                },
+                { concurrency: APPLY_CONCURRENCY },
+            );
             if (failed === 0) {
                 toast.success(
                     done === 1 ? "Rotated 1 photo" : `Rotated ${done} photos`,

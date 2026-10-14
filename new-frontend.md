@@ -6,13 +6,19 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-10-13 |
-| **Last agent / session** | Mobile perf/memory pass (`0.3.188`): thumbnail cache, viewer, idle workers, `_app` split, tag index, sync, Manage/upload |
+| **Last updated** | 2026-10-14 |
+| **Last agent / session** | Bulk quick-rotate / quick-crop Apply speed-up (`0.3.189`) |
 | **Current milestone** | Post-M8 UX / upload performance |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
-| **Next recommended action** | Phone QA of `0.3.188`: scroll a big library fast (thumbnails should keep up, no reloads), swipe through a run of videos in the viewer, open/close the app with nothing changed remotely (sync should be instant), upload 100+ photos (staging grid shows small previews), trash/restore/upload and check tag counts stay right, archive a large selection. |
+| **Next recommended action** | Phone QA of `0.3.189`: quick-rotate and quick-crop 20+ photos and Apply — progress should climb several at a time, all files end up rotated/cropped once, undo still works on a cropped photo, failed items stay pending for retry. Then QA the `0.3.188` perf items if not done yet. |
 
-**This session (local only — not pushed, `0.3.188`):**
+**This session (local only — not pushed, `0.3.189`):**
+1. **Bulk Apply concurrency** — `RotateToolFooter` runs 3 rotations at a time, `CropToolFooter` 2 crops at a time (each still waits for its own upload, bounding memory). Both were strictly one file at a time end to end.
+2. **`mapBatched` is a sliding pool** — each runner picks the next item as soon as it finishes, instead of lock-step slices waiting on the slowest item. All existing callers catch inside `op`.
+3. **No second download for crop undo** — `cropAndReplaceFileOptimistic` takes `options.sourceBytes`; quick crop and auto-crop pass the bytes they already decrypted, so finalize no longer re-downloads the original just to record edit history.
+4. **Deferred** — quick crop still decodes once on the main thread only to read dimensions (worker could take a normalized rect); crop encode is mozjpeg WASM in the single shared compress worker (native `convertToBlob` JPEG would be faster but larger files); rotate uses main-thread canvas + main-thread upload crypto and a separate `updatePublicMetadata` round trip; crop replace trashes one file per API call.
+
+**Previous session (committed `5ad6ca0e94`, `0.3.188`):**
 1. **Thumbnail cache** — session budget 96 MB; Map insertion order is the LRU (no sort on evict); newest requests decode first (LIFO); decrypt and show before the IDB write; LRU touches written in one transaction.
 2. **Viewer** — downloads abort when a slide leaves the window (fetch `signal` through `core`); only ±1 videos preload; video elements release `src` on unmount; progress re-renders only for the active slide; no extra byte copies when building Blobs.
 3. **Workers** — compress/crop share one worker; compress, relative sort and kit nearness workers terminate when idle (`worker-idle-timer.ts`; CLIP stays resident by choice); WebCodecs H.264 loaded on demand.

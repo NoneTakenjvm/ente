@@ -295,7 +295,7 @@ export function ManageAutoCropPanel({
                                 width: encoded.width,
                                 height: encoded.height,
                             },
-                            { autoCropped: true },
+                            { autoCropped: true, sourceBytes: bytes },
                         );
                         void finalize.catch(() => {
                             // Store path handles revert/toast.

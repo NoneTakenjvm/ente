@@ -234,7 +234,7 @@ interface LibraryState {
         fileId: number,
         croppedBytes: Uint8Array,
         dimensions: { width: number; height: number },
-        options?: { autoCropped?: boolean },
+        options?: { autoCropped?: boolean; sourceBytes?: Uint8Array },
     ) => { optimisticFile: EnteFile; finalize: Promise<EnteFile> };
     editVideoAndReplaceFileOptimistic: (
         fileId: number,
@@ -1654,7 +1654,7 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         fileId: number,
         croppedBytes: Uint8Array,
         dimensions: { width: number; height: number },
-        options?: { autoCropped?: boolean },
+        options?: { autoCropped?: boolean; sourceBytes?: Uint8Array },
     ): { optimisticFile: EnteFile; finalize: Promise<EnteFile> } => {
         const { allFiles } = get();
         const file = allFiles.find((entry) => entry.id === fileId);
@@ -1662,7 +1662,9 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             throw new Error(`File ${fileId} not found`);
         }
 
-        const previousOverride = getLocalMediaOverride(fileId)?.slice();
+        // Callers that already decoded the source pass it to skip a re-download.
+        const previousOverride =
+            getLocalMediaOverride(fileId)?.slice() ?? options?.sourceBytes;
         const previousTags = extractTags(file);
         const intendedTags = buildCroppedOrganizerTags(file, {
             autoCropped: options?.autoCropped,
