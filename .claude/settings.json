@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem *)",
+      "PowerShell(Get-Content *)",
+      "PowerShell(Get-CimInstance *)",
+      "PowerShell(Select-String *)",
+      "PowerShell(Get-Process *)",
+      "PowerShell(Get-ItemProperty *)",
+      "PowerShell(Test-Path *)",
+      "PowerShell(Get-WinEvent *)",
+      "PowerShell(Get-ScheduledTask *)",
+      "PowerShell(Get-Item *)",
+      "PowerShell(Get-Service *)",
+      "PowerShell(Resolve-DnsName *)",
+      "PowerShell(Get-NetTCPConnection *)",
+      "PowerShell(Get-AppxPackage *)",
+      "Bash(git grep *)",
+      "Bash(git check-ignore *)",
+      "Bash(where *)",
+      "mcp__computer-use__screenshot",
+      "mcp__computer-use__zoom",
+      "mcp__claude-in-chrome__list_connected_browsers",
+      "mcp__ccd_session_mgmt__search_session_transcripts"
+    ],
+    "deny": [
+      "Artifact",
+      "Workflow",
+      "ScheduleWakeup"
+    ]
+  }
+}
