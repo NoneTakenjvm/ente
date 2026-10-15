@@ -17,6 +17,10 @@ const DEFAULT_SIMILAR_MAX_GROUP_SIZE = 5;
 export const MIN_SIMILAR_MAX_GROUP_SIZE = 1;
 export const MAX_SIMILAR_MAX_GROUP_SIZE = 5;
 
+/** Seconds each photo stays up in the viewer slideshow. */
+const DEFAULT_SLIDESHOW_SECONDS = 5;
+export const SLIDESHOW_SECONDS_OPTIONS = [3, 5, 8, 10, 15, 30] as const;
+
 /**
  * CLIP ORT batch size. {@link CLIP_EMBEDDING_BATCH_SIZE_AUTO} uses device
  * defaults (WebGPU 2 mobile / 6 desktop; WASM 1 / 2). Explicit picks are from
@@ -41,6 +45,8 @@ export interface PersistedAppSettings {
      * device default; otherwise one of {@link CLIP_EMBEDDING_BATCH_SIZE_OPTIONS}.
      */
     clipEmbeddingBatchSize: number;
+    /** Seconds per photo in the viewer slideshow (videos play to the end). */
+    slideshowSeconds: number;
 }
 
 /**
@@ -66,6 +72,19 @@ const clampSimilarMaxGroupSize = (value: number): number => {
     return Math.min(
         MAX_SIMILAR_MAX_GROUP_SIZE,
         Math.max(MIN_SIMILAR_MAX_GROUP_SIZE, Math.round(value)),
+    );
+};
+
+/**
+ * Clamp slideshow seconds into the range the settings offer.
+ */
+const clampSlideshowSeconds = (value: number): number => {
+    if (!Number.isFinite(value)) {
+        return DEFAULT_SLIDESHOW_SECONDS;
+    }
+    return Math.min(
+        SLIDESHOW_SECONDS_OPTIONS[SLIDESHOW_SECONDS_OPTIONS.length - 1],
+        Math.max(SLIDESHOW_SECONDS_OPTIONS[0], Math.round(value)),
     );
 };
 
@@ -101,6 +120,7 @@ export const defaultAppSettings = (): PersistedAppSettings => ({
     gallerySortBy: "uploaded",
     similarMaxGroupSize: DEFAULT_SIMILAR_MAX_GROUP_SIZE,
     clipEmbeddingBatchSize: CLIP_EMBEDDING_BATCH_SIZE_AUTO,
+    slideshowSeconds: DEFAULT_SLIDESHOW_SECONDS,
 });
 
 export const mergeAppSettings = (
@@ -122,6 +142,7 @@ export const mergeAppSettings = (
         clipEmbeddingBatchSize: clampClipEmbeddingBatchSize(
             merged.clipEmbeddingBatchSize,
         ),
+        slideshowSeconds: clampSlideshowSeconds(merged.slideshowSeconds),
     };
 };
 

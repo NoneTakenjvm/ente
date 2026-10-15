@@ -10,6 +10,11 @@ import type {
 self.onmessage = (event: MessageEvent<RelativeSortWorkerRequest>): void => {
     const { id, mode, seed, startFileId, ids, packed, dim } =
         event.data;
+    const post = (order: readonly number[], partial: boolean): void => {
+        const orderIds = Float64Array.from(order);
+        const response: RelativeSortWorkerResponse = { id, orderIds, partial };
+        self.postMessage(response, [orderIds.buffer]);
+    };
     try {
         const order = sortIdsByRelativePacked(
             [...ids],
@@ -18,10 +23,9 @@ self.onmessage = (event: MessageEvent<RelativeSortWorkerRequest>): void => {
             mode,
             seed,
             startFileId,
+            (orderSoFar) => post(orderSoFar, true),
         );
-        const orderIds = Float64Array.from(order);
-        const response: RelativeSortWorkerResponse = { id, orderIds };
-        self.postMessage(response, [orderIds.buffer]);
+        post(order, false);
     } catch (error: unknown) {
         const response: RelativeSortWorkerResponse = {
             id,

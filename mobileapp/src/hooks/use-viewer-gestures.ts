@@ -62,7 +62,11 @@ export interface ViewerGestures {
     registerActiveMedia: (media: ActiveMedia | null) => void;
     goPrev: () => void;
     goNext: () => void;
+    /** Jump (or slide, with `animate`) to a slide; ignored when out of range. */
+    goToIndex: (index: number, animate?: boolean) => void;
     carouselAnimating: boolean;
+    /** Whether the active slide is pinched or double-tapped in. */
+    zoomed: boolean;
     chromeVisible: boolean;
     resetChromeTimer: () => void;
     resetZoom: () => void;
@@ -672,7 +676,9 @@ export function useViewerGestures({
         registerActiveMedia,
         goPrev,
         goNext,
+        goToIndex,
         carouselAnimating,
+        zoomed: zoomScale > 1.01,
         chromeVisible,
         resetChromeTimer,
         resetZoom,

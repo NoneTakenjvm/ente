@@ -22,6 +22,7 @@ import {
     MAX_SIMILAR_MAX_GROUP_SIZE,
     MIN_GALLERY_COLUMNS,
     MIN_SIMILAR_MAX_GROUP_SIZE,
+    SLIDESHOW_SECONDS_OPTIONS,
 } from "@/lib/app-settings";
 import {
     getKitEmbeddingBatchFallbackReason,
@@ -53,6 +54,8 @@ const similarMaxGroupSizeOptions: number[] = Array.from(
     (_, i) => MIN_SIMILAR_MAX_GROUP_SIZE + i,
 );
 
+const slideshowSecondsOptions: number[] = [...SLIDESHOW_SECONDS_OPTIONS];
+
 const clipBatchSizeOptions: number[] = [
     CLIP_EMBEDDING_BATCH_SIZE_AUTO,
     ...CLIP_EMBEDDING_BATCH_SIZE_OPTIONS,
@@ -82,6 +85,7 @@ export function ManageSettingsPanel(): JSX.Element {
     const galleryColumns = useSettingsStore((s) => s.galleryColumns);
     const galleryThumbnailMode = useSettingsStore((s) => s.galleryThumbnailMode);
     const similarMaxGroupSize = useSettingsStore((s) => s.similarMaxGroupSize);
+    const slideshowSeconds = useSettingsStore((s) => s.slideshowSeconds);
     const clipEmbeddingBatchSize = useSettingsStore(
         (s) => s.clipEmbeddingBatchSize,
     );
@@ -359,6 +363,29 @@ export function ManageSettingsPanel(): JSX.Element {
                                 />
                             </Field>
                         ))}
+                    </FieldGroup>
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>Slideshow</CardTitle>
+                    <CardDescription>
+                        Start it with the play button in the photo viewer.
+                        Videos play to the end; zooming in pauses the timer.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <FieldGroup>
+                        <NumberToggleField
+                            label="Seconds per photo"
+                            value={slideshowSeconds}
+                            options={slideshowSecondsOptions}
+                            optionLabel={(seconds) => `${seconds}s`}
+                            onChange={(seconds) => {
+                                patchSettings({ slideshowSeconds: seconds });
+                            }}
+                        />
                     </FieldGroup>
                 </CardContent>
             </Card>

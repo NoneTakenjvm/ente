@@ -9,15 +9,23 @@ import { createRng } from "@/lib/shuffle-files";
 
 export type RelativePackedMode = "closest" | "furthest";
 
+/** Chain length of the first {@link sortIdsByRelativePacked} prefix report; doubles after each. */
+const FIRST_PREFIX_REPORT = 200;
+
 /**
  * Walk a greedy nearest (or farthest) neighbor path through packed vectors.
  *
+ * The walk is O(n² · dim), so large libraries take seconds to minutes;
+ * {@link onPrefix} lets the gallery show the head of the chain meanwhile.
+ *
  * @param ids file ids aligned with {@link packed}
- * @param packed row-major embeddings, length `ids.length * dim`
+ * @param packed row-major embeddings, length `ids.length * dim`; rows are
+ * reordered in place, so the caller must not reuse it
  * @param dim embedding width (CLIP is 512)
  * @param mode closest vs furthest
  * @param seed picks the random start when {@link startFileId} is absent
  * @param startFileId when present and in {@link ids}, used as the chain tip
+ * @param onPrefix called with the chain so far at 200, 400, 800… files
  */
 export const sortIdsByRelativePacked = (
     ids: readonly number[],
@@ -26,62 +34,52 @@ export const sortIdsByRelativePacked = (
     mode: RelativePackedMode,
     seed: number,
     startFileId?: number,
+    onPrefix?: (orderSoFar: readonly number[]) => void,
 ): number[] => {
     const count = ids.length;
     if (count < 2 || packed.length < count * dim) {
         return [...ids];
     }
 
-    const startIndex = pickStartIndex(ids, seed, startFileId);
-    const order = new Array<number>(count);
-    order[0] = ids[startIndex]!;
-    let written = 1;
-    let currentIndex = startIndex;
-
-    const rest: number[] = [];
-    rest.length = count - 1;
-    let restAt = 0;
-    for (let index = 0; index < count; index += 1) {
-        if (index !== startIndex) {
-            rest[restAt] = index;
-            restAt += 1;
-        }
-    }
-    let restLength = count - 1;
+    // Remaining rows stay packed in [0, remaining): taking a row moves the
+    // last remaining row into its slot, so each scan reads memory in order.
+    const rowIds = [...ids];
+    const tip = new Float32Array(dim);
+    const order: number[] = [];
     const preferClosest = mode === "closest";
+    let remaining = count;
+    let nextRow = pickStartIndex(ids, seed, startFileId);
+    let nextPrefixReport = FIRST_PREFIX_REPORT;
 
-    while (restLength > 0) {
-        const base = currentIndex * dim;
-        let bestK = 0;
-        let bestIndex = rest[0]!;
-        let bestId = ids[bestIndex]!;
+    while (remaining > 0) {
+        order.push(rowIds[nextRow]!);
+        tip.set(packed.subarray(nextRow * dim, nextRow * dim + dim));
+        remaining -= 1;
+        rowIds[nextRow] = rowIds[remaining]!;
+        packed.copyWithin(nextRow * dim, remaining * dim, remaining * dim + dim);
+        if (onPrefix && order.length === nextPrefixReport && remaining > 0) {
+            onPrefix(order);
+            nextPrefixReport *= 2;
+        }
+
+        let bestId = Number.POSITIVE_INFINITY;
         let bestDist = preferClosest ?
             Number.POSITIVE_INFINITY :
             Number.NEGATIVE_INFINITY;
-
-        for (let k = 0; k < restLength; k += 1) {
-            const index = rest[k]!;
-            const off = index * dim;
+        for (let row = 0, offset = 0; row < remaining; row += 1, offset += dim) {
             let dot = 0;
             for (let d = 0; d < dim; d += 1) {
-                dot += packed[base + d]! * packed[off + d]!;
+                dot += tip[d]! * packed[offset + d]!;
             }
             const dist = 1 - dot;
-            const id = ids[index]!;
+            const id = rowIds[row]!;
             const better = preferClosest ? dist < bestDist : dist > bestDist;
             if (better || (dist === bestDist && id < bestId)) {
                 bestDist = dist;
-                bestIndex = index;
                 bestId = id;
-                bestK = k;
+                nextRow = row;
             }
         }
-
-        order[written] = bestId;
-        written += 1;
-        currentIndex = bestIndex;
-        restLength -= 1;
-        rest[bestK] = rest[restLength]!;
     }
 
     return order;

@@ -8,6 +8,8 @@ import {
     Heart,
     Image,
     MoreVertical,
+    Pause,
+    Play,
     Tag,
     Trash2,
     Undo2,
@@ -41,6 +43,7 @@ interface ViewerChromeProps {
     activeSlideMedia: SlideMedia | undefined;
     activeVideoRef: RefObject<HTMLVideoElement | null>;
     carouselAnimating: boolean;
+    slideshowPlaying: boolean;
     isFavorite: boolean;
     favoriteDisabled: boolean;
     isArchived: boolean;
@@ -59,6 +62,7 @@ interface ViewerChromeProps {
     onClose: () => void;
     onPrev: () => void;
     onNext: () => void;
+    onToggleSlideshow: () => void;
     onSetRelative: () => void;
     onToggleFavorite: () => void;
     onToggleArchive: () => void;
@@ -83,6 +87,7 @@ export function ViewerChrome({
     activeSlideMedia,
     activeVideoRef,
     carouselAnimating,
+    slideshowPlaying,
     isFavorite,
     favoriteDisabled,
     isArchived,
@@ -100,6 +105,7 @@ export function ViewerChrome({
     onClose,
     onPrev,
     onNext,
+    onToggleSlideshow,
     onSetRelative,
     onToggleFavorite,
     onToggleArchive,
@@ -152,6 +158,20 @@ export function ViewerChrome({
                         </Button>
                     ) : null}
                     <div className="flex items-center gap-1">
+                        <Button
+                            type="button"
+                            variant={slideshowPlaying ? "secondary" : "ghost"}
+                            size="icon-sm"
+                            onClick={onToggleSlideshow}
+                            aria-label={
+                                slideshowPlaying ?
+                                    "Stop slideshow" :
+                                    "Start slideshow"
+                            }
+                            aria-pressed={slideshowPlaying}
+                        >
+                            {slideshowPlaying ? <Pause /> : <Play />}
+                        </Button>
                         <Button
                             type="button"
                             variant="ghost"

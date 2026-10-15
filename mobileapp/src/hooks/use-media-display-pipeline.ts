@@ -18,7 +18,10 @@ import {
     packEmbeddings,
     sortFilesByRelative,
 } from "@/lib/relative-sort";
-import { sortRelativeIdsInWorker } from "@/lib/relative-sort-job";
+import {
+    cancelRelativeSortInWorker,
+    sortRelativeIdsInWorker,
+} from "@/lib/relative-sort-job";
 import { KIT_EMBEDDING_DIMS } from "@/lib/kit-embedding";
 import { sortFilesByTagFilterFit } from "@/lib/tag-filter-fit-sort";
 import { isEnteVideoFile } from "@/lib/media-kind";
@@ -567,6 +570,9 @@ export function useMediaDisplayPipeline({
             sortOnMainThread();
             return;
         }
+        // Large views take seconds to minutes: show the head of the chain as
+        // it grows, with a toast until the full order lands.
+        const toastId = toast.loading("Sorting by similarity…");
         const packed = packEmbeddings(withEmbeddingIds, embeddings);
         void sortRelativeIdsInWorker(
             withEmbeddingIds,
@@ -574,9 +580,17 @@ export function useMediaDisplayPipeline({
             relativeDirection,
             relativeSeed,
             relativeStartFileId,
+            applyOrder,
         )
             .then(applyOrder)
-            .catch(sortOnMainThread);
+            .catch(sortOnMainThread)
+            .finally(() => toast.dismiss(toastId));
+        return (): void => {
+            // Invalidate first so the cancelled job's rejection is ignored.
+            relativeJobRef.current += 1;
+            cancelRelativeSortInWorker();
+            toast.dismiss(toastId);
+        };
         // Omit computeVisibleFiles: stamp/library patches must not rebuild the
         // snake; New start / mode / tip / embedding hydrate are the triggers.
         // eslint-disable-next-line react-hooks/exhaustive-deps -- snapshot on apply

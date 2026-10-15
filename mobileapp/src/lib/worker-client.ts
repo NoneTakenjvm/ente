@@ -26,14 +26,24 @@ type WithoutId<Request> = Request extends unknown ?
     Omit<Request, "id"> :
     never;
 
+/** A worker reply; `partial` replies go to `onPartial` and leave the request pending. */
+interface WorkerResponse {
+    id: number;
+    partial?: boolean;
+}
+
 export interface WorkerClient<
     Request extends { id: number },
-    Response extends { id: number },
+    Response extends WorkerResponse,
 > {
-    /** Post a request (the client adds its `id`) and resolve with the reply carrying that `id`. */
+    /**
+     * Post a request (the client adds its `id`) and resolve with the final
+     * reply carrying that `id`. Partial replies before it go to `onPartial`.
+     */
     request: (
         message: WithoutId<Request>,
         transfer?: Transferable[],
+        onPartial?: (response: Response) => void,
     ) => Promise<Response>;
     /**
      * Terminate every worker and reject all pending requests with `reason`.
@@ -46,6 +56,7 @@ type PendingRequest<Response> = {
     worker: Worker;
     resolve: (response: Response) => void;
     reject: (error: Error) => void;
+    onPartial: ((response: Response) => void) | undefined;
     timer: ReturnType<typeof setTimeout> | undefined;
 };
 
@@ -59,7 +70,7 @@ type PendingRequest<Response> = {
  */
 export const createWorkerClient = <
     Request extends { id: number },
-    Response extends { id: number },
+    Response extends WorkerResponse,
 >(
     options: WorkerClientOptions,
 ): WorkerClient<Request, Response> => {
@@ -114,6 +125,10 @@ export const createWorkerClient = <
         Array.from({ length: options.poolSize ?? 1 }, () => {
             const worker = options.createWorker();
             worker.onmessage = (event: MessageEvent<Response>): void => {
+                if (event.data.partial) {
+                    pending.get(event.data.id)?.onPartial?.(event.data);
+                    return;
+                }
                 settle(event.data.id)?.resolve(event.data);
             };
             worker.onerror = (event: ErrorEvent): void => {
@@ -140,6 +155,7 @@ export const createWorkerClient = <
     const request: WorkerClient<Request, Response>["request"] = (
         message,
         transfer = [],
+        onPartial,
     ) =>
         new Promise((resolve, reject) => {
             if (typeof Worker === "undefined") {
@@ -171,7 +187,7 @@ export const createWorkerClient = <
                                 new Error("Worker request timed out"),
                         );
                     }, options.timeoutMs);
-            pending.set(id, { worker, resolve, reject, timer });
+            pending.set(id, { worker, resolve, reject, onPartial, timer });
             try {
                 worker.postMessage({ ...message, id }, transfer);
             } catch (error: unknown) {

@@ -6,13 +6,18 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-10-14 |
-| **Last agent / session** | Simplification plan complete (`mobileapp/simplification-plan.md`); last batch added knip (dead files/exports/deps) to CI and dropped 59 needless exports (`0.3.203`) |
+| **Last updated** | 2026-10-15 |
+| **Last agent / session** | Relative sort made progressive/cancellable/faster; viewer slideshow (`0.3.206`, uncommitted) |
 | **Current milestone** | Post-M8 UX / upload performance |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
-| **Next recommended action** | Phone QA of `0.3.203` (QA lists for `0.3.195`–`0.3.203` below; crop editor, PhotoViewer gestures and Manage scans need the most attention). Watch the first CI run on push (new lint/typecheck/test/knip steps). Rotate the test-account password. |
+| **Next recommended action** | Phone QA of `0.3.206` (list below), then the `0.3.195`–`0.3.203` lists. Watch the first CI run on push. Rotate the test-account password. |
 
-**This session (committed locally, not pushed, `0.3.203`): knip**
+**This session (uncommitted, `0.3.206`): relative sort + slideshow**
+1. **Relative sort** — it worked but the O(n²) walk ran for tens of seconds on large views with no feedback, and superseded jobs queued in the one worker. `sortIdsByRelativePacked` now keeps remaining rows contiguous (swap-remove, ~1.6× faster) and reports the chain head at 200, 400, 800… files; the worker posts those as `partial` replies (`createWorkerClient` routes them to `onPartial`), so the gallery reorders progressively. A "Sorting by similarity…" toast shows while it runs; a stale or unmounted job terminates the worker (`cancelRelativeSortInWorker`).
+2. **Slideshow** — Play/Pause button in the viewer top bar (`hooks/use-slideshow.ts`). Photos advance after Settings → Slideshow seconds (3–30, default 5); videos autoplay unlooped and advance on end. Paused while zoomed, while the crop editor, tag picker or a confirm dialog is open, or mid-swipe; the photo timer then resumes with its remaining time, but at least 1 s. Loops back to the first item after the last. Holds a screen wake lock. Follows the viewer's current list (album, tag filter, sort).
+3. **QA** — relative sort on a large library (toast, head appears fast, switching sort mid-run cancels); slideshow on photos and videos, manual swipe during play, zoom pauses / unzoom resumes (never sooner than 1 s), last item loops to the first, seconds setting persists, screen stays on.
+
+**Previous session (committed locally, not pushed, `0.3.203`): knip**
 1. **knip** — `mobileapp/knip.json` (entries: pages, `sw.ts`, workers, scripts; ignores only CSS-imported/config-only deps and the system `ffmpeg` binary); `npm run knip` runs in the deploy workflow after the type checks.
 2. **Cleanup** — `export` dropped from 59 file-local symbols; dead `flushDerivedReplaceOutboxPersist`, `flushFavoriteOutboxPersist`, `countKitPresenceInWorker` and a duplicate `findUserFavoritesCollection` re-export deleted. No crypto/metadata behaviour touched.
 3. **QA** — none beyond a smoke run (no behaviour change); covered by the `0.3.195`–`0.3.202` lists.

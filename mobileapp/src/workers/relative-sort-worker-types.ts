@@ -17,5 +17,7 @@ export interface RelativeSortWorkerRequest {
 export interface RelativeSortWorkerResponse {
     id: number;
     orderIds?: Float64Array;
+    /** True while the walk continues and {@link orderIds} is only its head. */
+    partial?: boolean;
     error?: string;
 }

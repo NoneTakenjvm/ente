@@ -21,6 +21,7 @@ import {
 import { ViewerChrome } from "@/components/photo-viewer/ViewerChrome";
 import { Button } from "@/components/ui/button";
 import { slideBlob, useSlideMedia } from "@/hooks/use-slide-media";
+import { useSlideshow } from "@/hooks/use-slideshow";
 import { useThumbnailEntry } from "@/hooks/use-thumbnail-entry";
 import { useViewerGestures } from "@/hooks/use-viewer-gestures";
 import { useViewerTagDraft } from "@/hooks/use-viewer-tag-draft";
@@ -92,6 +93,7 @@ export const PhotoViewer = memo(function PhotoViewer({
     const [deleteError, setDeleteError] = useState<string | undefined>();
     /** File whose playback scrubber is being dragged; resets itself when the slide changes. */
     const [scrubbingFileId, setScrubbingFileId] = useState<number | undefined>();
+    const [slideshowPlaying, setSlideshowPlaying] = useState<boolean>(false);
 
     const viewportRef = useRef<HTMLDivElement>(null);
     const trackRef = useRef<HTMLDivElement>(null);
@@ -176,6 +178,10 @@ export const PhotoViewer = memo(function PhotoViewer({
     const videoMuted = useVideoPlaybackStore((s) => s.muted);
     const videoAutoPlay = useSettingsStore((s) => s.videoAutoPlay);
     const videoLoop = useSettingsStore((s) => s.videoLoop);
+    const slideshowSeconds = useSettingsStore((s) => s.slideshowSeconds);
+    // The slideshow advances on `ended`, so its videos must play and not loop.
+    const videoAutoPlayActive = videoAutoPlay || slideshowPlaying;
+    const videoLoopActive = videoLoop && !slideshowPlaying;
     const activeVideoThumb = useThumbnailEntry(isVideo ? file : undefined);
 
     const slides = useSlideMedia(sessionFiles, currentIndex);
@@ -228,6 +234,38 @@ export const PhotoViewer = memo(function PhotoViewer({
         activeVideoRef,
     });
     const { clearPointers, resetChromeTimer, resetZoom } = gestures;
+
+    const { goNext, goToIndex } = gestures;
+    const hasNext = currentIndex < sessionFiles.length - 1;
+    // The slideshow loops: after the last slide it jumps back to the first.
+    const advanceSlideshow = useCallback((): void => {
+        if (hasNext) {
+            goNext();
+        } else {
+            goToIndex(0);
+        }
+    }, [goNext, goToIndex, hasNext]);
+    useSlideshow({
+        playing: slideshowPlaying,
+        paused:
+            gestures.zoomed ||
+            gestures.carouselAnimating ||
+            cropMode ||
+            tagDraft.showTagPicker ||
+            showDeleteConfirm ||
+            showRevertConfirm,
+        fileId: file?.id,
+        mediaSettled:
+            activeSlideMedia?.status === "ready" ||
+            activeSlideMedia?.status === "error",
+        advanceOnVideoEnd:
+            isVideo &&
+            activeSlideMedia?.status === "ready" &&
+            activeSlideMedia.url !== undefined,
+        seconds: slideshowSeconds,
+        activeVideoRef,
+        advance: advanceSlideshow,
+    });
 
     // Record qualifying full-screen views for Recents (including replays of a
     // past session, which count toward the current session).
@@ -287,12 +325,12 @@ export const PhotoViewer = memo(function PhotoViewer({
         // Muted/volume are applied by their own effect. Depending on the active
         // slide only keeps neighbour preload progress from re-priming (seek to 0)
         // or resuming a video the user is watching or paused.
-        if (!videoAutoPlay) {
+        if (!videoAutoPlayActive) {
             primeVideoFirstFrame(video);
             return;
         }
         void video.play().catch(() => undefined);
-    }, [currentIndex, isVideo, activeSlideMedia?.url, videoAutoPlay]);
+    }, [currentIndex, isVideo, activeSlideMedia?.url, videoAutoPlayActive]);
 
     /**
      * Show a derived edit (crop, video edit or revert) immediately from its
@@ -527,7 +565,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                             activeVideoRef={isActive ? activeVideoRef : undefined}
                             className="pointer-events-none absolute inset-0 size-full object-contain select-none [-webkit-touch-callout:none]"
                             src={slideMedia.url}
-                            loop={videoLoop}
+                            loop={videoLoopActive}
                             playsInline
                             preload={videoAutoPlay ? "metadata" : "auto"}
                             poster={
@@ -611,6 +649,7 @@ export const PhotoViewer = memo(function PhotoViewer({
                 activeSlideMedia={activeSlideMedia}
                 activeVideoRef={activeVideoRef}
                 carouselAnimating={gestures.carouselAnimating}
+                slideshowPlaying={slideshowPlaying}
                 isFavorite={isFavorite}
                 favoriteDisabled={favoriteBusy || favoritePending}
                 isArchived={isArchived}
@@ -632,6 +671,9 @@ export const PhotoViewer = memo(function PhotoViewer({
                 onClose={onClose}
                 onPrev={gestures.goPrev}
                 onNext={gestures.goNext}
+                onToggleSlideshow={() => {
+                    setSlideshowPlaying((playing) => !playing);
+                }}
                 onSetRelative={() => {
                     setRelativeStartFileId(file.id);
                     onClose();
