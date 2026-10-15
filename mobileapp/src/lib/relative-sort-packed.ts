@@ -42,24 +42,29 @@ export const sortIdsByRelativePacked = (
         return [...ids];
     }
 
+    const preferClosest = mode === "closest";
+    // An explicit start file ("Set Relative") ranks everything against itself
+    // instead of chaining from the previous pick: one O(n · dim) scoring pass
+    // and a sort, not the O(n²) walk.
+    if (startFileId !== undefined) {
+        const startRow = ids.indexOf(startFileId);
+        if (startRow >= 0) {
+            return rankAgainstRow(ids, packed, dim, preferClosest, startRow);
+        }
+    }
+
     // Remaining rows stay packed in [0, remaining): taking a row moves the
     // last remaining row into its slot, so each scan reads memory in order.
     const rowIds = [...ids];
     const tip = new Float32Array(dim);
     const order: number[] = [];
-    const preferClosest = mode === "closest";
-    // An explicit start file ("Set Relative") ranks everything against itself
-    // instead of chaining from the previous pick.
-    const anchored = startFileId !== undefined && ids.includes(startFileId);
     let remaining = count;
-    let nextRow = pickStartIndex(ids, seed, startFileId);
+    let nextRow = pickStartIndex(ids, seed);
     let nextPrefixReport = FIRST_PREFIX_REPORT;
 
     while (remaining > 0) {
         order.push(rowIds[nextRow]!);
-        if (!anchored || order.length === 1) {
-            tip.set(packed.subarray(nextRow * dim, nextRow * dim + dim));
-        }
+        tip.set(packed.subarray(nextRow * dim, nextRow * dim + dim));
         remaining -= 1;
         rowIds[nextRow] = rowIds[remaining]!;
         packed.copyWithin(nextRow * dim, remaining * dim, remaining * dim + dim);
@@ -104,17 +109,39 @@ export const pickRelativeStartIndex = (
     return Math.floor(createRng(seed)() * ids.length);
 };
 
-const pickStartIndex = (
+/**
+ * The start row first, then every other row ordered by distance to it
+ * (ties broken by id).
+ */
+const rankAgainstRow = (
     ids: readonly number[],
-    seed: number,
-    startFileId: number | undefined,
-): number => {
-    if (startFileId !== undefined) {
-        const explicit = ids.indexOf(startFileId);
-        if (explicit >= 0) {
-            return explicit;
+    packed: Float32Array,
+    dim: number,
+    preferClosest: boolean,
+    startRow: number,
+): number[] => {
+    const reference = packed.subarray(startRow * dim, startRow * dim + dim);
+    const rows: { id: number; dist: number }[] = [];
+    for (let row = 0, offset = 0; row < ids.length; row += 1, offset += dim) {
+        if (row === startRow) {
+            continue;
         }
+        let dot = 0;
+        for (let d = 0; d < dim; d += 1) {
+            dot += reference[d]! * packed[offset + d]!;
+        }
+        rows.push({ id: ids[row]!, dist: 1 - dot });
     }
+    rows.sort((a, b) => {
+        if (a.dist === b.dist) {
+            return a.id - b.id;
+        }
+        return preferClosest ? a.dist - b.dist : b.dist - a.dist;
+    });
+    return [ids[startRow]!, ...rows.map((row) => row.id)];
+};
+
+const pickStartIndex = (ids: readonly number[], seed: number): number => {
     const sortedIds = [...ids].sort((a, b) => a - b);
     const startId = sortedIds[pickRelativeStartIndex(sortedIds, seed)]!;
     return ids.indexOf(startId);

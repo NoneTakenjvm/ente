@@ -1226,6 +1226,21 @@ Grouped because both need hashes over the library.
 
 **Exit criteria:** "find duplicates/similar" screen runs incrementally over a real library without melting the phone.
 
+### M6 follow-ups — CLIP performance backlog (2026-10-15, not started)
+
+Standalone only. Ente's own `clip` mldata vectors exist only when ML is enabled in the official mobile/desktop app, so they can't be our source of vectors.
+
+1. **Blocked pair kernel** (`collectClipPairs` in `lib/similarity-clip.ts`). Compare 4 rows against each later row using 4 accumulators, with the dims loop unrolled by 2, plus a loop for the pairs inside the block and one for the remainder rows. It finds exactly the same pairs. Node bench on desktop with 6000 random 512-d unit vectors: 11.9 s → 5.6 s (~2.1×). The current kernel extrapolates to ~5 min for 30k photos on desktop, and phones are slower. About 30 lines; do this first.
+2. **Incremental Similar.** Persist the scan result and the set of scanned ids, encrypted with `cacheKey` like the other indexes, so Find only compares new or changed photos against the library: O(new · n) instead of n²/2. Store the top-k neighbours per file (k ≈ 8–16) rather than every pair, so the stored scan stays bounded. Invalidate a file when its vector changes: rotate calls `dropOrganizerClip`, and crop/compress replacements get new ids. Deleted files already drop out through `isLive`.
+3. **Multi-worker pair scan (optional).** Split rows across workers, interleaving them for balance because row i costs n − i. Each worker needs its own copy of the matrix: there is no SharedArrayBuffer without COOP/COEP. Only worth doing if a full rescan is still too slow after 1–2.
+4. **WebGPU matmul (only if needed).** Tiled dot products on the GPU. Last resort: it adds a new code path, needs candidate-pair readback and device fallbacks.
+5. **Compact embedding storage** (`db/kv.ts`). Chunks hold JSON number arrays at ~4.6 KB per vector, which means ~140 MB of JSON to parse on load at 30k photos. Store `{ids, float32 bytes}` instead (2 KB per vector), or float16 (1 KB; check the rankings don't change). Also add phash-style compaction (`compactChunkSize` / `maxExtraChunks` in `similarity-job.ts`); embedding chunks are never compacted today. This is a format change: old chunks get dropped and refill from the mldata pull or a rescan. Measure load time on the phone first.
+
+Low value / rejected:
+- **COOP/COEP for ORT WASM threads.** `numThreads = 4` is silently single-threaded today. Fixing it only helps devices without WebGPU, and COEP can block cross-origin fetches.
+- **WebGPU fp16 embedding.** Small speed gain, at the risk of the vectors drifting from the existing index.
+- **Reusing Ente's `clip` vectors.** Needs the official app with ML on. At most an opportunistic fill when they happen to exist.
+
 ---
 
 ## M7 — Compression

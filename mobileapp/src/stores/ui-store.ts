@@ -108,6 +108,8 @@ interface UIState {
     setCropLockAspect: (locked: boolean) => void;
     /** Rank the gallery against this file; starts a closest relative sort if none is active. */
     setRelativeStartFileId: (fileId: number) => void;
+    /** Bumped on every "Set Relative" so the gallery can jump to the top. */
+    relativeAnchorEpoch: number;
     /** Pick a new random start and rebuild the relative chain. */
     reapplyRelativeSort: () => void;
     /**
@@ -166,10 +168,13 @@ export const useUIStore = create<UIState>((set) => {
         setCropLockAspect: (locked: boolean): void => {
             set({ cropLockAspect: locked });
         },
+        relativeAnchorEpoch: 0,
         setRelativeStartFileId: (fileId: number): void => {
             set((state) => {
+                const relativeAnchorEpoch = state.relativeAnchorEpoch + 1;
                 if (state.ordering?.kind !== "relative") {
                     return {
+                        relativeAnchorEpoch,
                         ordering: {
                             kind: "relative",
                             direction: "closest",
@@ -178,7 +183,10 @@ export const useUIStore = create<UIState>((set) => {
                         },
                     };
                 }
-                return { ordering: { ...state.ordering, startFileId: fileId } };
+                return {
+                    relativeAnchorEpoch,
+                    ordering: { ...state.ordering, startFileId: fileId },
+                };
             });
         },
         reapplyRelativeSort: (): void => {

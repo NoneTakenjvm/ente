@@ -114,6 +114,32 @@ describe("sortFilesByRelative", () => {
         expect(ordered.map((f) => f.id)[0]).toBe(4);
     });
 
+    it("ranks every file against startFileId instead of chaining", () => {
+        const vector = (x: number, y: number, z: number): number[] => {
+            const out = new Array(512).fill(0);
+            out[0] = x;
+            out[1] = y;
+            out[2] = z;
+            return normalize(out);
+        };
+        // Similarity to 1: 2 → 0.8, 4 → 0.3, 3 → 0. A chain would go 1,2,3,4
+        // because 3 is closer to 2 than 4 is.
+        const embeddings = embMap([
+            [1, vector(1, 0, 0)],
+            [2, vector(0.8, 0, 0.6)],
+            [3, vector(0, 0, 1)],
+            [4, vector(0.3, 0.954, 0)],
+        ]);
+        const ordered = sortFilesByRelative(
+            [bareFile(4), bareFile(3), bareFile(2), bareFile(1)],
+            "closest",
+            embeddings,
+            0,
+            1,
+        );
+        expect(ordered.map((f) => f.id)).toEqual([1, 2, 4, 3]);
+    });
+
     it("falls back to seed when startFileId is missing an embedding", () => {
         const embeddings = embMap([
             [1, axis(0)],

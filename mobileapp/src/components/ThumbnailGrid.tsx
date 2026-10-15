@@ -36,6 +36,7 @@ import { useGridMarquee } from "@/hooks/use-grid-marquee";
 import { useListScrollController } from "@/hooks/use-list-scroll-controller";
 import type { MarqueeScrollController } from "@/hooks/use-marquee-selection";
 import { useSettingsStore } from "@/stores/settings-store";
+import { useUIStore } from "@/stores/ui-store";
 import { useSelectionStore } from "@/stores/selection-store";
 import type { EnteFile } from "ente-media/file";
 import {
@@ -271,6 +272,20 @@ function SizedMasonryGrid({
         const next = Math.min(node.scrollTop, maxScroll);
         setScrollTop((prev) => (prev === next ? prev : next));
     }, [height, placedLayout.totalHeight, viewOrderKey]);
+
+    // "Set Relative" re-ranks the whole gallery: start at the closest images.
+    const relativeAnchorEpoch = useUIStore((s) => s.relativeAnchorEpoch);
+    const seenAnchorEpochRef = useRef(relativeAnchorEpoch);
+    useEffect(() => {
+        if (seenAnchorEpochRef.current === relativeAnchorEpoch) {
+            return;
+        }
+        seenAnchorEpochRef.current = relativeAnchorEpoch;
+        if (scrollerRef.current) {
+            scrollerRef.current.scrollTop = 0;
+        }
+        setScrollTop(0);
+    }, [relativeAnchorEpoch]);
 
     useEffect(() => {
         scrollControllerRef.current = {
