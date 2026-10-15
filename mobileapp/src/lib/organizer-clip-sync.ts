@@ -9,27 +9,25 @@ import { wait } from "ente-utils/promise";
 import { getEnteCore } from "@/core";
 import { syncUpdatedFileDataFileIDs } from "@/core/api/file-data";
 import { getOrganizerDB } from "@/db";
-import {
-    appendEmbeddingChunk,
-    loadEmbeddingMeta,
-    saveEmbeddingMeta,
-    type PersistedEmbeddingMeta,
-} from "@/db/kv";
+import { appendEmbeddingChunk } from "@/db/kv";
 import { getSessionCacheKey } from "@/lib/cache-key";
 import { l2NormalizeEmbedding } from "@/lib/embedding-vector";
 import { waitWhileGalleryScrolling } from "@/lib/gallery-scroll-activity";
 import {
     KIT_EMBEDDING_DIMS,
-    KIT_EMBEDDING_MODEL_ID,
     embeddingToNumberArray,
+    ensureEmbeddingMeta,
     type EmbeddingMap,
     type EmbeddingVector,
     type ReadonlyEmbeddingMap,
 } from "@/lib/kit-embedding";
+import { isEnteVideoFile } from "@/lib/media-kind";
 import {
+    ORGANIZER_CLIP_MLDATA_KEY,
     fetchOrganizerMLDataBatch,
     putOrganizerClip,
 } from "@/lib/organizer-clip";
+import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
 
 const mldataCursorMetaKey = "organizer-clip-mldata-cursor";
 const uploadedIdsMetaKey = "organizer-clip-uploaded-ids";
@@ -46,13 +44,7 @@ const maxUploadFailureStreak = 5;
 let uploadChain: Promise<void> = Promise.resolve();
 const pendingUpload: EmbeddingMap = new Map();
 let pullInFlight: Promise<EmbeddingMap> | undefined;
-
-const emptyMeta = (): PersistedEmbeddingMeta => ({
-    version: 2,
-    modelId: KIT_EMBEDDING_MODEL_ID,
-    dims: KIT_EMBEDDING_DIMS,
-    nextChunkId: 0,
-});
+let uploadedIdsUpdate: Promise<void> = Promise.resolve();
 
 const loadMldataCursor = async (): Promise<number> => {
     const db = await getOrganizerDB();
@@ -89,18 +81,41 @@ const saveUploadedIdSet = async (ids: Set<number>): Promise<void> => {
     await db.put("meta", JSON.stringify([...ids]), uploadedIdsMetaKey);
 };
 
-const markUploaded = async (fileIds: Iterable<number>): Promise<void> => {
-    const set = await loadUploadedIdSet();
-    let changed = false;
-    for (const id of fileIds) {
-        if (!set.has(id)) {
-            set.add(id);
-            changed = true;
+/**
+ * Load, change and save the uploaded set one update at a time, so the upload
+ * drain and the pull never overwrite each other's marks.
+ */
+const updateUploadedIdSet = (
+    change: (ids: Set<number>) => void,
+): Promise<void> => {
+    const update = uploadedIdsUpdate.then(async () => {
+        const ids = await loadUploadedIdSet();
+        const sizeBefore = ids.size;
+        change(ids);
+        if (ids.size !== sizeBefore) {
+            await saveUploadedIdSet(ids);
         }
-    }
-    if (changed) {
-        await saveUploadedIdSet(set);
-    }
+    });
+    uploadedIdsUpdate = update.catch(() => undefined);
+    return update;
+};
+
+const markUploaded = (fileIds: Iterable<number>): Promise<void> => {
+    const added = [...fileIds];
+    return updateUploadedIdSet((ids) => {
+        for (const id of added) {
+            ids.add(id);
+        }
+    });
+};
+
+const unmarkUploaded = (fileIds: Iterable<number>): Promise<void> => {
+    const removed = [...fileIds];
+    return updateUploadedIdSet((ids) => {
+        for (const id of removed) {
+            ids.delete(id);
+        }
+    });
 };
 
 /**
@@ -199,10 +214,13 @@ const drainOrganizerClipUploads = async (): Promise<void> => {
 /**
  * Pull remote `organizer_clip` updates into local embedding chunks.
  *
+ * @param localEntries the hydrated in-memory index, when available; files
+ * marked uploaded but missing from it are refetched (gap restore).
  * @returns newly applied vectors (for store merge)
  */
 export const pullOrganizerClipSync = async (
     files: readonly EnteFile[],
+    localEntries?: ReadonlyEmbeddingMap,
     signal?: AbortSignal,
 ): Promise<EmbeddingMap> => {
     if (pullInFlight) {
@@ -217,7 +235,19 @@ export const pullOrganizerClipSync = async (
         const http = core.getHttpClient();
         const filesById = new Map(files.map((file) => [file.id, file]));
         let cursor = await loadMldataCursor();
-        const pendingIds: number[] = [];
+
+        // Vectors marked uploaded but missing locally were lost from this
+        // device's index after the cursor had already passed them.
+        const gapIds = new Set<number>();
+        if (localEntries) {
+            for (const fileId of await loadUploadedIdSet()) {
+                const file = filesById.get(fileId);
+                if (file && !isEnteVideoFile(file) && !localEntries.has(fileId)) {
+                    gapIds.add(fileId);
+                }
+            }
+        }
+        const pendingIds = new Set(gapIds);
 
         // The cursor is saved only once every listed vector is stored, so an
         // abort or failed fetch replays those pages instead of skipping them.
@@ -232,7 +262,7 @@ export const pullOrganizerClipSync = async (
                 cursor = page.lastUpdatedAt;
                 for (const fileId of page.fileIDs) {
                     if (filesById.has(fileId)) {
-                        pendingIds.push(fileId);
+                        pendingIds.add(fileId);
                     }
                 }
                 return Promise.resolve();
@@ -242,25 +272,21 @@ export const pullOrganizerClipSync = async (
         if (signal?.aborted) {
             return applied;
         }
-        if (pendingIds.length === 0) {
+        if (pendingIds.size === 0) {
             await saveMldataCursor(cursor);
             return applied;
         }
 
         const cacheKey = getSessionCacheKey();
-        let meta =
-            (await loadEmbeddingMeta(cacheKey)) ?? emptyMeta();
-        if (meta.modelId !== KIT_EMBEDDING_MODEL_ID) {
-            meta = emptyMeta();
-            await saveEmbeddingMeta(meta, cacheKey);
-        }
+        await ensureEmbeddingMeta(cacheKey);
 
-        for (let offset = 0; offset < pendingIds.length; offset += fetchBatchSize) {
+        const ids = [...pendingIds];
+        for (let offset = 0; offset < ids.length; offset += fetchBatchSize) {
             if (signal?.aborted) {
                 break;
             }
             await waitWhileGalleryScrolling(signal);
-            const slice = pendingIds.slice(offset, offset + fetchBatchSize);
+            const slice = ids.slice(offset, offset + fetchBatchSize);
             const sliceMap = new Map<number, EnteFile>();
             for (const id of slice) {
                 const file = filesById.get(id);
@@ -270,22 +296,31 @@ export const pullOrganizerClipSync = async (
             }
             const mldata = await fetchOrganizerMLDataBatch(http, sliceMap);
             const chunk = new Map();
-            for (const [fileId, data] of mldata) {
-                const clip = data.organizerClip;
-                if (!clip) {
-                    continue;
+            const notOnRemote: number[] = [];
+            for (const fileId of slice) {
+                const data = mldata.get(fileId);
+                const normalized =
+                    data?.organizerClip &&
+                    l2NormalizeEmbedding(data.organizerClip.embedding);
+                if (normalized) {
+                    chunk.set(fileId, normalized);
+                    applied.set(fileId, normalized);
+                } else if (
+                    gapIds.has(fileId) ||
+                    data?.raw[ORGANIZER_CLIP_MLDATA_KEY] === undefined
+                ) {
+                    notOnRemote.push(fileId);
                 }
-                const normalized = l2NormalizeEmbedding(clip.embedding);
-                if (!normalized) {
-                    continue;
-                }
-                chunk.set(fileId, normalized);
-                applied.set(fileId, normalized);
             }
             if (chunk.size > 0) {
-                meta = await appendEmbeddingChunk(chunk, meta, cacheKey);
+                await appendEmbeddingChunk(chunk, cacheKey);
                 await markUploaded(chunk.keys());
             }
+            // The official app saves mldata without a version check and can
+            // drop our key; unmarking lets the backfill re-upload the local
+            // copy. A gap the remote can't fill is unmarked so it isn't
+            // refetched every sync (the next CLIP scan re-embeds it).
+            await unmarkUploaded(notOnRemote);
         }
         if (!signal?.aborted) {
             await saveMldataCursor(cursor);
@@ -323,4 +358,47 @@ export const backfillOrganizerClipUploads = async (
     enqueueOrganizerClipUpload(todo);
     await uploadChain.catch(() => undefined);
     return todo.size;
+};
+
+/**
+ * Give a replacement upload (crop, auto-crop, compress) the vector of the file
+ * it replaced, so the edit does not drop it from the index. Synced like a new
+ * embedding.
+ */
+export const carryOverOrganizerClip = async (
+    source: EnteFile,
+    replacement: EnteFile,
+): Promise<void> => {
+    if (isEnteVideoFile(source)) {
+        return;
+    }
+    await useEmbeddingIndexStore.getState().ensureHydrated();
+    const vector = useEmbeddingIndexStore.getState().entries.get(source.id);
+    if (!vector) {
+        return;
+    }
+    const carried = new Map([[replacement.id, vector]]);
+    await appendEmbeddingChunk(carried, getSessionCacheKey());
+    const next = new Map(useEmbeddingIndexStore.getState().entries);
+    next.set(replacement.id, vector);
+    useEmbeddingIndexStore.getState().setEntries(next);
+    enqueueOrganizerClipUpload(carried);
+};
+
+/**
+ * Forget a file's vector after its pixels changed in place (rotate), so the
+ * next CLIP scan re-embeds it and the upload replaces the stale remote copy.
+ */
+export const dropOrganizerClip = async (fileId: number): Promise<void> => {
+    const cacheKey = getSessionCacheKey();
+    await ensureEmbeddingMeta(cacheKey);
+    await appendEmbeddingChunk(new Map([[fileId, null]]), cacheKey);
+    await unmarkUploaded([fileId]);
+    const { entries, isHydrated, setEntries } =
+        useEmbeddingIndexStore.getState();
+    if (isHydrated && entries.has(fileId)) {
+        const next = new Map(entries);
+        next.delete(fileId);
+        setEntries(next);
+    }
 };

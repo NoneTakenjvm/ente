@@ -620,6 +620,12 @@ const replaceSourceWithCompressed = async (
     registerShuffleFileSubstitution(sourceId, uploaded.id);
     useUIStore.getState().substituteMediaShuffleFileId(sourceId, uploaded.id);
     await removeFilesFromLibrary(set, get, [sourceId], uploaded);
+    // Caught: a throw here would make the derived-replace queue retry and
+    // upload a duplicate.
+    const { carryOverOrganizerClip } = await import("@/lib/organizer-clip-sync");
+    await carryOverOrganizerClip(sourceFile, uploaded).catch((error: unknown) => {
+        console.warn("[organizer-clip] carry-over failed", error);
+    });
     await invalidateThumbnailCache(sourceId);
     const {
         clearVideoDiskCache,
@@ -983,9 +989,13 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                         backfillOrganizerClipUploads,
                     }) => {
                         try {
-                            const applied = await pullOrganizerClipSync(allFiles);
                             const { useEmbeddingIndexStore } = await import(
                                 "@/stores/embedding-index-store"
+                            );
+                            const index = useEmbeddingIndexStore.getState();
+                            const applied = await pullOrganizerClipSync(
+                                allFiles,
+                                index.isHydrated ? index.entries : undefined,
                             );
                             // [Note: Post-sync CLIP merge needs a hydrated index]
                             //
@@ -995,7 +1005,8 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
                             // pin it to only the pulled vectors (setEntries marks
                             // it hydrated), and hydrating here would decrypt the
                             // whole index after every sync. The upload backfill
-                            // reads the in-memory vectors, so it waits too.
+                            // and the pull's gap restore read the in-memory
+                            // vectors, so they wait too.
                             if (!useEmbeddingIndexStore.getState().isHydrated) {
                                 return;
                             }
@@ -1380,6 +1391,10 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             next.delete(updated.id);
             setEntries(next);
         }
+        const { dropOrganizerClip } = await import("@/lib/organizer-clip-sync");
+        await dropOrganizerClip(updated.id).catch((error: unknown) => {
+            console.warn("[organizer-clip] drop after rotate failed", error);
+        });
         primeThumbnailFromBytes(updated.id, rotated.bytes);
         return updated;
     },

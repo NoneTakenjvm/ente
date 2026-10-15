@@ -85,8 +85,9 @@ export interface PersistedEmbeddingMeta {
     nextChunkId: number;
 }
 
+/** fileId → vector, or null for a file removed since earlier chunks. */
 interface EmbeddingChunkPayload {
-    entries: Record<number, number[]>;
+    entries: Record<number, number[] | null>;
 }
 
 interface PersistedViewSessions {
@@ -291,43 +292,60 @@ export const clearEmbeddingChunks = async (): Promise<void> => {
     await db.clear("embeddingChunks");
 };
 
+let embeddingAppends: Promise<void> = Promise.resolve();
+
 /**
- * Encrypt and append one embedding chunk; updates meta atomically after write.
+ * Encrypt and append one embedding chunk; a `null` entry removes that file.
  * Accepts packed or plain vectors — disk payload is always number[].
+ *
+ * [Note: Serialized embedding chunk appends]
+ *
+ * CLIP scans, the mldata pull and edits all append chunks. Appends run one at
+ * a time and take the chunk id from the stored meta, because a writer holding
+ * its own copy of the meta reuses ids, and `put` on a reused id silently
+ * replaces (drops) the earlier chunk.
+ *
+ * @throws when no embedding meta is stored (see `ensureEmbeddingMeta`).
  */
-export const appendEmbeddingChunk = async (
-    entries: ReadonlyMap<number, ArrayLike<number>>,
-    meta: PersistedEmbeddingMeta,
+export const appendEmbeddingChunk = (
+    entries: ReadonlyMap<number, ArrayLike<number> | null>,
     cacheKey: string,
-): Promise<PersistedEmbeddingMeta> => {
+): Promise<void> => {
     if (entries.size === 0) {
-        return meta;
+        return Promise.resolve();
     }
-    const jsonEntries: Record<number, number[]> = {};
-    for (const [fileId, vector] of entries) {
-        jsonEntries[fileId] = Array.isArray(vector) ?
-            vector :
-            Array.from(vector);
-    }
-    const payload: EmbeddingChunkPayload = {
-        entries: jsonEntries,
-    };
-    await appendChunk(
-        "embeddingChunks",
-        { chunkId: meta.nextChunkId, modelId: meta.modelId, dims: meta.dims },
-        payload,
-        cacheKey,
-    );
-    const nextMeta: PersistedEmbeddingMeta = {
-        ...meta,
-        nextChunkId: meta.nextChunkId + 1,
-    };
-    await saveEmbeddingMeta(nextMeta, cacheKey);
-    return nextMeta;
+    const append = embeddingAppends.then(async () => {
+        const meta = await loadEmbeddingMeta(cacheKey);
+        if (!meta) {
+            throw new Error("Embedding index meta missing");
+        }
+        const jsonEntries: Record<number, number[] | null> = {};
+        for (const [fileId, vector] of entries) {
+            jsonEntries[fileId] = vector === null || Array.isArray(vector) ?
+                vector :
+                Array.from(vector);
+        }
+        const payload: EmbeddingChunkPayload = {
+            entries: jsonEntries,
+        };
+        await appendChunk(
+            "embeddingChunks",
+            { chunkId: meta.nextChunkId, modelId: meta.modelId, dims: meta.dims },
+            payload,
+            cacheKey,
+        );
+        await saveEmbeddingMeta(
+            { ...meta, nextChunkId: meta.nextChunkId + 1 },
+            cacheKey,
+        );
+    });
+    embeddingAppends = append.catch(() => undefined);
+    return append;
 };
 
 /**
- * Decrypt all chunks for the given model and merge into a packed map.
+ * Decrypt all chunks for the given model and merge into a packed map,
+ * applying later chunks (and removals) over earlier ones.
  */
 export const loadAllEmbeddingChunks = async (
     meta: PersistedEmbeddingMeta,
@@ -341,7 +359,9 @@ export const loadAllEmbeddingChunks = async (
     const map = new Map<number, Float32Array>();
     for (const payload of payloads) {
         for (const [id, vector] of Object.entries(payload.entries)) {
-            if (Array.isArray(vector) && vector.length === meta.dims) {
+            if (vector === null) {
+                map.delete(Number(id));
+            } else if (Array.isArray(vector) && vector.length === meta.dims) {
                 map.set(Number(id), Float32Array.from(vector));
             }
         }

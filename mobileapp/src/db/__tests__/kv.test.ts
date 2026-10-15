@@ -116,24 +116,26 @@ describe("phash chunks", () => {
 describe("embedding chunks", () => {
     const meta = { version: 2 as const, modelId: "m", dims: 2, nextChunkId: 0 };
 
-    it("appends in order, advances meta, and filters by model", async () => {
-        let current = await kv.appendEmbeddingChunk(
-            new Map([[1, [1, 2]]]),
-            meta,
+    it("appends in order, applies removals, and filters by model", async () => {
+        await kv.saveEmbeddingMeta(meta, "k");
+        await kv.appendEmbeddingChunk(
+            new Map([
+                [1, [1, 2]],
+                [3, [7, 8]],
+            ]),
             "k",
         );
-        current = await kv.appendEmbeddingChunk(
-            new Map<number, ArrayLike<number>>([
+        await kv.appendEmbeddingChunk(
+            new Map<number, ArrayLike<number> | null>([
                 [1, new Float32Array([3, 4])],
                 [2, [5, 6]],
+                [3, null],
             ]),
-            current,
             "k",
         );
+        await kv.appendEmbeddingChunk(new Map(), "k");
+        const current = (await kv.loadEmbeddingMeta("k"))!;
         expect(current.nextChunkId).toBe(2);
-        expect(await kv.appendEmbeddingChunk(new Map(), current, "k")).toBe(
-            current,
-        );
         const loaded = await kv.loadAllEmbeddingChunks(current, "k");
         expect([...loaded.entries()].map(([id, v]) => [id, [...v]])).toEqual([
             [1, [3, 4]],
@@ -146,5 +148,16 @@ describe("embedding chunks", () => {
             modelId: "m",
             dims: 2,
         });
+    });
+
+    it("gives concurrent appends distinct chunk ids", async () => {
+        await kv.saveEmbeddingMeta(meta, "k");
+        await Promise.all([
+            kv.appendEmbeddingChunk(new Map([[1, [1, 2]]]), "k"),
+            kv.appendEmbeddingChunk(new Map([[2, [3, 4]]]), "k"),
+        ]);
+        const current = (await kv.loadEmbeddingMeta("k"))!;
+        expect(current.nextChunkId).toBe(2);
+        expect((await kv.loadAllEmbeddingChunks(current, "k")).size).toBe(2);
     });
 });

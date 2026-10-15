@@ -277,13 +277,11 @@ export const stripVideoEmbeddings = (
  */
 class EmbeddingWriteQueue {
     private dirty: EmbeddingMap = new Map();
-    private meta: PersistedEmbeddingMeta;
     private readonly cacheKey: string;
     private flushChain = Promise.resolve();
     private failures = 0;
 
-    constructor(meta: PersistedEmbeddingMeta, cacheKey: string) {
-        this.meta = meta;
+    constructor(cacheKey: string) {
         this.cacheKey = cacheKey;
     }
 
@@ -302,11 +300,7 @@ class EmbeddingWriteQueue {
         this.dirty.clear();
         this.flushChain = this.flushChain
             .then(async () => {
-                this.meta = await appendEmbeddingChunk(
-                    batch,
-                    this.meta,
-                    this.cacheKey,
-                );
+                await appendEmbeddingChunk(batch, this.cacheKey);
                 // Cross-device: upload this dirty batch (dynamic import avoids cycle).
                 void import("@/lib/organizer-clip-sync").then(
                     ({ enqueueOrganizerClipUpload }) => {
@@ -341,18 +335,15 @@ class EmbeddingWriteQueue {
 
 /**
  * Ensure meta exists for this model (clears obsolete chunks when needed).
+ * Call before appending embedding chunks.
  */
-const ensureEmbeddingMeta = async (
-    cacheKey: string,
-): Promise<PersistedEmbeddingMeta> => {
+export const ensureEmbeddingMeta = async (cacheKey: string): Promise<void> => {
     const existing = await loadEmbeddingMeta(cacheKey);
     if (existing?.modelId === KIT_EMBEDDING_MODEL_ID) {
-        return existing;
+        return;
     }
     await clearEmbeddingChunks();
-    const meta = emptyMeta();
-    await saveEmbeddingMeta(meta, cacheKey);
-    return meta;
+    await saveEmbeddingMeta(emptyMeta(), cacheKey);
 };
 
 type KitEmbeddingProgress = {
@@ -445,8 +436,8 @@ export const runKitEmbeddingJob = async (
         return entries;
     }
 
-    const meta = await ensureEmbeddingMeta(cacheKey);
-    const writeQueue = new EmbeddingWriteQueue(meta, cacheKey);
+    await ensureEmbeddingMeta(cacheKey);
+    const writeQueue = new EmbeddingWriteQueue(cacheKey);
 
     let completed = 0;
 
