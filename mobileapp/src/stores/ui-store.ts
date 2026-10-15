@@ -25,6 +25,8 @@ type NearnessSource = "kit" | "filter";
  *   it is still in the filtered set.
  * - `nearness`: CLIP nearness to seeds matching `filter`, independent of the
  *   gallery filter.
+ * - `textMatch`: CLIP match to a typed description; the query lives only in
+ *   memory.
  */
 export type GalleryOrdering =
     { kind: "viewportFit"; direction: Exclude<ViewportFitSort, "none"> } |
@@ -39,6 +41,7 @@ export type GalleryOrdering =
         startFileId: number | undefined;
     } |
     { kind: "nearness"; filter: TagFilterSelection; source: NearnessSource } |
+    { kind: "textMatch"; query: string } |
     { kind: "shuffled"; seed: number; fileIds: number[] };
 
 interface UploadJobState {

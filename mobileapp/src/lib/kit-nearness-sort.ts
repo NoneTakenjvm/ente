@@ -339,16 +339,30 @@ export const pickKitEmbeddingMedoids = (
     return medoids;
 };
 
+/** A vector blended into a kit centroid as if it were `weight` example photos. */
+export interface KitEmbeddingPrior {
+    vector: Float32Array;
+    weight: number;
+}
+
 /**
  * Mean L2-normalized embedding of seed file ids (kit centroid).
  * Kept for eval/export helpers; production ranking uses medoids.
+ * An optional `prior` joins the sum, so it also seeds a kit with no embedded
+ * seeds.
  */
 export const buildKitEmbeddingCentroid = (
     seedIds: readonly number[],
     embeddings: ReadonlyEmbeddingMap,
     maxSeeds: number = MAX_KIT_SEEDS,
+    prior?: KitEmbeddingPrior,
 ): Float32Array | undefined => {
     const acc = new Float32Array(KIT_EMBEDDING_DIMS);
+    if (prior) {
+        for (let i = 0; i < KIT_EMBEDDING_DIMS; i++) {
+            acc[i] = prior.weight * prior.vector[i]!;
+        }
+    }
     let count = 0;
     for (const id of seedIds) {
         if (count >= maxSeeds) {
@@ -363,7 +377,7 @@ export const buildKitEmbeddingCentroid = (
         }
         count += 1;
     }
-    if (count === 0) {
+    if (count === 0 && !prior) {
         return undefined;
     }
     return l2NormalizeEmbedding(acc);

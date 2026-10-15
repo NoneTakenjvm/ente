@@ -22,7 +22,15 @@ import {
     cancelRelativeSortInWorker,
     sortRelativeIdsInWorker,
 } from "@/lib/relative-sort-job";
-import { KIT_EMBEDDING_DIMS } from "@/lib/kit-embedding";
+import { KIT_EMBEDDING_DIMS, embedTextInWorker } from "@/lib/kit-embedding";
+import {
+    KIT_TEXT_PRIOR_WEIGHT,
+    kitTextPriorFits,
+    loadKitTextVector,
+    peekKitTextVector,
+    photoTextPrompt,
+    rankFileIdsByText,
+} from "@/lib/clip-text";
 import { sortFilesByTagFilterFit } from "@/lib/tag-filter-fit-sort";
 import { isEnteVideoFile } from "@/lib/media-kind";
 import { buildKitEmbeddingPrototypes } from "@/lib/kit-nearness-embedding-eval";
@@ -156,6 +164,8 @@ export function useMediaDisplayPipeline({
         ordering?.kind === "relative" ? ordering.seed : undefined;
     const relativeStartFileId =
         ordering?.kind === "relative" ? ordering.startFileId : undefined;
+    const textMatchQuery =
+        ordering?.kind === "textMatch" ? ordering.query : undefined;
 
     const baseFiles = filterWithinFiles ?? libraryFiles;
     const seedFiles = seedWithinFiles ?? filterWithinFiles ?? libraryFiles;
@@ -191,6 +201,7 @@ export function useMediaDisplayPipeline({
     const needsEmbeddings =
         ordering?.kind === "tagFilterFit" ||
         (ordering?.kind === "relative" && initialLoadDone) ||
+        ordering?.kind === "textMatch" ||
         nearnessActive;
 
     useEffect(() => {
@@ -235,6 +246,20 @@ export function useMediaDisplayPipeline({
         void (async (): Promise<void> => {
             const userId = useSessionStore.getState().userID ?? 0;
             const tagState = useTagStore.getState();
+            const kit = matchNearnessFilterToKitPreset(
+                nearnessFilter,
+                useTagSpeedStore.getState().presets,
+            );
+            if (kit && peekKitTextVector(kit.tags) === undefined) {
+                const textToastId = toast.loading("Reading kit tags…");
+                await loadKitTextVector(kit.tags);
+                toast.dismiss(textToastId);
+                if (cancelled) {
+                    return;
+                }
+                useUIStore.getState().reapplyNearness();
+                return;
+            }
             const seedMatches = filterFilesByTags(
                 seedFiles,
                 nearnessFilter,
@@ -250,9 +275,12 @@ export function useMediaDisplayPipeline({
                 .sort((a, b) => a.id - b.id)
                 .slice(0, MAX_KIT_SEEDS);
             if (seeds.length === 0) {
-                toast.message(
-                    "No photos match the nearness filter. Adjust tags or scopes.",
-                );
+                // A kit with a text vector still ranks with no seeds.
+                if (!kit || !peekKitTextVector(kit.tags)) {
+                    toast.message(
+                        "No photos match the nearness filter. Adjust tags or scopes.",
+                    );
+                }
                 return;
             }
 
@@ -363,10 +391,27 @@ export function useMediaDisplayPipeline({
         );
         const selectedGenome =
             matchedKit?.nearnessTune?.genome ?? DEFAULT_KIT_EMBEDDING_GENOME;
+        const kitTextVector = matchedKit ?
+            peekKitTextVector(matchedKit.tags) :
+            null;
+        if (kitTextVector === undefined) {
+            // Still loading: wait instead of showing an image-only order.
+            return { orderIds: [] };
+        }
+        // [Note: Kit text prior]
+        // The kit's tag prompt counts as KIT_TEXT_PRIOR_WEIGHT example photos
+        // in the centroid, so new and small kits rank well and the text fades
+        // as seeds accumulate. It is used only when the seeds sit high among
+        // the library's cosines to the text, which drops non-visual tags.
+        const prior = kitTextVector &&
+                kitTextPriorFits(kitTextVector, seedIds, embeddings) ?
+            { vector: kitTextVector, weight: KIT_TEXT_PRIOR_WEIGHT } :
+            undefined;
         const selectedMedoids = buildKitEmbeddingPrototypes(
             seedIds,
             embeddings,
             selectedGenome,
+            prior,
         );
         if (!selectedMedoids.length) {
             return { orderIds: [] };
@@ -602,6 +647,67 @@ export function useMediaDisplayPipeline({
         relativeStartFileId,
     ]);
 
+    const [frozenTextMatchOrderIds, setFrozenTextMatchOrderIds] = useState<
+        number[]
+    >([]);
+    const textMatchJobRef = useRef(0);
+    const textMatchVectorRef = useRef<
+        { query: string; vector: Float32Array } | undefined
+    >(undefined);
+
+    useEffect(() => {
+        if (textMatchQuery === undefined || !embeddingHydrated) {
+            textMatchJobRef.current += 1;
+            textMatchVectorRef.current = undefined;
+            setFrozenTextMatchOrderIds([]);
+            return;
+        }
+        const jobId = textMatchJobRef.current + 1;
+        textMatchJobRef.current = jobId;
+        // Re-rank with the same vector when only the embedding count changed
+        // (a scan is running); embed the query only when it is new.
+        const cached = textMatchVectorRef.current?.query === textMatchQuery ?
+            textMatchVectorRef.current.vector :
+            undefined;
+        const toastId = cached ?
+            undefined :
+            toast.loading("Matching description…");
+        const dismissToast = (): void => {
+            if (toastId !== undefined) {
+                toast.dismiss(toastId);
+            }
+        };
+        (cached ?
+            Promise.resolve(cached) :
+            embedTextInWorker(photoTextPrompt([textMatchQuery])))
+            .then((vector) => {
+                textMatchVectorRef.current = { query: textMatchQuery, vector };
+                if (jobId === textMatchJobRef.current) {
+                    setFrozenTextMatchOrderIds(
+                        rankFileIdsByText(
+                            computeVisibleFiles(),
+                            vector,
+                            useEmbeddingIndexStore.getState().entries,
+                        ),
+                    );
+                }
+            })
+            .catch((error: unknown) => {
+                if (jobId === textMatchJobRef.current) {
+                    console.warn("Text search unavailable", error);
+                    toast.error("Could not run text search");
+                }
+            })
+            .finally(dismissToast);
+        return (): void => {
+            textMatchJobRef.current += 1;
+            dismissToast();
+        };
+        // Omit computeVisibleFiles: stamp/library patches must not reorder;
+        // a new query / embedding hydrate are the triggers.
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- snapshot on apply
+    }, [embeddingCount, embeddingHydrated, textMatchQuery]);
+
     const filteredFilesCacheRef = useRef<EnteFile[]>([]);
     const filterBasisRef = useRef<{
         tagFilter: TagFilterSelection;
@@ -729,6 +835,11 @@ export function useMediaDisplayPipeline({
                     filteredFiles,
                     frozenRelativeOrderIds,
                 );
+            case "textMatch":
+                return reconcileFrozenFileOrder(
+                    filteredFiles,
+                    frozenTextMatchOrderIds,
+                );
             case "tagFilterFit": {
                 const { direction } = ordering;
                 return tagFilterFitActive ?
@@ -813,6 +924,7 @@ export function useMediaDisplayPipeline({
         filteredFiles,
         frozenNearnessOrderIds,
         frozenRelativeOrderIds,
+        frozenTextMatchOrderIds,
         nearnessActive,
         ordering,
         qualityEntries,

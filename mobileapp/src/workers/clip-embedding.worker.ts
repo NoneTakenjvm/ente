@@ -22,6 +22,8 @@ import type {
     ClipEmbeddingDtype,
     ClipEmbeddingEmbedBatchDoneMessage,
     ClipEmbeddingEmbedBatchMessage,
+    ClipEmbeddingEmbedTextDoneMessage,
+    ClipEmbeddingEmbedTextMessage,
     ClipEmbeddingInbound,
     ClipEmbeddingInitDoneMessage,
 } from "@/workers/clip-embedding-worker-types";
@@ -29,6 +31,12 @@ import { errorMessage } from "@/lib/format";
 
 /** Xenova config pins `vision_model` to fp32; quantized S2 is unreliable. */
 const SESSION_DTYPE: ClipEmbeddingDtype = "fp32";
+
+/**
+ * Text tower weights: int8 export, 64 MB vs 254 MB fp32. On public data
+ * (COCO, MIRFLICKR) label retrieval AP was 58.4 vs 58.6 and 57.6 vs 59.3.
+ */
+const TEXT_DTYPE = "q8";
 
 type EmbedTensor = {
     data: Float32Array | number[];
@@ -40,6 +48,15 @@ type VisionModel = (inputs: unknown) => Promise<{
 }>;
 
 type ImageProcessor = (images: unknown) => Promise<{ pixel_values: unknown }>;
+
+type TextTokenizer = (
+    texts: string[],
+    options: { padding: "max_length"; truncation: boolean },
+) => unknown;
+
+type TextModel = (inputs: unknown) => Promise<{
+    text_embeds?: EmbedTensor;
+}>;
 
 let processor: ImageProcessor | undefined;
 let visionModel: VisionModel | undefined;
@@ -349,6 +366,66 @@ const embedBatchBytes = async (
     };
 };
 
+/** Loaded on the first `embed-text` request only; a failed load is retried. */
+let textSessionPromise:
+    Promise<{ tokenizer: TextTokenizer; model: TextModel }> | undefined;
+
+const loadTextSession = (): Promise<{
+    tokenizer: TextTokenizer;
+    model: TextModel;
+}> => {
+    textSessionPromise ??= (async () => {
+        await applyWasmThreadLimit();
+        const { AutoTokenizer, CLIPTextModelWithProjection } = await import(
+            "@huggingface/transformers"
+        );
+        const tokenizer = (await AutoTokenizer.from_pretrained(
+            KIT_EMBEDDING_MODEL_ID,
+        )) as unknown as TextTokenizer;
+        const model = (await CLIPTextModelWithProjection.from_pretrained(
+            KIT_EMBEDDING_MODEL_ID,
+            { device: "wasm", dtype: TEXT_DTYPE },
+        )) as unknown as TextModel;
+        return { tokenizer, model };
+    })().catch((error: unknown) => {
+        textSessionPromise = undefined;
+        throw error;
+    });
+    return textSessionPromise;
+};
+
+const embedText = async (text: string): Promise<Float32Array> => {
+    const { tokenizer, model } = await loadTextSession();
+    const inputs = tokenizer([text], { padding: "max_length", truncation: true });
+    const output = await runSerialised(() => model(inputs));
+    const embeds = output.text_embeds;
+    if (!embeds?.data || embeds.data.length < KIT_EMBEDDING_DIMS) {
+        throw new Error("text forward returned no 512-d text_embeds");
+    }
+    const row = Float32Array.from(embeds.data.slice(0, KIT_EMBEDDING_DIMS));
+    const vector = l2NormalizeEmbedding(row);
+    if (!vector) {
+        throw new Error("text embedding is zero or non-finite");
+    }
+    return vector;
+};
+
+const handleEmbedText = (message: ClipEmbeddingEmbedTextMessage): void => {
+    void (async () => {
+        const done: ClipEmbeddingEmbedTextDoneMessage = {
+            kind: "embed-text-done",
+            id: message.id,
+        };
+        try {
+            done.vector = await embedText(message.text);
+        } catch (error) {
+            // Never echo the prompt: report the failure class only.
+            done.error = errorMessage(error, "embed-text failed");
+        }
+        self.postMessage(done, done.vector ? [done.vector.buffer as ArrayBuffer] : []);
+    })();
+};
+
 const handleInit = async (id: number): Promise<void> => {
     try {
         await getSession();
@@ -407,6 +484,10 @@ self.onmessage = (event: MessageEvent<ClipEmbeddingInbound>): void => {
         void handleInit(message.id).catch((error) => {
             console.warn("[clip-embedding.worker] init failed", error);
         });
+        return;
+    }
+    if (message.kind === "embed-text") {
+        handleEmbedText(message);
         return;
     }
     handleEmbedBatch(message);

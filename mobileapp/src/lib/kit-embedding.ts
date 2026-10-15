@@ -54,6 +54,7 @@ import type {
     ClipEmbeddingDevice,
     ClipEmbeddingDtype,
     ClipEmbeddingEmbedBatchDoneMessage,
+    ClipEmbeddingEmbedTextDoneMessage,
     ClipEmbeddingInbound,
     ClipEmbeddingInitDoneMessage,
     ClipEmbeddingOutbound,
@@ -221,6 +222,21 @@ const embedBatchInWorker = async (
         batchFallbackReason = done.batchFallbackReason;
     }
     return done.results;
+};
+
+/**
+ * Embed a short text prompt with the CLIP text tower, in the CLIP worker.
+ * The text never leaves the device and is not logged.
+ */
+export const embedTextInWorker = async (text: string): Promise<Float32Array> => {
+    const done = (await clipWorker.request({
+        kind: "embed-text",
+        text,
+    })) as ClipEmbeddingEmbedTextDoneMessage;
+    if (done.error || !done.vector) {
+        throw new Error(done.error ?? "embed-text returned no vector");
+    }
+    return done.vector;
 };
 
 const emptyMeta = (): PersistedEmbeddingMeta => ({

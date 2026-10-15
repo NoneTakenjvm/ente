@@ -17,6 +17,7 @@ import {
 } from "@/lib/kit-nearness-embedding-genome";
 import {
     buildKitEmbeddingCentroid,
+    type KitEmbeddingPrior,
     fileMatchesKitTags,
     kitEmbeddingDistanceCompetitive,
     listKitSeedFiles,
@@ -91,15 +92,22 @@ const topKHitRate = (
 };
 
 /**
- * Build prototypes (centroid or medoids) for a genome.
+ * Build prototypes (centroid or medoids) for a genome. The optional `prior`
+ * only applies to the centroid path; medoid genomes ignore it.
  */
 export const buildKitEmbeddingPrototypes = (
     seedIds: readonly number[],
     embeddings: ReadonlyEmbeddingMap,
     genome: KitEmbeddingNearnessGenome = DEFAULT_KIT_EMBEDDING_GENOME,
+    prior?: KitEmbeddingPrior,
 ): EmbeddingVector[] => {
     if (genome.useCentroid >= 0.5) {
-        const centroid = buildKitEmbeddingCentroid(seedIds, embeddings);
+        const centroid = buildKitEmbeddingCentroid(
+            seedIds,
+            embeddings,
+            undefined,
+            prior,
+        );
         return centroid ? [centroid] : [];
     }
     return pickKitEmbeddingMedoids(seedIds, embeddings, {

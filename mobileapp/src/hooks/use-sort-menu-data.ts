@@ -27,6 +27,7 @@ export const useHydrateIndexesForOrdering = (
         kind === "tagFilterFit" ||
         kind === "relative" ||
         kind === "nearness" ||
+        kind === "textMatch" ||
         hasKits;
 
     useEffect(() => {

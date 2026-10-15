@@ -22,9 +22,17 @@ export type ClipEmbeddingEmbedBatchMessage = {
     }>;
 };
 
+/** Embed one text prompt with the CLIP text tower (loaded lazily). */
+export type ClipEmbeddingEmbedTextMessage = {
+    kind: "embed-text";
+    id: number;
+    text: string;
+};
+
 export type ClipEmbeddingInbound =
     ClipEmbeddingInitMessage |
-    ClipEmbeddingEmbedBatchMessage;
+    ClipEmbeddingEmbedBatchMessage |
+    ClipEmbeddingEmbedTextMessage;
 
 export type ClipEmbeddingInitDoneMessage = {
     kind: "init-done";
@@ -49,6 +57,15 @@ export type ClipEmbeddingEmbedBatchDoneMessage = {
     error?: string;
 };
 
+export type ClipEmbeddingEmbedTextDoneMessage = {
+    kind: "embed-text-done";
+    id: number;
+    /** L2-normalised text embedding; absent when `error` is set. */
+    vector?: Float32Array;
+    error?: string;
+};
+
 export type ClipEmbeddingOutbound =
     ClipEmbeddingInitDoneMessage |
-    ClipEmbeddingEmbedBatchDoneMessage;
+    ClipEmbeddingEmbedBatchDoneMessage |
+    ClipEmbeddingEmbedTextDoneMessage;

@@ -7,6 +7,7 @@ import {
     NearnessSection,
     type NearnessView,
 } from "@/components/sort-menu/NearnessSection";
+import { TextMatchSection } from "@/components/sort-menu/TextMatchSection";
 import { ViewportTargetInputs } from "@/components/sort-menu/ViewportTargetInputs";
 import { Button } from "@/components/ui/button";
 import { DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
@@ -30,7 +31,7 @@ interface SortPanelProps {
 /** Orderings that are a single direction choice. */
 type DirectionSortKind = Exclude<
     GalleryOrdering["kind"],
-    "nearness" | "shuffled"
+    "nearness" | "shuffled" | "textMatch"
 >;
 
 interface DirectionSortSection {
@@ -137,6 +138,10 @@ export function SortPanel({
                     />
                 </div>
             ))}
+            <div>
+                <DropdownMenuSeparator />
+                <TextMatchSection sectionState={sectionState} />
+            </div>
             <div>
                 <DropdownMenuSeparator />
                 <NearnessSection
