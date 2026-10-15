@@ -360,6 +360,40 @@ export const encodeJpegInWorker = async (
     };
 };
 
+/**
+ * Crop an image to its detected black border in the compress worker, with a
+ * single decode off the main thread.
+ *
+ * @returns the cropped JPEG, or `undefined` when there is no meaningful border
+ */
+export const autoCropJpegInWorker = async (
+    bytes: Uint8Array,
+): Promise<EncodeJpegResult | undefined> => {
+    const buffer = arrayBufferFromUint8Array(bytes);
+    const response = await compressWorker.request(
+        {
+            bytes: new Uint8Array(buffer),
+            quality: DEFAULT_JPEG_QUALITY,
+            autoCrop: true,
+        },
+        [buffer],
+    );
+    if (response.error) {
+        throw new Error(response.error);
+    }
+    if (response.skipped) {
+        return undefined;
+    }
+    if (!response.bytes || !response.width || !response.height) {
+        throw new Error("Auto-crop returned incomplete result");
+    }
+    return {
+        bytes: response.bytes,
+        width: response.width,
+        height: response.height,
+    };
+};
+
 export interface EncodeStillImageResult {
     bytes: Uint8Array;
     width: number;

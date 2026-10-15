@@ -15,6 +15,8 @@ interface JobControlsProps {
     complete: boolean;
     /** Extra reason to disable the start button (indexes still loading, ...). */
     disabled?: boolean;
+    /** Shown before the progress count. */
+    progressLabel?: string;
     size?: "default" | "sm";
     variant?: "default" | "outline";
     onStart: () => void;
@@ -31,6 +33,7 @@ export function JobControls({
     resumeLabel,
     complete,
     disabled = false,
+    progressLabel = "Scanning",
     size = "default",
     variant = "outline",
     onStart,
@@ -73,7 +76,7 @@ export function JobControls({
                         className="h-1"
                     />
                     <span className="text-xs text-muted-foreground">
-                        Scanning {progress.current} / {progress.total}
+                        {progressLabel} {progress.current} / {progress.total}
                     </span>
                 </div>
             ) : null}

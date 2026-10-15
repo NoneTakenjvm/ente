@@ -1,7 +1,7 @@
 import { registerReset } from "@/lib/session-lifecycle";
 /**
  * Local-only edit history: the previous bytes for the most recent crop/rotate
- * (or mass auto-crop) replace on this client, so the user can revert once.
+ * replace on this client, so the user can revert once.
  *
  * Large payloads (typical phone videos) are skipped — keeping them in a Map
  * alongside ffmpeg WASM OOMs mobile Chrome.

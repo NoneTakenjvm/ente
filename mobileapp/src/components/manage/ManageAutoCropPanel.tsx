@@ -1,7 +1,6 @@
 import { useEffect, useState, type JSX } from "react";
+import { JobControls } from "@/components/manage/JobControls";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import {
     Empty,
     EmptyDescription,
@@ -11,34 +10,29 @@ import {
 import { useJob } from "@/hooks/use-job";
 import {
     AUTO_CROP_BATCH_SIZE,
-    AUTO_CROP_BATCH_SIZE_UNDER_PRESSURE,
     autoCropEligibleFiles,
-    runAutoCropApply,
-    runAutoCropScan,
+    runAutoCrop,
     type AutoCropProgress,
 } from "@/lib/auto-crop-job";
 import { terminateBorderScanWorker } from "@/lib/border-scan-job";
-import { jobPercent } from "@/lib/job-utils";
 import type { EnteFile } from "ente-media/file";
-import { errorMessage, plural } from "@/lib/format";
+import { errorMessage } from "@/lib/format";
 
 interface ManageAutoCropPanelProps {
     files: EnteFile[];
 }
 
 /**
- * Scan for images with black borders and batch-crop them.
+ * Find images with black borders and crop them, batch after batch, until all
+ * eligible images are done or the user pauses.
  *
- * Acts on up to {@link AUTO_CROP_BATCH_SIZE} eligible images per run. Fetches
- * missing thumbnails on demand. Files with no border (or after a successful
- * crop) get a hidden `auto-cropped` tag so later runs skip them.
+ * Fetches missing thumbnails on demand. Files with no border (or after a
+ * successful crop) get a hidden `auto-cropped` tag so later runs skip them.
  */
 export function ManageAutoCropPanel({
     files,
 }: ManageAutoCropPanelProps): JSX.Element {
-    const scanJob = useJob<AutoCropProgress>();
-    const applyJob = useJob<AutoCropProgress>();
-    const [candidates, setCandidates] = useState<EnteFile[]>([]);
+    const job = useJob<AutoCropProgress>();
     const [error, setError] = useState<string | undefined>();
     const [resultMessage, setResultMessage] = useState<string | undefined>();
 
@@ -48,135 +42,69 @@ export function ManageAutoCropPanel({
         };
     }, []);
 
-    const scanning = scanJob.status === "running";
-    const applying = applyJob.status === "running";
-
-    const handleScan = (): void => {
+    const handleStart = (): void => {
         setError(undefined);
         setResultMessage(undefined);
-        setCandidates([]);
-        scanJob.start(
-            (signal, onProgress) => runAutoCropScan(files, signal, onProgress),
+        job.start(
+            (signal, onProgress) => runAutoCrop(files, signal, onProgress),
             {
-                onFinish: (result, aborted) => {
-                    if (!aborted) {
-                        setCandidates(result.found);
-                        setResultMessage(result.message);
-                    }
+                onFinish: (message) => {
+                    setResultMessage(message);
                 },
-                onError: (scanError) => {
-                    setError(errorMessage(scanError, "Scan failed"));
+                onError: (runError) => {
+                    setError(errorMessage(runError, "Auto-crop failed"));
                 },
             },
         );
     };
 
-    const handleApply = (): void => {
-        if (!candidates.length) {
-            return;
-        }
-        setError(undefined);
-        applyJob.start(
-            (signal, onProgress) =>
-                runAutoCropApply(candidates, signal, onProgress),
-            {
-                onFinish: (message, aborted) => {
-                    if (!aborted) {
-                        setResultMessage(message);
-                        setCandidates([]);
-                    }
-                },
-            },
-        );
-    };
-
-    const handleCancel = (): void => {
-        scanJob.reset();
-        applyJob.reset();
-        terminateBorderScanWorker();
-    };
-
-    const progress = scanning ? scanJob.progress : applyJob.progress;
-
+    const running = job.status === "running";
     const eligibleRemaining = autoCropEligibleFiles(files).length;
 
     return (
         <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 py-3">
             <p className="text-sm text-muted-foreground">
-                Processes up to {AUTO_CROP_BATCH_SIZE} images per run
-                ({AUTO_CROP_BATCH_SIZE_UNDER_PRESSURE} when memory is tight).
-                Missing thumbnails are downloaded during the scan. Images
+                Scans {AUTO_CROP_BATCH_SIZE} images at a time for black borders
+                and crops the ones it finds, until every image is done or you
+                pause. Missing thumbnails are downloaded during the scan. Images
                 without borders are marked internally so they are not scanned
                 again
                 {eligibleRemaining > 0 ?
                     ` (${eligibleRemaining} still eligible).` :
                     "."}
             </p>
-            <div className="flex flex-wrap gap-2">
-                <Button
-                    type="button"
-                    onClick={handleScan}
-                    disabled={scanning || applying || files.length === 0}
-                >
-                    {scanning ? "Scanning…" : "Scan for borders"}
-                </Button>
-                <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={handleApply}
-                    disabled={
-                        applying || scanning || candidates.length === 0
-                    }
-                >
-                    {applying ?
-                        "Cropping…" :
-                        `Crop ${candidates.length || ""}`.trim()}
-                </Button>
-                {scanning || applying ? (
-                    <Button
-                        type="button"
-                        variant="outline"
-                        onClick={handleCancel}
-                    >
-                        Cancel
-                    </Button>
-                ) : null}
-            </div>
-            {progress && (scanning || applying) ? (
-                <div className="flex flex-col gap-1">
-                    <Progress
-                        value={jobPercent(progress.current, progress.total)}
-                        className="h-1"
-                    />
-                    <span className="text-xs text-muted-foreground">
-                        {progress.label ? `${progress.label} ` : null}
-                        {progress.current} / {progress.total}
-                    </span>
-                </div>
+            <JobControls
+                status={job.status}
+                progress={job.progress}
+                startLabel="Start auto-crop"
+                resumeLabel="Resume auto-crop"
+                complete={eligibleRemaining === 0}
+                disabled={files.length === 0}
+                progressLabel={job.progress?.label}
+                variant="default"
+                onStart={handleStart}
+                onPause={job.pause}
+            />
+            {running && job.progress ? (
+                <p className="text-sm">{job.progress.cropped} cropped so far.</p>
             ) : null}
             {error ? (
                 <Alert variant="destructive">
                     <AlertDescription>{error}</AlertDescription>
                 </Alert>
             ) : null}
-            {resultMessage ? (
+            {resultMessage && !running ? (
                 <p className="text-sm text-muted-foreground">{resultMessage}</p>
             ) : null}
-            {!scanning && !candidates.length && !resultMessage ? (
+            {job.status === "idle" ? (
                 <Empty className="flex-1 border-0">
                     <EmptyHeader>
-                        <EmptyTitle>Ready to scan</EmptyTitle>
+                        <EmptyTitle>Ready to auto-crop</EmptyTitle>
                         <EmptyDescription>
-                            Run a scan to find images with black borders.
+                            Start to find and crop images with black borders.
                         </EmptyDescription>
                     </EmptyHeader>
                 </Empty>
-            ) : null}
-            {candidates.length > 0 ? (
-                <p className="text-sm">
-                    {plural(candidates.length, "image")} with borders ready to
-                    crop.
-                </p>
             ) : null}
         </div>
     );

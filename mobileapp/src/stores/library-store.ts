@@ -1410,8 +1410,11 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
         primeThumbnailFromBytes(fileId, croppedBytes);
 
         const finalize = (async (): Promise<EnteFile> => {
-            let previousBytes: Uint8Array | undefined = previousOverride;
-            if (!previousBytes) {
+            // Mass auto-crop keeps no undo bytes: one entry per file would grow
+            // without bound over a long run (the source stays in Trash).
+            let previousBytes: Uint8Array | undefined =
+                options?.autoCropped ? undefined : previousOverride;
+            if (!previousBytes && !options?.autoCropped) {
                 try {
                     previousBytes = new Uint8Array(
                         await getEnteCore().getDecryptedFile(file),

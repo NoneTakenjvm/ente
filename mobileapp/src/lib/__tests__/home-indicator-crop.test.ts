@@ -5,7 +5,7 @@ import {
     findBottomHomeIndicatorTop,
     rowLooksLikeHomeIndicator,
     trimBottomHomeIndicator,
-} from "@/lib/crop-editor";
+} from "@/lib/content-bounds";
 import { rgbaImageData } from "@/test-utils/fixtures";
 
 describe("home indicator auto-crop trim", () => {

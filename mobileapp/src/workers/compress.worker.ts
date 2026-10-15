@@ -16,6 +16,10 @@ import {
 } from "@/lib/compress-classify";
 import { arrayBufferFromUint8Array } from "@/lib/bytes-blob";
 import {
+    detectContentBoundsFromSource,
+    hasMeaningfulBorder,
+} from "@/lib/content-bounds";
+import {
     detectImageFormatFromBytes,
     type DetectedImageFormat,
 } from "@/lib/image-format";
@@ -289,6 +293,65 @@ const transferResponse = (response: CompressWorkerResponse): void => {
     self.postMessage(response);
 };
 
+/**
+ * Decode once, find the black border on the bitmap and encode only the content
+ * inside it, without a full-size pixel buffer. Replies `skipped` when there is
+ * no meaningful border.
+ */
+const autoCropToJpeg = async (
+    id: number,
+    bytes: Uint8Array,
+    quality: number,
+): Promise<void> => {
+    const format = detectImageFormatFromBytes(bytes);
+    const bitmap = await createImageBitmap(
+        new Blob([toArrayBuffer(bytes)], { type: mimeForFormat(format) }),
+    );
+    try {
+        const { width, height } = bitmap;
+        const bounds = detectContentBoundsFromSource(bitmap, width, height);
+        if (!bounds || !hasMeaningfulBorder(bounds, width, height)) {
+            transferResponse({ id, skipped: true, width, height });
+            return;
+        }
+        const canvas = new OffscreenCanvas(bounds.width, bounds.height);
+        const context = canvas.getContext("2d");
+        if (!context) {
+            throw new Error("OffscreenCanvas unavailable");
+        }
+        context.drawImage(
+            bitmap,
+            bounds.x,
+            bounds.y,
+            bounds.width,
+            bounds.height,
+            0,
+            0,
+            bounds.width,
+            bounds.height,
+        );
+        const imageData = context.getImageData(0, 0, bounds.width, bounds.height);
+        const encoded = await encodeJpegImage(
+            imageData,
+            quality,
+            bytes.length,
+            false,
+        );
+        transferResponse({
+            id,
+            bytes: encoded.bytes,
+            width: bounds.width,
+            height: bounds.height,
+            encodeQuality: encoded.encodeQuality,
+            encoder: "mozjpeg",
+            mimeType: "image/jpeg",
+            extension: "jpg",
+        });
+    } finally {
+        bitmap.close();
+    }
+};
+
 self.onmessage = async (
     event: MessageEvent<CompressWorkerRequest>,
 ): Promise<void> => {
@@ -298,11 +361,16 @@ self.onmessage = async (
         quality,
         cropRect,
         normalizedCropRect,
+        autoCrop,
         preferSmaller = false,
         output = cropRect || normalizedCropRect ? "jpeg" : "auto",
         minSizeBytes = 0,
     }: CompressWorkerRequest = event.data;
     try {
+        if (autoCrop) {
+            await autoCropToJpeg(id, bytes, quality);
+            return;
+        }
         const format = detectImageFormatFromBytes(bytes);
         let imageData = await decodeToImageData(bytes, format);
         if (normalizedCropRect) {

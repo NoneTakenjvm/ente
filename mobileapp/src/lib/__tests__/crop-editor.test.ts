@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-    containedDisplaySize,
     detectContentBoundsFromImageData,
     isBorderPixel,
-} from "@/lib/crop-editor";
+} from "@/lib/content-bounds";
+import { containedDisplaySize } from "@/lib/crop-editor";
 import { rgbaImageData } from "@/test-utils/fixtures";
 
 describe("crop-editor helpers", () => {

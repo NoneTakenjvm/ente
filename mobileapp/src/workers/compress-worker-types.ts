@@ -14,6 +14,11 @@ export interface CompressWorkerRequest {
     cropRect?: CropRect;
     /** Crop in 0-1 units of the decoded image; resolved against its size in the worker. */
     normalizedCropRect?: CropRect;
+    /**
+     * JPEG only: crop to the detected black border; replies `skipped` when
+     * there is no meaningful border.
+     */
+    autoCrop?: boolean;
     /** JPEG only: try lower mozjpeg qualities until output is smaller than input. */
     preferSmaller?: boolean;
     /** jpeg = crop path; auto = PhotoHoard classify + AVIF/WebP. */
