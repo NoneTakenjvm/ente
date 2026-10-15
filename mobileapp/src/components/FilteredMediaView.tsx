@@ -52,7 +52,6 @@ export function FilteredMediaView({
     const mode = useSelectionStore((s) => s.mode);
     const pruneToVisible = useSelectionStore((s) => s.pruneToVisible);
     const pendingRotations = useSelectionStore((s) => s.pendingRotations);
-    const applyBusy = useSelectionStore((s) => s.applyBusy);
 
     const resetSelection = useSelectionStore((s) => s.reset);
 
@@ -71,7 +70,7 @@ export function FilteredMediaView({
         };
     }, [resetSelection]);
 
-    const gridSelection = useMediaGridSelection({ disabled: applyBusy });
+    const gridSelection = useMediaGridSelection();
 
     const toolActive = mode !== "none";
     const footerInsetPx = toolActive ? SELECTION_FOOTER_INSET_PX : 0;

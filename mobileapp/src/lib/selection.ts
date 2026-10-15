@@ -5,6 +5,7 @@ import { defaultNormalizedCrop, type PendingCrop } from "@/lib/crop-draft";
 import { fileAspectRatio } from "@/lib/file-aspect-ratio";
 import { bulkAddTags } from "@/lib/tag-bulk-actions";
 import { viewportTargetAspectRatio } from "@/lib/viewport-fit";
+import { isBatchApplying } from "@/stores/batch-apply-store";
 import type { SelectionMode } from "@/stores/selection-store";
 import { useUIStore } from "@/stores/ui-store";
 import type { EnteFile } from "ente-media/file";
@@ -19,6 +20,9 @@ export const SELECTION_FOOTER_INSET_PX = 104;
 /** Shared empty set for stamp/rotate — avoids reallocating on every grid rebuild. */
 const EMPTY_SELECTED_IDS: ReadonlySet<number> = new Set();
 
+/** Shown when a draft targets a photo whose last batch edit is still applying. */
+export const APPLYING_MESSAGE = "Still applying the last edit to this photo";
+
 interface BuildMediaGridSelectionArgs {
     mode: SelectionMode;
     /** Prefer a memoized Set from the caller so grid `itemData` stays stable across taps. */
@@ -28,7 +32,6 @@ interface BuildMediaGridSelectionArgs {
     addPendingCrop?: (fileId: number, crop: PendingCrop) => void;
     toggleSelection: (fileId: number) => void;
     selectMany: (fileIds: number[], mode: "add" | "toggle" | "set") => void;
-    disabled?: boolean;
 }
 
 /**
@@ -43,10 +46,13 @@ export function buildMediaGridSelection(
         const bump = args.bumpRotate;
         return {
             selectedIds: EMPTY_SELECTED_IDS as Set<number>,
-            disabled: args.disabled,
             onToggle: (file: EnteFile): void => {
                 if (!canCrop(file)) {
                     toast.message("Rotate works on photos only");
+                    return;
+                }
+                if (isBatchApplying(file.id)) {
+                    toast.message(APPLYING_MESSAGE);
                     return;
                 }
                 bump?.(file.id);
@@ -59,7 +65,6 @@ export function buildMediaGridSelection(
         const addPendingCrop = args.addPendingCrop;
         return {
             selectedIds: EMPTY_SELECTED_IDS as Set<number>,
-            disabled: args.disabled,
             cropMode: true,
             onToggle: (file: EnteFile, imageAspect?: number): void => {
                 if (!canCrop(file)) {
@@ -68,6 +73,10 @@ export function buildMediaGridSelection(
                 }
                 if (file.ownerID !== getEnteCore().getUserID()) {
                     toast.message("Can only crop photos you own");
+                    return;
+                }
+                if (isBatchApplying(file.id)) {
+                    toast.message(APPLYING_MESSAGE);
                     return;
                 }
                 const { viewportTargetWidth, viewportTargetHeight } =
@@ -92,7 +101,6 @@ export function buildMediaGridSelection(
         const tags = args.stampTags;
         return {
             selectedIds: EMPTY_SELECTED_IDS as Set<number>,
-            disabled: args.disabled,
             onToggle: (file: EnteFile): void => {
                 if (tags.length === 0) {
                     toast.message("Pick tags or a kit first");
@@ -113,7 +121,6 @@ export function buildMediaGridSelection(
             new Set(args.selectedIds);
     return {
         selectedIds,
-        disabled: args.disabled,
         onToggle: (file: EnteFile): void => {
             args.toggleSelection(file.id);
         },

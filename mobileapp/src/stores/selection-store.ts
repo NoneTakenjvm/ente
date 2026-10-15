@@ -22,8 +22,6 @@ interface SelectionState {
     pendingRotations: Record<number, RotationDegrees>;
     /** Draft crop box per file id. */
     pendingCrops: Record<number, PendingCrop>;
-    /** True while rotate/crop Apply is uploading (locks the grid). */
-    applyBusy: boolean;
     /**
      * Switch tool. Always drops every tool's drafts and, unless entering
      * select, the selection.
@@ -40,13 +38,11 @@ interface SelectionState {
     setStampSheetOpen: (open: boolean) => void;
     bumpRotate: (fileId: number) => void;
     clearPendingRotations: () => void;
-    removePendingRotation: (fileId: number) => void;
     /** Add a draft crop; does nothing when the file already has one. */
     addPendingCrop: (fileId: number, crop: PendingCrop) => void;
     setPendingCropRect: (fileId: number, rect: NormalizedCropRect) => void;
     removePendingCrop: (fileId: number) => void;
     clearPendingCrops: () => void;
-    setApplyBusy: (busy: boolean) => void;
     reset: () => void;
 }
 
@@ -60,7 +56,6 @@ const initialState = {
     stampSheetOpen: false,
     pendingRotations: {} as Record<number, RotationDegrees>,
     pendingCrops: {} as Record<number, PendingCrop>,
-    applyBusy: false,
 };
 
 export const useSelectionStore = create<SelectionState>((set, get) => ({
@@ -77,7 +72,6 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
                 stampPickMode === "tag",
             pendingRotations: {},
             pendingCrops: {},
-            applyBusy: false,
         });
     },
 
@@ -193,21 +187,6 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
 
     clearPendingRotations: (): void => {
         set({ pendingRotations: {} });
-    },
-
-    removePendingRotation: (fileId: number): void => {
-        set((state) => {
-            if (state.pendingRotations[fileId] === undefined) {
-                return state;
-            }
-            const pendingRotations = { ...state.pendingRotations };
-            delete pendingRotations[fileId];
-            return { pendingRotations };
-        });
-    },
-
-    setApplyBusy: (busy: boolean): void => {
-        set({ applyBusy: busy });
     },
 
     addPendingCrop: (fileId: number, crop: PendingCrop): void => {

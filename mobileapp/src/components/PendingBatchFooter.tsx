@@ -1,10 +1,11 @@
 import { useCallback, type JSX, type ReactNode } from "react";
-import { toast } from "sonner";
 import { ToolFooter } from "@/components/ToolFooter";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
-import { mapBatched } from "@/lib/batched";
-import { plural } from "@/lib/format";
+import {
+    startBatchApply,
+    type BatchApplyRun,
+    type BatchApplyVerb,
+} from "@/stores/batch-apply-store";
 import { useSelectionStore, type SelectionMode } from "@/stores/selection-store";
 
 interface PendingBatchFooterProps<Entry extends { fileId: number }> {
@@ -15,14 +16,9 @@ interface PendingBatchFooterProps<Entry extends { fileId: number }> {
     emptyHint: string;
     /** Hint suffix shown after the pending count, e.g. `drag to adjust`. */
     pendingHint: string;
-    /** Progress and result wording: `Cropping` / `Cropped`. */
-    verb: { active: string; past: string };
+    verb: BatchApplyVerb;
     entries: Entry[];
-    /**
-     * Apply one entry and drop it from the pending drafts. May return a
-     * `finalize` promise to wait for before the next slot starts.
-     */
-    applyOne: (entry: Entry) => Promise<{ finalize: Promise<unknown> } | void>;
+    applyOne: BatchApplyRun<Entry>["applyOne"];
     concurrency: number;
     /** Returns false when the user declines to lose the pending drafts. */
     confirmDiscard: () => boolean;
@@ -31,7 +27,8 @@ interface PendingBatchFooterProps<Entry extends { fileId: number }> {
 
 /**
  * Footer for draft-then-apply tools (crop, rotate): "N pending", Discard,
- * Close, and Apply, which runs `applyOne` over the entries with a progress toast.
+ * Close, and Apply, which hands the drafts to a background batch (see
+ * {@link startBatchApply}) and closes the tool so the UI stays usable.
  */
 export function PendingBatchFooter<Entry extends { fileId: number }>({
     mode,
@@ -47,60 +44,23 @@ export function PendingBatchFooter<Entry extends { fileId: number }>({
 }: PendingBatchFooterProps<Entry>): JSX.Element | null {
     const active = useSelectionStore((s) => s.mode === mode);
     const setMode = useSelectionStore((s) => s.setMode);
-    const applyBusy = useSelectionStore((s) => s.applyBusy);
-    const setApplyBusy = useSelectionStore((s) => s.setApplyBusy);
 
     const pendingCount = entries.length;
 
     const handleClose = useCallback((): void => {
-        if (applyBusy || !confirmDiscard()) {
+        if (!confirmDiscard()) {
             return;
         }
         setMode("none");
-    }, [applyBusy, confirmDiscard, setMode]);
+    }, [confirmDiscard, setMode]);
 
-    const handleApply = useCallback(async (): Promise<void> => {
-        if (applyBusy || entries.length === 0) {
+    const handleApply = useCallback((): void => {
+        if (entries.length === 0) {
             return;
         }
-        setApplyBusy(true);
-        const total = entries.length;
-        let done = 0;
-        let failed = 0;
-        const progress = toast.loading(`${verb.active} 0 of ${total}…`);
-        try {
-            await mapBatched(
-                entries,
-                async (entry) => {
-                    try {
-                        const result = await applyOne(entry);
-                        done += 1;
-                        toast.loading(`${verb.active} ${done} of ${total}…`, {
-                            id: progress,
-                        });
-                        await result?.finalize.catch(() => undefined);
-                    } catch (error) {
-                        failed += 1;
-                        console.warn(`${verb.active} failed`, entry.fileId, error);
-                    }
-                },
-                { concurrency },
-            );
-            if (failed === 0) {
-                toast.success(`${verb.past} ${plural(done, "photo")}`, {
-                    id: progress,
-                });
-                setMode("none");
-            } else {
-                toast.error(
-                    `${verb.past} ${done}, ${failed} failed — retry remaining`,
-                    { id: progress },
-                );
-            }
-        } finally {
-            setApplyBusy(false);
-        }
-    }, [applyBusy, applyOne, concurrency, entries, setApplyBusy, setMode, verb]);
+        startBatchApply({ verb, entries, applyOne, concurrency });
+        setMode("none");
+    }, [applyOne, concurrency, entries, setMode, verb]);
 
     if (!active) {
         return null;
@@ -120,7 +80,7 @@ export function PendingBatchFooter<Entry extends { fileId: number }>({
                         type="button"
                         variant="ghost"
                         size="sm"
-                        disabled={applyBusy || pendingCount === 0}
+                        disabled={pendingCount === 0}
                         onClick={clearPending}
                     >
                         Discard
@@ -129,7 +89,6 @@ export function PendingBatchFooter<Entry extends { fileId: number }>({
                         type="button"
                         variant="outline"
                         size="sm"
-                        disabled={applyBusy}
                         onClick={handleClose}
                     >
                         Close
@@ -138,12 +97,9 @@ export function PendingBatchFooter<Entry extends { fileId: number }>({
                         type="button"
                         variant="default"
                         size="sm"
-                        disabled={applyBusy || pendingCount === 0}
-                        onClick={() => {
-                            void handleApply();
-                        }}
+                        disabled={pendingCount === 0}
+                        onClick={handleApply}
                     >
-                        {applyBusy ? <Spinner className="size-3.5" /> : null}
                         Apply
                     </Button>
                 </>

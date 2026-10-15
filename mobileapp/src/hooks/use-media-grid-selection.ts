@@ -10,19 +10,15 @@ import { useSelectionStore } from "@/stores/selection-store";
  * Does not subscribe to `selectedIds` — cells and marquee read the store live —
  * so toggling one photo does not re-render the whole virtualized grid.
  */
-export function useMediaGridSelection(options?: {
-    disabled?: boolean;
-}): ThumbnailGridSelection | undefined {
+export function useMediaGridSelection(): ThumbnailGridSelection | undefined {
     const mode = useSelectionStore((s) => s.mode);
     const stampTags = useSelectionStore((s) => s.stampTags);
-    const applyBusy = useSelectionStore((s) => s.applyBusy);
     const toggleSelection = useSelectionStore((s) => s.toggle);
     const selectMany = useSelectionStore((s) => s.selectMany);
     const bumpRotate = useSelectionStore((s) => s.bumpRotate);
     const addPendingCrop = useSelectionStore((s) => s.addPendingCrop);
 
-    const disabled = options?.disabled ?? applyBusy;
-    const modeKey = `${mode}|${disabled}|${stampTags.join("\0")}`;
+    const modeKey = `${mode}|${stampTags.join("\0")}`;
 
     const stableRef = useRef<{
         modeKey: string;
@@ -38,7 +34,6 @@ export function useMediaGridSelection(options?: {
         addPendingCrop,
         toggleSelection,
         selectMany,
-        disabled,
     });
 
     if (!built) {

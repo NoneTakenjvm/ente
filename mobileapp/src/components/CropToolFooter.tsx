@@ -26,7 +26,6 @@ interface PendingCropEntry {
 export function CropToolFooter(): JSX.Element | null {
     const pendingCrops = useSelectionStore((s) => s.pendingCrops);
     const clearPendingCrops = useSelectionStore((s) => s.clearPendingCrops);
-    const removePendingCrop = useSelectionStore((s) => s.removePendingCrop);
 
     const entries = useMemo(
         (): PendingCropEntry[] =>
@@ -35,16 +34,6 @@ export function CropToolFooter(): JSX.Element | null {
                 pending,
             })),
         [pendingCrops],
-    );
-
-    const applyOne = useCallback(
-        async (entry: PendingCropEntry): Promise<{ finalize: Promise<unknown> }> => {
-            const result = await cropFile(entry.fileId, entry.pending);
-            // Committed and queued for retry: re-applying would crop twice.
-            removePendingCrop(entry.fileId);
-            return result;
-        },
-        [removePendingCrop],
     );
 
     const confirmDiscard = useCallback(
@@ -60,7 +49,7 @@ export function CropToolFooter(): JSX.Element | null {
             pendingHint="drag to adjust"
             verb={VERB}
             entries={entries}
-            applyOne={applyOne}
+            applyOne={cropFile}
             concurrency={APPLY_CONCURRENCY}
             confirmDiscard={confirmDiscard}
             clearPending={clearPendingCrops}
@@ -73,10 +62,10 @@ export function CropToolFooter(): JSX.Element | null {
  * Rejects before anything is committed; `finalize` settles when the replace
  * upload finishes. Returned in an object so awaiting this does not wait for it.
  */
-const cropFile = async (
-    fileId: number,
-    pending: PendingCrop,
-): Promise<{ finalize: Promise<unknown> }> => {
+const cropFile = async ({
+    fileId,
+    pending,
+}: PendingCropEntry): Promise<{ finalize: Promise<unknown> }> => {
     const { getFileById, cropAndReplaceFileOptimistic } =
         useLibraryStore.getState();
     const file = getFileById(fileId);

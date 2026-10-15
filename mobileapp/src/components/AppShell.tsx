@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { PageLoader } from "@/components/PageLoader";
+import { BatchApplyBanner } from "@/components/BatchApplyBanner";
 import { SyncBanner } from "@/components/SyncBanner";
 import { UploadPanel } from "@/components/UploadPanel";
 import { UploadProgressBar } from "@/components/UploadProgressBar";
@@ -148,6 +149,7 @@ export function AppShell({
                 )}
             >
                 <SyncBanner />
+                <BatchApplyBanner />
                 {children}
             </main>
 

@@ -24,9 +24,6 @@ export function RotateToolFooter(): JSX.Element | null {
     const clearPendingRotations = useSelectionStore(
         (s) => s.clearPendingRotations,
     );
-    const removePendingRotation = useSelectionStore(
-        (s) => s.removePendingRotation,
-    );
     const rotateAndUploadFile = useLibraryStore((s) => s.rotateAndUploadFile);
 
     const entries = useMemo(
@@ -41,9 +38,8 @@ export function RotateToolFooter(): JSX.Element | null {
     const applyOne = useCallback(
         async (entry: PendingRotation): Promise<void> => {
             await rotateAndUploadFile(entry.fileId, entry.degrees);
-            removePendingRotation(entry.fileId);
         },
-        [removePendingRotation, rotateAndUploadFile],
+        [rotateAndUploadFile],
     );
 
     const confirmDiscard = useCallback(

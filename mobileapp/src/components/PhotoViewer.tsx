@@ -35,6 +35,7 @@ import {
     mimeTypeForFile,
     type MediaKind,
 } from "@/lib/media-kind";
+import { APPLYING_MESSAGE } from "@/lib/selection";
 import { extractUserTags } from "@/lib/tags";
 import { VIEW_SESSION_QUALIFY_MS } from "@/lib/view-sessions";
 import {
@@ -44,6 +45,7 @@ import {
 import { isFileArchivedLocally } from "@/lib/visibility-outbox";
 import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
+import { isBatchApplying } from "@/stores/batch-apply-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useTagStore } from "@/stores/tag-store";
@@ -681,7 +683,13 @@ export const PhotoViewer = memo(function PhotoViewer({
                 onToggleFavorite={handleToggleFavorite}
                 onToggleArchive={handleToggleArchive}
                 onRevert={() => setShowRevertConfirm(true)}
-                onCrop={() => setCropMode(true)}
+                onCrop={() => {
+                    if (isBatchApplying(file.id)) {
+                        toast.message(APPLYING_MESSAGE);
+                        return;
+                    }
+                    setCropMode(true);
+                }}
                 onDelete={() => setShowDeleteConfirm(true)}
                 onEditTags={tagDraft.beginTagDraft}
                 onScrubbingChange={(scrubbing) => {
