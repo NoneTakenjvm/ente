@@ -7,12 +7,18 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-10-15 |
-| **Last agent / session** | CLIP vector loss fixes: serialized chunk appends, remote-wipe repair, crop carry-over, rotate re-embed, gap restore (`0.3.209`, uncommitted) |
+| **Last agent / session** | Similar is pure CLIP: all-pairs scan in a worker + complete-linkage groups, no caps (`0.3.211`, uncommitted) |
 | **Current milestone** | Post-M8 UX / upload performance |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
-| **Next recommended action** | Phone QA of `0.3.209` (list below), then `0.3.208` and the `0.3.195`–`0.3.203` lists. Watch the first CI run on push. Rotate the test-account password. |
+| **Next recommended action** | Phone QA of `0.3.211` and `0.3.209` (lists below), then `0.3.208` and the `0.3.195`–`0.3.203` lists. Watch the first CI run on push. Rotate the test-account password. |
 
-**This session (uncommitted, `0.3.209`): CLIP sync loss fixes**
+**This session (uncommitted, `0.3.211`): pure-CLIP Similar**
+1. **Why** — relative sort surfaced more duplicates than Similar. Similar hid every union-find component above the max group size (5), so dense piles vanished whole; it also required a phash entry, capped the slider at 0.16 and filtered edges by mutual top-3.
+2. **Matching** — `similar-pairs.worker.ts` runs `collectClipPairs` (every pair of owned, non-archived stills with a CLIP vector, kept up to score 25 = CLIP 0.25) once per Find; the slider (CLIP 0.02–0.25, default 0.12) only regroups. `groupClipPairs` is complete-linkage: pairs tightest first, groups merge only if every cross pair is within the threshold, so no chaining and no size cap. Groups list tightest pair first.
+3. **Removed** — `similarity-stage1-core.ts` (dHash clustering), `similarity-match-cache.ts`, crop-merge Stage 2 (`mergeCropMatches`, crop-check worker messages), mutual top-K confirm, and the Settings "Similar max group size" (`similarMaxGroupSize`). Scan library still fills phash + quality; quality picks the keeper. The phash index itself is now unused by Similar (follow-up: drop it).
+4. **QA** — Manage → Similar: Find similar on the full library (progress, Cancel, Find again), drag the threshold both ways (regroups without a rescan), large groups render and clean up, deleting a group's files drops them from the results, compare against relative sort for missed pairs.
+
+**Previous session (uncommitted, `0.3.209`): CLIP sync loss fixes**
 1. **Chunk id collisions** — the CLIP scan's write queue and the mldata pull each held their own copy of the embedding meta, so they reused chunk ids and `put` silently replaced earlier chunks (lost vectors, often already marked uploaded so never re-pulled). `appendEmbeddingChunk(entries, cacheKey)` now serializes appends and reads `nextChunkId` from the stored meta; callers run `ensureEmbeddingMeta` first. Chunks accept `null` removals, like phash. The uploaded-id set is also updated one change at a time.
 2. **Remote wipes** — the official Flutter app PUTs mldata without `lastUpdatedAt`, so it can drop `organizer_clip`. When the pull sees a changed file whose mldata lacks the key, it unmarks it and the backfill re-uploads the local copy (a key with another model id is left alone, to avoid ping-pong).
 3. **Edits** — crop, auto-crop and compress copy the source's vector to the replacement file id (`carryOverOrganizerClip`) and upload it. Rotate drops the vector and its uploaded mark (`dropOrganizerClip`) so the next CLIP scan re-embeds and re-uploads it.

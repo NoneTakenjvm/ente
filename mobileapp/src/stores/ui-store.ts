@@ -103,7 +103,7 @@ interface UIState {
      */
     cropLockAspect: boolean;
     setCropLockAspect: (locked: boolean) => void;
-    /** Pin the relative snake tip to this file id (requires relative sort on). */
+    /** Rank the gallery against this file; starts a closest relative sort if none is active. */
     setRelativeStartFileId: (fileId: number) => void;
     /** Pick a new random start and rebuild the relative chain. */
     reapplyRelativeSort: () => void;
@@ -166,7 +166,14 @@ export const useUIStore = create<UIState>((set) => {
         setRelativeStartFileId: (fileId: number): void => {
             set((state) => {
                 if (state.ordering?.kind !== "relative") {
-                    return state;
+                    return {
+                        ordering: {
+                            kind: "relative",
+                            direction: "closest",
+                            seed: Date.now(),
+                            startFileId: fileId,
+                        },
+                    };
                 }
                 return { ordering: { ...state.ordering, startFileId: fileId } };
             });

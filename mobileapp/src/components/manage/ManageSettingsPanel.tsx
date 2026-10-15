@@ -19,9 +19,7 @@ import {
     clampClipEmbeddingBatchSize,
     clampGalleryColumns,
     MAX_GALLERY_COLUMNS,
-    MAX_SIMILAR_MAX_GROUP_SIZE,
     MIN_GALLERY_COLUMNS,
-    MIN_SIMILAR_MAX_GROUP_SIZE,
     SLIDESHOW_SECONDS_OPTIONS,
 } from "@/lib/app-settings";
 import {
@@ -47,11 +45,6 @@ import { errorMessage } from "@/lib/format";
 const columnOptions: number[] = Array.from(
     { length: MAX_GALLERY_COLUMNS - MIN_GALLERY_COLUMNS + 1 },
     (_, i) => MIN_GALLERY_COLUMNS + i,
-);
-
-const similarMaxGroupSizeOptions: number[] = Array.from(
-    { length: MAX_SIMILAR_MAX_GROUP_SIZE - MIN_SIMILAR_MAX_GROUP_SIZE + 1 },
-    (_, i) => MIN_SIMILAR_MAX_GROUP_SIZE + i,
 );
 
 const slideshowSecondsOptions: number[] = [...SLIDESHOW_SECONDS_OPTIONS];
@@ -84,7 +77,6 @@ export function ManageSettingsPanel(): JSX.Element {
     const videoSettings = { videoAutoPlay, videoLoop, videoDefaultMuted };
     const galleryColumns = useSettingsStore((s) => s.galleryColumns);
     const galleryThumbnailMode = useSettingsStore((s) => s.galleryThumbnailMode);
-    const similarMaxGroupSize = useSettingsStore((s) => s.similarMaxGroupSize);
     const slideshowSeconds = useSettingsStore((s) => s.slideshowSeconds);
     const clipEmbeddingBatchSize = useSettingsStore(
         (s) => s.clipEmbeddingBatchSize,
@@ -443,30 +435,6 @@ export function ManageSettingsPanel(): JSX.Element {
                                 </ToggleGroupItem>
                             </ToggleGroup>
                         </Field>
-                    </FieldGroup>
-                </CardContent>
-            </Card>
-
-            <Card>
-                <CardHeader>
-                    <CardTitle>Similar photos</CardTitle>
-                    <CardDescription>
-                        Matching finds natural similar piles with no size cap.
-                        Groups larger than this setting are hidden (not split
-                        into smaller cards).
-                    </CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <FieldGroup>
-                        <NumberToggleField
-                            label="Max group size"
-                            value={similarMaxGroupSize}
-                            options={similarMaxGroupSizeOptions}
-                            hint="Hide piles larger than this (usually false positives)"
-                            onChange={(size) => {
-                                patchSettings({ similarMaxGroupSize: size });
-                            }}
-                        />
                     </FieldGroup>
                 </CardContent>
             </Card>

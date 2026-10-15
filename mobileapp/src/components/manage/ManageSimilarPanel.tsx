@@ -1,5 +1,4 @@
 import {
-    startTransition,
     useEffect,
     useMemo,
     useRef,
@@ -15,52 +14,45 @@ import { Slider } from "@/components/ui/slider";
 import { useJob } from "@/hooks/use-job";
 import { errorMessage, plural } from "@/lib/format";
 import { eligibleImageFiles, jobPercent } from "@/lib/job-utils";
+import { packEmbeddings } from "@/lib/relative-sort";
 import {
     defaultSimilarityThreshold,
-    indexableFiles,
-    mergeCropMatches,
+    similarCandidateFiles,
+    similarityGroupsFromIds,
     similarityGroupToSelection,
-    toStage1Items,
-    trimSimilarityGroups,
-    type SimilarMatchProgress,
-    type SimilarityGroup,
 } from "@/lib/similarity-groups";
 import {
-    runStage1InWorker,
+    cancelSimilarPairsInWorker,
+    findSimilarPairsInWorker,
     runThumbnailAnalysisJob,
     terminatePhashWorker,
 } from "@/lib/similarity-job";
 import {
-    CLIP_SCORE_COLLECT_MAX,
     CLIP_SCORE_SLIDER_MAX,
     CLIP_SCORE_SLIDER_MIN,
     clampClipScoreThreshold,
+    groupClipPairs,
+    type ClipPairs,
 } from "@/lib/similarity-clip";
-import {
-    EDGE_COLLECT_THRESHOLD,
-    clusterFromFileEdges,
-    type Stage1Cluster,
-} from "@/lib/similarity-stage1-core";
-import {
-    clearSimilarityMatchCache,
-    getCachedStage1Edges,
-    setCachedStage1Edges,
-    similarityIndexKey,
-} from "@/lib/similarity-match-cache";
 import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { usePhashIndexStore } from "@/stores/phash-index-store";
 import { useQualityIndexStore } from "@/stores/quality-index-store";
 import { useSessionStore } from "@/stores/session-store";
-import { useSettingsStore } from "@/stores/settings-store";
 
 interface ManageSimilarPanelProps {
     showLoader: boolean;
 }
 
+type ScanProgress = {
+    completed: number;
+    total: number;
+};
+
 /**
- * Hash/CLIP similar-photo groups: library hash scan, find, and cleanup.
+ * CLIP similar-photo groups: compare every pair of CLIP vectors once, then
+ * group at the slider threshold (no rescan when it moves).
  */
 export function ManageSimilarPanel({
     showLoader,
@@ -80,271 +72,107 @@ export function ManageSimilarPanel({
 
     const phashJob = useJob();
 
-    const similarMaxGroupSize = useSettingsStore((s) => s.similarMaxGroupSize);
-    const similarMaxGroupSizeRef = useRef(similarMaxGroupSize);
-
     const [threshold, setThreshold] = useState(
         () => clampClipScoreThreshold(defaultSimilarityThreshold),
     );
     // The slider updates live while dragging; grouping only recomputes after
-    // the user pauses, so moving the thumb doesn't re-run dHash grouping and
-    // worker crop matches on every tick.
+    // the user pauses, not on every tick.
     const [debouncedThreshold, setDebouncedThreshold] = useState(
         () => clampClipScoreThreshold(defaultSimilarityThreshold),
     );
     const thresholdTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const [scanError, setScanError] = useState<string | undefined>();
-    const [similarGroups, setSimilarGroups] = useState<SimilarityGroup[]>([]);
+    /** Every pair within the slider ceiling from the last finished scan. */
+    const [pairs, setPairs] = useState<ClipPairs | undefined>();
     const [similarBusy, setSimilarBusy] = useState<boolean>(false);
     const [similarProgress, setSimilarProgress] = useState<
-        SimilarMatchProgress | undefined
+        ScanProgress | undefined
     >(undefined);
-    /** >0 means the user asked to find similar groups; 0 = idle until they tap Find. */
-    const [similarFindGeneration, setSimilarFindGeneration] = useState<number>(0);
-
-    const cropMergeAbort = useRef<AbortController | undefined>(undefined);
-    /** Uncapped groups from the last similar find (trim for display / max-size). */
-    const lastFullSimilarGroups = useRef<SimilarityGroup[]>([]);
-
-    useEffect(() => {
-        similarMaxGroupSizeRef.current = similarMaxGroupSize;
-    }, [similarMaxGroupSize]);
+    /** Bumped per scan and on cancel, so a superseded scan's replies are ignored. */
+    const scanRun = useRef(0);
 
     useEffect(() => {
         return (): void => {
             if (thresholdTimer.current) {
                 clearTimeout(thresholdTimer.current);
             }
-            cropMergeAbort.current?.abort();
-            // Drop session edge/crop caches when leaving Similar — they can
-            // pin tens of thousands of verdicts and freeze/OOM the phone.
-            clearSimilarityMatchCache();
+            scanRun.current += 1;
+            cancelSimilarPairsInWorker();
             terminatePhashWorker();
         };
     }, []);
 
-    // Stage-1 then async crop merge — only after the user taps Find similar.
-    // Edge + crop verdict caches make later threshold changes cheap.
-    useEffect(() => {
-        cropMergeAbort.current?.abort();
-        cropMergeAbort.current = undefined;
+    const candidateFiles = useMemo(
+        () =>
+            similarCandidateFiles(
+                allFiles,
+                embeddingEntries,
+                collections,
+                userId,
+            ),
+        [allFiles, embeddingEntries, collections, userId],
+    );
 
-        if (similarFindGeneration === 0) {
-            setSimilarGroups([]);
-            setSimilarBusy(false);
-            setSimilarProgress(undefined);
-            lastFullSimilarGroups.current = [];
-            return;
+    // Files deleted or archived since the scan drop out of their pairs.
+    const similarGroups = useMemo(() => {
+        if (!pairs) {
+            return [];
         }
-
-        const abort = new AbortController();
-        cropMergeAbort.current = abort;
-        let cancelled = false;
-
-        const filesById = new Map(allFiles.map((file) => [file.id, file]));
-        const indexed = indexableFiles(
-            phashEntries,
+        const filesById = new Map(
+            candidateFiles.map((file) => [file.id, file]),
+        );
+        return similarityGroupsFromIds(
+            groupClipPairs(pairs, debouncedThreshold, (fileId) =>
+                filesById.has(fileId)),
             filesById,
             collections,
             userId,
         );
-        const stage1Items = toStage1Items(indexed);
-        let clipOverlap = 0;
-        // Cheap per-vector sample so a re-embedded file (same count) misses the cache.
-        let clipFingerprint = 0;
-        for (const item of stage1Items) {
-            const vector = embeddingEntries.get(item.fileId);
-            if (vector?.length) {
-                clipOverlap += 1;
-                clipFingerprint =
-                    (Math.imul(clipFingerprint, 31) +
-                        item.fileId +
-                        Math.round(vector[0]! * 1e6) +
-                        Math.round(vector[vector.length - 1]! * 1e3)) |
-                    0;
-            }
-        }
-        const useClip = clipOverlap >= 2;
-        const indexKey =
-            similarityIndexKey(stage1Items) +
-            (useClip ? `|clip:${clipOverlap}:${clipFingerprint}` : "|hash");
-        const collectThreshold = useClip ?
-            CLIP_SCORE_COLLECT_MAX :
-            EDGE_COLLECT_THRESHOLD;
-        const cachedEdges = getCachedStage1Edges(indexKey, collectThreshold);
-        const fromCache = Boolean(cachedEdges);
+    }, [pairs, candidateFiles, debouncedThreshold, collections, userId]);
 
-        // Cache hit: keep current groups visible while reclustering (no flash).
+    const handleFindSimilar = (): void => {
+        scanRun.current += 1;
+        const run = scanRun.current;
+        const fileIds = candidateFiles.map((file) => file.id);
+        setScanError(undefined);
+        setPairs(undefined);
         setSimilarBusy(true);
-        setSimilarProgress(
-            fromCache ?
-                {
-                    stepDescription: "Grouping from cache",
-                    completed: 1,
-                    total: 1,
-                } :
-                undefined,
-        );
-        if (!fromCache) {
-            setSimilarGroups([]);
-        }
-
-        const run = async (): Promise<void> => {
-            if (!fromCache) {
-                await new Promise((resolve) => setTimeout(resolve, 0));
-            }
-            if (abort.signal.aborted || cancelled) {
-                return;
-            }
-
-            try {
-                const showTrimmed = (full: SimilarityGroup[]): void => {
-                    lastFullSimilarGroups.current = full;
-                    startTransition(() => {
-                        setSimilarGroups(
-                            trimSimilarityGroups(
-                                full,
-                                similarMaxGroupSizeRef.current,
-                            ),
-                        );
-                    });
-                };
-
-                // Progress bar only during the scan — mounting thousands of
-                // DedupGroupCards (and their thumbs) mid-pass freezes the UI.
-                let stage1Clusters: Stage1Cluster[];
-                const clip =
-                    useClip ? { embeddings: embeddingEntries } : undefined;
-                if (cachedEdges) {
-                    stage1Clusters = clusterFromFileEdges(
-                        stage1Items,
-                        cachedEdges,
-                        debouncedThreshold,
-                        clip,
+        setSimilarProgress({ completed: 0, total: fileIds.length });
+        findSimilarPairsInWorker(
+            fileIds,
+            packEmbeddings(fileIds, embeddingEntries),
+            (completed, total) => {
+                if (scanRun.current === run) {
+                    setSimilarProgress({ completed, total });
+                }
+            },
+        )
+            .then((found) => {
+                if (scanRun.current === run) {
+                    setPairs(found);
+                }
+            })
+            .catch((scanFailure: unknown) => {
+                if (scanRun.current === run) {
+                    setScanError(
+                        errorMessage(scanFailure, "Similar-photo scan failed"),
                     );
-                } else {
-                    setSimilarProgress({
-                        stepDescription:
-                            clip ?
-                                "Matching closest CLIP neighbours" :
-                                "Comparing hashes",
-                        completed: 0,
-                        total: Math.max(indexed.length, 1),
-                    });
-                    const stage1Result = await runStage1InWorker(
-                        stage1Items,
-                        debouncedThreshold,
-                        {
-                            signal: abort.signal,
-                            embeddings: clip?.embeddings,
-                            onProgress: (update) => {
-                                if (abort.signal.aborted || cancelled) {
-                                    return;
-                                }
-                                const stepDescription =
-                                    update.phase === "comparing" ?
-                                        clip ?
-                                            "Matching closest CLIP neighbours" :
-                                            "Comparing hashes" :
-                                        update.phase === "finalizing" ?
-                                            "Finalizing groups" :
-                                            "Grouping done";
-                                setSimilarProgress({
-                                    stepDescription,
-                                    completed: update.completed,
-                                    total: Math.max(update.total, 1),
-                                });
-                            },
-                        },
-                    );
-                    if (abort.signal.aborted || cancelled) {
-                        return;
-                    }
-                    setCachedStage1Edges(
-                        indexKey,
-                        collectThreshold,
-                        stage1Result.edges,
-                    );
-                    stage1Clusters = stage1Result.clusters;
                 }
-                if (abort.signal.aborted || cancelled) {
-                    return;
-                }
-                // Seed crop merge from raw clusters (including oversized) so UF
-                // stays correct; assembly/display skips groups above the settings max.
-                const merged = await mergeCropMatches([], {
-                    entries: phashEntries,
-                    filesById,
-                    collections,
-                    userId,
-                    signal: abort.signal,
-                    maxGroupSize: similarMaxGroupSizeRef.current,
-                    stage1Clusters,
-                    onProgress: (progress) => {
-                        if (abort.signal.aborted || cancelled) {
-                            return;
-                        }
-                        setSimilarProgress(progress);
-                    },
-                });
-                if (abort.signal.aborted || cancelled) {
-                    return;
-                }
-                showTrimmed(merged);
-                setSimilarProgress(undefined);
-            } catch (mergeError: unknown) {
-                if (
-                    mergeError instanceof DOMException &&
-                    mergeError.name === "AbortError"
-                ) {
-                    return;
-                }
-                throw mergeError;
-            } finally {
-                if (!cancelled && !abort.signal.aborted) {
+            })
+            .finally(() => {
+                if (scanRun.current === run) {
                     setSimilarBusy(false);
+                    setSimilarProgress(undefined);
                 }
-            }
-        };
+            });
+    };
 
-        void run().catch((runError: unknown) => {
-            if (!cancelled && !abort.signal.aborted) {
-                setSimilarBusy(false);
-                setScanError(
-                    errorMessage(runError, "Similar-photo scan failed"),
-                );
-            }
-        });
-
-        return (): void => {
-            cancelled = true;
-            abort.abort();
-        };
-    }, [
-        allFiles,
-        collections,
-        phashEntries,
-        embeddingEntries,
-        debouncedThreshold,
-        similarFindGeneration,
-        userId,
-    ]);
-
-    // Max group size only re-slices the last uncapped result — no rematch.
-    useEffect(() => {
-        if (similarFindGeneration === 0) {
-            return;
-        }
-        if (lastFullSimilarGroups.current.length === 0) {
-            return;
-        }
-        setSimilarGroups(
-            trimSimilarityGroups(
-                lastFullSimilarGroups.current,
-                similarMaxGroupSize,
-            ),
-        );
-    }, [similarFindGeneration, similarMaxGroupSize]);
+    const handleCancelFind = (): void => {
+        scanRun.current += 1;
+        cancelSimilarPairsInWorker();
+        setSimilarBusy(false);
+        setSimilarProgress(undefined);
+    };
 
     const groups = useMemo(
         () =>
@@ -356,23 +184,12 @@ export function ManageSimilarPanel({
         [similarGroups, favoriteFileIds, qualityById],
     );
 
-    const phashCandidateCount = useMemo(
+    const eligibleCount = useMemo(
         () => eligibleImageFiles(allFiles, userId).length,
         [allFiles, userId],
     );
     const phashIndexedCount = phashEntries.size;
-    const clipCoverageOnIndexed = useMemo(() => {
-        if (phashEntries.size === 0) {
-            return 0;
-        }
-        let n = 0;
-        for (const id of phashEntries.keys()) {
-            if (embeddingEntries.has(id)) {
-                n += 1;
-            }
-        }
-        return n;
-    }, [phashEntries, embeddingEntries]);
+    const clipCount = candidateFiles.length;
 
     const handleStartPhashJob = (): void => {
         phashJob.start(
@@ -403,21 +220,19 @@ export function ManageSimilarPanel({
     const emptyTitle =
         similarBusy ?
             "Finding similar photos…" :
-            phashIndexedCount < 2 ?
-                "Scan your library" :
-                similarFindGeneration === 0 ?
+            clipCount < 2 ?
+                "Scan CLIP embeddings" :
+                !pairs ?
                     "Ready when you are" :
                     "No similar groups";
 
     const emptyDescription =
         similarBusy ?
-            "Comparing photos — groups appear as matches are found." :
-            similarFindGeneration === 0 ?
-                phashIndexedCount < 2 ?
-                    "Scan your library to hash photos, then tap Find similar." :
-                    "Hash new photos with Scan library if needed, then tap Find similar." :
-                phashIndexedCount < 2 ?
-                    "Scan your library to find similar photos." :
+            "Comparing every pair of CLIP embeddings." :
+            clipCount < 2 ?
+                "Run the CLIP scan in Settings, then tap Find similar." :
+                !pairs ?
+                    "Tap Find similar to compare CLIP embeddings." :
                     "No similar groups at this threshold.";
 
     return (
@@ -438,13 +253,13 @@ export function ManageSimilarPanel({
                         startLabel="Scan library"
                         resumeLabel="Resume scan"
                         complete={
-                            phashIndexedCount >= phashCandidateCount &&
-                            phashCandidateCount > 0
+                            phashIndexedCount >= eligibleCount &&
+                            eligibleCount > 0
                         }
                         disabled={
                             !phashHydrated ||
                             !qualityHydrated ||
-                            phashIndexedCount >= phashCandidateCount
+                            phashIndexedCount >= eligibleCount
                         }
                         size="sm"
                         variant="default"
@@ -455,16 +270,10 @@ export function ManageSimilarPanel({
                             type="button"
                             size="sm"
                             variant="secondary"
-                            onClick={() => {
-                                setSimilarFindGeneration((n) => n + 1);
-                            }}
-                            disabled={
-                                similarBusy ||
-                                !phashHydrated ||
-                                phashIndexedCount < 2
-                            }
+                            onClick={handleFindSimilar}
+                            disabled={similarBusy || clipCount < 2}
                         >
-                            {similarFindGeneration > 0 && !similarBusy ?
+                            {pairs && !similarBusy ?
                                 "Find again" :
                                 "Find similar"}
                         </Button>
@@ -473,13 +282,7 @@ export function ManageSimilarPanel({
                                 type="button"
                                 variant="outline"
                                 size="sm"
-                                onClick={() => {
-                                    cropMergeAbort.current?.abort();
-                                    setSimilarFindGeneration(0);
-                                    setSimilarBusy(false);
-                                    setSimilarProgress(undefined);
-                                    setSimilarGroups([]);
-                                }}
+                                onClick={handleCancelFind}
                             >
                                 Cancel
                             </Button>
@@ -487,10 +290,7 @@ export function ManageSimilarPanel({
                     </JobControls>
                     <Field>
                         <FieldLabel htmlFor="similarity-threshold">
-                            Threshold: {threshold}
-                            {clipCoverageOnIndexed >= 2 ?
-                                ` (CLIP ≤ ${(threshold / 100).toFixed(2)})` :
-                                ""}
+                            Threshold: CLIP ≤ {(threshold / 100).toFixed(2)}
                         </FieldLabel>
                         <Slider
                             id="similarity-threshold"
@@ -515,26 +315,14 @@ export function ManageSimilarPanel({
                         />
                     </Field>
                     <p className="text-xs text-muted-foreground">
-                        Indexed {phashIndexedCount} / {phashCandidateCount}{" "}
-                        images
-                        {phashIndexedCount > 0 ?
-                            ` · CLIP ${clipCoverageOnIndexed}/${phashIndexedCount}` :
-                            ""}
-                        · {plural(similarGroups.length, "similar group")}
-                        {similarBusy && similarProgress ?
-                            ` · ${similarProgress.stepDescription}` :
-                            similarBusy ?
-                                " · matching…" :
-                                ""}
+                        CLIP {clipCount} / {eligibleCount} images · quality{" "}
+                        {phashIndexedCount} / {eligibleCount} ·{" "}
+                        {plural(similarGroups.length, "similar group")}
                     </p>
-                    {phashIndexedCount > 0 && clipCoverageOnIndexed < 2 ? (
-                        <p className="text-xs text-muted-foreground">
-                            Scan CLIP embeddings in Settings — Similar matches
-                            each photo to its closest CLIP neighbour, then keeps
-                            pairs within the threshold. Without CLIP it falls
-                            back to hashes only.
-                        </p>
-                    ) : null}
+                    <p className="text-xs text-muted-foreground">
+                        Similar groups photos by CLIP closeness alone. Scan
+                        library scores quality so the best copy is kept.
+                    </p>
                     {similarBusy && similarProgress ? (
                         <div className="flex flex-col gap-1">
                             <Progress
@@ -542,8 +330,7 @@ export function ManageSimilarPanel({
                                 className="h-1"
                             />
                             <span className="text-xs text-muted-foreground">
-                                {similarProgress.stepDescription}{" "}
-                                {similarProgress.completed} /{" "}
+                                Comparing photos {similarProgress.completed} /{" "}
                                 {similarProgress.total}
                             </span>
                         </div>

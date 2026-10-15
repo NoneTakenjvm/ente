@@ -1,49 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { Collection } from "ente-media/collection";
 import type { EnteFile } from "ente-media/file";
 import { FileType } from "ente-media/file-type";
-import type { PhashEntry } from "@/lib/crop-match";
 import {
-    clustersToSimilarityGroups,
-    indexableFiles,
-    MAX_GROUP_SIZE,
-    mergeCropMatches,
-    toStage1Items,
-    trimSimilarityGroups,
-    type SimilarityGroup,
+    similarCandidateFiles,
+    similarityGroupsFromIds,
 } from "@/lib/similarity-groups";
-import { runStage1Clustering } from "@/lib/similarity-stage1-core";
-
-vi.mock("@/lib/similarity-job", () => ({
-    checkCropMatchBatchInWorkers: vi.fn(
-        async (
-            _entries: unknown,
-            pairs: Array<[string, string]>,
-        ): Promise<boolean[]> => pairs.map(() => true),
-    ),
-}));
-
-const stubFile = (
-    id: number,
-    collectionID: number,
-    ownerID: number,
-): EnteFile =>
-    ({
-        id,
-        collectionID,
-        ownerID,
-        updationTime: id,
-        encryptedKey: "key",
-        keyDecryptionNonce: "nonce",
-        metadata: {
-            creationTime: id,
-            modificationTime: id,
-            title: `file-${id}`,
-            fileType: FileType.image,
-            hash: "hash",
-        },
-        isDeleted: false,
-    }) as unknown as EnteFile;
+import { axis, embMap, stubFile } from "@/test-utils/fixtures";
 
 const stubCollection = (id: number): Collection => ({
     id,
@@ -56,281 +19,66 @@ const stubCollection = (id: number): Collection => ({
     updationTime: id,
 });
 
-/**
- * Stage-1 as production runs it (`runStage1Clustering`, the function the phash
- * worker calls) followed by the same group assembly and display trim.
- */
-const buildSimilarityGroups = async (
-    entries: Map<number, PhashEntry>,
-    filesById: Map<number, EnteFile>,
-    collections: Collection[],
-    userId: number,
-    threshold: number,
-    maxGroupSize: number = MAX_GROUP_SIZE,
-): Promise<SimilarityGroup[]> => {
-    const indexed = indexableFiles(entries, filesById, collections, userId);
-    if (indexed.length < 2) {
-        return [];
-    }
-    const { clusters } = await runStage1Clustering(
-        toStage1Items(indexed),
-        threshold,
-        () => {},
-    );
-    return trimSimilarityGroups(
-        clustersToSimilarityGroups(clusters, filesById, collections, userId),
-        maxGroupSize,
-    );
-};
+const collections = [stubCollection(1)];
 
-// Hex strings where each is one 64-bit dHash value; normalized into PhashEntry
-// hashes before building groups.
-const describeGroups = async (
-    hashes: Map<number, string[]>,
-    filesById: Map<number, EnteFile>,
-    collections: Collection[],
-    maxGroupSize: number = MAX_GROUP_SIZE,
-): Promise<number[][]> => {
-    const entries = new Map<number, PhashEntry>();
-    for (const [fileId, hashesArr] of hashes.entries()) {
-        entries.set(fileId, { hashes: hashesArr });
-    }
-    const groups = await buildSimilarityGroups(
-        entries,
-        filesById,
-        collections,
-        1,
-        10,
-        maxGroupSize,
-    );
-    return groups.map((group) =>
-        group.items.map((item) => item.file.id).sort((a, b) => a - b));
-};
-
-describe("Stage-1 groups with rotation/mirror variants", () => {
-    const filesById = new Map([
-        [1, stubFile(1, 1, 1)],
-        [2, stubFile(2, 1, 1)],
-        [3, stubFile(3, 1, 1)],
-        [4, stubFile(4, 1, 1)],
-    ]);
-    const collections = [stubCollection(1)];
-
-    it("groups a rotated duplicate whose variant matches another file's primary", async () => {
-        // file 1: primary at prefix a1bf..., variants include a1bf... (itself)
-        // file 2: variants where the 270°-no-mirror variant equals file 1's
-        // primary (a1bf...), so the rotated file matches the source.
-        const entries = new Map<number, string[]>([
-            [1, ["a1bf--------" as string, "c0de--------", "c0de--------", "c0de--------"]],
-            [2, ["f9c1--------", "f9c1--------", "f9c1--------", "a1bf--------"]],
-        ]);
-        const groups = await describeGroups(entries, filesById, collections);
-        expect(groups).toEqual([[1, 2]]);
-    });
-
-    it("groups a mirrored duplicate via the mirror variant", async () => {
-        // file 3: mirror variant (index 1, 90°? no — use 0°+mirror at index 1)
-        // The index order is [rot0,nomirror, rot0,mirror, rot90,nomirror, ...].
-        const entries = new Map<number, string[]>([
-            [1, ["a1bf--------"]],
-            [3, ["d00d--------", "a1bf--------"]],
-        ]);
-        const groups = await describeGroups(entries, filesById, collections);
-        expect(groups).toEqual([[1, 3]]);
-    });
-
-    it("does not group two different photos whose all variants differ", async () => {
-        const entries = new Map<number, string[]>([
-            [1, ["aaaa--------"]],
-            [4, ["cccc--------"]],
-        ]);
-        const groups = await describeGroups(entries, filesById, collections);
-        expect(groups).toEqual([]);
-    });
-
-    it("treats legacy single-hash entries like the original single-hash compare", async () => {
-        // file 1 and file 2 primary hashes identical (same prefix, distance 0).
-        const entries = new Map<number, string[]>([
-            [1, ["a1bf--------"]],
-            [2, ["a1bf--------"]],
-        ]);
-        const groups = await describeGroups(entries, filesById, collections);
-        expect(groups).toEqual([[1, 2]]);
-    });
-
-    it("does not union a file with itself via its own multiple variants", async () => {
-        // file 1 has two variants sharing a prefix but no other files.
-        const entries = new Map<number, string[]>([
-            [1, ["a1bf--------", "a1bf--------"]],
-            [2, ["c0de--------"]],
-        ]);
-        const groups = await describeGroups(entries, filesById, collections);
-        expect(groups).toEqual([]);
-    });
-});
-
-describe("Stage-1 groups mutual nearest-neighbour", () => {
-    const collections = [stubCollection(1)];
-
-    it("does not let a hub photo chain many one-sided neighbours into one blob", async () => {
-        // 10 peripherals share an identical hash (true cluster). The hub is
-        // within the Stage-1 threshold of that cluster, but each peripheral's
-        // closest matches are the other 9 peripherals — so the hub falls outside
-        // every peripheral's top-8 mutual rank and must not join the group.
-        const filesById = new Map(
-            Array.from({ length: 11 }, (_, i) => [i + 1, stubFile(i + 1, 1, 1)]),
-        );
-        const entries = new Map<number, string[]>();
-        // Hamming distance between these two 64-bit hex values is 8 (one nibble
-        // differs by 0xF→0x7 is wrong — use a single-bit nibble flip pattern).
-        // `a100...` vs `a101...` differs by 1 bit; stack 8 distinct bit flips:
-        // hub a100000000000000, cluster a1000000000000ff → 8 bits in the last byte.
-        entries.set(1, ["a100000000000000"]);
-        for (let i = 2; i <= 11; i++) {
-            entries.set(i, ["a1000000000000ff"]);
-        }
-        const groups = await describeGroups(entries, filesById, collections, 20);
-        expect(groups).toHaveLength(1);
-        expect(groups[0]).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
-        expect(groups[0]!.includes(1)).toBe(false);
-    });
-});
-
-describe("Stage-1 groups oversized-component filter", () => {
-    const filesById = new Map(
-        Array.from({ length: MAX_GROUP_SIZE + 20 }, (_, i) => [
-            i + 1,
-            stubFile(i + 1, 1, 1),
-        ]),
-    );
-    const collections = [stubCollection(1)];
-
-    it("hides a loose chain larger than maxGroupSize instead of slicing it", async () => {
-        // Adjacent 1-bit hash chain → one Stage-1 component larger than the
-        // display max. Filter hides it; must not mint dozens of tiny cards.
-        const entries = new Map<number, string[]>();
-        for (let i = 0; i < MAX_GROUP_SIZE + 20; i++) {
-            entries.set(i + 1, [
-                (0xa1b00000 + i).toString(16).padStart(16, "0"),
-            ]);
-        }
-        const groups = await describeGroups(entries, filesById, collections);
-        expect(groups).toEqual([]);
-    });
-
-    it("keeps a genuinely identical cluster together below the cap", async () => {
-        // 3 truly identical copies: same hash → one tight group, no split.
-        const entries = new Map<number, string[]>([
-            [1, ["a1bf000000000000"]],
-            [2, ["a1bf000000000000"]],
-            [3, ["a1bf000000000000"]],
-        ]);
-        const localFiles = new Map([
-            [1, stubFile(1, 1, 1)],
-            [2, stubFile(2, 1, 1)],
-            [3, stubFile(3, 1, 1)],
-        ]);
-        const groups = await describeGroups(entries, localFiles, collections);
-        expect(groups).toEqual([[1, 2, 3]]);
-    });
-});
-
-describe("mergeCropMatches uncapped match + display filter", () => {
-    const count = MAX_GROUP_SIZE + 25;
-    const collections = [stubCollection(1)];
-    const filesById = new Map(
-        Array.from({ length: count }, (_, i) => [i + 1, stubFile(i + 1, 1, 1)]),
-    );
-
-    /** Distinct dHash so Stage-1 leaves everything as singletons; shared 3-hex
-     *  color prefix so Stage-2 proposes a long chain of crop candidates. */
-    const cropChainEntries = (): Map<number, PhashEntry> => {
-        const entries = new Map<number, PhashEntry>();
-        for (let i = 0; i < count; i++) {
-            const hashPrefix = (i * 17).toString(16).padStart(3, "0").slice(-3);
-            const color = `aaa${i.toString(16).padStart(13, "0")}`;
-            entries.set(i + 1, {
-                hashes: [`${hashPrefix}${"f".repeat(13)}`],
-                color,
-                grid: "AAAA",
-            });
-        }
-        return entries;
-    };
-
-    it("does not assemble/display a crop mega-chain above the settings max", async () => {
-        const { clearSimilarityMatchCache } = await import(
-            "@/lib/similarity-match-cache"
-        );
-        clearSimilarityMatchCache();
-
-        const entries = cropChainEntries();
-        const stage1 = await buildSimilarityGroups(entries, filesById, collections, 1, 10);
-        expect(stage1).toEqual([]);
-
-        let lastEmitted: Awaited<ReturnType<typeof mergeCropMatches>> = [];
-        const merged = await mergeCropMatches(stage1, {
-            entries,
-            filesById,
-            collections,
-            userId: 1,
-            batchSize: 16,
-            maxGroupSize: MAX_GROUP_SIZE,
-            onGroups: (groups) => {
-                lastEmitted = groups;
-            },
+describe("similarCandidateFiles", () => {
+    it("keeps owned, non-archived stills that have a CLIP vector", () => {
+        const archived = stubFile({
+            id: 2,
+            magicMetadata: { version: 1, count: 1, data: { visibility: 1 } },
+        } as Partial<EnteFile>);
+        const video = stubFile({
+            id: 3,
+            metadata: { ...stubFile().metadata, fileType: FileType.video },
         });
-
-        // Matching may chain everyone; assembly skips components > settings max.
-        expect(merged.every((group) => group.items.length <= MAX_GROUP_SIZE)).toBe(
-            true,
+        const files = [
+            stubFile({ id: 1 }),
+            archived,
+            video,
+            stubFile({ id: 4, ownerID: 2 }),
+            stubFile({ id: 5, collectionID: 9 }),
+            stubFile({ id: 6 }),
+        ];
+        const embeddings = embMap(
+            [1, 2, 3, 4, 5].map((id) => [id, axis(0)]),
         );
-        for (const group of lastEmitted) {
-            expect(group.items.length).toBeLessThanOrEqual(MAX_GROUP_SIZE);
-        }
-    });
-
-    it("aborts when the signal is already aborted", async () => {
-        const entries = cropChainEntries();
-        const abort = new AbortController();
-        abort.abort();
-        await expect(
-            mergeCropMatches([], {
-                entries,
-                filesById,
-                collections,
-                userId: 1,
-                signal: abort.signal,
-            }),
-        ).rejects.toMatchObject({ name: "AbortError" });
-    });
-});
-
-describe("indexableFiles", () => {
-    it("skips archived files", () => {
-        const active = stubFile(1, 1, 1);
-        const archived = {
-            ...stubFile(2, 1, 1),
-            magicMetadata: {
-                version: 1,
-                count: 1,
-                data: { visibility: 1 },
-            },
-        } as EnteFile;
-        const filesById = new Map([
-            [1, active],
-            [2, archived],
-        ]);
-        const entries = new Map<number, PhashEntry>([
-            [1, { hashes: ["a1bf--------"] }],
-            [2, { hashes: ["a1bf--------"] }],
-        ]);
-        const indexed = indexableFiles(
-            entries,
-            filesById,
-            [stubCollection(1)],
+        const candidates = similarCandidateFiles(
+            files,
+            embeddings,
+            collections,
             1,
         );
-        expect(indexed.map((row) => row.fileId)).toEqual([1]);
+        expect(candidates.map((file) => file.id)).toEqual([1]);
+    });
+
+    it("lists a file id once even when it appears in several entries", () => {
+        const files = [stubFile({ id: 1 }), stubFile({ id: 1 })];
+        const candidates = similarCandidateFiles(
+            files,
+            embMap([[1, axis(0)]]),
+            collections,
+            1,
+        );
+        expect(candidates).toHaveLength(1);
+    });
+});
+
+describe("similarityGroupsFromIds", () => {
+    it("skips unknown files and groups left with one file", () => {
+        const filesById = new Map(
+            [1, 2, 3].map((id) => [id, stubFile({ id })]),
+        );
+        const groups = similarityGroupsFromIds(
+            [
+                [1, 2],
+                [3, 99],
+            ],
+            filesById,
+            collections,
+            1,
+        );
+        expect(groups.map((group) => group.items.map((item) => item.file.id))).toEqual([
+            [1, 2],
+        ]);
     });
 });

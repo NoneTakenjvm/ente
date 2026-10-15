@@ -12,11 +12,6 @@ export type GalleryColumnCount = 2 | 3 | 4 | 5 | 6 | 7 | 8;
 export const MIN_GALLERY_COLUMNS = 2;
 export const MAX_GALLERY_COLUMNS = 8;
 
-/** Default Similar-photos group cap (true duplicates rarely exceed a handful). */
-const DEFAULT_SIMILAR_MAX_GROUP_SIZE = 5;
-export const MIN_SIMILAR_MAX_GROUP_SIZE = 1;
-export const MAX_SIMILAR_MAX_GROUP_SIZE = 5;
-
 /** Seconds each photo stays up in the viewer slideshow. */
 const DEFAULT_SLIDESHOW_SECONDS = 5;
 export const SLIDESHOW_SECONDS_OPTIONS = [3, 5, 8, 10, 15, 30] as const;
@@ -38,8 +33,6 @@ export interface PersistedAppSettings {
     galleryColumns: GalleryColumnCount;
     galleryThumbnailMode: GalleryThumbnailMode;
     gallerySortBy: MediaSortBy;
-    /** Cap: hide Similar groups larger than this (matching stays uncapped). */
-    similarMaxGroupSize: number;
     /**
      * Images per CLIP ORT forward. {@link CLIP_EMBEDDING_BATCH_SIZE_AUTO} =
      * device default; otherwise one of {@link CLIP_EMBEDDING_BATCH_SIZE_OPTIONS}.
@@ -60,19 +53,6 @@ export const clampGalleryColumns = (value: number): GalleryColumnCount => {
         MAX_GALLERY_COLUMNS,
         Math.max(MIN_GALLERY_COLUMNS, Math.round(value)),
     ) as GalleryColumnCount;
-};
-
-/**
- * Clamp a Similar max-group-size value into the allowed settings range.
- */
-const clampSimilarMaxGroupSize = (value: number): number => {
-    if (!Number.isFinite(value)) {
-        return DEFAULT_SIMILAR_MAX_GROUP_SIZE;
-    }
-    return Math.min(
-        MAX_SIMILAR_MAX_GROUP_SIZE,
-        Math.max(MIN_SIMILAR_MAX_GROUP_SIZE, Math.round(value)),
-    );
 };
 
 /**
@@ -118,7 +98,6 @@ export const defaultAppSettings = (): PersistedAppSettings => ({
     galleryColumns: 4,
     galleryThumbnailMode: "grid",
     gallerySortBy: "uploaded",
-    similarMaxGroupSize: DEFAULT_SIMILAR_MAX_GROUP_SIZE,
     clipEmbeddingBatchSize: CLIP_EMBEDDING_BATCH_SIZE_AUTO,
     slideshowSeconds: DEFAULT_SLIDESHOW_SECONDS,
 });
@@ -138,7 +117,6 @@ export const mergeAppSettings = (
         gallerySortBy: isMediaSortBy(merged.gallerySortBy) ?
             merged.gallerySortBy :
             "uploaded",
-        similarMaxGroupSize: clampSimilarMaxGroupSize(merged.similarMaxGroupSize),
         clipEmbeddingBatchSize: clampClipEmbeddingBatchSize(
             merged.clipEmbeddingBatchSize,
         ),

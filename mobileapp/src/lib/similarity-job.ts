@@ -19,22 +19,20 @@ import {
     runWithConcurrency,
     workerCount,
 } from "@/lib/job-utils";
-import type {
-    Stage1Cluster,
-    Stage1FileEdge,
-    Stage1Item,
-    Stage1ProgressUpdate,
-} from "@/lib/similarity-stage1-core";
-import type { ReadonlyEmbeddingMap } from "@/lib/kit-embedding";
+import {
+    CLIP_SCORE_SLIDER_MAX,
+    type ClipPairs,
+} from "@/lib/similarity-clip";
+import { KIT_EMBEDDING_DIMS } from "@/lib/kit-embedding";
 import type {
     AnalyzeThumbnailRequest,
     AnalyzeThumbnailResponse,
-    CropCheckBatchMessage,
-    CropCheckBatchResult,
-    PhashWorkerOutbound,
     QualityScoreInputs,
-    Stage1Message,
 } from "@/workers/phash-worker-types";
+import type {
+    SimilarPairsWorkerRequest,
+    SimilarPairsWorkerResponse,
+} from "@/workers/similar-pairs-worker-types";
 import { registerReset } from "@/lib/session-lifecycle";
 import { createWorkerClient } from "@/lib/worker-client";
 
@@ -53,14 +51,28 @@ export interface ThumbnailAnalysisResult {
     qualityEntries: Map<number, number>;
 }
 
-/** Shared thumbnail-analysis / crop-check pool. */
+/** Release the Similar pair worker after this long with no requests. */
+const SIMILAR_PAIRS_IDLE_TERMINATE_MS = 30_000;
+
+/** Shared thumbnail-analysis pool. */
 const phashWorkers = createWorkerClient<
-    AnalyzeThumbnailRequest | CropCheckBatchMessage,
-    AnalyzeThumbnailResponse | CropCheckBatchResult
+    AnalyzeThumbnailRequest,
+    AnalyzeThumbnailResponse
 >({
     createWorker: () =>
         new Worker(new URL("../workers/phash.worker.ts", import.meta.url)),
     poolSize: workerCount(),
+});
+
+const similarPairsWorker = createWorkerClient<
+    SimilarPairsWorkerRequest,
+    SimilarPairsWorkerResponse
+>({
+    createWorker: () =>
+        new Worker(
+            new URL("../workers/similar-pairs.worker.ts", import.meta.url),
+        ),
+    idleMs: SIMILAR_PAIRS_IDLE_TERMINATE_MS,
 });
 
 /** Decode `bytes` once in a worker and compute only the requested signals. */
@@ -71,10 +83,10 @@ const analyzeThumbnailInWorker = async (
     quality: QualityScoreInputs | undefined,
 ): Promise<AnalyzeThumbnailResponse> => {
     // Thumbnail bytes are a fresh decrypt per call, so hand the buffer over.
-    const response = (await phashWorkers.request(
+    const response = await phashWorkers.request(
         { kind: "analyze-thumbnail", fileId, bytes, needsPhash, quality },
         [bytes.buffer as ArrayBuffer],
-    )) as AnalyzeThumbnailResponse;
+    );
     if (
         response.error ||
         (needsPhash && !response.phashEntry) ||
@@ -83,71 +95,6 @@ const analyzeThumbnailInWorker = async (
         throw new Error(response.error ?? "Thumbnail analysis failed");
     }
     return response;
-};
-
-export type CropBatchEntry = { color: string; grid: string };
-
-/**
- * Batch crop checks across the worker pool. Unique grids are decoded once per
- * worker chunk; pairs are split round-robin so cores stay busy. Rejects if the
- * pool is terminated mid-batch.
- */
-export const checkCropMatchBatchInWorkers = (
-    entries: Record<string, CropBatchEntry>,
-    pairs: Array<[string, string]>,
-): Promise<boolean[]> => {
-    if (pairs.length === 0) {
-        return Promise.resolve([]);
-    }
-
-    const chunkCount = Math.min(workerCount(), pairs.length);
-    const matches = new Array<boolean>(pairs.length).fill(false);
-
-    const runChunk = async (
-        chunkPairs: Array<[string, string]>,
-        absoluteIndexes: number[],
-    ): Promise<void> => {
-        const chunkEntries: Record<string, CropBatchEntry> = {};
-        for (const [a, b] of chunkPairs) {
-            for (const key of [a, b]) {
-                const entry = entries[key];
-                if (entry) {
-                    chunkEntries[key] = entry;
-                }
-            }
-        }
-        const reply = (await phashWorkers.request({
-            kind: "crop-check-batch",
-            entries: chunkEntries,
-            pairs: chunkPairs,
-        })) as CropCheckBatchResult;
-        for (let i = 0; i < absoluteIndexes.length; i++) {
-            matches[absoluteIndexes[i]!] = reply.matches[i] ?? false;
-        }
-    };
-
-    const chunkPairs: Array<Array<[string, string]>> = Array.from(
-        { length: chunkCount },
-        () => [],
-    );
-    const chunkIndexes: number[][] = Array.from(
-        { length: chunkCount },
-        () => [],
-    );
-    for (let i = 0; i < pairs.length; i++) {
-        const chunk = i % chunkCount;
-        chunkPairs[chunk]!.push(pairs[i]!);
-        chunkIndexes[chunk]!.push(i);
-    }
-
-    return Promise.all(
-        chunkPairs.map((pairsForChunk, chunk) => {
-            if (pairsForChunk.length === 0) {
-                return Promise.resolve();
-            }
-            return runChunk(pairsForChunk, chunkIndexes[chunk]!);
-        }),
-    ).then(() => matches);
 };
 
 /** Serializes phash index writes so chunk ids are allocated one at a time. */
@@ -368,134 +315,49 @@ export const runThumbnailAnalysisJob = async (
 };
 
 /**
- * Terminate the shared thumbnail-analysis / crop-check pool. Requests still in flight
+ * Terminate the shared thumbnail-analysis pool. Requests still in flight
  * reject so their callers (and the job's in-flight cap) settle.
  */
 export const terminatePhashWorker = (): void => {
     phashWorkers.terminate(new Error("Phash workers terminated"));
 };
 
-export interface Stage1WorkerOptions {
-    onProgress?: (update: Stage1ProgressUpdate) => void;
-    signal?: AbortSignal;
-    /** CLIP vectors for nearest-neighbour Similar (file id → L2-normalized). */
-    embeddings?: ReadonlyEmbeddingMap;
-}
-
-export type Stage1WorkerResult = {
-    clusters: Stage1Cluster[];
-    edges: Stage1FileEdge[];
+/**
+ * Collect every CLIP pair within {@link CLIP_SCORE_SLIDER_MAX} in a worker,
+ * so any slider position regroups without rescanning.
+ *
+ * Transfers {@link packed}; the caller must not reuse that buffer.
+ *
+ * @param fileIds row i of {@link packed} belongs to `fileIds[i]`
+ */
+export const findSimilarPairsInWorker = async (
+    fileIds: readonly number[],
+    packed: Float32Array,
+    onProgress: (completed: number, total: number) => void,
+): Promise<ClipPairs> => {
+    const idBuffer = Float64Array.from(fileIds);
+    const response = await similarPairsWorker.request(
+        {
+            fileIds: idBuffer,
+            packed,
+            dims: KIT_EMBEDDING_DIMS,
+            maxScore: CLIP_SCORE_SLIDER_MAX,
+        },
+        [idBuffer.buffer, packed.buffer],
+        (progress) => {
+            onProgress(progress.completed ?? 0, progress.total ?? 0);
+        },
+    );
+    if (response.error || !response.pairs) {
+        throw new Error(response.error ?? "Similar scan failed");
+    }
+    return response.pairs;
 };
 
-/**
- * Run Stage-1 clustering on a dedicated worker so the UI thread stays free.
- * Progress (and provisional tight-match groups) stream back via {@link onProgress}.
- * Returns clusters for the requested threshold plus edges collected up to
- * {@link EDGE_COLLECT_THRESHOLD} for later threshold changes.
- */
-export const runStage1InWorker = (
-    items: Stage1Item[],
-    threshold: number,
-    options: Stage1WorkerOptions = {},
-): Promise<Stage1WorkerResult> =>
-    new Promise((resolve, reject) => {
-        if (items.length < 2) {
-            options.onProgress?.({
-                phase: "done",
-                completed: 0,
-                total: 0,
-                clusters: [],
-            });
-            resolve({ clusters: [], edges: [] });
-            return;
-        }
-
-        // One dedicated worker per call, so a fixed id is unambiguous.
-        const requestId = 1;
-        const worker = new Worker(
-            new URL("../workers/phash.worker.ts", import.meta.url),
-        );
-        let settled = false;
-
-        const cleanup = (): void => {
-            options.signal?.removeEventListener("abort", onAbort);
-            worker.terminate();
-        };
-
-        const fail = (error: unknown): void => {
-            if (settled) {
-                return;
-            }
-            settled = true;
-            cleanup();
-            reject(error);
-        };
-
-        const succeed = (result: Stage1WorkerResult): void => {
-            if (settled) {
-                return;
-            }
-            settled = true;
-            cleanup();
-            resolve(result);
-        };
-
-        const onAbort = (): void => {
-            worker.postMessage({ kind: "stage1-abort", id: requestId });
-            fail(new DOMException("Similarity grouping aborted", "AbortError"));
-        };
-
-        if (options.signal?.aborted) {
-            fail(new DOMException("Similarity grouping aborted", "AbortError"));
-            return;
-        }
-        options.signal?.addEventListener("abort", onAbort);
-
-        worker.onmessage = (event: MessageEvent<PhashWorkerOutbound>): void => {
-            const data = event.data;
-            if (!("kind" in data) || data.id !== requestId) {
-                return;
-            }
-            if (data.kind === "stage1-progress") {
-                options.onProgress?.(data.update);
-                return;
-            }
-            if (data.kind === "stage1-result") {
-                if (data.error) {
-                    fail(new Error(data.error));
-                    return;
-                }
-                succeed({
-                    clusters: data.clusters ?? [],
-                    edges: data.edges ?? [],
-                });
-            }
-        };
-
-        worker.onerror = (event: ErrorEvent): void => {
-            fail(new Error(event.message || "Stage-1 worker failed"));
-        };
-
-        const embeddings = options.embeddings ?
-            packStage1Embeddings(items, options.embeddings) :
-            undefined;
-        const message: Stage1Message = {
-            kind: "stage1",
-            id: requestId,
-            items,
-            threshold,
-            embeddings,
-        };
-        worker.postMessage(
-            message,
-            embeddings ?
-                [
-                    embeddings.vectors.buffer as ArrayBuffer,
-                    embeddings.fileIds.buffer as ArrayBuffer,
-                ] :
-                [],
-        );
-    });
+/** Stop a running Similar pair scan (its promise rejects). */
+export const cancelSimilarPairsInWorker = (): void => {
+    similarPairsWorker.terminate(new Error("Similar scan cancelled"));
+};
 
 /** Chain a phash index write after earlier ones; failures are logged, not thrown. */
 const queuePhashWrite = (task: () => Promise<void>): Promise<void> => {
@@ -524,39 +386,6 @@ const rewritePhashChunks = async (
     }
 };
 
-/**
- * Pack the items' CLIP vectors into one transferable buffer (row i belongs to
- * `fileIds[i]`) instead of structured-cloning thousands of arrays. Files
- * without a vector of the common length are left out.
- */
-const packStage1Embeddings = (
-    items: Stage1Item[],
-    embeddings: ReadonlyEmbeddingMap,
-): Stage1Message["embeddings"] => {
-    let dims = 0;
-    const rows: Array<[number, ArrayLike<number>]> = [];
-    for (const item of items) {
-        const vector = embeddings.get(item.fileId);
-        if (!vector?.length) {
-            continue;
-        }
-        dims ||= vector.length;
-        if (vector.length === dims) {
-            rows.push([item.fileId, vector]);
-        }
-    }
-    if (rows.length === 0) {
-        return undefined;
-    }
-    const vectors = new Float32Array(rows.length * dims);
-    const fileIds = new Float64Array(rows.length);
-    rows.forEach(([fileId, vector], row) => {
-        vectors.set(vector, row * dims);
-        fileIds[row] = fileId;
-    });
-    return { vectors, fileIds, dims };
-};
-
 /** Original dimensions and size the quality score compares the thumbnail against. */
 const qualityScoreInputs = (file: EnteFile): QualityScoreInputs => {
     const data = file.pubMagicMetadata?.data;
@@ -568,3 +397,4 @@ const qualityScoreInputs = (file: EnteFile): QualityScoreInputs => {
 };
 
 registerReset(terminatePhashWorker);
+registerReset(cancelSimilarPairsInWorker);

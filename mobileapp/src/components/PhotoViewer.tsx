@@ -139,7 +139,6 @@ export const PhotoViewer = memo(function PhotoViewer({
     const file = sessionFiles[currentIndex];
     const mediaKind = file ? mediaKindForFile(file) : null;
     const isVideo = file?.metadata.fileType === FileType.video;
-    const relativeActive = useUIStore((s) => s.ordering?.kind === "relative");
     const relativeStartFileId = useUIStore((s) => {
         const { ordering } = s;
         return ordering?.kind === "relative" ? ordering.startFileId : undefined;
@@ -154,7 +153,6 @@ export const PhotoViewer = memo(function PhotoViewer({
     });
     const showSetRelative =
         !readOnly &&
-        relativeActive &&
         file !== undefined &&
         !isEnteVideoFile(file) &&
         hasClipEmbedding;

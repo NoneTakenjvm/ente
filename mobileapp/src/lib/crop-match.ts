@@ -57,7 +57,7 @@ export const CROP_SAD_THRESHOLD = 0.08;
  * template residual (+ soft color gate in {@link areCropMatchesGrids}) is the
  * precision filter.
  */
-export const COLOR_PALETTE_THRESHOLD = 12;
+const COLOR_PALETTE_THRESHOLD = 12;
 
 /**
  * When palette Hamming is at least this high, demand a stronger template score
@@ -586,7 +586,7 @@ export const templateMatchScore = (aGrid: string, bGrid: string): number =>
  * Whether two images could be the same photo under a crop, using already-decoded
  * luminance grids (batch path — decode once per file).
  */
-export const areCropMatchesGrids = (
+const areCropMatchesGrids = (
     aColor: string,
     aGrid: Uint8Array,
     bColor: string,

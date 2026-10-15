@@ -1,33 +1,27 @@
 /**
  * CLIP helpers for Similar: cosine distance, score mapping for the threshold
- * slider, and CLIP-first nearest-neighbour propose/confirm.
+ * slider, all-pairs collection and complete-linkage grouping.
  *
  * Cosine distance is {@code 1 - dot} on L2-normalized embeddings (0 = identical).
- * Edge scores stored on {@link Stage1FileEdge} are {@code round(distance * 100)}
- * so the slider ({@link CLIP_SCORE_SLIDER_MIN}–{@link CLIP_SCORE_SLIDER_MAX})
- * means CLIP ≤ 0.08–0.16.
+ * Pair scores are {@code round(distance * 100)}, so the slider
+ * ({@link CLIP_SCORE_SLIDER_MIN}–{@link CLIP_SCORE_SLIDER_MAX}) means
+ * CLIP ≤ 0.02–0.25.
  *
  * Worker-safe (no DOM).
  */
 
-/** Slider floor — stricter than this is rarely useful for near-dupes. */
-export const CLIP_SCORE_SLIDER_MIN = 8;
+/** Every collected pair as parallel arrays (row i is one pair). */
+export type ClipPairs = {
+    leftIds: Float64Array;
+    rightIds: Float64Array;
+    scores: Uint8Array;
+};
 
-/** Slider ceiling / collect max — looser pulls in “same scene” false piles. */
-export const CLIP_SCORE_SLIDER_MAX = 16;
+/** Slider floor — near-identical copies only. */
+export const CLIP_SCORE_SLIDER_MIN = 2;
 
-/** Collect CLIP edges up to this score. Must match {@link CLIP_SCORE_SLIDER_MAX}. */
-export const CLIP_SCORE_COLLECT_MAX = CLIP_SCORE_SLIDER_MAX;
-
-/**
- * Edges at or below this score skip the mutual-neighbour confirm
- * (near-identical embeddings). Below the slider floor so they always survive
- * once collected.
- */
-export const CLIP_TIGHT_SCORE = 5;
-
-/** Mutual confirm: each side must list the other in its top-K within collect. */
-export const CLIP_CONFIRM_TOP_K = 3;
+/** Slider ceiling; pairs are collected up to this so the slider never rescans. */
+export const CLIP_SCORE_SLIDER_MAX = 25;
 
 /**
  * Cosine distance between two L2-normalized vectors (0 = identical).
@@ -58,172 +52,123 @@ export const clampClipScoreThreshold = (score: number): number =>
         Math.max(CLIP_SCORE_SLIDER_MIN, Math.round(score)),
     );
 
-export type ClipNeighbour = {
-    /** Index into the embedded-item list (not file id). */
-    other: number;
-    score: number;
-};
-
 /**
- * Insert {@link candidate} into a sorted ascending top-K list (by score, then
- * other id). Keeps at most {@link topK} entries.
- */
-const insertTopNeighbour = (
-    list: ClipNeighbour[],
-    candidate: ClipNeighbour,
-    topK: number,
-): void => {
-    let insertAt = list.length;
-    for (let i = 0; i < list.length; i++) {
-        const cur = list[i]!;
-        if (
-            candidate.score < cur.score ||
-            (candidate.score === cur.score && candidate.other < cur.other)
-        ) {
-            insertAt = i;
-            break;
-        }
-    }
-    if (insertAt >= topK) {
-        return;
-    }
-    list.splice(insertAt, 0, candidate);
-    if (list.length > topK) {
-        list.length = topK;
-    }
-};
-
-/**
- * Score `vectors[row]` against every later vector and offer each pair within
- * `collectMax` to both rows' top-K lists, so one pass over all rows compares
- * each pair once. Row `row` is final once this returns.
+ * Compare every pair of packed vectors and keep those scoring at most
+ * {@link maxScore}. O(n²) dot products — run it in a worker.
  *
- * [Note: Symmetric top-K scan]
- *
- * {@link insertTopNeighbour} keeps each list sorted by (score, other) and
- * bounded, so the result does not depend on the order pairs are offered in
- * and matches a full per-row scan at half the dot products.
+ * @param fileIds row i of {@link packed} belongs to `fileIds[i]`
+ * @param onRow called after each row with the number of rows done
  */
-export const scanClipNeighbourRow = (
-    vectors: readonly ArrayLike<number>[],
-    row: number,
-    topByIndex: ClipNeighbour[][],
-    topK: number = CLIP_CONFIRM_TOP_K,
-    collectMax: number = CLIP_SCORE_COLLECT_MAX,
-): void => {
-    const left = vectors[row]!;
-    const dims = left.length;
-    if (dims === 0) {
-        return;
-    }
+export const collectClipPairs = (
+    fileIds: ArrayLike<number>,
+    packed: Float32Array,
+    dims: number,
+    maxScore: number = CLIP_SCORE_SLIDER_MAX,
+    onRow?: (completed: number) => void,
+): ClipPairs => {
+    const leftIds: number[] = [];
+    const rightIds: number[] = [];
+    const scores: number[] = [];
     // Reject on the raw dot first; a point of slack leaves rounding at the
     // band edge to the exact score check below.
-    const minDot = 1 - (collectMax + 1) / 100;
-    for (let other = row + 1; other < vectors.length; other++) {
-        const right = vectors[other]!;
-        if (right.length !== dims) {
-            continue;
+    const minDot = 1 - (maxScore + 1) / 100;
+    for (let row = 0; row < fileIds.length; row++) {
+        const rowStart = row * dims;
+        for (let other = row + 1; other < fileIds.length; other++) {
+            const otherStart = other * dims;
+            let dot = 0;
+            for (let d = 0; d < dims; d++) {
+                dot += packed[rowStart + d]! * packed[otherStart + d]!;
+            }
+            if (dot < minDot) {
+                continue;
+            }
+            const score = clipDistanceToScore(1 - dot);
+            if (score > maxScore) {
+                continue;
+            }
+            leftIds.push(fileIds[row]!);
+            rightIds.push(fileIds[other]!);
+            scores.push(score);
         }
-        let dot = 0;
-        for (let d = 0; d < dims; d++) {
-            dot += left[d]! * right[d]!;
-        }
-        if (dot < minDot) {
-            continue;
-        }
-        const score = clipDistanceToScore(1 - dot);
-        if (score > collectMax) {
-            continue;
-        }
-        insertTopNeighbour(topByIndex[row]!, { other, score }, topK);
-        insertTopNeighbour(topByIndex[other]!, { other: row, score }, topK);
+        onRow?.(row + 1);
     }
+    return {
+        leftIds: Float64Array.from(leftIds),
+        rightIds: Float64Array.from(rightIds),
+        scores: Uint8Array.from(scores),
+    };
 };
 
 /**
- * Confirm a proposed CLIP edge beyond 1-NN: tight scores always pass;
- * otherwise both sides must list each other in their top-K.
- */
-export const shouldConfirmClipEdge = (
-    leftTop: readonly ClipNeighbour[],
-    rightTop: readonly ClipNeighbour[],
-    leftIndex: number,
-    rightIndex: number,
-    score: number,
-    tightScore: number = CLIP_TIGHT_SCORE,
-): boolean => {
-    if (score <= tightScore) {
-        return true;
-    }
-    const leftHasRight = leftTop.some((n) => n.other === rightIndex);
-    const rightHasLeft = rightTop.some((n) => n.other === leftIndex);
-    return leftHasRight && rightHasLeft;
-};
-
-const upsertEdge = (
-    edgeByKey: Map<string, number>,
-    left: number,
-    right: number,
-    score: number,
-): void => {
-    const a = Math.min(left, right);
-    const b = Math.max(left, right);
-    const key = `${a}:${b}`;
-    const prev = edgeByKey.get(key);
-    if (prev === undefined || score < prev) {
-        edgeByKey.set(key, score);
-    }
-};
-
-/**
- * Build confirmed undirected CLIP edges from per-item top neighbours.
+ * Group files whose pairs score at most {@link threshold}.
  *
- * Propose:
- * - each file’s closest neighbour (1-NN) within the collect band
- * - mutual top-K edges (links multi-copy piles beyond a single snake edge)
+ * [Note: Complete-linkage Similar groups]
  *
- * Final “are they close enough?” is the UI threshold on these scores.
+ * Pairs are taken tightest first; two groups merge only when every file in
+ * one is within the threshold of every file in the other. So every pair in a
+ * group is within the threshold — groups never chain (A~B~C~D with A far
+ * from D) the way connected components do, and no size cap is needed.
+ *
+ * @param isLive drops files no longer eligible since the pairs were collected
+ * @returns file-id groups, tightest pair first
  */
-export const collectConfirmedClipEdges = (
-    topByIndex: readonly (readonly ClipNeighbour[])[],
-): Array<{ left: number; right: number; score: number }> => {
-    const edgeByKey = new Map<string, number>();
+export const groupClipPairs = (
+    pairs: ClipPairs,
+    threshold: number,
+    isLive: (fileId: number) => boolean,
+): number[][] => {
+    const neighboursById = new Map<number, Set<number>>();
+    const addNeighbour = (fileId: number, otherId: number): void => {
+        const neighbours = neighboursById.get(fileId);
+        if (neighbours) {
+            neighbours.add(otherId);
+        } else {
+            neighboursById.set(fileId, new Set([otherId]));
+        }
+    };
+    const kept: number[] = [];
+    for (let i = 0; i < pairs.scores.length; i++) {
+        const leftId = pairs.leftIds[i]!;
+        const rightId = pairs.rightIds[i]!;
+        if (pairs.scores[i]! > threshold || !isLive(leftId) || !isLive(rightId)) {
+            continue;
+        }
+        addNeighbour(leftId, rightId);
+        addNeighbour(rightId, leftId);
+        kept.push(i);
+    }
+    kept.sort((a, b) => pairs.scores[a]! - pairs.scores[b]! || a - b);
 
-    for (let i = 0; i < topByIndex.length; i++) {
-        const nn = topByIndex[i]![0];
-        if (nn) {
-            upsertEdge(edgeByKey, i, nn.other, nn.score);
+    const groupById = new Map<number, number[]>();
+    const areNeighbours = (fileId: number, otherId: number): boolean =>
+        neighboursById.get(fileId)!.has(otherId);
+    for (const i of kept) {
+        const leftGroup = groupById.get(pairs.leftIds[i]!) ?? [pairs.leftIds[i]!];
+        const rightGroup =
+            groupById.get(pairs.rightIds[i]!) ?? [pairs.rightIds[i]!];
+        if (
+            leftGroup === rightGroup ||
+            !leftGroup.every((fileId) =>
+                rightGroup.every((otherId) => areNeighbours(fileId, otherId)))
+        ) {
+            continue;
+        }
+        const merged = [...leftGroup, ...rightGroup];
+        for (const fileId of merged) {
+            groupById.set(fileId, merged);
         }
     }
 
-    for (let i = 0; i < topByIndex.length; i++) {
-        const leftTop = topByIndex[i]!;
-        for (const neighbour of leftTop) {
-            const j = neighbour.other;
-            if (j <= i) {
-                continue;
-            }
-            const rightTop = topByIndex[j]!;
-            if (
-                !shouldConfirmClipEdge(
-                    leftTop,
-                    rightTop,
-                    i,
-                    j,
-                    neighbour.score,
-                )
-            ) {
-                continue;
-            }
-            upsertEdge(edgeByKey, i, j, neighbour.score);
+    // Walk the pairs again so groups come out tightest pair first.
+    const seen = new Set<number[]>();
+    const groups: number[][] = [];
+    for (const i of kept) {
+        const group = groupById.get(pairs.leftIds[i]!);
+        if (group && !seen.has(group)) {
+            seen.add(group);
+            groups.push(group);
         }
     }
-
-    const edges: Array<{ left: number; right: number; score: number }> = [];
-    for (const [key, score] of edgeByKey.entries()) {
-        const [left, right] = key.split(":").map(Number) as [number, number];
-        edges.push({ left, right, score });
-    }
-    edges.sort((a, b) => a.score - b.score);
-    return edges;
+    return groups;
 };
