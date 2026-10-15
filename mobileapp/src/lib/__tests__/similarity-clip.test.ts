@@ -81,17 +81,17 @@ describe("groupClipPairs", () => {
         ]);
     });
 
-    it("keeps a large all-close pile together with no size cap", () => {
-        const rows: Array<[number, number, number]> = [];
-        for (let left = 1; left <= 8; left++) {
-            for (let right = left + 1; right <= 8; right++) {
-                rows.push([left, right, 3]);
-            }
-        }
-        const groups = groupClipPairs(toPairs(rows), 12, everyFile);
-        expect(groups).toHaveLength(1);
-        expect([...groups[0]!].sort((a, b) => a - b)).toEqual([
-            1, 2, 3, 4, 5, 6, 7, 8,
+    it("gives each file at most one partner, closest first", () => {
+        const pairs = toPairs([
+            [1, 2, 3],
+            [1, 3, 4],
+            [2, 3, 5],
+            [3, 4, 6],
+            [1, 5, 2],
+        ]);
+        expect(groupClipPairs(pairs, 12, everyFile)).toEqual([
+            [1, 5],
+            [2, 3],
         ]);
     });
 

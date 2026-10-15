@@ -1,6 +1,6 @@
 /**
  * CLIP helpers for Similar: cosine distance, score mapping for the threshold
- * slider, all-pairs collection and complete-linkage grouping.
+ * slider, all-pairs collection and one-to-one pairing.
  *
  * Cosine distance is {@code 1 - dot} on L2-normalized embeddings (0 = identical).
  * Pair scores are {@code round(distance * 100)}, so the slider
@@ -101,74 +101,45 @@ export const collectClipPairs = (
 };
 
 /**
- * Group files whose pairs score at most {@link threshold}.
+ * Pair up files whose CLIP score is at most {@link threshold}.
  *
- * [Note: Complete-linkage Similar groups]
+ * [Note: One-to-one Similar pairs]
  *
- * Pairs are taken tightest first; two groups merge only when every file in
- * one is within the threshold of every file in the other. So every pair in a
- * group is within the threshold — groups never chain (A~B~C~D with A far
- * from D) the way connected components do, and no size cap is needed.
+ * Pairs are taken tightest first and each file joins at most one, so every
+ * result is a file and its closest match that is still unpaired. Results are
+ * never larger than two, so one duplicate can't pull unrelated photos in.
  *
  * @param isLive drops files no longer eligible since the pairs were collected
- * @returns file-id groups, tightest pair first
+ * @returns `[leftId, rightId]` pairs, tightest first
  */
 export const groupClipPairs = (
     pairs: ClipPairs,
     threshold: number,
     isLive: (fileId: number) => boolean,
 ): number[][] => {
-    const neighboursById = new Map<number, Set<number>>();
-    const addNeighbour = (fileId: number, otherId: number): void => {
-        const neighbours = neighboursById.get(fileId);
-        if (neighbours) {
-            neighbours.add(otherId);
-        } else {
-            neighboursById.set(fileId, new Set([otherId]));
-        }
-    };
     const kept: number[] = [];
     for (let i = 0; i < pairs.scores.length; i++) {
-        const leftId = pairs.leftIds[i]!;
-        const rightId = pairs.rightIds[i]!;
-        if (pairs.scores[i]! > threshold || !isLive(leftId) || !isLive(rightId)) {
-            continue;
+        if (
+            pairs.scores[i]! <= threshold &&
+            isLive(pairs.leftIds[i]!) &&
+            isLive(pairs.rightIds[i]!)
+        ) {
+            kept.push(i);
         }
-        addNeighbour(leftId, rightId);
-        addNeighbour(rightId, leftId);
-        kept.push(i);
     }
     kept.sort((a, b) => pairs.scores[a]! - pairs.scores[b]! || a - b);
 
-    const groupById = new Map<number, number[]>();
-    const areNeighbours = (fileId: number, otherId: number): boolean =>
-        neighboursById.get(fileId)!.has(otherId);
-    for (const i of kept) {
-        const leftGroup = groupById.get(pairs.leftIds[i]!) ?? [pairs.leftIds[i]!];
-        const rightGroup =
-            groupById.get(pairs.rightIds[i]!) ?? [pairs.rightIds[i]!];
-        if (
-            leftGroup === rightGroup ||
-            !leftGroup.every((fileId) =>
-                rightGroup.every((otherId) => areNeighbours(fileId, otherId)))
-        ) {
-            continue;
-        }
-        const merged = [...leftGroup, ...rightGroup];
-        for (const fileId of merged) {
-            groupById.set(fileId, merged);
-        }
-    }
-
-    // Walk the pairs again so groups come out tightest pair first.
-    const seen = new Set<number[]>();
+    const pairedIds = new Set<number>();
     const groups: number[][] = [];
     for (const i of kept) {
-        const group = groupById.get(pairs.leftIds[i]!);
-        if (group && !seen.has(group)) {
-            seen.add(group);
-            groups.push(group);
+        const leftId = pairs.leftIds[i]!;
+        const rightId = pairs.rightIds[i]!;
+        if (pairedIds.has(leftId) || pairedIds.has(rightId)) {
+            continue;
         }
+        pairedIds.add(leftId);
+        pairedIds.add(rightId);
+        groups.push([leftId, rightId]);
     }
     return groups;
 };

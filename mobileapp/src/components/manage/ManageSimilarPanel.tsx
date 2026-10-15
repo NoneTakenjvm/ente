@@ -51,8 +51,9 @@ type ScanProgress = {
 };
 
 /**
- * CLIP similar-photo groups: compare every pair of CLIP vectors once, then
- * group at the slider threshold (no rescan when it moves).
+ * CLIP similar-photo pairs: compare every pair of CLIP vectors once, then
+ * pair each photo with its closest match at the slider threshold (no rescan
+ * when it moves).
  */
 export function ManageSimilarPanel({
     showLoader,
@@ -224,7 +225,7 @@ export function ManageSimilarPanel({
                 "Scan CLIP embeddings" :
                 !pairs ?
                     "Ready when you are" :
-                    "No similar groups";
+                    "No similar pairs";
 
     const emptyDescription =
         similarBusy ?
@@ -233,7 +234,7 @@ export function ManageSimilarPanel({
                 "Run the CLIP scan in Settings, then tap Find similar." :
                 !pairs ?
                     "Tap Find similar to compare CLIP embeddings." :
-                    "No similar groups at this threshold.";
+                    "No similar pairs at this threshold.";
 
     return (
         <DedupGroupReview
@@ -317,11 +318,11 @@ export function ManageSimilarPanel({
                     <p className="text-xs text-muted-foreground">
                         CLIP {clipCount} / {eligibleCount} images · quality{" "}
                         {phashIndexedCount} / {eligibleCount} ·{" "}
-                        {plural(similarGroups.length, "similar group")}
+                        {plural(similarGroups.length, "similar pair")}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                        Similar groups photos by CLIP closeness alone. Scan
-                        library scores quality so the best copy is kept.
+                        Similar pairs each photo with its closest CLIP match.
+                        Scan library scores quality so the best copy is kept.
                     </p>
                     {similarBusy && similarProgress ? (
                         <div className="flex flex-col gap-1">
