@@ -24,7 +24,8 @@ const FIRST_PREFIX_REPORT = 200;
  * @param dim embedding width (CLIP is 512)
  * @param mode closest vs furthest
  * @param seed picks the random start when {@link startFileId} is absent
- * @param startFileId when present and in {@link ids}, used as the chain tip
+ * @param startFileId when present and in {@link ids}, the first file and the
+ * fixed reference every other file is ranked against (no chaining)
  * @param onPrefix called with the chain so far at 200, 400, 800… files
  */
 export const sortIdsByRelativePacked = (
@@ -47,13 +48,18 @@ export const sortIdsByRelativePacked = (
     const tip = new Float32Array(dim);
     const order: number[] = [];
     const preferClosest = mode === "closest";
+    // An explicit start file ("Set Relative") ranks everything against itself
+    // instead of chaining from the previous pick.
+    const anchored = startFileId !== undefined && ids.includes(startFileId);
     let remaining = count;
     let nextRow = pickStartIndex(ids, seed, startFileId);
     let nextPrefixReport = FIRST_PREFIX_REPORT;
 
     while (remaining > 0) {
         order.push(rowIds[nextRow]!);
-        tip.set(packed.subarray(nextRow * dim, nextRow * dim + dim));
+        if (!anchored || order.length === 1) {
+            tip.set(packed.subarray(nextRow * dim, nextRow * dim + dim));
+        }
         remaining -= 1;
         rowIds[nextRow] = rowIds[remaining]!;
         packed.copyWithin(nextRow * dim, remaining * dim, remaining * dim + dim);
