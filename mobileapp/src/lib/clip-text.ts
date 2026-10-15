@@ -16,7 +16,7 @@ import type { EnteFile } from "ente-media/file";
 export const KIT_TEXT_PRIOR_WEIGHT = 8;
 
 /** Untuned guard: random tags score about 0.5 on the seed percentile. */
-export const KIT_TEXT_PRIOR_MIN_PERCENTILE = 0.7;
+const KIT_TEXT_PRIOR_MIN_PERCENTILE = 0.7;
 
 /** `null` marks a failed load; absent means not requested yet. */
 const kitTextVectors = new Map<string, Float32Array | null>();

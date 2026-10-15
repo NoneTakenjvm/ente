@@ -19,7 +19,8 @@
         "postcss-load-config"
     ],
     "ignoreBinaries": [
-        "ffmpeg"
+        "ffmpeg",
+        "curl.exe"
     ],
     "rules": {
         "duplicates": "off"
