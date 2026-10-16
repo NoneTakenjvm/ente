@@ -1,13 +1,13 @@
 /// <reference lib="webworker" />
 
 /**
- * MobileCLIP-S2 image embeddings off the main thread (Transformers.js).
+ * MobileCLIP2-S2 image embeddings off the main thread (Transformers.js).
  *
  * Loads the vision tower only (`CLIPVisionModelWithProjection`) — S2 is a
  * FastViT, not ViT-B/16, so we use `image_embeds` rather than mean-pooled
  * patch tokens. WASM fp32 is loaded first so a failed WebGPU session cannot
  * poison Transformers.js `wasmInitPromise`. WebGPU fp32 is an upgrade after
- * that. Xenova pins vision to fp32 — quantized weights are skipped.
+ * that. The export ships fp32 weights only.
  * Batched ORT forwards are attempted; a failed batch permanently falls back
  * to one image at a time so the scan still completes.
  */
@@ -26,17 +26,27 @@ import type {
     ClipEmbeddingEmbedTextMessage,
     ClipEmbeddingInbound,
     ClipEmbeddingInitDoneMessage,
+    ClipEmbeddingWarmTextDoneMessage,
 } from "@/workers/clip-embedding-worker-types";
 import { errorMessage } from "@/lib/format";
 
-/** Xenova config pins `vision_model` to fp32; quantized S2 is unreliable. */
+/** The pinned export ships fp32 weights only (vision 143 MB). */
 const SESSION_DTYPE: ClipEmbeddingDtype = "fp32";
 
+/** fp32 only too: 254 MB, until an int8 text tower is hosted. */
+const TEXT_DTYPE = "fp32";
+
 /**
- * Text tower weights: int8 export, 64 MB vs 254 MB fp32. On public data
- * (COCO, MIRFLICKR) label retrieval AP was 58.4 vs 58.6 and 57.6 vs 59.3.
+ * Third-party Transformers.js export of MobileCLIP2-S2, pinned to a commit so
+ * the weights behind the persisted index cannot change. S2 lives in `onnx/s2`.
  */
-const TEXT_DTYPE = "q8";
+const MODEL_FILES = {
+    revision: "ba95759a5bdbaca53e9111e2550a76ec09c8fd9e",
+    subfolder: "onnx/s2",
+};
+
+/** The export ships no tokenizer; MobileCLIP2 keeps MobileCLIP's CLIP BPE. */
+const TOKENIZER_ID = "Xenova/mobileclip_s2";
 
 type EmbedTensor = {
     data: Float32Array | number[];
@@ -163,11 +173,11 @@ const loadVisionSession = async (
     );
     const nextProcessor = (await AutoProcessor.from_pretrained(
         KIT_EMBEDDING_MODEL_ID,
-        {},
+        { revision: MODEL_FILES.revision },
     )) as unknown as ImageProcessor;
     const nextModel = (await CLIPVisionModelWithProjection.from_pretrained(
         KIT_EMBEDDING_MODEL_ID,
-        { device, dtype },
+        { ...MODEL_FILES, device, dtype },
     )) as unknown as VisionModel;
     processor = nextProcessor;
     visionModel = nextModel;
@@ -366,7 +376,7 @@ const embedBatchBytes = async (
     };
 };
 
-/** Loaded on the first `embed-text` request only; a failed load is retried. */
+/** Loaded on the first `warm-text` or `embed-text` request; a failed load is retried. */
 let textSessionPromise:
     Promise<{ tokenizer: TextTokenizer; model: TextModel }> | undefined;
 
@@ -380,11 +390,11 @@ const loadTextSession = (): Promise<{
             "@huggingface/transformers"
         );
         const tokenizer = (await AutoTokenizer.from_pretrained(
-            KIT_EMBEDDING_MODEL_ID,
+            TOKENIZER_ID,
         )) as unknown as TextTokenizer;
         const model = (await CLIPTextModelWithProjection.from_pretrained(
             KIT_EMBEDDING_MODEL_ID,
-            { device: "wasm", dtype: TEXT_DTYPE },
+            { ...MODEL_FILES, device: "wasm", dtype: TEXT_DTYPE },
         )) as unknown as TextModel;
         return { tokenizer, model };
     })().catch((error: unknown) => {
@@ -423,6 +433,21 @@ const handleEmbedText = (message: ClipEmbeddingEmbedTextMessage): void => {
             done.error = errorMessage(error, "embed-text failed");
         }
         self.postMessage(done, done.vector ? [done.vector.buffer as ArrayBuffer] : []);
+    })();
+};
+
+const handleWarmText = (id: number): void => {
+    void (async () => {
+        const done: ClipEmbeddingWarmTextDoneMessage = {
+            kind: "warm-text-done",
+            id,
+        };
+        try {
+            await loadTextSession();
+        } catch (error) {
+            done.error = errorMessage(error, "warm-text failed");
+        }
+        self.postMessage(done);
     })();
 };
 
@@ -488,6 +513,10 @@ self.onmessage = (event: MessageEvent<ClipEmbeddingInbound>): void => {
     }
     if (message.kind === "embed-text") {
         handleEmbedText(message);
+        return;
+    }
+    if (message.kind === "warm-text") {
+        handleWarmText(message.id);
         return;
     }
     handleEmbedBatch(message);

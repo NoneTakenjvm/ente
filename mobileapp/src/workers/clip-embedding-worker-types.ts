@@ -29,10 +29,17 @@ export type ClipEmbeddingEmbedTextMessage = {
     text: string;
 };
 
+/** Load the CLIP text tower ahead of the first `embed-text` request. */
+type ClipEmbeddingWarmTextMessage = {
+    kind: "warm-text";
+    id: number;
+};
+
 export type ClipEmbeddingInbound =
     ClipEmbeddingInitMessage |
     ClipEmbeddingEmbedBatchMessage |
-    ClipEmbeddingEmbedTextMessage;
+    ClipEmbeddingEmbedTextMessage |
+    ClipEmbeddingWarmTextMessage;
 
 export type ClipEmbeddingInitDoneMessage = {
     kind: "init-done";
@@ -65,7 +72,14 @@ export type ClipEmbeddingEmbedTextDoneMessage = {
     error?: string;
 };
 
+export type ClipEmbeddingWarmTextDoneMessage = {
+    kind: "warm-text-done";
+    id: number;
+    error?: string;
+};
+
 export type ClipEmbeddingOutbound =
     ClipEmbeddingInitDoneMessage |
     ClipEmbeddingEmbedBatchDoneMessage |
-    ClipEmbeddingEmbedTextDoneMessage;
+    ClipEmbeddingEmbedTextDoneMessage |
+    ClipEmbeddingWarmTextDoneMessage;

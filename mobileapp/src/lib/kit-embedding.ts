@@ -3,9 +3,8 @@ import { registerReset } from "@/lib/session-lifecycle";
  * On-device CLIP image embeddings for kit nearness ranking.
  *
  * Inference runs in {@link ../workers/clip-embedding.worker.ts} (Transformers.js
- * + Xenova MobileCLIP-S2 vision tower). Loads WASM `fp32` first (ORT init),
- * then upgrades to WebGPU `fp32` if the FastViT graph runs. Quantized S2 is
- * skipped — the Xenova config pins vision to fp32.
+ * + MobileCLIP2-S2 vision tower). Loads WASM `fp32` first (ORT init),
+ * then upgrades to WebGPU `fp32` if the FastViT graph runs.
  * Scan uses an ORT **batch size** (Auto or 4/8/12/16): multiple thumbnails go
  * through one forward pass. Up to two batches stay in flight so JPEG decode of
  * the next overlaps GPU work on the current. Embeddings are flushed to IDB as
@@ -58,6 +57,7 @@ import type {
     ClipEmbeddingInbound,
     ClipEmbeddingInitDoneMessage,
     ClipEmbeddingOutbound,
+    ClipEmbeddingWarmTextDoneMessage,
 } from "@/workers/clip-embedding-worker-types";
 
 export { KIT_EMBEDDING_DIMS, KIT_EMBEDDING_MODEL_ID };
@@ -237,6 +237,19 @@ export const embedTextInWorker = async (text: string): Promise<Float32Array> => 
         throw new Error(done.error ?? "embed-text returned no vector");
     }
     return done.vector;
+};
+
+/**
+ * Start loading the CLIP text tower so the first {@link embedTextInWorker}
+ * call doesn't wait for the model download.
+ */
+export const warmTextModelInWorker = async (): Promise<void> => {
+    const done = (await clipWorker.request({
+        kind: "warm-text",
+    })) as ClipEmbeddingWarmTextDoneMessage;
+    if (done.error) {
+        throw new Error(done.error);
+    }
 };
 
 const emptyMeta = (): PersistedEmbeddingMeta => ({

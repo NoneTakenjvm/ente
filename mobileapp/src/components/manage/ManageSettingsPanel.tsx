@@ -186,14 +186,14 @@ export function ManageSettingsPanel(): JSX.Element {
                                 clipSmokeToastShown.current = true;
                                 if (progress.device === "webgpu") {
                                     toast.success(
-                                        `MobileCLIP-S2 on WebGPU (${dtype})`,
+                                        `MobileCLIP2-S2 on WebGPU (${dtype})`,
                                     );
                                 } else {
                                     const reason = getKitEmbeddingWebGpuSkipReason();
                                     toast.message(
                                         reason ?
-                                            `MobileCLIP-S2 on WASM — ${reason}` :
-                                            "MobileCLIP-S2 on WASM",
+                                            `MobileCLIP2-S2 on WASM — ${reason}` :
+                                            "MobileCLIP2-S2 on WASM",
                                     );
                                 }
                             }
@@ -443,8 +443,8 @@ export function ManageSettingsPanel(): JSX.Element {
                 <CardHeader>
                     <CardTitle>Kit nearness (CLIP)</CardTitle>
                     <CardDescription>
-                        Smoke test: MobileCLIP-S2 (`{KIT_EMBEDDING_MODEL_ID}`).
-                        Changing model drops the old ViT-B/16 index — rescan
+                        Smoke test: MobileCLIP2-S2 (`{KIT_EMBEDDING_MODEL_ID}`).
+                        Changing model drops the old index — rescan
                         required. Loads WASM fp32 first, then upgrades to
                         WebGPU fp32 if the FastViT graph runs. Status line shows the backend that actually
                         loaded; “sequential” means a batched GPU forward failed

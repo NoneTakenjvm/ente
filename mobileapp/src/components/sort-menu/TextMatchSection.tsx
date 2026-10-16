@@ -2,6 +2,7 @@ import { useState, type JSX } from "react";
 import { OptionsSection, type SectionState } from "@/components/ScopeFilterMenu";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { warmTextModelInWorker } from "@/lib/kit-embedding";
 import { useUIStore } from "@/stores/ui-store";
 
 /** Sort by CLIP match to a typed description. */
@@ -33,6 +34,11 @@ export function TextMatchSection({
                     onChange={(event) => setDraft(event.target.value)}
                     placeholder="Describe photos…"
                     className="h-8"
+                    onFocus={() => {
+                        warmTextModelInWorker().catch((error: unknown) => {
+                            console.warn("Text model preload failed", error);
+                        });
+                    }}
                     onKeyDown={(event) => {
                         event.stopPropagation();
                         if (event.key === "Enter") {

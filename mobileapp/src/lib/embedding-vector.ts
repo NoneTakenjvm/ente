@@ -1,5 +1,5 @@
 /** CLIP model id; changing it invalidates the persisted embedding index. */
-export const KIT_EMBEDDING_MODEL_ID = "Xenova/mobileclip_s2";
+export const KIT_EMBEDDING_MODEL_ID = "plhery/mobileclip2-onnx";
 
 export const KIT_EMBEDDING_DIMS = 512;
 
