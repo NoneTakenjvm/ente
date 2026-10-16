@@ -48,6 +48,9 @@ const MODEL_FILES = {
 /** The export ships no tokenizer; MobileCLIP2 keeps MobileCLIP's CLIP BPE. */
 const TOKENIZER_ID = "Xenova/mobileclip_s2";
 
+/** Pinned like {@link MODEL_FILES}: tokenizer changes would shift text vectors. */
+const TOKENIZER_REVISION = "0c311c620b36a2270b851db7bef9135f3eaae5d7";
+
 type EmbedTensor = {
     data: Float32Array | number[];
     dims: number[];
@@ -149,7 +152,11 @@ const resetSession = async (): Promise<void> => {
     }
 };
 
-const applyWasmThreadLimit = async (): Promise<void> => {
+/**
+ * Point ORT at the copies in `public/ort` (no CDN fetch of code that sees
+ * decrypted photos) and cap wasm threads. Runs before every session load.
+ */
+const configureOrt = async (): Promise<void> => {
     const { env } = await import("@huggingface/transformers");
     const cores =
         typeof navigator !== "undefined" ?
@@ -157,6 +164,7 @@ const applyWasmThreadLimit = async (): Promise<void> => {
             2;
     const wasm = env.backends?.onnx?.wasm;
     if (wasm) {
+        wasm.wasmPaths = "/ort/";
         wasm.numThreads = Math.min(4, Math.max(1, cores));
     }
 };
@@ -165,9 +173,7 @@ const loadVisionSession = async (
     device: ClipEmbeddingDevice,
     dtype: ClipEmbeddingDtype,
 ): Promise<void> => {
-    if (device === "wasm") {
-        await applyWasmThreadLimit();
-    }
+    await configureOrt();
     const { AutoProcessor, CLIPVisionModelWithProjection } = await import(
         "@huggingface/transformers"
     );
@@ -385,12 +391,13 @@ const loadTextSession = (): Promise<{
     model: TextModel;
 }> => {
     textSessionPromise ??= (async () => {
-        await applyWasmThreadLimit();
+        await configureOrt();
         const { AutoTokenizer, CLIPTextModelWithProjection } = await import(
             "@huggingface/transformers"
         );
         const tokenizer = (await AutoTokenizer.from_pretrained(
             TOKENIZER_ID,
+            { revision: TOKENIZER_REVISION },
         )) as unknown as TextTokenizer;
         const model = (await CLIPTextModelWithProjection.from_pretrained(
             KIT_EMBEDDING_MODEL_ID,

@@ -126,14 +126,14 @@ const TEXT_MODELS: TextModelSpec[] = [
         // Community ONNX export; same open_clip tokenizer as Xenova/mobileclip_s2 (context 77).
         name: "mobileclip2-s2",
         prompt: (subject) => `a photo of ${subject}`,
-        fp32Only: true,
         load: async (lib) => {
-            const id = await prepareMobileClip2(lib);
+            // Sets `env.localModelPath`; the hub-layout folder (with its q8 text tower) holds the same fp32 files.
+            await prepareMobileClip2(lib);
             return makeTextEmbedder(
                 await tokenizerOf(lib, KIT_EMBEDDING_MODEL_ID),
-                await lib.CLIPTextModelWithProjection.from_pretrained(id, {
+                await lib.CLIPTextModelWithProjection.from_pretrained("mobileclip2-s2-hub", {
                     device: "cpu",
-                    dtype: "fp32",
+                    dtype: TEXT_DTYPE,
                     model_file_name: "text_model",
                 }),
                 "text_embeds",

@@ -28,6 +28,7 @@ export default defineConfig(
         ignores: [
             ".next/**",
             "out/**",
+            "public/ort/**",
             "build/**",
             "node_modules/**",
             "next-env.d.ts",

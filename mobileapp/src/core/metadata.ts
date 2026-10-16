@@ -22,6 +22,22 @@ export const getPublicMetadata = (
 ): FilePublicMagicMetadataData => file.pubMagicMetadata?.data ?? {};
 
 /**
+ * Public magic metadata to start a derived reupload (crop, compress) from.
+ *
+ * Keeps every key of {@link file} (caption, location and date overrides,
+ * uploader name, unknown keys from other clients) so the replacement loses
+ * nothing. Drops `sv`: it records that the old bytes were looked at for HLS
+ * generation, which says nothing about the new bytes. `w` and `h` are kept
+ * here but the caller overwrites them with the new dimensions.
+ */
+export const carriedPublicMagicData = (
+    file: EnteFile,
+): FilePublicMagicMetadataData => ({
+    ...file.pubMagicMetadata?.data,
+    sv: undefined,
+});
+
+/**
  * Sort key by the file's first upload time, newest first.
  *
  * Prefers the `uploadedAt` recorded in public magic metadata (stamped by this

@@ -29,6 +29,13 @@ export interface PostEnteFileRequest {
         data: string;
         header: string;
     };
+    /** Private magic metadata (e.g. visibility), same shape as the public one. */
+    magicMetadata?: {
+        version: number;
+        count: number;
+        data: string;
+        header: string;
+    };
 }
 
 /** Bound PUTs so a stalled S3 connection cannot freeze the batch forever. */

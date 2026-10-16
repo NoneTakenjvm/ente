@@ -27,7 +27,11 @@ import {
     putEnteFileUpdate,
     type PostEnteFileRequest,
 } from "./remote";
-import { fileUploadSortTime, updatePublicMetadata } from "../metadata";
+import {
+    carriedPublicMagicData,
+    fileUploadSortTime,
+    updatePublicMetadata,
+} from "../metadata";
 import { buildOrganizerUpdate } from "@/lib/tag-writes";
 
 interface UploadJpegOptions {
@@ -40,6 +44,11 @@ interface UploadJpegOptions {
     width: number;
     height: number;
     organizerTags?: string[];
+    /**
+     * The file a derived reupload replaces. Its public and private magic
+     * metadata (caption, archive state, keys from other clients) carry over.
+     */
+    sourceFile?: EnteFile;
     /**
      * When set, this is a derived reupload of an existing file: the source
      * file's upload time is preserved so the new file keeps its position, and
@@ -78,6 +87,7 @@ const buildPublicMagicData = (
     options: UploadJpegOptions,
 ): Record<string, unknown> => {
     const data: Record<string, unknown> = {
+        ...(options.sourceFile && carriedPublicMagicData(options.sourceFile)),
         w: ensureInteger(options.width),
         h: ensureInteger(options.height),
         // Original uploads stamp their upload time once; derived reuploads
@@ -118,13 +128,20 @@ const uploadJpegImage = async (
     const publicMagicMetadata = createMagicMetadata(
         buildPublicMagicData(options),
     );
+    const privateMagicMetadata = createMagicMetadata(
+        options.sourceFile?.magicMetadata?.data,
+    );
     const [
         { encryptedFile, encryptedThumbnail, encryptedMetadata },
         encryptedPubMagicData,
+        encryptedPrivateMagicData,
         encryptedFileKey,
     ] = await Promise.all([
         encryptImageAndThumbnail(crypto, jpegBytes, fileKey, options),
         crypto.encryptMetadataJSON(publicMagicMetadata.data, fileKey),
+        privateMagicMetadata.count ?
+            crypto.encryptMetadataJSON(privateMagicMetadata.data, fileKey) :
+            undefined,
         crypto.encryptBox(fileKey, collection.key),
     ]);
     const { fileObjectKey, thumbnailObjectKey, thumbnailDecryptionHeader } =
@@ -155,6 +172,12 @@ const uploadJpegImage = async (
             count: publicMagicMetadata.count,
             data: encryptedPubMagicData.encryptedData,
             header: encryptedPubMagicData.decryptionHeader,
+        },
+        magicMetadata: encryptedPrivateMagicData && {
+            version: privateMagicMetadata.version,
+            count: privateMagicMetadata.count,
+            data: encryptedPrivateMagicData.encryptedData,
+            header: encryptedPrivateMagicData.decryptionHeader,
         },
     };
 
@@ -190,6 +213,7 @@ const uploadDerivedImage = async (
         width: dimensions.width,
         height: dimensions.height,
         organizerTags: options.organizerTags,
+        sourceFile,
         uploadedAt: fileUploadSortTime(sourceFile),
         editedTime: sourceFile.pubMagicMetadata?.data.editedTime,
         editedName: sourceFile.pubMagicMetadata?.data.editedName,

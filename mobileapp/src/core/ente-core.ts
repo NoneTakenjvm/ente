@@ -18,6 +18,7 @@ import {
     type CollectionDiffResult,
 } from "./api/files";
 import { HttpClient, resolveApiOrigin } from "./api/http";
+import { logoutRemote } from "./api/logout";
 import {
     decryptFileCiphertext,
     fetchEncryptedFile,
@@ -86,8 +87,12 @@ export class EnteCore {
     async login(credentials: LoginCredentials): Promise<Session> {
         // Lazy so SRP (and its node crypto polyfills) stay out of the app shell.
         const { loginSRP } = await import("./auth/srp");
-        const userID = await loginSRP(this.http, this.session, credentials);
-        return { userID };
+        return loginSRP(this.http, this.session, credentials);
+    }
+
+    /** Revoke {@link authToken} on the server. Throws on failure. */
+    remoteLogout(authToken: string): Promise<void> {
+        return logoutRemote(this.http, authToken);
     }
 
     async listCollections(): Promise<Collection[]> {

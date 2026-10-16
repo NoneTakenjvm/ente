@@ -1,4 +1,4 @@
-import { useEffect, useState, type JSX } from "react";
+import { useEffect, useState, type FormEvent, type JSX } from "react";
 import { useRouter } from "next/router";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -9,58 +9,52 @@ import {
     CardHeader,
     CardTitle,
 } from "@/components/ui/card";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import {
-    getLockedSessionEmail,
-    hasPersistedSession,
-} from "@/lib/session-persistence";
-import {
-    isSessionAuthenticated,
-    useSessionStore,
-} from "@/stores/session-store";
+import { loadPersistedSession } from "@/lib/session-persistence";
+import { useSessionStore } from "@/stores/session-store";
 import { errorMessage } from "@/lib/format";
 
 interface UnlockFormProps {
     onUseDifferentAccount: () => void;
 }
 
+/** Asks for the password only; the master key is derived locally. */
 export function UnlockForm({
     onUseDifferentAccount,
 }: UnlockFormProps): JSX.Element {
     const router = useRouter();
     const unlock = useSessionStore((s) => s.unlock);
     const signOut = useSessionStore((s) => s.logout);
+    const [password, setPassword] = useState<string>("");
     const [loading, setLoading] = useState<boolean>(false);
     const [unlockError, setUnlockError] = useState<string | undefined>();
-
-    const email = getLockedSessionEmail();
+    const [email] = useState<string | undefined>(
+        () => loadPersistedSession()?.email,
+    );
 
     useEffect(() => {
-        if (!hasPersistedSession()) {
+        if (!loadPersistedSession()) {
             onUseDifferentAccount();
         }
     }, [onUseDifferentAccount]);
 
-    const handleUnlock = async (): Promise<void> => {
+    const handleUnlock = async (event: FormEvent): Promise<void> => {
+        event.preventDefault();
         setLoading(true);
         setUnlockError(undefined);
         try {
-            const restored = await unlock();
-            if (restored && isSessionAuthenticated()) {
-                await router.replace("/gallery");
-                return;
-            }
-            setUnlockError("Could not restore your session. Sign in again.");
+            await unlock(password);
+            await router.replace("/gallery");
         } catch (error) {
-            setUnlockError(
-                errorMessage(error, "Unlock failed"),
-            );
-        } finally {
+            setUnlockError(errorMessage(error, "Unlock failed"));
             setLoading(false);
         }
     };
 
-    const handleDifferentAccount = (): void => {
+    const handleSignOut = (): void => {
+        setLoading(true);
         // Wait for the clear so it cannot wipe a login started right after.
         void signOut().then(onUseDifferentAccount);
     };
@@ -71,42 +65,60 @@ export function UnlockForm({
                 <CardTitle className="text-xl">NTPhotos</CardTitle>
                 <CardDescription>
                     {email ?
-                        `Unlock session for ${email}` :
-                        "Unlock your session"}
+                        `Enter your password to unlock ${email}` :
+                        "Enter your password to unlock"}
                 </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3">
-                {unlockError ? (
-                    <Alert variant="destructive">
-                        <AlertDescription>{unlockError}</AlertDescription>
-                    </Alert>
-                ) : null}
+            <CardContent>
+                <form onSubmit={(event) => void handleUnlock(event)}>
+                    <FieldGroup>
+                        <Field>
+                            <FieldLabel htmlFor="unlock-password">
+                                Password
+                            </FieldLabel>
+                            <Input
+                                id="unlock-password"
+                                type="password"
+                                autoComplete="current-password"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                required
+                                disabled={loading}
+                            />
+                        </Field>
 
-                <Button
-                    type="button"
-                    className="w-full"
-                    disabled={loading}
-                    onClick={() => void handleUnlock()}
-                >
-                    {loading ? (
-                        <>
-                            <Spinner data-icon="inline-start" />
-                            Unlocking…
-                        </>
-                    ) : (
-                        "Unlock"
-                    )}
-                </Button>
+                        {unlockError ? (
+                            <Alert variant="destructive">
+                                <AlertDescription>{unlockError}</AlertDescription>
+                            </Alert>
+                        ) : null}
 
-                <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full"
-                    disabled={loading}
-                    onClick={handleDifferentAccount}
-                >
-                    Use a different account
-                </Button>
+                        <Button
+                            type="submit"
+                            className="w-full"
+                            disabled={loading}
+                        >
+                            {loading ? (
+                                <>
+                                    <Spinner data-icon="inline-start" />
+                                    Unlocking…
+                                </>
+                            ) : (
+                                "Unlock"
+                            )}
+                        </Button>
+
+                        <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full"
+                            disabled={loading}
+                            onClick={handleSignOut}
+                        >
+                            Sign out / use a different account
+                        </Button>
+                    </FieldGroup>
+                </form>
             </CardContent>
         </Card>
     );

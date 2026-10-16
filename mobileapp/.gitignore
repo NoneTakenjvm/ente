@@ -6,6 +6,7 @@
 /out/
 /public/sw*
 /public/swe-worker*
+/public/ort/
 
 # production
 /build

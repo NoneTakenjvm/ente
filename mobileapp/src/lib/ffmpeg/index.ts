@@ -6,6 +6,11 @@ import { withTimeout } from "@/lib/with-timeout";
 import { createWorkerIdleTimer } from "@/lib/worker-idle-timer";
 
 const CORE_BASE = "https://assets.ente.com/ffmpeg-core-0.12.10/";
+/** SHA-256 of the single-thread UMD build, identical to npm `@ffmpeg/core@0.12.10`. */
+const CORE_JS_SHA256 =
+    "b266ab5b952555881dd6310663986994a182acb2b7ff25cf10a25f7a37ac2b21";
+const CORE_WASM_SHA256 =
+    "9f57947a5bd530d8f00c5b3f2cb2a3492faa7e5d823315342d6a8656d0a6b7b7";
 /** Reclaim the WASM heap shortly after the last job (mobile Chrome). */
 const FFMPEG_IDLE_TERMINATE_MS = 2_500;
 const THUMB_FRAME_MAX_EDGE = 512;
@@ -39,16 +44,50 @@ export const terminateFFmpeg = async (): Promise<void> => {
     }
 };
 
+/** Download a core file, check its SHA-256 and return a blob URL of the verified bytes. */
+const fetchVerifiedCoreUrl = async (
+    name: string,
+    mimeType: string,
+    expectedSha256: string,
+): Promise<string> => {
+    const response = await fetch(`${CORE_BASE}${name}`);
+    if (!response.ok) {
+        throw new Error(`ffmpeg core ${name} download failed (${response.status})`);
+    }
+    const bytes = await response.arrayBuffer();
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+    const actualSha256 = Array.from(digest, (byte) =>
+        byte.toString(16).padStart(2, "0")).join("");
+    if (actualSha256 !== expectedSha256) {
+        throw new Error(`ffmpeg core ${name} failed its integrity check`);
+    }
+    return URL.createObjectURL(new Blob([bytes], { type: mimeType }));
+};
+
 const getFFmpeg = (): Promise<FFmpeg> => {
     idleTimer.clear();
     if (!ffmpegPromise) {
         const loading = (async (): Promise<FFmpeg> => {
-            const ffmpeg = new FFmpeg();
-            await ffmpeg.load({
-                coreURL: `${CORE_BASE}ffmpeg-core.js`,
-                wasmURL: `${CORE_BASE}ffmpeg-core.wasm`,
-            });
-            return ffmpeg;
+            const [coreURL, wasmURL] = await Promise.all([
+                fetchVerifiedCoreUrl(
+                    "ffmpeg-core.js",
+                    "text/javascript",
+                    CORE_JS_SHA256,
+                ),
+                fetchVerifiedCoreUrl(
+                    "ffmpeg-core.wasm",
+                    "application/wasm",
+                    CORE_WASM_SHA256,
+                ),
+            ]);
+            try {
+                const ffmpeg = new FFmpeg();
+                await ffmpeg.load({ coreURL, wasmURL });
+                return ffmpeg;
+            } finally {
+                URL.revokeObjectURL(coreURL);
+                URL.revokeObjectURL(wasmURL);
+            }
         })();
         ffmpegPromise = loading;
         // Drop a failed load so the next call retries instead of reusing it.

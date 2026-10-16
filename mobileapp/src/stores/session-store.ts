@@ -1,22 +1,25 @@
 import { create } from "zustand";
 import type { StateCreator } from "zustand";
 import {
+    clearSessionStorage,
+    haveMasterKeyInSession,
+    masterKeyFromSession,
+    saveMasterKeyInSessionAndSafeStore,
+} from "ente-base/session";
+import {
     getEnteCore,
     resetEnteCore,
     type LoginCredentials,
 } from "@/core";
+import { unlockMasterKey } from "@/core/auth/key-attributes";
 import { wipeOrganizerDB, wipeOrganizerDBForUser } from "@/db";
 import { clearSessionCacheKey } from "@/lib/cache-key";
 import { clearAllLocalMediaOverrides } from "@/lib/local-media-overrides";
 import {
     clearPersistedSession,
-    clearPersistedWrapKey,
-    clearSessionLock,
-    getLockedSessionEmail,
-    isSessionLocked,
     loadPersistedSession,
-    markSessionLocked,
     savePersistedSession,
+    type PersistedSession,
 } from "@/lib/session-persistence";
 import { wipeSiteStorage } from "@/lib/site-wipe";
 import { clearThumbnailCache } from "@/lib/thumbnail-cache";
@@ -36,11 +39,16 @@ interface SessionState {
     email: string | undefined;
     errorMessage: string | undefined;
     login: (credentials: LoginCredentials) => Promise<void>;
-    /** Flush, then clear the session; resolves once local state is gone. */
+    /**
+     * Flush, revoke the token on the server, wipe this user's local data and
+     * all saved credentials. Best-effort: never throws.
+     */
     logout: () => Promise<void>;
-    /** Wipe in-memory keys and mark locked; resolves when flush + clear finish. */
+    /** Wipe in-memory and tab-session keys; the password is needed to unlock. */
     lock: () => Promise<void>;
-    unlock: () => Promise<boolean>;
+    /** Derive the master key from the password locally; throws if it is wrong. */
+    unlock: (password: string) => Promise<void>;
+    /** Restore from the tab's session key (reload); false when locked or signed out. */
     restoreFromPersistence: () => Promise<boolean>;
     panic: () => Promise<void>;
 }
@@ -66,138 +74,152 @@ const signedOutState = {
     errorMessage: undefined,
 } as const;
 
-const persistCurrentSession = async (
-    authToken: string,
-    masterKey: string,
-    userID: number,
-    email: string,
-): Promise<void> => {
-    await savePersistedSession({
-        authToken,
-        masterKey,
-        userID,
-        email,
-    });
-    clearSessionLock();
+/**
+ * [Note: Do not throw during logout] Run one logout step, ignoring failure so a
+ * network or storage error cannot leave the user signed in.
+ */
+const attempt = async (step: () => Promise<unknown>): Promise<void> => {
+    try {
+        await step();
+    } catch {
+        // Best-effort.
+    }
 };
 
-const createSessionStore: StateCreator<SessionState> = (set) => ({
-    status: "idle",
-    userID: undefined,
-    email: undefined,
-    errorMessage: undefined,
-
-    login: async (credentials: LoginCredentials): Promise<void> => {
-        set({
-            status: "loading",
-            errorMessage: undefined,
-            email: credentials.email,
-        });
-        try {
-            const core = getEnteCore();
-            const session = await core.login(credentials);
-            const { authToken, masterKey } = core.getSessionCredentials();
-            await persistCurrentSession(
-                authToken,
-                masterKey,
-                session.userID,
-                credentials.email,
-            );
-            resetUnauthorizedGate();
-            set({
-                status: "authenticated",
-                userID: session.userID,
-                email: credentials.email,
-                errorMessage: undefined,
-            });
-        } catch (error) {
-            set({
-                status: "error",
-                userID: undefined,
-                errorMessage:
-                    errorMessage(error, "Login failed"),
-            });
-            throw error;
-        }
-    },
-
-    logout: async (): Promise<void> => {
-        try {
-            await flushAll();
-        } catch {
-            // Best-effort — still clear local session.
-        }
-        clearPersistedSession();
-        clearSessionLock();
-        clearLocalState();
-        set(signedOutState);
-    },
-
-    lock: async (): Promise<void> => {
-        const { email, status } = useSessionStore.getState();
-        if (status !== "authenticated" || !email) {
-            return;
-        }
-        try {
-            await flushAll();
-        } catch {
-            // Best-effort.
-        }
-        clearMemoryState();
-        markSessionLocked(email);
-        set({
-            status: "idle",
-            userID: undefined,
-            errorMessage: undefined,
-        });
-    },
-
-    unlock: async (): Promise<boolean> => {
-        clearSessionLock();
-        return useSessionStore.getState().restoreFromPersistence();
-    },
-
-    restoreFromPersistence: async (): Promise<boolean> => {
-        if (getEnteCore().isAuthenticated()) {
-            return true;
-        }
-        if (isSessionLocked()) {
-            return false;
-        }
-        const payload = await loadPersistedSession();
-        if (!payload) {
-            return false;
-        }
-        getEnteCore().restoreSession(
-            payload.authToken,
-            payload.masterKey,
-            payload.userID,
-        );
+const createSessionStore: StateCreator<SessionState> = (set) => {
+    const startSession = (
+        { authToken, userID, email }: PersistedSession,
+        masterKey: string,
+    ): void => {
+        getEnteCore().restoreSession(authToken, masterKey, userID);
         resetUnauthorizedGate();
         set({
             status: "authenticated",
-            userID: payload.userID,
-            email: payload.email,
+            userID,
+            email,
             errorMessage: undefined,
         });
-        return true;
-    },
+    };
 
-    panic: async (): Promise<void> => {
-        const userId = useSessionStore.getState().userID;
-        clearPersistedSession();
-        clearPersistedWrapKey();
-        clearSessionLock();
-        await wipeSiteStorage();
-        if (userId !== undefined) {
-            await wipeOrganizerDBForUser(userId);
-        } else {
-            await wipeOrganizerDB();
-        }
-        clearLocalState();
-        set(signedOutState);
-    },
-});
+    return {
+        status: "idle",
+        userID: undefined,
+        email: undefined,
+        errorMessage: undefined,
+
+        login: async (credentials: LoginCredentials): Promise<void> => {
+            set({
+                status: "loading",
+                errorMessage: undefined,
+                email: credentials.email,
+            });
+            try {
+                const core = getEnteCore();
+                const { userID, keyAttributes } =
+                    await core.login(credentials);
+                const { authToken, masterKey } = core.getSessionCredentials();
+                savePersistedSession({
+                    authToken,
+                    userID,
+                    email: credentials.email,
+                    keyAttributes,
+                });
+                await saveMasterKeyInSessionAndSafeStore(masterKey);
+                resetUnauthorizedGate();
+                set({
+                    status: "authenticated",
+                    userID,
+                    email: credentials.email,
+                    errorMessage: undefined,
+                });
+            } catch (error) {
+                set({
+                    status: "error",
+                    userID: undefined,
+                    errorMessage:
+                        errorMessage(error, "Login failed"),
+                });
+                throw error;
+            }
+        },
+
+        logout: async (): Promise<void> => {
+            const persisted = loadPersistedSession();
+            const userID = useSessionStore.getState().userID ?? persisted?.userID;
+            await attempt(flushAll);
+            if (persisted) {
+                await attempt(() => getEnteCore().remoteLogout(persisted.authToken));
+            }
+            clearPersistedSession();
+            clearSessionStorage();
+            clearLocalState();
+            if (userID !== undefined) {
+                await attempt(() => wipeOrganizerDBForUser(userID));
+            }
+            set(signedOutState);
+        },
+
+        lock: async (): Promise<void> => {
+            if (useSessionStore.getState().status !== "authenticated") {
+                return;
+            }
+            await attempt(flushAll);
+            clearMemoryState();
+            clearSessionStorage();
+            set({
+                status: "idle",
+                userID: undefined,
+                errorMessage: undefined,
+            });
+        },
+
+        unlock: async (password: string): Promise<void> => {
+            const persisted = loadPersistedSession();
+            if (!persisted) {
+                throw new Error("No saved session. Sign in again.");
+            }
+            const masterKey = await unlockMasterKey(
+                password,
+                persisted.keyAttributes,
+            );
+            await saveMasterKeyInSessionAndSafeStore(masterKey);
+            startSession(persisted, masterKey);
+        },
+
+        restoreFromPersistence: async (): Promise<boolean> => {
+            if (getEnteCore().isAuthenticated()) {
+                return true;
+            }
+            const persisted = loadPersistedSession();
+            if (!persisted) {
+                return false;
+            }
+            const masterKey = await masterKeyFromSession().catch(
+                () => undefined,
+            );
+            if (!masterKey) {
+                return false;
+            }
+            startSession(persisted, masterKey);
+            return true;
+        },
+
+        panic: async (): Promise<void> => {
+            const userId = useSessionStore.getState().userID;
+            clearPersistedSession();
+            clearSessionStorage();
+            if (userId !== undefined) {
+                await wipeOrganizerDBForUser(userId);
+            } else {
+                await wipeOrganizerDB();
+            }
+            // After the DB is closed above, so its delete is not blocked.
+            await wipeSiteStorage();
+            clearLocalState();
+            set(signedOutState);
+        },
+    };
+};
 
 export const useSessionStore = create<SessionState>(createSessionStore);
 
@@ -211,9 +233,11 @@ if (typeof window !== "undefined") {
 export const isSessionAuthenticated = (): boolean =>
     getEnteCore().isAuthenticated();
 
-/** True when credentials are saved but the session is locked. */
+/** True when an account is saved but its master key needs the password. */
 export const isSessionLockedForLogin = (): boolean =>
-    isSessionLocked() && getLockedSessionEmail() !== undefined;
+    !isSessionAuthenticated() &&
+    !haveMasterKeyInSession() &&
+    loadPersistedSession() !== undefined;
 
 /**
  * Clear stale Zustand session state when the core was reset (e.g. HMR, tab restore).

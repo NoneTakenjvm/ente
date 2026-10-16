@@ -1,7 +1,6 @@
 import {
     boxSealOpenBytes,
     decryptBox,
-    deriveKey,
     deriveSubKeyBytes,
     toB64,
     toB64URLSafe,
@@ -9,8 +8,13 @@ import {
 import { SRP, SrpClient } from "fast-srp-hap";
 import { z } from "zod";
 import type { HttpClient } from "../api/http";
-import type { LoginCredentials } from "../types";
+import type { LoginCredentials, Session } from "../types";
 import { setSessionData, type CoreSession } from "../session";
+import {
+    PasswordKeyAttributes,
+    decryptMasterKey,
+    deriveKek,
+} from "./key-attributes";
 
 const RemoteSRPAttributes = z.object({
     srpUserID: z.string(),
@@ -176,13 +180,7 @@ const unwrapSession = async (
     encryptedToken: string,
     kek: string,
 ): Promise<{ masterKey: string; authToken: string }> => {
-    const masterKey = await decryptBox(
-        {
-            encryptedData: keyAttributes.encryptedKey,
-            nonce: keyAttributes.keyDecryptionNonce,
-        },
-        kek,
-    );
+    const masterKey = await decryptMasterKey(kek, keyAttributes);
 
     const privateKey = await decryptBox(
         {
@@ -209,7 +207,7 @@ export const loginSRP = async (
     http: HttpClient,
     session: CoreSession,
     credentials: LoginCredentials,
-): Promise<number> => {
+): Promise<Session> => {
     const { email, password, totp } = credentials;
 
     const srpAttributes = await getSRPAttributes(http, email);
@@ -224,12 +222,7 @@ export const loginSRP = async (
         );
     }
 
-    const kek = await deriveKey(
-        password,
-        srpAttributes.kekSalt,
-        srpAttributes.opsLimit,
-        srpAttributes.memLimit,
-    );
+    const kek = await deriveKek(password, srpAttributes);
 
     let authResponse = await verifySRP(http, srpAttributes, kek);
 
@@ -274,5 +267,8 @@ export const loginSRP = async (
     );
 
     setSessionData(session, authToken, masterKey, id);
-    return id;
+    return {
+        userID: id,
+        keyAttributes: PasswordKeyAttributes.parse(keyAttributes),
+    };
 };

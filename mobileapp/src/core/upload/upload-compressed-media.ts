@@ -25,7 +25,7 @@ import { ensureInteger } from "ente-utils/ensure";
 import type { HttpClient } from "../api/http";
 import { extractVideoFrameJpeg } from "@/lib/ffmpeg";
 import type { CompressMediaResult } from "@/lib/transcode/compress-media";
-import { fileUploadSortTime } from "../metadata";
+import { carriedPublicMagicData, fileUploadSortTime } from "../metadata";
 import { generateImageThumbnail } from "./thumbnail";
 import {
     postEnteFile,
@@ -62,15 +62,13 @@ const buildPublicMagicData = (
     sourceFile: EnteFile,
     organizerTags: string[],
 ): Record<string, unknown> => {
-    const { editedTime, editedName } = sourceFile.pubMagicMetadata?.data ?? {};
     return {
+        // Carry the source's keys (edits, caption, ...) over to the derived file.
+        ...carriedPublicMagicData(sourceFile),
         w: ensureInteger(width),
         h: ensureInteger(height),
         uploadedAt: ensureInteger(fileUploadSortTime(sourceFile)),
         editedAt: ensureInteger(Date.now() * 1000),
-        // Carry the source's user edits over to the derived file.
-        ...(editedTime !== undefined && { editedTime }),
-        ...(editedName !== undefined && { editedName }),
         _organizer_v1: {
             tags: organizerTags,
             updatedAt: Date.now() * 1000,
@@ -136,6 +134,14 @@ export const uploadCompressedMedia = async (
         await encryptMagicMetadata(publicMagicMetadata, fileKey) :
         undefined;
 
+    // Carry the source's private magic metadata (archive state) over.
+    const privateMagicMetadata = createMagicMetadata(
+        sourceFile.magicMetadata?.data,
+    );
+    const encryptedPrivateMagicMetadata = privateMagicMetadata.count ?
+        await encryptMagicMetadata(privateMagicMetadata, fileKey) :
+        undefined;
+
     const encryptedFileKey = await encryptBox(fileKey, collection.key);
 
     const fileUploadURL = await putEncryptedObject(
@@ -171,6 +177,7 @@ export const uploadCompressedMedia = async (
         },
         metadata: encryptedMetadata,
         pubMagicMetadata: encryptedPubMagicMetadata,
+        magicMetadata: encryptedPrivateMagicMetadata,
     };
 
     const remoteFile = await postEnteFile(http, newFileRequest);

@@ -2,26 +2,6 @@
  * Hard wipe of browser storage used by the Photos PWA (panic / re-auth).
  */
 
-const storageKeyPrefixes = ["ntphotos-", "mobileapp-"] as const;
-
-const clearStorageByPrefix = (storage: Storage): void => {
-    const toRemove: string[] = [];
-    for (let index = 0; index < storage.length; index++) {
-        const key = storage.key(index);
-        if (!key) {
-            continue;
-        }
-        if (
-            storageKeyPrefixes.some((prefix) => key.startsWith(prefix))
-        ) {
-            toRemove.push(key);
-        }
-    }
-    for (const key of toRemove) {
-        storage.removeItem(key);
-    }
-};
-
 const wipeOrganizerIndexedDatabases = async (): Promise<void> => {
     if (typeof indexedDB === "undefined") {
         return;
@@ -47,9 +27,8 @@ const wipeOrganizerIndexedDatabases = async (): Promise<void> => {
                             new Error(`Failed to delete IndexedDB ${name}`),
                     );
                 };
-                request.onblocked = (): void => {
-                    resolve();
-                };
+                // `onblocked` is ignored: the delete completes (success) once
+                // other connections close. Callers close this tab's own first.
             });
         }),
     );
@@ -84,12 +63,12 @@ export const wipeSiteStorage = async (): Promise<void> => {
         return;
     }
     try {
-        clearStorageByPrefix(window.localStorage);
+        window.localStorage.clear();
     } catch {
         // Ignore quota / security errors during panic wipe.
     }
     try {
-        clearStorageByPrefix(window.sessionStorage);
+        window.sessionStorage.clear();
     } catch {
         // Ignore.
     }

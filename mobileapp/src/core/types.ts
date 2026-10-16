@@ -1,3 +1,5 @@
+import type { PasswordKeyAttributes } from "./auth/key-attributes";
+
 export interface LoginCredentials {
     email: string;
     password: string;
@@ -6,6 +8,8 @@ export interface LoginCredentials {
 
 export interface Session {
     userID: number;
+    /** Password-encrypted master key, kept so the session can be unlocked offline. */
+    keyAttributes: PasswordKeyAttributes;
 }
 
 export interface EnteCoreConfig {

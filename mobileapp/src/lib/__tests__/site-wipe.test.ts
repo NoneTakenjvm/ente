@@ -10,13 +10,12 @@ describe("wipeSiteStorage", () => {
         vi.restoreAllMocks();
     });
 
-    it("clears ntphotos and mobileapp storage keys", async () => {
+    it("clears all localStorage and sessionStorage keys", async () => {
         localStorage.setItem("ntphotos-session", "x");
-        localStorage.setItem("ntphotos-wrap-key", "y");
         localStorage.setItem("mobileapp-video-volume", "0.5");
-        localStorage.setItem("unrelated-key", "keep");
-        sessionStorage.setItem("ntphotos-locked", "1");
-        sessionStorage.setItem("other", "keep");
+        localStorage.setItem("logs", "z");
+        sessionStorage.setItem("encryptionKey", "1");
+        sessionStorage.setItem("other", "y");
 
         vi.stubGlobal("indexedDB", {
             databases: async () => [],
@@ -48,11 +47,10 @@ describe("wipeSiteStorage", () => {
         await wipeSiteStorage();
 
         expect(localStorage.getItem("ntphotos-session")).toBeNull();
-        expect(localStorage.getItem("ntphotos-wrap-key")).toBeNull();
         expect(localStorage.getItem("mobileapp-video-volume")).toBeNull();
-        expect(localStorage.getItem("unrelated-key")).toBe("keep");
-        expect(sessionStorage.getItem("ntphotos-locked")).toBeNull();
-        expect(sessionStorage.getItem("other")).toBe("keep");
+        expect(localStorage.getItem("logs")).toBeNull();
+        expect(sessionStorage.getItem("encryptionKey")).toBeNull();
+        expect(sessionStorage.getItem("other")).toBeNull();
         expect(caches.delete).toHaveBeenCalledWith("sw-cache");
     });
 });
