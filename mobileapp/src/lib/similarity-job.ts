@@ -329,10 +329,13 @@ export const terminatePhashWorker = (): void => {
  * Transfers {@link packed}; the caller must not reuse that buffer.
  *
  * @param fileIds row i of {@link packed} belongs to `fileIds[i]`
+ * @param queryCount only the first `queryCount` files are searched, each
+ * against the whole list
  */
 export const findSimilarPairsInWorker = async (
     fileIds: readonly number[],
     packed: Float32Array,
+    queryCount: number,
     onProgress: (completed: number, total: number) => void,
 ): Promise<ClipPairs> => {
     const idBuffer = Float64Array.from(fileIds);
@@ -342,6 +345,7 @@ export const findSimilarPairsInWorker = async (
             packed,
             dims: KIT_EMBEDDING_DIMS,
             maxScore: CLIP_SCORE_SLIDER_MAX,
+            queryCount,
         },
         [idBuffer.buffer, packed.buffer],
         (progress) => {

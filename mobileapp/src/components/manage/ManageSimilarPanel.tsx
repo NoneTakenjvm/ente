@@ -11,6 +11,7 @@ import { JobControls } from "@/components/manage/JobControls";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
+import { SimilarScopeControls } from "@/components/manage/SimilarScopeControls";
 import { useJob } from "@/hooks/use-job";
 import { errorMessage, plural } from "@/lib/format";
 import { eligibleImageFiles, jobPercent } from "@/lib/job-utils";
@@ -34,6 +35,10 @@ import {
     groupClipPairs,
     type ClipPairs,
 } from "@/lib/similarity-clip";
+import {
+    similarScopeFiles,
+    type SimilarScope,
+} from "@/lib/similarity-scope";
 import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
@@ -51,7 +56,8 @@ type ScanProgress = {
 };
 
 /**
- * CLIP similar-photo pairs: compare every pair of CLIP vectors once, then
+ * CLIP similar-photo pairs: compare each searched photo (the whole library,
+ * the latest uploads or a hand-picked set) with every CLIP vector once, then
  * pair each photo with its closest match at the slider threshold (no rescan
  * when it moves).
  */
@@ -85,6 +91,8 @@ export function ManageSimilarPanel({
     const [scanError, setScanError] = useState<string | undefined>();
     /** Every pair within the slider ceiling from the last finished scan. */
     const [pairs, setPairs] = useState<ClipPairs | undefined>();
+    const [scope, setScope] = useState<SimilarScope>({ kind: "library" });
+    const [pickedIds, setPickedIds] = useState<Set<number>>(new Set());
     const [similarBusy, setSimilarBusy] = useState<boolean>(false);
     const [similarProgress, setSimilarProgress] = useState<
         ScanProgress | undefined
@@ -114,6 +122,11 @@ export function ManageSimilarPanel({
         [allFiles, embeddingEntries, collections, userId],
     );
 
+    const scopeFiles = useMemo(
+        () => similarScopeFiles(scope, candidateFiles, pickedIds),
+        [scope, candidateFiles, pickedIds],
+    );
+
     // Files deleted or archived since the scan drop out of their pairs.
     const similarGroups = useMemo(() => {
         if (!pairs) {
@@ -134,14 +147,22 @@ export function ManageSimilarPanel({
     const handleFindSimilar = (): void => {
         scanRun.current += 1;
         const run = scanRun.current;
-        const fileIds = candidateFiles.map((file) => file.id);
+        // Searched photos come first; the worker compares each with every row.
+        const searchedIds = new Set(scopeFiles.map((file) => file.id));
+        const fileIds = [
+            ...searchedIds,
+            ...candidateFiles
+                .map((file) => file.id)
+                .filter((fileId) => !searchedIds.has(fileId)),
+        ];
         setScanError(undefined);
         setPairs(undefined);
         setSimilarBusy(true);
-        setSimilarProgress({ completed: 0, total: fileIds.length });
+        setSimilarProgress({ completed: 0, total: searchedIds.size });
         findSimilarPairsInWorker(
             fileIds,
             packEmbeddings(fileIds, embeddingEntries),
+            searchedIds.size,
             (completed, total) => {
                 if (scanRun.current === run) {
                     setSimilarProgress({ completed, total });
@@ -229,7 +250,7 @@ export function ManageSimilarPanel({
 
     const emptyDescription =
         similarBusy ?
-            "Comparing every pair of CLIP embeddings." :
+            "Comparing CLIP embeddings." :
             clipCount < 2 ?
                 "Run the CLIP scan in Settings, then tap Find similar." :
                 !pairs ?
@@ -272,7 +293,7 @@ export function ManageSimilarPanel({
                             size="sm"
                             variant="secondary"
                             onClick={handleFindSimilar}
-                            disabled={similarBusy || clipCount < 2}
+                            disabled={similarBusy || clipCount < 2 || scopeFiles.length === 0}
                         >
                             {pairs && !similarBusy ?
                                 "Find again" :
@@ -289,6 +310,15 @@ export function ManageSimilarPanel({
                             </Button>
                         ) : null}
                     </JobControls>
+                    <SimilarScopeControls
+                        scope={scope}
+                        onScopeChange={setScope}
+                        pickedIds={pickedIds}
+                        onPickedIdsChange={setPickedIds}
+                        candidates={candidateFiles}
+                        scopeSize={scopeFiles.length}
+                        disabled={similarBusy}
+                    />
                     <Field>
                         <FieldLabel htmlFor="similarity-threshold">
                             Threshold: CLIP ≤ {(threshold / 100).toFixed(2)}

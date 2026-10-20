@@ -7,18 +7,9 @@ import {
 import { ThumbnailGrid } from "@/components/ThumbnailGrid";
 import { CompressionPanel } from "@/components/CompressionPanel";
 import { BatchCompressPreviewSheet } from "@/components/manage/BatchCompressPreviewSheet";
-import { TagClausePicker } from "@/components/TagClausePicker";
-import { TagQueryEditor } from "@/components/TagQueryEditor";
-import { ScopeFilterMenu } from "@/components/ScopeFilterMenu";
+import { ManageTagFilterToolbar } from "@/components/manage/ManageTagFilterToolbar";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuGroup,
-    DropdownMenuLabel,
-    DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -47,20 +38,11 @@ import {
 import { runCompressJob } from "@/lib/compress-job";
 import { jobPercent } from "@/lib/job-utils";
 import { mediaKindForFile } from "@/lib/media-kind";
-import {
-    countTagFilterClauses,
-    describeTagFilter,
-    emptyTagFilter,
-    filterFilesByTags,
-    GROUPED_TAG_FILTER_DROPDOWN_HINT,
-    isFlatTagFilterRoot,
-    isTagFilterActive,
-} from "@/lib/tag-filter";
+import { filterFilesByTags } from "@/lib/tag-filter";
 import { VIDEO_COMPRESS_BATCH_MAX_LONG_EDGE } from "@/lib/transcode/compress-media";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useTagStore } from "@/stores/tag-store";
-import { ListFilter } from "lucide-react";
 import type { EnteFile } from "ente-media/file";
 import { errorMessage, formatFileSize, plural } from "@/lib/format";
 
@@ -378,17 +360,6 @@ export function ManageCompressPanel({
         (preset) => preset.bytes === minSizeBytes,
     ) ?? MIN_SIZE_FILTER_PRESETS[0]!;
 
-    const clauseCount = countTagFilterClauses(filter.root);
-    const filterActive = isTagFilterActive(filter);
-    const isFlat = isFlatTagFilterRoot(filter.root);
-    const hasQueryContent =
-        clauseCount > 0 ||
-        filter.tagScope !== "all" ||
-        filter.favoritesScope !== "all" ||
-        filter.mediaScope !== "all" ||
-        filter.croppedScope !== "all" ||
-        filter.rotatedScope !== "all";
-
     const encoderHint =
         jobProgress?.encoder === "webcodecs" ?
             "Hardware H.264" :
@@ -401,80 +372,13 @@ export function ManageCompressPanel({
     return (
         <>
             <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-3">
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                    <ScopeFilterMenu
-                        filter={filter}
-                        setScope={actions.setScope}
-                        counts={scopeCounts}
-                    />
-                    <TagClausePicker
-                        filter={filter}
-                        onSetTagFilterMode={actions.setTagFilterMode}
-                        onSetKitMode={actions.setKitMode}
-                        onSetRootOp={(op) => {
-                            actions.setGroupOp(filter.root.id, op);
-                        }}
-                        triggerLabel={
-                            clauseCount === 0 ?
-                                "Tags" :
-                                `${plural(clauseCount, "tag")}`
-                        }
-                        triggerVariant={clauseCount > 0 ? "secondary" : "outline"}
-                        disabled={!isFlat || jobRunning}
-                    />
-                    <DropdownMenu>
-                        <DropdownMenuTrigger
-                            render={
-                                <Button
-                                    type="button"
-                                    variant={hasQueryContent ? "secondary" : "outline"}
-                                    size="icon-sm"
-                                    disabled={jobRunning}
-                                    aria-label="Edit tag query"
-                                >
-                                    <ListFilter />
-                                </Button>
-                            }
-                        />
-                        <DropdownMenuContent
-                            align="start"
-                            className="flex max-h-[min(80dvh,28rem)] w-[min(100vw-2rem,24rem)] flex-col overflow-x-hidden overflow-y-auto overscroll-contain p-2"
-                        >
-                            <DropdownMenuGroup className="flex min-h-0 flex-1 flex-col gap-3">
-                                <DropdownMenuLabel className="shrink-0 px-0">
-                                    Query builder
-                                </DropdownMenuLabel>
-                                <TagQueryEditor
-                                    filter={filter}
-                                    actions={actions}
-                                    counts={scopeCounts}
-                                />
-                            </DropdownMenuGroup>
-                        </DropdownMenuContent>
-                    </DropdownMenu>
-                    {!isFlat ? (
-                        <p className="w-full text-xs text-muted-foreground">
-                            {GROUPED_TAG_FILTER_DROPDOWN_HINT}
-                        </p>
-                    ) : null}
-                </div>
-
-                {filterActive ? (
-                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                        <span className="text-muted-foreground">
-                            {describeTagFilter(filter)}
-                        </span>
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            size="xs"
-                            disabled={jobRunning}
-                            onClick={() => setFilter(emptyTagFilter())}
-                        >
-                            Clear
-                        </Button>
-                    </div>
-                ) : null}
+                <ManageTagFilterToolbar
+                    filter={filter}
+                    actions={actions}
+                    setFilter={setFilter}
+                    counts={scopeCounts}
+                    disabled={jobRunning}
+                />
 
                 <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
                     <p className="text-xs text-muted-foreground">

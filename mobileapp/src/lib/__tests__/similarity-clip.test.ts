@@ -60,6 +60,17 @@ describe("collectClipPairs", () => {
         expect(collectClipPairs([10, 20, 30], packed, 2, 4).scores).toHaveLength(0);
     });
 
+    it("searches only the first queryCount rows against every later row", () => {
+        // Rows 0 and 3 are identical; rows 1 and 2 are identical to each other.
+        const packed = Float32Array.from([1, 0, 0, 1, 0, 1, 1, 0]);
+        const pairs = collectClipPairs([10, 20, 30, 40], packed, 2, 25, undefined, 1);
+        expect([...pairs.leftIds]).toEqual([10]);
+        expect([...pairs.rightIds]).toEqual([40]);
+        const both = collectClipPairs([10, 20, 30, 40], packed, 2, 25, undefined, 2);
+        expect([...both.leftIds]).toEqual([10, 20]);
+        expect([...both.rightIds]).toEqual([40, 30]);
+    });
+
     it("reports each finished row", () => {
         const packed = Float32Array.from([1, 0, 1, 0, 1, 0]);
         const rows: number[] = [];

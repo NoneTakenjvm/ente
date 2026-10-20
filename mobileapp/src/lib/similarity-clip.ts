@@ -58,6 +58,9 @@ export const clampClipScoreThreshold = (score: number): number =>
  *
  * @param fileIds row i of {@link packed} belongs to `fileIds[i]`
  * @param onRow called after each row with the number of rows done
+ * @param queryCount only the first `queryCount` rows are searched, each
+ * against every later row, so every pair has at least one query file and no
+ * pair repeats. Defaults to all rows.
  */
 export const collectClipPairs = (
     fileIds: ArrayLike<number>,
@@ -65,6 +68,7 @@ export const collectClipPairs = (
     dims: number,
     maxScore: number = CLIP_SCORE_SLIDER_MAX,
     onRow?: (completed: number) => void,
+    queryCount: number = fileIds.length,
 ): ClipPairs => {
     const leftIds: number[] = [];
     const rightIds: number[] = [];
@@ -72,7 +76,7 @@ export const collectClipPairs = (
     // Reject on the raw dot first; a point of slack leaves rounding at the
     // band edge to the exact score check below.
     const minDot = 1 - (maxScore + 1) / 100;
-    for (let row = 0; row < fileIds.length; row++) {
+    for (let row = 0; row < queryCount; row++) {
         const rowStart = row * dims;
         for (let other = row + 1; other < fileIds.length; other++) {
             const otherStart = other * dims;

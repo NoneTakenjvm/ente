@@ -7,10 +7,14 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-10-15 |
-| **Last agent / session** | Similar is pure CLIP: all-pairs scan in a worker + one-to-one closest pairs (`0.3.212`, uncommitted) |
+| **Last agent / session** | Similar scope: whole library / latest uploads / picked (`0.3.216`, uncommitted); before that, Similar is pure CLIP: all-pairs scan in a worker + one-to-one closest pairs (`0.3.212`, uncommitted) |
 | **Current milestone** | Post-M8 UX / upload performance |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
 | **Next recommended action** | Phone QA of `0.3.212` and `0.3.209` (lists below), then `0.3.208` and the `0.3.195`–`0.3.203` lists. Watch the first CI run on push. Rotate the test-account password. |
+
+**This session (uncommitted, `0.3.216`): Similar scope**
+1. **Scope** — Manage → Similar can search for the whole library, the last 50–1000 uploaded, or a hand-picked set (tag-filtered grid in a sheet, picks survive filter changes). Each searched photo is still compared with every CLIP vector: the panel sends searched ids first and `collectClipPairs` takes a `queryCount` so only those rows scan (q×n, no repeated pair). Scope logic in `lib/similarity-scope.ts`; UI in `manage/SimilarScopeControls.tsx`. The Compress panel's filter toolbar moved into shared `manage/ManageTagFilterToolbar.tsx`.
+2. **QA** — each scope with Find similar (progress counts searched photos), Latest count change, Pick: filter then Select shown / untick / marquee, picks kept after changing the filter, Done; Compress filter toolbar unchanged.
 
 **This session (uncommitted, `0.3.211`–`0.3.212`): pure-CLIP Similar**
 1. **Why** — relative sort surfaced more duplicates than Similar. Similar hid every union-find component above the max group size (5), so dense piles vanished whole; it also required a phash entry, capped the slider at 0.16 and filtered edges by mutual top-3.

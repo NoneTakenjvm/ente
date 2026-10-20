@@ -8,6 +8,8 @@ export interface SimilarPairsWorkerRequest {
     packed: Float32Array;
     dims: number;
     maxScore: number;
+    /** Only the first `queryCount` rows are searched; each is compared with every other row. */
+    queryCount: number;
 }
 
 export interface SimilarPairsWorkerResponse {

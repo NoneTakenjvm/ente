@@ -8,8 +8,8 @@ import type {
 } from "@/workers/similar-pairs-worker-types";
 
 self.onmessage = (event: MessageEvent<SimilarPairsWorkerRequest>): void => {
-    const { id, fileIds, packed, dims, maxScore } = event.data;
-    const total = fileIds.length;
+    const { id, fileIds, packed, dims, maxScore, queryCount } = event.data;
+    const total = queryCount;
     // About a hundred progress replies per scan.
     const progressEvery = Math.max(1, Math.floor(total / 100));
     try {
@@ -29,6 +29,7 @@ self.onmessage = (event: MessageEvent<SimilarPairsWorkerRequest>): void => {
                     self.postMessage(progress);
                 }
             },
+            queryCount,
         );
         const response: SimilarPairsWorkerResponse = { id, pairs };
         self.postMessage(response, [
