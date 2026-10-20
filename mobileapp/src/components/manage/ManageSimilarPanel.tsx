@@ -5,6 +5,7 @@ import {
     useState,
     type JSX,
 } from "react";
+import { toast } from "sonner";
 import { DedupGroupReview } from "@/components/manage/DedupGroupReview";
 import { Button } from "@/components/ui/button";
 import { JobControls } from "@/components/manage/JobControls";
@@ -13,7 +14,7 @@ import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
 import { SimilarScopeControls } from "@/components/manage/SimilarScopeControls";
 import { useJob } from "@/hooks/use-job";
-import { errorMessage, plural } from "@/lib/format";
+import { errorMessage } from "@/lib/format";
 import { eligibleImageFiles, jobPercent } from "@/lib/job-utils";
 import { packEmbeddings } from "@/lib/relative-sort";
 import {
@@ -34,6 +35,7 @@ import {
     clampClipScoreThreshold,
     clipDistanceToScore,
     embeddingCosineDistance,
+    exemptPairKey,
     groupClipPairs,
     type ClipPairs,
 } from "@/lib/similarity-clip";
@@ -41,13 +43,15 @@ import {
     similarScopeFiles,
     type SimilarScope,
 } from "@/lib/similarity-scope";
-import type { DedupGroupItem } from "@/lib/dedup-prune";
+import type { DedupGroupItem, DedupGroupSelection } from "@/lib/dedup-prune";
+import { persistSimilarExemptions } from "@/lib/similar-exemptions";
 import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { usePhashIndexStore } from "@/stores/phash-index-store";
 import { useQualityIndexStore } from "@/stores/quality-index-store";
 import { useSessionStore } from "@/stores/session-store";
+import { useSimilarExemptionStore } from "@/stores/similar-exemption-store";
 
 interface ManageSimilarPanelProps {
     showLoader: boolean;
@@ -79,6 +83,10 @@ export function ManageSimilarPanel({
     const qualityHydrated = useQualityIndexStore((s) => s.isHydrated);
     const setQualityEntries = useQualityIndexStore((s) => s.setEntries);
     const favoriteFileIds = useFavoritesStore((s) => s.favoriteFileIds);
+
+    const exemptions = useSimilarExemptionStore((s) => s.entries);
+    const hydrateExemptions = useSimilarExemptionStore((s) => s.ensureHydrated);
+    const setExemptions = useSimilarExemptionStore((s) => s.setEntries);
 
     const phashJob = useJob();
 
@@ -114,6 +122,10 @@ export function ManageSimilarPanel({
         };
     }, []);
 
+    useEffect(() => {
+        void hydrateExemptions();
+    }, [hydrateExemptions]);
+
     const candidateFiles = useMemo(
         () =>
             similarCandidateFiles(
@@ -139,13 +151,24 @@ export function ManageSimilarPanel({
             candidateFiles.map((file) => [file.id, file]),
         );
         return similarityGroupsFromIds(
-            groupClipPairs(pairs, debouncedThreshold, (fileId) =>
-                filesById.has(fileId)),
+            groupClipPairs(
+                pairs,
+                debouncedThreshold,
+                (fileId) => filesById.has(fileId),
+                exemptions,
+            ),
             filesById,
             collections,
             userId,
         );
-    }, [pairs, candidateFiles, debouncedThreshold, collections, userId]);
+    }, [
+        pairs,
+        candidateFiles,
+        debouncedThreshold,
+        exemptions,
+        collections,
+        userId,
+    ]);
 
     const handleFindSimilar = (): void => {
         scanRun.current += 1;
@@ -190,6 +213,26 @@ export function ManageSimilarPanel({
                     setSimilarProgress(undefined);
                 }
             });
+    };
+
+    /** Stop flagging this pair, saving the exemption so it holds across scans. */
+    const handleExemptPair = async (
+        group: DedupGroupSelection,
+    ): Promise<void> => {
+        const [first, second] = group.items;
+        if (!first || !second) {
+            return;
+        }
+        try {
+            // Load saved exemptions first so this write can't drop them.
+            await hydrateExemptions();
+            const next = new Set(useSimilarExemptionStore.getState().entries);
+            next.add(exemptPairKey(first.file.id, second.file.id));
+            setExemptions(next);
+            await persistSimilarExemptions(next);
+        } catch (error: unknown) {
+            toast.error(errorMessage(error, "Could not save the exemption"));
+        }
     };
 
     const handleCancelFind = (): void => {
@@ -263,38 +306,15 @@ export function ManageSimilarPanel({
     return (
         <DedupGroupReview
             groups={groups}
-            scanError={scanError}
-            showLoader={showLoader}
-            emptyTitle={emptyTitle}
-            emptyDescription={emptyDescription}
-            groupSubtitle={(group) =>
-                `${pairDistanceLabel(group.items, embeddingEntries)} · ${group.items.map((item) => item.collectionName).join(", ")}`}
-        >
-            {() => (
+            setupLabel="Scan & scope"
+            groupNoun="similar pair"
+            toolbar={
                 <>
-                    <JobControls
-                        status={phashJob.status}
-                        progress={phashJob.progress}
-                        startLabel="Scan library"
-                        resumeLabel="Resume scan"
-                        complete={
-                            phashIndexedCount >= eligibleCount &&
-                            eligibleCount > 0
-                        }
-                        disabled={
-                            !phashHydrated ||
-                            !qualityHydrated ||
-                            phashIndexedCount >= eligibleCount
-                        }
-                        size="sm"
-                        variant="default"
-                        onStart={handleStartPhashJob}
-                        onPause={phashJob.pause}
-                    >
+                    <div className="flex gap-2">
                         <Button
                             type="button"
-                            size="sm"
-                            variant="secondary"
+                            className="flex-1"
+                            variant="default"
                             onClick={handleFindSimilar}
                             disabled={similarBusy || clipCount < 2 || scopeFiles.length === 0}
                         >
@@ -306,22 +326,12 @@ export function ManageSimilarPanel({
                             <Button
                                 type="button"
                                 variant="outline"
-                                size="sm"
                                 onClick={handleCancelFind}
                             >
                                 Cancel
                             </Button>
                         ) : null}
-                    </JobControls>
-                    <SimilarScopeControls
-                        scope={scope}
-                        onScopeChange={setScope}
-                        pickedIds={pickedIds}
-                        onPickedIdsChange={setPickedIds}
-                        candidates={candidateFiles}
-                        scopeSize={scopeFiles.length}
-                        disabled={similarBusy}
-                    />
+                    </div>
                     <Field>
                         <FieldLabel htmlFor="similarity-threshold">
                             Threshold: CLIP ≤ {(threshold / 100).toFixed(2)}
@@ -348,15 +358,6 @@ export function ManageSimilarPanel({
                             }}
                         />
                     </Field>
-                    <p className="text-xs text-muted-foreground">
-                        CLIP {clipCount} / {eligibleCount} images · quality{" "}
-                        {phashIndexedCount} / {eligibleCount} ·{" "}
-                        {plural(similarGroups.length, "similar pair")}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                        Similar pairs each photo with its closest CLIP match.
-                        Scan library scores quality so the best copy is kept.
-                    </p>
                     {similarBusy && similarProgress ? (
                         <div className="flex flex-col gap-1">
                             <Progress
@@ -369,6 +370,54 @@ export function ManageSimilarPanel({
                             </span>
                         </div>
                     ) : null}
+                </>
+            }
+            scanError={scanError}
+            showLoader={showLoader}
+            emptyTitle={emptyTitle}
+            emptyDescription={emptyDescription}
+            onExemptGroup={(group) => {
+                void handleExemptPair(group);
+            }}
+            groupSubtitle={(group) =>
+                `${pairDistanceLabel(group.items, embeddingEntries)} · ${group.items.map((item) => item.collectionName).join(", ")}`}
+        >
+            {() => (
+                <>
+                    <JobControls
+                        status={phashJob.status}
+                        progress={phashJob.progress}
+                        startLabel="Scan library"
+                        resumeLabel="Resume scan"
+                        complete={
+                            phashIndexedCount >= eligibleCount &&
+                            eligibleCount > 0
+                        }
+                        disabled={
+                            !phashHydrated ||
+                            !qualityHydrated ||
+                            phashIndexedCount >= eligibleCount
+                        }
+                        size="sm"
+                        variant="default"
+                        onStart={handleStartPhashJob}
+                        onPause={phashJob.pause}
+                    />
+                    <SimilarScopeControls
+                        scope={scope}
+                        onScopeChange={setScope}
+                        pickedIds={pickedIds}
+                        onPickedIdsChange={setPickedIds}
+                        candidates={candidateFiles}
+                        scopeSize={scopeFiles.length}
+                        disabled={similarBusy}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                        CLIP {clipCount} / {eligibleCount} images · quality{" "}
+                        {phashIndexedCount} / {eligibleCount}. Similar pairs
+                        each photo with its closest CLIP match; Scan library
+                        scores quality so the best copy is kept.
+                    </p>
                 </>
             )}
         </DedupGroupReview>

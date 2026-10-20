@@ -103,6 +103,8 @@ interface KvValues {
     /** Older versions are still present on disk; callers check `version`. */
     phashIndex: { version?: number; nextChunkId?: number };
     qualityIndex: PersistedQualityIndex;
+    /** Pair keys from `exemptPairKey` that Similar never flags. */
+    similarExemptions: string[];
     embeddingIndex: PersistedEmbeddingMeta;
     tagOutbox: PersistedTagOutboxEntry[];
     favoriteOutbox: PersistedFavoriteOutboxEntry[];

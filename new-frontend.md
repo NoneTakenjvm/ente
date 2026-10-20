@@ -7,10 +7,20 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-10-15 |
-| **Last agent / session** | Similar scope: whole library / latest uploads / picked (`0.3.216`, uncommitted); before that, Similar is pure CLIP: all-pairs scan in a worker + one-to-one closest pairs (`0.3.212`, uncommitted) |
+| **Last agent / session** | Similar review facelift (`0.3.218`, uncommitted); before that, Exempt pair for Similar (`0.3.217`, uncommitted); before that, Similar scope: whole library / latest uploads / picked (`0.3.216`, uncommitted); before that, Similar is pure CLIP: all-pairs scan in a worker + one-to-one closest pairs (`0.3.212`, uncommitted) |
 | **Current milestone** | Post-M8 UX / upload performance |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
 | **Next recommended action** | Phone QA of `0.3.212` and `0.3.209` (lists below), then `0.3.208` and the `0.3.195`–`0.3.203` lists. Watch the first CI run on push. Rotate the test-account password. |
+
+**This session (uncommitted, `0.3.218`): Similar review facelift**
+1. **Cards** — `dedup/DedupGroupCard.tsx` shows a pair as two big square contain-fit tiles in a 2-column grid (no more wasted right side). Under each: dimensions, file size, quality, favourite and taken date, with the leader on each measure bold + "▲" (`lib/dedup-facts.ts`; only when every value is known and the top is unique). Tap a tile to keep it; badges read Keep / Trash / Tap to keep. Footer: "Trash the other" checkbox and "Exempt pair".
+2. **Compare** — `dedup/DedupCompareDialog.tsx` is a full-screen view for close calls: tap the photo (or A/B tab, or arrow keys) to flip in the same frame at full resolution (`useSlideMedia`), 3× zoom keeps the same spot when flipping, "Keep A/B" button.
+3. **Page** — `manage/DedupGroupReview.tsx`: setup (scan + scope) is a collapsible "Scan & scope" section that folds once results arrive; Find similar, the threshold slider and progress stay pinned above the results; result count + Select all / Clear; one bottom bar with Dry run + Review cleanup. Exact duplicates use the same cards and compare.
+4. **QA** — pair cards on a phone (tiles square, facts and ▲ correct, tap to switch keeper), Compare: flip, zoom then flip, keep from the dialog, close; setup collapses after Find and reopens; slider/Find usable with it collapsed; Select all / Clear; cleanup bar over the tab bar; Exact duplicates cards.
+
+**Previous session (uncommitted, `0.3.217`): Exempt pair**
+1. **Exempt pair** — each Similar card has an "Exempt pair" button. The pair is saved as an order-independent id key (`exemptPairKey`) in the encrypted `similarExemptions` kv record (`stores/similar-exemption-store.ts`, `lib/similar-exemptions.ts`) and `groupClipPairs` skips it, so both photos can pair with their next-closest match. Device-local; a replaced/re-uploaded file has a new id and is no longer exempt. Group size was already fixed at 2 (no setting remains).
+2. **QA** — exempt a pair (it disappears, its photos may re-pair), Find again and reload: still hidden; exempt several in a row; Exact duplicates cards have no button.
 
 **This session (uncommitted, `0.3.216`): Similar scope**
 1. **Scope** — Manage → Similar can search for the whole library, the last 50–1000 uploaded, or a hand-picked set (tag-filtered grid in a sheet, picks survive filter changes). Each searched photo is still compared with every CLIP vector: the panel sends searched ids first and `collectClipPairs` takes a `queryCount` so only those rows scan (q×n, no repeated pair). Scope logic in `lib/similarity-scope.ts`; UI in `manage/SimilarScopeControls.tsx`. The Compress panel's filter toolbar moved into shared `manage/ManageTagFilterToolbar.tsx`.

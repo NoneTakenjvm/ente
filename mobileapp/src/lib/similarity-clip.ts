@@ -104,6 +104,12 @@ export const collectClipPairs = (
     };
 };
 
+/** Order-independent key for the pair of files `fileId` and `otherFileId`. */
+export const exemptPairKey = (fileId: number, otherFileId: number): string =>
+    fileId < otherFileId ?
+        `${fileId}-${otherFileId}` :
+        `${otherFileId}-${fileId}`;
+
 /**
  * Pair up files whose CLIP score is at most {@link threshold}.
  *
@@ -114,19 +120,25 @@ export const collectClipPairs = (
  * never larger than two, so one duplicate can't pull unrelated photos in.
  *
  * @param isLive drops files no longer eligible since the pairs were collected
+ * @param exemptions {@link exemptPairKey}s of pairs the user said to ignore;
+ * their files stay free to pair with their next-closest match
  * @returns `[leftId, rightId]` pairs, tightest first
  */
 export const groupClipPairs = (
     pairs: ClipPairs,
     threshold: number,
     isLive: (fileId: number) => boolean,
+    exemptions: ReadonlySet<string> = new Set(),
 ): number[][] => {
     const kept: number[] = [];
     for (let i = 0; i < pairs.scores.length; i++) {
         if (
             pairs.scores[i]! <= threshold &&
             isLive(pairs.leftIds[i]!) &&
-            isLive(pairs.rightIds[i]!)
+            isLive(pairs.rightIds[i]!) &&
+            !exemptions.has(
+                exemptPairKey(pairs.leftIds[i]!, pairs.rightIds[i]!),
+            )
         ) {
             kept.push(i);
         }

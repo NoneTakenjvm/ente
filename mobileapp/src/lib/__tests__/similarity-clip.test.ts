@@ -6,6 +6,7 @@ import {
     clipDistanceToScore,
     collectClipPairs,
     embeddingCosineDistance,
+    exemptPairKey,
     groupClipPairs,
     type ClipPairs,
 } from "@/lib/similarity-clip";
@@ -80,6 +81,16 @@ describe("collectClipPairs", () => {
 });
 
 describe("groupClipPairs", () => {
+    it("skips exempt pairs so their files pair with the next closest", () => {
+        const pairs = toPairs([
+            [1, 2, 3],
+            [1, 3, 4],
+        ]);
+        expect(
+            groupClipPairs(pairs, 12, everyFile, new Set([exemptPairKey(2, 1)])),
+        ).toEqual([[1, 3]]);
+    });
+
     it("does not chain files that are not all within the threshold", () => {
         const pairs = toPairs([
             [1, 2, 5],
