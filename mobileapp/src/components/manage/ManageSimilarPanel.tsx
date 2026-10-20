@@ -32,6 +32,8 @@ import {
     CLIP_SCORE_SLIDER_MAX,
     CLIP_SCORE_SLIDER_MIN,
     clampClipScoreThreshold,
+    clipDistanceToScore,
+    embeddingCosineDistance,
     groupClipPairs,
     type ClipPairs,
 } from "@/lib/similarity-clip";
@@ -39,6 +41,7 @@ import {
     similarScopeFiles,
     type SimilarScope,
 } from "@/lib/similarity-scope";
+import type { DedupGroupItem } from "@/lib/dedup-prune";
 import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useLibraryStore } from "@/stores/library-store";
@@ -265,7 +268,7 @@ export function ManageSimilarPanel({
             emptyTitle={emptyTitle}
             emptyDescription={emptyDescription}
             groupSubtitle={(group) =>
-                group.items.map((item) => item.collectionName).join(", ")}
+                `${pairDistanceLabel(group.items, embeddingEntries)} · ${group.items.map((item) => item.collectionName).join(", ")}`}
         >
             {() => (
                 <>
@@ -371,3 +374,18 @@ export function ManageSimilarPanel({
         </DedupGroupReview>
     );
 }
+
+/** The pair's CLIP distance on the slider's scale, e.g. "CLIP 0.07". */
+const pairDistanceLabel = (
+    items: readonly DedupGroupItem[],
+    embeddings: ReadonlyMap<number, ArrayLike<number>>,
+): string => {
+    const [first, second] = items;
+    const score = clipDistanceToScore(
+        embeddingCosineDistance(
+            embeddings.get(first!.file.id),
+            embeddings.get(second!.file.id),
+        ),
+    );
+    return `CLIP ${(score / 100).toFixed(2)}`;
+};
