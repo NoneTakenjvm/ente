@@ -38,6 +38,7 @@ vi.mock("@/lib/cache-key", () => ({
 vi.mock("@/lib/dedup-prune", () => ({
     planDuplicateGroupPrune: (groups: Array<{ filesToTrash: EnteFile[] }>) => ({
         filesToTrash: groups.flatMap((group) => group.filesToTrash),
+        tagsToMerge: new Map(),
     }),
     pruneDuplicateGroups: vi.fn(async () => undefined),
 }));

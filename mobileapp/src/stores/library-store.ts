@@ -1205,6 +1205,11 @@ const createLibraryStore: StateCreator<LibraryState> = (set, get) => ({
             return;
         }
 
+        // Queue the keepers' merged tags before their copies are trashed.
+        if (!options?.dryRun && plan.tagsToMerge.size > 0) {
+            get().setTagsOnFiles(plan.tagsToMerge);
+        }
+
         await pruneDuplicateGroups({
             ctx,
             groups,

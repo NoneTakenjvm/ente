@@ -1,14 +1,24 @@
 import { describe, expect, it } from "vitest";
 import type { EnteFile } from "ente-media/file";
 import { dedupGroupFacts } from "@/lib/dedup-facts";
+import type { DedupGroupItem } from "@/lib/dedup-prune";
 import { stubFile } from "@/test-utils/fixtures";
 
-const photo = (id: number, w: number, h: number, fileSize?: number): EnteFile =>
-    stubFile({
+const photo = (
+    id: number,
+    w: number,
+    h: number,
+    fileSize?: number,
+    extraData: Record<string, unknown> = {},
+): DedupGroupItem => ({
+    file: stubFile({
         id,
-        pubMagicMetadata: { version: 1, count: 2, data: { w, h } },
+        pubMagicMetadata: { version: 1, count: 2, data: { w, h, ...extraData } },
         info: fileSize === undefined ? undefined : { fileSize },
-    } as Partial<EnteFile>);
+    } as Partial<EnteFile>),
+    collectionIDs: new Set([1]),
+    collectionName: "Camera",
+});
 
 describe("dedupGroupFacts", () => {
     it("formats dimensions and size and flags the leader on each measure", () => {
@@ -25,6 +35,7 @@ describe("dedupGroupFacts", () => {
             size: "3.0 MB",
             quality: 80,
             isFavorite: false,
+            album: "Camera",
             hasMostPixels: true,
             isLargestFile: true,
             hasBestQuality: false,
@@ -49,5 +60,37 @@ describe("dedupGroupFacts", () => {
         }
         expect(facts[1]!.size).toBeUndefined();
         expect(facts[1]!.quality).toBeUndefined();
+    });
+
+    it("flags tags only one photo has and ages upload and later edits", () => {
+        const hour = 60 * 60 * 1000;
+        const now = 1000 * hour;
+        const uploadedAt = (now - 3 * hour) * 1000;
+        const facts = dedupGroupFacts(
+            [
+                photo(1, 10, 10, undefined, {
+                    uploadedAt,
+                    editedAt: uploadedAt,
+                    _organizer_v1: { tags: ["cat", "sofa"] },
+                }),
+                photo(2, 10, 10, undefined, {
+                    uploadedAt,
+                    editedAt: (now - hour) * 1000,
+                    _organizer_v1: { tags: ["cat"] },
+                }),
+            ],
+            new Set(),
+            new Map(),
+            now,
+        );
+        expect(facts[0]).toMatchObject({
+            uploadedAt: "3h ago",
+            editedAt: undefined,
+            tags: [
+                { name: "cat", onlyHere: false },
+                { name: "sofa", onlyHere: true },
+            ],
+        });
+        expect(facts[1]!.editedAt).toBe("1h ago");
     });
 });

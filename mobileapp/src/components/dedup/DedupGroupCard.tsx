@@ -23,9 +23,13 @@ interface DedupGroupCardProps {
     onExempt?: () => void;
 }
 
+/** Tags shown per photo before the rest fold into "+N". */
+const maxShownTags = 6;
+
 /**
- * One duplicate group: big side-by-side tiles with each photo's facts (tap to
- * keep it), a compare button for close calls, and the cleanup toggle.
+ * One duplicate group: a compact row per photo with a small preview and its
+ * facts (tap a row to keep it), a compare button for close calls, and the
+ * cleanup toggle.
  */
 export function DedupGroupCard({
     items,
@@ -43,7 +47,7 @@ export function DedupGroupCard({
         <Card
             size="sm"
             className={cn(
-                "shrink-0 gap-3 overflow-visible",
+                "shrink-0 gap-2 overflow-visible",
                 isSelected && "ring-2 ring-destructive/50",
             )}
         >
@@ -62,9 +66,9 @@ export function DedupGroupCard({
                     Compare
                 </Button>
             </div>
-            <div className="grid grid-cols-2 gap-2 px-3">
+            <div className="flex flex-col gap-1.5 px-3">
                 {items.map((file, index) => (
-                    <DedupTile
+                    <DedupRow
                         key={file.id}
                         file={file}
                         facts={facts[index]}
@@ -94,7 +98,7 @@ export function DedupGroupCard({
                         className="shrink-0 text-muted-foreground"
                         onClick={onExempt}
                     >
-                        Exempt pair
+                        Not a duplicate
                     </Button>
                 ) : null}
             </div>
@@ -102,7 +106,7 @@ export function DedupGroupCard({
     );
 }
 
-function DedupTile({
+function DedupRow({
     file,
     facts,
     isKeeper,
@@ -118,29 +122,31 @@ function DedupTile({
     return (
         <button
             type="button"
-            className="flex min-w-0 flex-col gap-1.5 text-left"
+            className={cn(
+                "flex min-w-0 gap-2.5 rounded-lg border p-1.5 text-left transition-colors",
+                isKeeper ?
+                    "border-primary bg-primary/5" :
+                    "border-transparent bg-muted/40",
+            )}
             onClick={onSelect}
             aria-label={isKeeper ? "Keeper" : "Keep this one"}
             aria-pressed={isKeeper}
         >
             <span
                 className={cn(
-                    "relative block aspect-square w-full overflow-hidden rounded-lg bg-muted ring-offset-2 ring-offset-card transition-opacity",
-                    isKeeper && "ring-2 ring-primary",
-                    willTrash && "opacity-60",
+                    "relative block size-20 shrink-0 overflow-hidden rounded-md bg-muted transition-opacity",
+                    willTrash && "opacity-50",
                 )}
             >
                 <ThumbnailImage file={file} contain />
-                {isKeeper ? (
-                    <Badge className="absolute top-1.5 left-1.5">Keep</Badge>
-                ) : (
+                {isKeeper || willTrash ? (
                     <Badge
-                        variant={willTrash ? "destructive" : "secondary"}
-                        className="absolute top-1.5 left-1.5"
+                        variant={isKeeper ? "default" : "destructive"}
+                        className="absolute bottom-1 left-1 h-4 px-1.5 text-[0.65rem]"
                     >
-                        {willTrash ? "Trash" : "Tap to keep"}
+                        {isKeeper ? "Keep" : "Trash"}
                     </Badge>
-                )}
+                ) : null}
             </span>
             {facts ? <DedupFacts facts={facts} /> : null}
         </button>
@@ -149,8 +155,9 @@ function DedupTile({
 
 /** A photo's facts, with the value that leads the group emphasised. */
 function DedupFacts({ facts }: { facts: DedupItemFacts }): JSX.Element {
+    const hiddenTagCount = facts.tags.length - maxShownTags;
     return (
-        <span className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5 text-xs text-muted-foreground">
             <span className="flex flex-wrap items-center gap-x-1.5">
                 {facts.dimensions ? (
                     <Fact leads={facts.hasMostPixels}>{facts.dimensions}</Fact>
@@ -158,11 +165,9 @@ function DedupFacts({ facts }: { facts: DedupItemFacts }): JSX.Element {
                 {facts.size ? (
                     <Fact leads={facts.isLargestFile}>{facts.size}</Fact>
                 ) : null}
-            </span>
-            <span className="flex flex-wrap items-center gap-x-1.5">
                 {facts.quality !== undefined ? (
                     <Fact leads={facts.hasBestQuality}>
-                        {`Quality ${facts.quality}`}
+                        {`Q ${facts.quality}`}
                     </Fact>
                 ) : null}
                 {facts.isFavorite ? (
@@ -172,7 +177,35 @@ function DedupFacts({ facts }: { facts: DedupItemFacts }): JSX.Element {
                     />
                 ) : null}
             </span>
-            <span className="truncate">{facts.takenAt}</span>
+            <span className="truncate">
+                Uploaded {facts.uploadedAt}
+                {facts.editedAt ? ` · edited ${facts.editedAt}` : ""}
+            </span>
+            <span className="truncate">Taken {facts.takenAt}</span>
+            <span className="truncate">{facts.album}</span>
+            {facts.tags.length > 0 ? (
+                <span className="mt-0.5 flex flex-wrap gap-1">
+                    {facts.tags.slice(0, maxShownTags).map((tag) => (
+                        <Badge
+                            key={tag.name}
+                            variant={tag.onlyHere ? "outline" : "secondary"}
+                            className="h-4 max-w-[8rem] px-1.5 text-[0.65rem]"
+                            title={
+                                tag.onlyHere ?
+                                    "Only this copy has this tag; cleanup copies it to the keeper" :
+                                    undefined
+                            }
+                        >
+                            <span className="truncate">{tag.name}</span>
+                        </Badge>
+                    ))}
+                    {hiddenTagCount > 0 ? (
+                        <span className="text-[0.65rem]">+{hiddenTagCount}</span>
+                    ) : null}
+                </span>
+            ) : (
+                <span className="italic">No tags</span>
+            )}
         </span>
     );
 }

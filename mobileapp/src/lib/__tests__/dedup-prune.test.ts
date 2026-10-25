@@ -37,6 +37,46 @@ describe("dedup-prune", () => {
         expect(plan.collectionsToLink.get(20)?.map((entry) => entry.id)).toEqual([
             1,
         ]);
+        expect(plan.tagsToMerge.size).toBe(0);
+    });
+
+    it("merges trashed copies' user tags onto the keeper", () => {
+        const tagged = (id: number, tags: string[]): DedupGroupItem => ({
+            file: stubFile({
+                id,
+                collectionID: 10,
+                pubMagicMetadata: {
+                    version: 1,
+                    count: 1,
+                    data: { _organizer_v1: { tags } },
+                },
+            } as Partial<EnteFile>),
+            collectionIDs: new Set([10]),
+            collectionName: "A",
+        });
+
+        const plan = planDuplicateGroupPrune([
+            {
+                id: "group-1",
+                isSelected: true,
+                keeperFileId: 1,
+                items: [
+                    tagged(1, ["cat"]),
+                    tagged(2, ["cat", "sofa", "cropped"]),
+                    tagged(3, ["garden"]),
+                ],
+            },
+            {
+                id: "group-2",
+                isSelected: true,
+                keeperFileId: 4,
+                items: [tagged(4, ["dog"]), tagged(5, ["dog"])],
+            },
+        ]);
+
+        expect(plan.tagsToMerge).toEqual(
+            new Map([[1, ["cat", "sofa", "garden"]]]),
+        );
     });
 
     describe("defaultKeeperFileId", () => {

@@ -40,6 +40,7 @@ import {
     type ClipPairs,
 } from "@/lib/similarity-clip";
 import {
+    recentScopeLabel,
     similarScopeFiles,
     type SimilarScope,
 } from "@/lib/similarity-scope";
@@ -299,14 +300,16 @@ export function ManageSimilarPanel({
             "Comparing CLIP embeddings." :
             clipCount < 2 ?
                 "Run the CLIP scan in Settings, then tap Find similar." :
-                !pairs ?
-                    "Tap Find similar to compare CLIP embeddings." :
-                    "No similar pairs at this threshold.";
+                scopeFiles.length === 0 ?
+                    "No photos in this scope. Widen it under Scope." :
+                    !pairs ?
+                        "Tap Find similar to compare CLIP embeddings." :
+                        "No similar pairs at this distance. Drag the slider right to loosen it.";
 
     return (
         <DedupGroupReview
             groups={groups}
-            setupLabel="Scan & scope"
+            setupLabel={`Scope · ${scopeSummary(scope, pickedIds.size)}`}
             groupNoun="similar pair"
             toolbar={
                 <>
@@ -319,8 +322,8 @@ export function ManageSimilarPanel({
                             disabled={similarBusy || clipCount < 2 || scopeFiles.length === 0}
                         >
                             {pairs && !similarBusy ?
-                                "Find again" :
-                                "Find similar"}
+                                `Find again (${scopeFiles.length})` :
+                                `Find similar (${scopeFiles.length})`}
                         </Button>
                         {similarBusy ? (
                             <Button
@@ -334,7 +337,7 @@ export function ManageSimilarPanel({
                     </div>
                     <Field>
                         <FieldLabel htmlFor="similarity-threshold">
-                            Threshold: CLIP ≤ {(threshold / 100).toFixed(2)}
+                            Max distance {(threshold / 100).toFixed(2)}
                         </FieldLabel>
                         <Slider
                             id="similarity-threshold"
@@ -357,6 +360,10 @@ export function ManageSimilarPanel({
                                 }
                             }}
                         />
+                        <div className="flex justify-between text-xs text-muted-foreground">
+                            <span>Near-identical</span>
+                            <span>Loosely similar</span>
+                        </div>
                     </Field>
                     {similarBusy && similarProgress ? (
                         <div className="flex flex-col gap-1">
@@ -380,7 +387,7 @@ export function ManageSimilarPanel({
                 void handleExemptPair(group);
             }}
             groupSubtitle={(group) =>
-                `${pairDistanceLabel(group.items, embeddingEntries)} · ${group.items.map((item) => item.collectionName).join(", ")}`}
+                pairDistanceLabel(group.items, embeddingEntries)}
         >
             {() => (
                 <>
@@ -424,7 +431,20 @@ export function ManageSimilarPanel({
     );
 }
 
-/** The pair's CLIP distance on the slider's scale, e.g. "CLIP 0.07". */
+/** What the scope searches, for the folded setup header. */
+const scopeSummary = (scope: SimilarScope, pickedCount: number): string => {
+    switch (scope.kind) {
+        case "library":
+            return "Whole library";
+        case "uploadedWithin":
+        case "latest":
+            return recentScopeLabel(scope);
+        case "picked":
+            return `${pickedCount} picked`;
+    }
+};
+
+/** The pair's CLIP distance on the slider's scale, e.g. "Distance 0.04". */
 const pairDistanceLabel = (
     items: readonly DedupGroupItem[],
     embeddings: ReadonlyMap<number, ArrayLike<number>>,
@@ -436,5 +456,5 @@ const pairDistanceLabel = (
             embeddings.get(second!.file.id),
         ),
     );
-    return `CLIP ${(score / 100).toFixed(2)}`;
+    return `Distance ${(score / 100).toFixed(2)}`;
 };

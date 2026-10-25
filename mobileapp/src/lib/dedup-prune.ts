@@ -7,6 +7,8 @@ import {
 import { moveToTrash } from "@/core/api/trash";
 import { collectionNameByID } from "@/lib/collections";
 import { fileByteSize } from "@/lib/compress";
+import { addTagNames } from "@/lib/tag-writes";
+import { extractTags, extractUserTags } from "@/lib/tags";
 
 export interface DedupGroupItem {
     file: EnteFile;
@@ -43,6 +45,8 @@ export interface PruneDuplicateGroupsOptions {
 export interface PruneDuplicateGroupsResult {
     filesToTrash: EnteFile[];
     collectionsToLink: Map<number, EnteFile[]>;
+    /** Keeper id → its tags plus its trashed copies' user tags, when that adds any. */
+    tagsToMerge: Map<number, string[]>;
 }
 
 const unionCollectionIDs = (
@@ -62,7 +66,9 @@ const differenceCollectionIDs = (
 };
 
 /**
- * Compute which files would be trashed and which collection links would be added.
+ * Compute which files would be trashed, which collection links would be added
+ * and which keepers take over their trashed copies' tags. System tags (crop,
+ * rotate stamps) describe one file's edits, so only user tags carry over.
  */
 export const planDuplicateGroupPrune = (
     groups: DedupGroupSelection[],
@@ -70,6 +76,7 @@ export const planDuplicateGroupPrune = (
     const filesToAdd = new Map<number, EnteFile[]>();
     const filesToTrash: EnteFile[] = [];
     const trashedIds = new Set<number>();
+    const tagsToMerge = new Map<number, string[]>();
 
     for (const group of groups) {
         if (!group.isSelected) {
@@ -83,19 +90,29 @@ export const planDuplicateGroupPrune = (
             continue;
         }
 
+        const keeperId = retainedItem.file.id;
+        const keeperTags =
+            tagsToMerge.get(keeperId) ?? extractTags(retainedItem.file);
+        const copyTags: string[] = [];
         let collectionIDs = new Set<number>();
         for (const item of group.items) {
-            if (item.file.id === retainedItem.file.id) {
+            if (item.file.id === keeperId) {
                 continue;
             }
             collectionIDs = unionCollectionIDs(
                 collectionIDs,
                 item.collectionIDs,
             );
+            copyTags.push(...extractUserTags(item.file));
             if (!trashedIds.has(item.file.id)) {
                 trashedIds.add(item.file.id);
                 filesToTrash.push(item.file);
             }
+        }
+
+        const mergedTags = addTagNames(keeperTags, ...copyTags);
+        if (mergedTags.length > keeperTags.length) {
+            tagsToMerge.set(keeperId, mergedTags);
         }
 
         collectionIDs = differenceCollectionIDs(
@@ -111,7 +128,7 @@ export const planDuplicateGroupPrune = (
         }
     }
 
-    return { filesToTrash, collectionsToLink: filesToAdd };
+    return { filesToTrash, collectionsToLink: filesToAdd, tagsToMerge };
 };
 
 /**
@@ -175,7 +192,8 @@ const pixelCount = (file: EnteFile): number => {
 };
 
 /**
- * Symlink keepers into missing albums, then trash losers.
+ * Symlink keepers into missing albums, then trash losers. Tag merges in the
+ * plan are written by the caller through the tag outbox.
  */
 export const pruneDuplicateGroups = async (
     options: PruneDuplicateGroupsOptions,

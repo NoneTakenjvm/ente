@@ -22,7 +22,7 @@ export interface SimilarityGroup {
     items: DedupGroupItem[];
 }
 
-export const defaultSimilarityThreshold = 12;
+export const defaultSimilarityThreshold = 5;
 
 /**
  * Files Similar compares: owned, non-archived stills in normal owned

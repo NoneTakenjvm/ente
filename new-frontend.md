@@ -6,13 +6,23 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-10-15 |
-| **Last agent / session** | Similar review facelift (`0.3.218`, uncommitted); before that, Exempt pair for Similar (`0.3.217`, uncommitted); before that, Similar scope: whole library / latest uploads / picked (`0.3.216`, uncommitted); before that, Similar is pure CLIP: all-pairs scan in a worker + one-to-one closest pairs (`0.3.212`, uncommitted) |
+| **Last updated** | 2026-10-25 |
+| **Last agent / session** | Cleanup merges tags onto keepers (`0.3.220`, uncommitted); before that, Similar compact cards + Recent scope (`0.3.219`); before that, Similar review facelift (`0.3.218`); before that, Exempt pair for Similar (`0.3.217`, uncommitted); before that, Similar scope: whole library / latest uploads / picked (`0.3.216`, uncommitted); before that, Similar is pure CLIP: all-pairs scan in a worker + one-to-one closest pairs (`0.3.212`, uncommitted) |
 | **Current milestone** | Post-M8 UX / upload performance |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
 | **Next recommended action** | Phone QA of `0.3.212` and `0.3.209` (lists below), then `0.3.208` and the `0.3.195`–`0.3.203` lists. Watch the first CI run on push. Rotate the test-account password. |
 
-**This session (uncommitted, `0.3.218`): Similar review facelift**
+**This session (uncommitted, `0.3.220`): cleanup merges tags onto keepers**
+1. **Merge** — `planDuplicateGroupPrune` returns `tagsToMerge` (keeper id → keeper tags + the trashed copies' user tags; system tags like `cropped` stay behind). On a real (non-dry) cleanup the store writes them with `setTagsOnFiles` (optimistic + tag outbox) before trashing. Applies to Exact duplicates and Similar. The confirm dialog says how many keepers take over tags; tags only one copy has are outlined (no longer red).
+2. **QA** — tag only the copy, tick Trash, Review cleanup (dialog mentions tags), Move to trash: keeper shows the tag in the viewer and after reload; dry run writes nothing.
+
+**Previous session (uncommitted, `0.3.219`): Similar compact cards + Recent scope**
+1. **Cards** — `dedup/DedupGroupCard.tsx` now lists one compact row per photo (80px contain thumbnail + facts) instead of big square tiles. Facts add uploaded age, a later edit's age (`editedAt` more than a minute after upload), album and user tags (`lib/dedup-facts.ts`, `formatTimeAgo` in `lib/format.ts`). A tag no other photo in the group has is outlined. "Exempt pair" is now "Not a duplicate". Compare tabs also show uploaded age and tags.
+2. **Scope** — Whole library / Recent / Pick. Recent offers last 24 hours, 3, 7, 30 days by upload time (`uploadedWithin`, uses `fileUploadSortTime`) or the last 100 / 500 uploads, each with its photo count. The setup header reads "Scope · <choice>"; Find shows the searched count.
+3. **Threshold** — default 0.05 (was 0.12); slider reads "Max distance", with Near-identical / Loosely similar hints; card subtitle is "Distance 0.04" (albums moved into rows).
+4. **QA** — Recent 24h after a fresh upload (count, Find, pairs), each Recent option's count, cards on a phone (row height, tags wrap, red tags when Trash ticked), Compare tabs, Exact duplicates cards.
+
+**Previous session (uncommitted, `0.3.218`): Similar review facelift**
 1. **Cards** — `dedup/DedupGroupCard.tsx` shows a pair as two big square contain-fit tiles in a 2-column grid (no more wasted right side). Under each: dimensions, file size, quality, favourite and taken date, with the leader on each measure bold + "▲" (`lib/dedup-facts.ts`; only when every value is known and the top is unique). Tap a tile to keep it; badges read Keep / Trash / Tap to keep. Footer: "Trash the other" checkbox and "Exempt pair".
 2. **Compare** — `dedup/DedupCompareDialog.tsx` is a full-screen view for close calls: tap the photo (or A/B tab, or arrow keys) to flip in the same frame at full resolution (`useSlideMedia`), 3× zoom keeps the same spot when flipping, "Keep A/B" button.
 3. **Page** — `manage/DedupGroupReview.tsx`: setup (scan + scope) is a collapsible "Scan & scope" section that folds once results arrive; Find similar, the threshold slider and progress stay pinned above the results; result count + Select all / Clear; one bottom bar with Dry run + Review cleanup. Exact duplicates use the same cards and compare.

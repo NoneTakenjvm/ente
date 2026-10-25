@@ -131,7 +131,7 @@ export function DedupGroupReview({
                 shownGroups.map((group) => [
                     group.id,
                     dedupGroupFacts(
-                        group.items.map((item) => item.file),
+                        group.items,
                         favoriteFileIds,
                         qualityById,
                     ),
@@ -370,6 +370,9 @@ export function DedupGroupReview({
                         moved to trash.
                         {prunePlan.collectionsToLink.size > 0 ?
                             ` ${plural(prunePlan.collectionsToLink.size, "album link")} will be added so keepers stay visible where copies were.` :
+                            ""}
+                        {prunePlan.tagsToMerge.size > 0 ?
+                            ` ${plural(prunePlan.tagsToMerge.size, "keeper")} will take over tags from the copies.` :
                             ""}
                     </>
                 }

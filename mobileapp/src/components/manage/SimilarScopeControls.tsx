@@ -22,7 +22,9 @@ import { useScopeCounts } from "@/hooks/use-scope-counts";
 import { useTagFilterDraft } from "@/hooks/use-tag-filter-draft";
 import { plural } from "@/lib/format";
 import {
-    LATEST_UPLOAD_COUNTS,
+    RECENT_SCOPES,
+    recentScopeLabel,
+    similarScopeFiles,
     sortByUploadedNewestFirst,
     type SimilarScope,
 } from "@/lib/similarity-scope";
@@ -43,7 +45,9 @@ interface SimilarScopeControlsProps {
     disabled: boolean;
 }
 
-/** Chooses which photos a Similar run searches for: all, the latest uploads, or a hand-picked set. */
+const noPicks: ReadonlySet<number> = new Set();
+
+/** Chooses which photos a Similar run searches for: all, recent uploads, or a hand-picked set. */
 export function SimilarScopeControls({
     scope,
     onScopeChange,
@@ -54,6 +58,21 @@ export function SimilarScopeControls({
     disabled,
 }: SimilarScopeControlsProps): JSX.Element {
     const [pickerOpen, setPickerOpen] = useState<boolean>(false);
+    const isRecent = scope.kind === "uploadedWithin" || scope.kind === "latest";
+
+    // How many photos each Recent option would search, shown in its label.
+    const recentSizes = useMemo(
+        () =>
+            new Map(
+                RECENT_SCOPES.map((recent) => [
+                    recentScopeLabel(recent),
+                    recent.kind === "latest" ?
+                        Math.min(recent.count, candidates.length) :
+                        similarScopeFiles(recent, candidates, noPicks).length,
+                ]),
+            ),
+        [candidates],
+    );
 
     return (
         <>
@@ -61,51 +80,56 @@ export function SimilarScopeControls({
                 <FieldLabel>Search for</FieldLabel>
                 <ToggleGroup
                     variant="outline"
-                    value={[scope.kind]}
+                    value={[isRecent ? "recent" : scope.kind]}
                     disabled={disabled}
                     className="w-full"
                     onValueChange={(next) => {
                         const kind = Array.isArray(next) ? next[0] : next;
-                        if (kind === "library") {
+                        if (kind === "library" || kind === "picked") {
                             onScopeChange({ kind });
-                        } else if (kind === "latest") {
-                            onScopeChange({
-                                kind,
-                                count: LATEST_UPLOAD_COUNTS[1]!,
-                            });
-                        } else if (kind === "picked") {
-                            onScopeChange({ kind });
+                        } else if (kind === "recent") {
+                            onScopeChange(RECENT_SCOPES[0]!);
                         }
                     }}
                 >
                     <ToggleGroupItem value="library" className="flex-1">
                         Whole library
                     </ToggleGroupItem>
-                    <ToggleGroupItem value="latest" className="flex-1">
-                        Latest
+                    <ToggleGroupItem value="recent" className="flex-1">
+                        Recent
                     </ToggleGroupItem>
                     <ToggleGroupItem value="picked" className="flex-1">
                         Pick
                     </ToggleGroupItem>
                 </ToggleGroup>
             </Field>
-            {scope.kind === "latest" ? (
+            {isRecent ? (
                 <Select
-                    value={String(scope.count)}
+                    value={recentScopeLabel(scope)}
                     disabled={disabled}
                     onValueChange={(value) => {
-                        onScopeChange({ kind: "latest", count: Number(value) });
+                        const next = RECENT_SCOPES.find(
+                            (recent) => recentScopeLabel(recent) === value,
+                        );
+                        if (next) {
+                            onScopeChange(next);
+                        }
                     }}
                 >
                     <SelectTrigger className="w-full">
-                        <SelectValue>Last {scope.count} uploaded</SelectValue>
+                        <SelectValue>
+                            {`${recentScopeLabel(scope)} (${scopeSize})`}
+                        </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
-                        {LATEST_UPLOAD_COUNTS.map((count) => (
-                            <SelectItem key={count} value={String(count)}>
-                                Last {count} uploaded
-                            </SelectItem>
-                        ))}
+                        {RECENT_SCOPES.map((recent) => {
+                            const label = recentScopeLabel(recent);
+                            return (
+                                <SelectItem key={label} value={label}>
+                                    {label} ({recentSizes.get(label)})
+                                </SelectItem>
+                            );
+                        })}
                     </SelectContent>
                 </Select>
             ) : null}
@@ -121,8 +145,9 @@ export function SimilarScopeControls({
                 </Button>
             ) : null}
             <p className="text-xs text-muted-foreground">
-                Searching {plural(scopeSize, "photo")}, each compared with the
-                whole library.
+                {scopeSize === 0 ?
+                    "No photos in this range yet." :
+                    `Searching ${plural(scopeSize, "photo")}, each compared with the whole library.`}
             </p>
             <PhotoPickerSheet
                 open={pickerOpen}

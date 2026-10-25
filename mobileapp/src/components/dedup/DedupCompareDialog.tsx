@@ -269,6 +269,12 @@ function CompareTab({
                     {facts.hasBestQuality ? " ▲" : ""}
                 </span>
             ) : null}
+            {facts ? <span>Uploaded {facts.uploadedAt}</span> : null}
+            {facts?.tags.length ? (
+                <span className="line-clamp-2">
+                    {facts.tags.map((tag) => tag.name).join(", ")}
+                </span>
+            ) : null}
         </button>
     );
 }

@@ -22,6 +22,30 @@ export const formatFileSize = (bytes: number): string => {
 };
 
 /**
+ * Short age of a moment: `"just now"`, `"5m ago"`, `"3h ago"`, `"6d ago"`,
+ * then the plain date once it is over a week old.
+ *
+ * @param time epoch milliseconds
+ * @param now epoch milliseconds to measure from
+ */
+export const formatTimeAgo = (time: number, now: number = Date.now()): string => {
+    const minutes = Math.floor((now - time) / 60_000);
+    if (minutes < 1) {
+        return "just now";
+    }
+    if (minutes < 60) {
+        return `${minutes}m ago`;
+    }
+    if (minutes < 24 * 60) {
+        return `${Math.floor(minutes / 60)}h ago`;
+    }
+    if (minutes < 7 * 24 * 60) {
+        return `${Math.floor(minutes / (24 * 60))}d ago`;
+    }
+    return new Date(time).toLocaleDateString(undefined, { dateStyle: "medium" });
+};
+
+/**
  * User-facing text for a caught value: the `Error` message, else
  * {@link fallback}, else the stringified value.
  */

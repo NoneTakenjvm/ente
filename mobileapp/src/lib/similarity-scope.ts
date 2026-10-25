@@ -7,11 +7,35 @@ import { fileUploadSortTime } from "@/core/metadata";
  */
 export type SimilarScope =
     | { kind: "library" } |
+    { kind: "uploadedWithin"; hours: number } |
     { kind: "latest"; count: number } |
     { kind: "picked" };
 
-/** Offered "last N uploaded" sizes. */
-export const LATEST_UPLOAD_COUNTS: readonly number[] = [50, 100, 250, 500, 1000];
+/** The "Recent" scopes: a window of upload time or a number of uploads. */
+export type RecentScope = Extract<
+    SimilarScope,
+    { kind: "uploadedWithin" | "latest" }
+>;
+
+/** Offered "Recent" scopes, by upload time first, then by count. */
+export const RECENT_SCOPES: readonly RecentScope[] = [
+    { kind: "uploadedWithin", hours: 24 },
+    { kind: "uploadedWithin", hours: 24 * 3 },
+    { kind: "uploadedWithin", hours: 24 * 7 },
+    { kind: "uploadedWithin", hours: 24 * 30 },
+    { kind: "latest", count: 100 },
+    { kind: "latest", count: 500 },
+];
+
+/** "Last 24 hours", "Last 7 days" or "Last 100 uploads". */
+export const recentScopeLabel = (scope: RecentScope): string => {
+    if (scope.kind === "latest") {
+        return `Last ${scope.count} uploads`;
+    }
+    return scope.hours > 24 && scope.hours % 24 === 0 ?
+        `Last ${scope.hours / 24} days` :
+        `Last ${scope.hours} hours`;
+};
 
 /** Files newest-uploaded first. */
 export const sortByUploadedNewestFirst = (
@@ -26,15 +50,24 @@ export const sortByUploadedNewestFirst = (
  *
  * @param candidates every file Similar can compare
  * @param pickedIds the hand-picked ids, used by the `picked` scope
+ * @param now epoch milliseconds that `uploadedWithin` counts back from
  */
 export const similarScopeFiles = (
     scope: SimilarScope,
     candidates: readonly EnteFile[],
     pickedIds: ReadonlySet<number>,
+    now: number = Date.now(),
 ): EnteFile[] => {
     switch (scope.kind) {
         case "library":
             return [...candidates];
+        case "uploadedWithin": {
+            // Upload times are epoch microseconds.
+            const cutoff = (now - scope.hours * 60 * 60 * 1000) * 1000;
+            return sortByUploadedNewestFirst(
+                candidates.filter((file) => fileUploadSortTime(file) >= cutoff),
+            );
+        }
         case "latest":
             return sortByUploadedNewestFirst(candidates).slice(0, scope.count);
         case "picked":

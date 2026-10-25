@@ -32,6 +32,26 @@ describe("similarScopeFiles", () => {
         ).toEqual([2, 3]);
     });
 
+    it("uploadedWithin keeps uploads inside the window, newest first", () => {
+        const hour = 60 * 60 * 1000;
+        const now = 100 * hour;
+        const recent = [
+            uploadedAt(1, (now - 30 * hour) * 1000),
+            uploadedAt(2, (now - 2 * hour) * 1000),
+            uploadedAt(3, (now - 20 * hour) * 1000),
+        ];
+        expect(
+            ids(
+                similarScopeFiles(
+                    { kind: "uploadedWithin", hours: 24 },
+                    recent,
+                    new Set(),
+                    now,
+                ),
+            ),
+        ).toEqual([2, 3]);
+    });
+
     it("latest larger than the library keeps everything", () => {
         expect(
             similarScopeFiles(
