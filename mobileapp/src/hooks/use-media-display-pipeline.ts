@@ -145,6 +145,13 @@ export function useMediaDisplayPipeline({
     const viewportTargetWidth = useUIStore((s) => s.viewportTargetWidth);
     const viewportTargetHeight = useUIStore((s) => s.viewportTargetHeight);
     const nearnessEpoch = useUIStore((s) => s.nearnessEpoch);
+    const kitReviewRejectedIds = useUIStore((s) => s.kitReviewRejectedIds);
+    const selectionMode = useSelectionStore((s) => s.mode);
+    const reviewKitId = useSelectionStore((s) => s.reviewKitId);
+    const presets = useTagSpeedStore((s) => s.presets);
+    const reviewKit = selectionMode === "kitReview" ?
+        presets.find((preset) => preset.id === reviewKitId) :
+        undefined;
 
     const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
     const embeddingCount = useEmbeddingIndexStore((s) => s.entries.size);
@@ -453,6 +460,22 @@ export function useMediaDisplayPipeline({
                 })
                 .filter((medoids) => medoids.length > 0) :
             [];
+        // [Note: Kit review rejections]
+        // Photos rejected for this kit act as a rival "not this kit" prototype,
+        // so near-misses rank lower after Apply. Always used in review, even when
+        // the rival toggle is off.
+        const selection = useSelectionStore.getState();
+        const rejectedVectors = matchedKit !== undefined &&
+            selection.mode === "kitReview" &&
+            matchedKit.id === selection.reviewKitId ?
+            pickKitEmbeddingMedoids(
+                [...(ui.kitReviewRejectedIds.get(matchedKit.id) ?? [])],
+                embeddings,
+            ).map((medoid) => medoid.vector) :
+            [];
+        if (rejectedVectors.length > 0) {
+            rivalMedoidSets.push(rejectedVectors);
+        }
         const scoreOptions = {
             lambda: selectedGenome.rivalLambda,
             tau: selectedGenome.rivalTau,
@@ -936,7 +959,22 @@ export function useMediaDisplayPipeline({
         viewerAspect,
     ]);
 
-    // A new filter drops active batch tools; stamp mode survives it.
+    // Kit review hides photos that already carry every kit tag and photos
+    // rejected for this kit, so the next best candidates move up.
+    const reviewFiles = useMemo((): EnteFile[] => {
+        if (!reviewKit?.tags.length) {
+            return displayFiles;
+        }
+        const kitTagFileSets = reviewKit.tags.map((tag) => fileIdsByTag.get(tag));
+        const rejectedIds = kitReviewRejectedIds.get(reviewKit.id);
+        return displayFiles.filter(
+            (file) =>
+                !rejectedIds?.has(file.id) &&
+                !kitTagFileSets.every((fileIds) => fileIds?.has(file.id)),
+        );
+    }, [displayFiles, fileIdsByTag, kitReviewRejectedIds, reviewKit]);
+
+    // A new filter drops active batch tools; stamp and kit review survive it.
     const selectionFilterRef = useRef(tagFilter);
     useEffect(() => {
         if (selectionFilterRef.current === tagFilter) {
@@ -944,14 +982,14 @@ export function useMediaDisplayPipeline({
         }
         selectionFilterRef.current = tagFilter;
         const { mode, setMode } = useSelectionStore.getState();
-        if (mode !== "none" && mode !== "stamp") {
+        if (mode !== "none" && mode !== "stamp" && mode !== "kitReview") {
             setMode("none");
         }
     }, [tagFilter]);
 
     return {
         filteredFiles,
-        displayFiles,
+        displayFiles: reviewFiles,
         matchCount: filteredFiles.length,
     };
 }

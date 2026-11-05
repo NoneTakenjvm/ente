@@ -5,9 +5,9 @@ import {
     type JSX,
 } from "react";
 import { ChevronDown, Stamp, Tag } from "lucide-react";
+import { KitList } from "@/components/KitList";
 import { TagPickerSheet } from "@/components/TagPickerSheet";
 import { ToolFooter } from "@/components/ToolFooter";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
@@ -24,11 +24,6 @@ import {
 } from "@/stores/selection-store";
 import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
-
-interface RankedKit {
-    preset: TagPreset;
-    count: number;
-}
 
 /**
  * True when `tags` is exactly the preset's tag set (order-independent).
@@ -201,7 +196,10 @@ export function StampToolFooter(): JSX.Element | null {
                         {stampPickMode === "kit" ? (
                             <KitList
                                 rankedKits={rankedKits}
-                                stampTags={stampTags}
+                                isActive={(preset) =>
+                                    tagsMatchPreset(stampTags, preset)
+                                }
+                                emptyHint="Create them in Manage → Tags."
                                 onSelect={(preset) => {
                                     selectKit(preset);
                                     setExpandedKitKey(null);
@@ -238,57 +236,6 @@ export function StampToolFooter(): JSX.Element | null {
                 onTogglePinTag={togglePinnedTag}
             />
         </>
-    );
-}
-
-function KitList({
-    rankedKits,
-    stampTags,
-    onSelect,
-}: {
-    rankedKits: RankedKit[];
-    stampTags: string[];
-    onSelect: (preset: TagPreset) => void;
-}): JSX.Element {
-    if (rankedKits.length === 0) {
-        return (
-            <p className="text-xs text-muted-foreground">
-                No kits yet. Create them in Manage → Tags.
-            </p>
-        );
-    }
-    return (
-        <ul className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain">
-            {rankedKits.map(({ preset, count }) => (
-                <li key={preset.id}>
-                    <Button
-                        type="button"
-                        variant={
-                            tagsMatchPreset(stampTags, preset) ?
-                                "secondary" :
-                                "ghost"
-                        }
-                        className="h-auto min-h-9 w-full justify-between gap-2 px-2 py-1.5"
-                        onClick={() => onSelect(preset)}
-                    >
-                        <span className="flex min-w-0 flex-col items-start gap-0.5 text-left">
-                            <span className="truncate text-sm font-medium">
-                                {preset.name}
-                            </span>
-                            <span className="truncate text-xs text-muted-foreground">
-                                {preset.tags.join(", ")}
-                            </span>
-                        </span>
-                        <Badge
-                            variant="secondary"
-                            className="shrink-0 tabular-nums"
-                        >
-                            {count}
-                        </Badge>
-                    </Button>
-                </li>
-            ))}
-        </ul>
     );
 }
 

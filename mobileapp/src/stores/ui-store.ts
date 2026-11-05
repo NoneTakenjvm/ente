@@ -108,8 +108,9 @@ interface UIState {
     setCropLockAspect: (locked: boolean) => void;
     /** Rank the gallery against this file; starts a closest relative sort if none is active. */
     setRelativeStartFileId: (fileId: number) => void;
-    /** Bumped on every "Set Relative" so the gallery can jump to the top. */
-    relativeAnchorEpoch: number;
+    /** Bumped when a re-rank should start at the top ("Set Relative", kit review Apply). */
+    scrollTopEpoch: number;
+    scrollGalleryToTop: () => void;
     /** Pick a new random start and rebuild the relative chain. */
     reapplyRelativeSort: () => void;
     /**
@@ -133,6 +134,11 @@ interface UIState {
     reapplyNearness: () => void;
     reconcileMediaShuffle: (fileIds: readonly number[]) => void;
     substituteMediaShuffleFileId: (oldId: number, newId: number) => void;
+    /** Photos rejected in kit review, per kit preset id. Session-only. */
+    kitReviewRejectedIds: ReadonlyMap<string, ReadonlySet<number>>;
+    addKitReviewRejections: (kitId: string, fileIds: readonly number[]) => void;
+    /** Forget this kit's rejections so those photos are reviewed again. */
+    clearKitReviewRejections: (kitId: string) => void;
 }
 
 export const useUIStore = create<UIState>((set) => {
@@ -168,13 +174,16 @@ export const useUIStore = create<UIState>((set) => {
         setCropLockAspect: (locked: boolean): void => {
             set({ cropLockAspect: locked });
         },
-        relativeAnchorEpoch: 0,
+        scrollTopEpoch: 0,
+        scrollGalleryToTop: (): void => {
+            set((state) => ({ scrollTopEpoch: state.scrollTopEpoch + 1 }));
+        },
         setRelativeStartFileId: (fileId: number): void => {
             set((state) => {
-                const relativeAnchorEpoch = state.relativeAnchorEpoch + 1;
+                const scrollTopEpoch = state.scrollTopEpoch + 1;
                 if (state.ordering?.kind !== "relative") {
                     return {
-                        relativeAnchorEpoch,
+                        scrollTopEpoch,
                         ordering: {
                             kind: "relative",
                             direction: "closest",
@@ -184,7 +193,7 @@ export const useUIStore = create<UIState>((set) => {
                     };
                 }
                 return {
-                    relativeAnchorEpoch,
+                    scrollTopEpoch,
                     ordering: { ...state.ordering, startFileId: fileId },
                 };
             });
@@ -277,10 +286,28 @@ export const useUIStore = create<UIState>((set) => {
                 return { ordering: { ...ordering, fileIds: next } };
             });
         },
+        kitReviewRejectedIds: new Map<string, ReadonlySet<number>>(),
+        addKitReviewRejections: (kitId: string, fileIds: readonly number[]): void => {
+            set((state) => {
+                const rejectedIds = new Map(state.kitReviewRejectedIds);
+                rejectedIds.set(
+                    kitId,
+                    new Set([...(state.kitReviewRejectedIds.get(kitId) ?? []), ...fileIds]),
+                );
+                return { kitReviewRejectedIds: rejectedIds };
+            });
+        },
+        clearKitReviewRejections: (kitId: string): void => {
+            set((state) => {
+                const rejectedIds = new Map(state.kitReviewRejectedIds);
+                rejectedIds.delete(kitId);
+                return { kitReviewRejectedIds: rejectedIds };
+            });
+        },
     };
 });
 
 registerReset(() => {
     useUploadJobStore.getState().reset();
-    useUIStore.setState({ ordering: undefined });
+    useUIStore.setState({ ordering: undefined, kitReviewRejectedIds: new Map() });
 });

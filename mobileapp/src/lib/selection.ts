@@ -6,7 +6,7 @@ import { fileAspectRatio } from "@/lib/file-aspect-ratio";
 import { bulkAddTags } from "@/lib/tag-bulk-actions";
 import { viewportTargetAspectRatio } from "@/lib/viewport-fit";
 import { isBatchApplying } from "@/stores/batch-apply-store";
-import type { SelectionMode } from "@/stores/selection-store";
+import type { KitReviewMark, SelectionMode } from "@/stores/selection-store";
 import { useUIStore } from "@/stores/ui-store";
 import type { EnteFile } from "ente-media/file";
 import { toast } from "sonner";
@@ -32,10 +32,14 @@ interface BuildMediaGridSelectionArgs {
     addPendingCrop?: (fileId: number, crop: PendingCrop) => void;
     toggleSelection: (fileId: number) => void;
     selectMany: (fileIds: number[], mode: "add" | "toggle" | "set") => void;
+    reviewKitId: string | undefined;
+    cycleReviewMark: (fileId: number) => void;
+    markReviewMany: (fileIds: readonly number[], mark: KitReviewMark) => void;
+    onLongPress?: (file: EnteFile) => void;
 }
 
 /**
- * Grid tap/drag behaviour for selection, stamp, quick-rotate, or quick-crop tools.
+ * Grid tap/drag behaviour for selection, stamp, kit review, quick-rotate, or quick-crop tools.
  * Stamp applies tags only (no checkmarks); rotate drafts +90° and crop drafts a
  * viewport-aspect box (tap only).
  */
@@ -110,6 +114,25 @@ export function buildMediaGridSelection(
             },
             // Tap-only: marquee must not bulk-stamp tags.
             onSelectMany: undefined,
+        };
+    }
+    if (args.mode === "kitReview") {
+        const { reviewKitId, cycleReviewMark, markReviewMany, onLongPress } = args;
+        return {
+            selectedIds: EMPTY_SELECTED_IDS as Set<number>,
+            reviewMode: true,
+            onToggle: (file: EnteFile): void => {
+                if (!reviewKitId) {
+                    toast.message("Pick a kit first");
+                    return;
+                }
+                cycleReviewMark(file.id);
+            },
+            // Marquee marks yes, same as tapping, so it needs a kit.
+            onSelectMany: reviewKitId ?
+                (fileIds) => markReviewMany(fileIds, "yes") :
+                undefined,
+            onLongPress,
         };
     }
     if (args.mode !== "select") {

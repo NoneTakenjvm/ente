@@ -11,6 +11,7 @@ import {
     emptyTagFilter,
     isTagFilterActive,
 } from "@/lib/tag-filter";
+import { startKitReview } from "@/lib/kit-review";
 import {
     matchNearnessFilterToKitPreset,
     nearnessFilterFromKitTags,
@@ -77,16 +78,16 @@ export function NearnessSection({
         if (!preset.tags.length) {
             return;
         }
+        // While reviewing, keep the review on the kit the grid is ranked by.
+        if (useSelectionStore.getState().mode === "kitReview") {
+            startKitReview(preset);
+            return;
+        }
         setOrdering({
             kind: "nearness",
             filter: nearnessFilterFromKitTags(preset.tags),
             source: "kit",
         });
-        const selection = useSelectionStore.getState();
-        selection.setStampPickMode("kit");
-        selection.setStampTags(preset.tags);
-        selection.setMode("stamp");
-        selection.setStampSheetOpen(false);
     };
 
     const openFilterEditor = (): void => {
@@ -168,6 +169,9 @@ export function NearnessSection({
                         />
                         Rival kit penalties
                     </label>
+                    <p className="px-1.5 text-xs text-muted-foreground">
+                        To tag photos with this kit, use Tools → Review kit.
+                    </p>
                 </>
             );
         }

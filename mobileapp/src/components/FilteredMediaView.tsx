@@ -7,6 +7,7 @@ import {
     type JSX,
 } from "react";
 import { CropToolFooter } from "@/components/CropToolFooter";
+import { KitReviewFooter } from "@/components/KitReviewFooter";
 import { PageLoader } from "@/components/PageLoader";
 import { RotateToolFooter } from "@/components/RotateToolFooter";
 import { SelectionActionFooter } from "@/components/SelectionActionFooter";
@@ -70,7 +71,7 @@ export function FilteredMediaView({
         };
     }, [resetSelection]);
 
-    const gridSelection = useMediaGridSelection();
+    const gridSelection = useMediaGridSelection(files);
 
     const toolActive = mode !== "none";
     const footerInsetPx = toolActive ? SELECTION_FOOTER_INSET_PX : 0;
@@ -105,6 +106,7 @@ export function FilteredMediaView({
             <StampToolFooter />
             <RotateToolFooter />
             <CropToolFooter />
+            <KitReviewFooter files={files} />
             {viewer ? (
                 <PhotoViewer
                     files={viewer.files}

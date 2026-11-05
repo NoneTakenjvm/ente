@@ -6,13 +6,20 @@
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-10-25 |
-| **Last agent / session** | Cleanup merges tags onto keepers (`0.3.220`, uncommitted); before that, Similar compact cards + Recent scope (`0.3.219`); before that, Similar review facelift (`0.3.218`); before that, Exempt pair for Similar (`0.3.217`, uncommitted); before that, Similar scope: whole library / latest uploads / picked (`0.3.216`, uncommitted); before that, Similar is pure CLIP: all-pairs scan in a worker + one-to-one closest pairs (`0.3.212`, uncommitted) |
+| **Last updated** | 2026-11-05 |
+| **Last agent / session** | Kit review tool (`0.3.221`); before that, cleanup merges tags onto keepers (`0.3.220`); before that, Similar compact cards + Recent scope (`0.3.219`); before that, Similar review facelift (`0.3.218`); before that, Exempt pair for Similar (`0.3.217`, uncommitted); before that, Similar scope: whole library / latest uploads / picked (`0.3.216`, uncommitted); before that, Similar is pure CLIP: all-pairs scan in a worker + one-to-one closest pairs (`0.3.212`, uncommitted) |
 | **Current milestone** | Post-M8 UX / upload performance |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
-| **Next recommended action** | Phone QA of `0.3.212` and `0.3.209` (lists below), then `0.3.208` and the `0.3.195`–`0.3.203` lists. Watch the first CI run on push. Rotate the test-account password. |
+| **Next recommended action** | Phone QA of `0.3.221` kit review (list below), then `0.3.212` and `0.3.209` (lists below), then `0.3.208` and the `0.3.195`–`0.3.203` lists. Watch the first CI run on push. Rotate the test-account password. |
 
-**This session (uncommitted, `0.3.220`): cleanup merges tags onto keepers**
+**This session (`0.3.221`): Kit review tool**
+1. **Flow** — Tools → **Review kit** (`selection-store` mode `kitReview`; actions in `lib/kit-review.ts`; footer `KitReviewFooter.tsx`). Pick a kit (or New kit from tags); the grid ranks by kit nearness and hides photos that already carry every kit tag or were skipped for that kit this session. Tap cycles yes → no → clear, drag marks yes, hold marks every unmarked photo up to that tile yes (toast with Undo). **Rest no** rejects unmarked photos above the lowest mark; **Clear marks**, **Scan N new** (embeds only the view's missing images), **Restore N skipped**.
+2. **Apply** — clears the marks first, writes the kit tags on yes photos in one `bulkAddTags` batch (Undo toast), records no photos in `ui-store.kitReviewRejectedIds` (session-only), re-ranks and scrolls to the top (`scrollTopEpoch`, renamed from `relativeAnchorEpoch`). Yes photos become seeds; rejections feed a rival "not this kit" medoid set into the competitive score (`[Note: Kit review rejections]` in `use-media-display-pipeline.ts`).
+3. **Changed** — Options → Nearness → Choose kit no longer arms Stamp (browse only, with a hint); during review it switches the review kit. Stamp's kit list moved to `KitList.tsx`. Marks outside the view are pruned; switching tools asks before dropping marks.
+4. **Not done** — rejections are not persisted across sessions; no likeness score / cutoff on tiles; no yes/no in the photo viewer; per-tag "Kit nearness" switch and per-kit Tune are unchanged. The learned margins reorder sees rejections only through the production score.
+5. **QA** — Review kit with and without a kit nearness sort active; tap cycle, drag, hold + Undo, Rest no; Apply on a few and on hundreds (count, Undo toast, scroll to top, re-rank); skip some then Restore; New kit; Scan N new on an unscanned view; change the gallery filter mid-review (marks outside the view drop); switch to Stamp with marks (confirm).
+
+**Previous session (uncommitted, `0.3.220`): cleanup merges tags onto keepers**
 1. **Merge** — `planDuplicateGroupPrune` returns `tagsToMerge` (keeper id → keeper tags + the trashed copies' user tags; system tags like `cropped` stay behind). On a real (non-dry) cleanup the store writes them with `setTagsOnFiles` (optimistic + tag outbox) before trashing. Applies to Exact duplicates and Similar. The confirm dialog says how many keepers take over tags; tags only one copy has are outlined (no longer red).
 2. **QA** — tag only the copy, tick Trash, Review cleanup (dialog mentions tags), Move to trash: keeper shows the tag in the viewer and after reload; dry run writes nothing.
 

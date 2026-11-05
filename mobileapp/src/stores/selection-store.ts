@@ -8,7 +8,10 @@ import { registerReset } from "@/lib/session-lifecycle";
 export type StampPickMode = "kit" | "tag";
 
 /** Which grid tool is active; the tools are mutually exclusive. */
-export type SelectionMode = "none" | "select" | "stamp" | "rotate" | "crop";
+export type SelectionMode = "none" | "select" | "stamp" | "kitReview" | "rotate" | "crop";
+
+/** A staged kit review verdict: "yes" adds the kit's tags on Apply, "no" rejects it. */
+export type KitReviewMark = "yes" | "no";
 
 interface SelectionState {
     mode: SelectionMode;
@@ -22,9 +25,13 @@ interface SelectionState {
     pendingRotations: Record<number, RotationDegrees>;
     /** Draft crop box per file id. */
     pendingCrops: Record<number, PendingCrop>;
+    /** Kit being reviewed in the kit review tool. */
+    reviewKitId: string | undefined;
+    /** Staged kit review verdicts per file id; replaced on every change. */
+    reviewMarks: ReadonlyMap<number, KitReviewMark>;
     /**
      * Switch tool. Always drops every tool's drafts and, unless entering
-     * select, the selection.
+     * select, the selection. Review marks are always dropped; the review kit stays.
      */
     setMode: (mode: SelectionMode) => void;
     toggle: (fileId: number) => void;
@@ -43,6 +50,12 @@ interface SelectionState {
     setPendingCropRect: (fileId: number, rect: NormalizedCropRect) => void;
     removePendingCrop: (fileId: number) => void;
     clearPendingCrops: () => void;
+    setReviewKitId: (kitId: string | undefined) => void;
+    cycleReviewMark: (fileId: number) => void;
+    /** Mark every listed photo that has no mark yet; existing marks are kept. */
+    markReviewMany: (fileIds: readonly number[], mark: KitReviewMark) => void;
+    unmarkReview: (fileIds: readonly number[]) => void;
+    clearReviewMarks: () => void;
     reset: () => void;
 }
 
@@ -56,6 +69,8 @@ const initialState = {
     stampSheetOpen: false,
     pendingRotations: {} as Record<number, RotationDegrees>,
     pendingCrops: {} as Record<number, PendingCrop>,
+    reviewKitId: undefined as string | undefined,
+    reviewMarks: new Map<number, KitReviewMark>(),
 };
 
 export const useSelectionStore = create<SelectionState>((set, get) => ({
@@ -72,6 +87,7 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
                 stampPickMode === "tag",
             pendingRotations: {},
             pendingCrops: {},
+            reviewMarks: new Map<number, KitReviewMark>(),
         });
     },
 
@@ -126,10 +142,18 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
     pruneToVisible: (visibleIds: Set<number>): void => {
         set((state) => {
             const pruned = state.selectedIds.filter((id) => visibleIds.has(id));
-            if (pruned.length === state.selectedIds.length) {
+            // Review marks on photos that left the view must not be applied.
+            const reviewMarks = new Map(
+                [...state.reviewMarks].filter(([id]) => visibleIds.has(id)),
+            );
+            const marksPruned = reviewMarks.size !== state.reviewMarks.size;
+            if (pruned.length === state.selectedIds.length && !marksPruned) {
                 return state;
             }
-            return { selectedIds: pruned };
+            return {
+                selectedIds: pruned,
+                ...(marksPruned ? { reviewMarks } : {}),
+            };
         });
     },
 
@@ -226,6 +250,51 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
 
     clearPendingCrops: (): void => {
         set({ pendingCrops: {} });
+    },
+
+    setReviewKitId: (kitId: string | undefined): void => {
+        set({ reviewKitId: kitId, reviewMarks: new Map<number, KitReviewMark>() });
+    },
+
+    cycleReviewMark: (fileId: number): void => {
+        set((state) => {
+            const reviewMarks = new Map(state.reviewMarks);
+            const mark = state.reviewMarks.get(fileId);
+            if (mark === undefined) {
+                reviewMarks.set(fileId, "yes");
+            } else if (mark === "yes") {
+                reviewMarks.set(fileId, "no");
+            } else {
+                reviewMarks.delete(fileId);
+            }
+            return { reviewMarks };
+        });
+    },
+
+    markReviewMany: (fileIds: readonly number[], mark: KitReviewMark): void => {
+        set((state) => {
+            const reviewMarks = new Map(state.reviewMarks);
+            for (const fileId of fileIds) {
+                if (!reviewMarks.has(fileId)) {
+                    reviewMarks.set(fileId, mark);
+                }
+            }
+            return { reviewMarks };
+        });
+    },
+
+    unmarkReview: (fileIds: readonly number[]): void => {
+        set((state) => {
+            const reviewMarks = new Map(state.reviewMarks);
+            for (const fileId of fileIds) {
+                reviewMarks.delete(fileId);
+            }
+            return { reviewMarks };
+        });
+    },
+
+    clearReviewMarks: (): void => {
+        set({ reviewMarks: new Map<number, KitReviewMark>() });
     },
 
     reset: (): void => {
