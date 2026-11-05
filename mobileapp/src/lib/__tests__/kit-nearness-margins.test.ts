@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
     buildKitWhitening,
     countKitPresence,
+    kitMatchFractions,
     rankByKitMargins,
     tagPresenceProbabilities,
     trainTagLogOddsModel,
@@ -154,6 +155,21 @@ describe("trainTagLogOddsModel", () => {
     });
 });
 
+describe("kitMatchFractions", () => {
+    it("is the share of members at or below each score", () => {
+        const matches = kitMatchFractions(
+            [0.5, 10, -1, Number.NaN],
+            [1, 2, 3, 4, 5],
+        );
+        expect(Array.from(matches!)).toEqual([0, 1, 0, Number.NaN]);
+        expect(kitMatchFractions([3], [1, 2, 3, 4, 5])?.[0]).toBeCloseTo(0.6);
+    });
+
+    it("needs enough members", () => {
+        expect(kitMatchFractions([1], [1, 2, 3, 4])).toBeUndefined();
+    });
+});
+
 describe("rankByKitMargins", () => {
     const training = buildToyTraining(8);
     const whitening = buildKitWhitening(
@@ -185,11 +201,32 @@ describe("rankByKitMargins", () => {
         ),
     });
 
+    const rankOrder = (
+        ...args: Parameters<typeof rankByKitMargins>
+    ): Float64Array | undefined => rankByKitMargins(...args)?.orderIds;
+
+    it("returns member-calibrated matches aligned with the order", () => {
+        const ranked = rankByKitMargins(
+            requestFor([
+                { id: 1, row: noisyUnit([0, 0, 0, 1], 901) },
+                { id: 2, row: noisyUnit([1, 1, 1, 0], 902) },
+            ]),
+            whitening,
+            models,
+        );
+        expect(ranked && Array.from(ranked.orderIds)).toEqual([2, 1]);
+        const matches = ranked?.matches;
+        expect(matches).toBeDefined();
+        expect(matches![0]!).toBeGreaterThan(matches![1]!);
+        expect(matches![1]!).toBeGreaterThanOrEqual(0);
+        expect(matches![0]!).toBeLessThanOrEqual(1);
+    });
+
     it("ranks a member above negatives the production score cannot split", () => {
         const member = noisyUnit([1, 1, 1, 0], 501);
         const onlyA = noisyUnit([1, 0, 0, 0], 502);
         const unrelated = noisyUnit([0, 0, 0, 1], 503);
-        const order = rankByKitMargins(
+        const order = rankOrder(
             requestFor([
                 { id: 1, row: onlyA, productionScore: 0.7 },
                 { id: 2, row: member, productionScore: 0.7 },
@@ -205,7 +242,7 @@ describe("rankByKitMargins", () => {
     it("pushes a hard negative below a member it out-scores on production", () => {
         const member = noisyUnit([1, 1, 1, 0], 511);
         const onlyB = noisyUnit([0, 1, 0, 0], 512);
-        const order = rankByKitMargins(
+        const order = rankOrder(
             requestFor([
                 { id: 1, row: onlyB, productionScore: 0.72 },
                 { id: 2, row: member, productionScore: 0.7 },
@@ -218,7 +255,7 @@ describe("rankByKitMargins", () => {
 
     it("breaks exact ties by lower id", () => {
         const row = noisyUnit([1, 1, 1, 0], 600);
-        const order = rankByKitMargins(
+        const order = rankOrder(
             requestFor([
                 { id: 9, row },
                 { id: 4, row },
@@ -232,7 +269,7 @@ describe("rankByKitMargins", () => {
     it("preserves Ente-scale file ids that do not fit in Int32", () => {
         const member = noisyUnit([1, 1, 1, 0], 801);
         const onlyA = noisyUnit([1, 0, 0, 0], 802);
-        const order = rankByKitMargins(
+        const order = rankOrder(
             requestFor([
                 { id: 2_500_000_001, row: onlyA, productionScore: 0.7 },
                 { id: 5_000_000_123, row: member, productionScore: 0.7 },

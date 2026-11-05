@@ -134,7 +134,7 @@ export const markReviewYesThrough = (
     if (index === -1) {
         return;
     }
-    markWithUndo(orderedIds.slice(0, index + 1), "yes");
+    markReviewWithUndo(orderedIds.slice(0, index + 1), "yes");
 };
 
 /**
@@ -149,7 +149,7 @@ export const markRestReviewNo = (orderedIds: readonly number[]): void => {
             lastMarkedIndex = index;
         }
     });
-    markWithUndo(orderedIds.slice(0, lastMarkedIndex + 1), "no");
+    markReviewWithUndo(orderedIds.slice(0, lastMarkedIndex + 1), "no");
 };
 
 /**
@@ -197,8 +197,11 @@ export const embedKitReviewCandidates = async (
     }
 };
 
-/** Mark every unmarked id with `mark`, toasting the count with an Undo. */
-const markWithUndo = (fileIds: readonly number[], mark: KitReviewMark): void => {
+/**
+ * Mark every unmarked id with `mark` and toast the count with an Undo (bulk
+ * marks: hold, Rest no, the match cutoff).
+ */
+export const markReviewWithUndo = (fileIds: readonly number[], mark: KitReviewMark): void => {
     const { reviewMarks: previous, reviewKitId } = useSelectionStore.getState();
     const unmarked = fileIds.filter((id) => !previous.has(id));
     if (unmarked.length === 0) {

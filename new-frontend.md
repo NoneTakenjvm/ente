@@ -7,12 +7,18 @@
 | Field | Value |
 |---|---|
 | **Last updated** | 2026-11-05 |
-| **Last agent / session** | Kit review tool (`0.3.221`); before that, cleanup merges tags onto keepers (`0.3.220`); before that, Similar compact cards + Recent scope (`0.3.219`); before that, Similar review facelift (`0.3.218`); before that, Exempt pair for Similar (`0.3.217`, uncommitted); before that, Similar scope: whole library / latest uploads / picked (`0.3.216`, uncommitted); before that, Similar is pure CLIP: all-pairs scan in a worker + one-to-one closest pairs (`0.3.212`, uncommitted) |
+| **Last agent / session** | Kit review match % + cutoff (`0.3.222`); before that, Kit review tool (`0.3.221`); before that, cleanup merges tags onto keepers (`0.3.220`); before that, Similar compact cards + Recent scope (`0.3.219`); before that, Similar review facelift (`0.3.218`); before that, Exempt pair for Similar (`0.3.217`, uncommitted); before that, Similar scope: whole library / latest uploads / picked (`0.3.216`, uncommitted); before that, Similar is pure CLIP: all-pairs scan in a worker + one-to-one closest pairs (`0.3.212`, uncommitted) |
 | **Current milestone** | Post-M8 UX / upload performance |
 | **Blockers** | ffmpeg WASM still heavy when VideoEncoder is unavailable; test-account password must be rotated (was in prod chunks + git history) |
-| **Next recommended action** | Phone QA of `0.3.221` kit review (list below), then `0.3.212` and `0.3.209` (lists below), then `0.3.208` and the `0.3.195`–`0.3.203` lists. Watch the first CI run on push. Rotate the test-account password. |
+| **Next recommended action** | Phone QA of `0.3.221`–`0.3.222` kit review (lists below), then `0.3.212` and `0.3.209` (lists below), then `0.3.208` and the `0.3.195`–`0.3.203` lists. Watch the first CI run on push. Rotate the test-account password. |
 
-**This session (`0.3.221`): Kit review tool**
+**This session (`0.3.222`): Kit review match % + cutoff**
+1. **Match** — each ranked tile in Review kit shows a match %: the share of the kit's own tagged photos that score at or below it under the same score that orders the grid (`kitMatchFractions`, `[Note: Kit match is member-calibrated]` in `lib/kit-nearness-margins.ts`). Learned margins return it from the worker with the order; the production order computes it in `frozenNearness` (prototype seeds left out). Needs 5+ tagged photos; published to `ui-store.kitReviewMatchById` only for the kit the ranking was built for.
+2. **Cutoff** — footer slider (5–100%, default 50%) + "Yes to N ≥ X%" marks every unmarked photo at or above the cutoff yes (toast with Undo); compares the rounded % the tiles show.
+3. **Known** — matches are in-sample for members, so they read a little low; on the learned path tuned medoid kits read lower still.
+4. **QA** — a kit with <5 tagged photos (hint, no badges), then 5+: badges fall down the grid, cutoff count changes with the slider, Yes to N + Undo, Apply then badges recompute; a kit with the rival toggle off (production path).
+
+**Previous session (`0.3.221`): Kit review tool**
 1. **Flow** — Tools → **Review kit** (`selection-store` mode `kitReview`; actions in `lib/kit-review.ts`; footer `KitReviewFooter.tsx`). Pick a kit (or New kit from tags); the grid ranks by kit nearness and hides photos that already carry every kit tag or were skipped for that kit this session. Tap cycles yes → no → clear, drag marks yes, hold marks every unmarked photo up to that tile yes (toast with Undo). **Rest no** rejects unmarked photos above the lowest mark; **Clear marks**, **Scan N new** (embeds only the view's missing images), **Restore N skipped**.
 2. **Apply** — clears the marks first, writes the kit tags on yes photos in one `bulkAddTags` batch (Undo toast), records no photos in `ui-store.kitReviewRejectedIds` (session-only), re-ranks and scrolls to the top (`scrollTopEpoch`, renamed from `relativeAnchorEpoch`). Yes photos become seeds; rejections feed a rival "not this kit" medoid set into the competitive score (`[Note: Kit review rejections]` in `use-media-display-pipeline.ts`).
 3. **Changed** — Options → Nearness → Choose kit no longer arms Stamp (browse only, with a hint); during review it switches the review kit. Stamp's kit list moved to `KitList.tsx`. Marks outside the view are pruned; switching tools asks before dropping marks.

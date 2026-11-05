@@ -139,6 +139,14 @@ interface UIState {
     addKitReviewRejections: (kitId: string, fileIds: readonly number[]) => void;
     /** Forget this kit's rejections so those photos are reviewed again. */
     clearKitReviewRejections: (kitId: string) => void;
+    /**
+     * Kit match (0–1) per ranked file while reviewing a kit; `undefined` when
+     * the kit has too few tagged photos to calibrate against.
+     */
+    kitReviewMatchById: ReadonlyMap<number, number> | undefined;
+    setKitReviewMatchById: (
+        matchById: ReadonlyMap<number, number> | undefined,
+    ) => void;
 }
 
 export const useUIStore = create<UIState>((set) => {
@@ -304,10 +312,20 @@ export const useUIStore = create<UIState>((set) => {
                 return { kitReviewRejectedIds: rejectedIds };
             });
         },
+        kitReviewMatchById: undefined,
+        setKitReviewMatchById: (
+            matchById: ReadonlyMap<number, number> | undefined,
+        ): void => {
+            set({ kitReviewMatchById: matchById });
+        },
     };
 });
 
 registerReset(() => {
     useUploadJobStore.getState().reset();
-    useUIStore.setState({ ordering: undefined, kitReviewRejectedIds: new Map() });
+    useUIStore.setState({
+        ordering: undefined,
+        kitReviewRejectedIds: new Map(),
+        kitReviewMatchById: undefined,
+    });
 });

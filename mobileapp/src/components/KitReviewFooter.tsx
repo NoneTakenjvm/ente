@@ -4,6 +4,7 @@ import { KitList } from "@/components/KitList";
 import { TagPickerSheet } from "@/components/TagPickerSheet";
 import { ToolFooter } from "@/components/ToolFooter";
 import { Button } from "@/components/ui/button";
+import { Slider } from "@/components/ui/slider";
 import {
     applyKitReview,
     confirmDiscardReviewMarks,
@@ -11,8 +12,10 @@ import {
     embedKitReviewCandidates,
     exitKitReview,
     markRestReviewNo,
+    markReviewWithUndo,
     startKitReview,
 } from "@/lib/kit-review";
+import { KIT_MATCH_MIN_MEMBERS } from "@/lib/kit-nearness-margins";
 import { rankPresetsByMatchCount, type TagPreset } from "@/lib/tag-presets";
 import { useEmbeddingIndexStore } from "@/stores/embedding-index-store";
 import { useLibraryStore } from "@/stores/library-store";
@@ -21,6 +24,15 @@ import { useTagSpeedStore } from "@/stores/tag-speed-store";
 import { useTagStore } from "@/stores/tag-store";
 import { useUIStore } from "@/stores/ui-store";
 import type { EnteFile } from "ente-media/file";
+
+/**
+ * Starting match cutoff (%): photos that score at least as well as half the
+ * kit's own tagged photos.
+ */
+const DEFAULT_MATCH_CUTOFF = 50;
+
+/** Lowest cutoff the slider offers; below this nearly everything matches. */
+const MATCH_CUTOFF_MIN = 5;
 
 /**
  * Footer for the kit review tool: pick a kit, then stage yes/no marks on the
@@ -41,6 +53,7 @@ function ActiveKitReviewFooter({ files }: { files: EnteFile[] }): JSX.Element {
             (s.kitReviewRejectedIds.get(reviewKitId)?.size ?? 0) :
             0);
     const embeddings = useEmbeddingIndexStore((s) => s.entries);
+    const matchById = useUIStore((s) => s.kitReviewMatchById);
     const allFiles = useLibraryStore((s) => s.allFiles);
     const presets = useTagSpeedStore((s) => s.presets);
     const pinnedTags = useTagSpeedStore((s) => s.pinnedTags);
@@ -51,6 +64,9 @@ function ActiveKitReviewFooter({ files }: { files: EnteFile[] }): JSX.Element {
     const [kitSheetOpen, setKitSheetOpen] = useState<boolean>(false);
     const [newKitTags, setNewKitTags] = useState<string[]>([]);
     const [scanBusy, setScanBusy] = useState<boolean>(false);
+    const [matchCutoff, setMatchCutoff] = useState<number>(
+        DEFAULT_MATCH_CUTOFF,
+    );
 
     const kit: TagPreset | undefined = presets.find(
         (preset) => preset.id === reviewKitId,
@@ -70,6 +86,22 @@ function ActiveKitReviewFooter({ files }: { files: EnteFile[] }): JSX.Element {
         () => countUnembeddedImages(files, embeddings),
         [embeddings, files],
     );
+    /** Unmarked photos at or above the match cutoff, in grid order. */
+    const cutoffIds = useMemo((): number[] => {
+        if (!matchById) {
+            return [];
+        }
+        // Compare the rounded percent the tiles show, so a "70%" tile is in
+        // "≥ 70%" (the raw float32 fraction can sit just below it).
+        return files
+            .filter(
+                (file) =>
+                    !reviewMarks.has(file.id) &&
+                    Math.round((matchById.get(file.id) ?? Number.NaN) * 100) >=
+                        matchCutoff,
+            )
+            .map((file) => file.id);
+    }, [files, matchById, matchCutoff, reviewMarks]);
 
     const pickKit = (preset: TagPreset): void => {
         startKitReview(preset);
@@ -204,7 +236,34 @@ function ActiveKitReviewFooter({ files }: { files: EnteFile[] }): JSX.Element {
                 {files.length === 0 ?
                     "Nothing left to review here." :
                     `${files.length} to review · tap: yes → no → clear · hold: yes up to here`}
+                {files.length > 0 && !matchById ?
+                    ` · match % shows once ${KIT_MATCH_MIN_MEMBERS}+ photos have the kit` :
+                    null}
             </p>
+            {matchById && files.length > 0 ? (
+                <div className="flex items-center gap-3">
+                    <Slider
+                        className="flex-1"
+                        aria-label="Kit match cutoff"
+                        min={MATCH_CUTOFF_MIN}
+                        max={100}
+                        step={5}
+                        value={[matchCutoff]}
+                        onValueChange={(value) => {
+                            const next = Array.isArray(value) ? value[0] : value;
+                            if (typeof next === "number") {
+                                setMatchCutoff(next);
+                            }
+                        }}
+                    />
+                    <FooterChip
+                        label={`Yes to ${cutoffIds.length} ≥ ${matchCutoff}%`}
+                        title="Mark every unmarked photo with at least this kit match as yes"
+                        disabled={cutoffIds.length === 0}
+                        onClick={() => markReviewWithUndo(cutoffIds, "yes")}
+                    />
+                </div>
+            ) : null}
             <div className="flex gap-1.5 overflow-x-auto pb-0.5">
                 {marked ? (
                     <>

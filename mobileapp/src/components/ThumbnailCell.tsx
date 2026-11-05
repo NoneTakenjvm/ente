@@ -17,6 +17,7 @@ import { Check, CircleCheck, Play, X } from "lucide-react";
 import { FileType } from "ente-media/file-type";
 import type { EnteFile } from "ente-media/file";
 import { selectedIdSet, useSelectionStore } from "@/stores/selection-store";
+import { useUIStore } from "@/stores/ui-store";
 import { formatFileSize } from "@/lib/format";
 
 const LONG_PRESS_MS = 450;
@@ -110,6 +111,8 @@ export const ThumbnailCell = memo(function ThumbnailCell({
         cropMode ? s.pendingCrops[file.id] : undefined);
     const reviewMark = useSelectionStore((s) =>
         reviewMode ? s.reviewMarks.get(file.id) : undefined);
+    const kitMatch = useUIStore((s) =>
+        reviewMode ? s.kitReviewMatchById?.get(file.id) : undefined);
     const showSelected = observeStoreSelection ? selectedFromStore : isSelected;
     const previewTransform =
         previewRotationDegrees !== undefined ?
@@ -308,6 +311,14 @@ export const ThumbnailCell = memo(function ThumbnailCell({
                     aria-hidden
                 >
                     <X className="size-4" strokeWidth={3} />
+                </span>
+            ) : null}
+            {kitMatch !== undefined && Number.isFinite(kitMatch) ? (
+                <span
+                    className="pointer-events-none absolute bottom-1 left-1 z-10 rounded bg-black/60 px-1 text-[10px] leading-4 font-medium text-white tabular-nums"
+                    aria-hidden
+                >
+                    {Math.round(kitMatch * 100)}%
                 </span>
             ) : null}
         </TileFrame>

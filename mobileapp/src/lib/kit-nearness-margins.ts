@@ -75,7 +75,15 @@ export type KitWorkerRequest = KitMarginsWorkerRequest | KitPresenceWorkerReques
 export type KitMarginsWorkerResponse = {
     id: number;
     orderIds?: Float64Array;
+    /** Kit match per ranked id (see {@link kitMatchFractions}); absent with too few members. */
+    matches?: Float32Array;
     error?: string;
+};
+
+/** Ranked candidate ids, best first, with their kit match when available. */
+export type KitMarginsRankResult = {
+    orderIds: Float64Array;
+    matches?: Float32Array;
 };
 
 export type KitPresenceWorkerResponse = {
@@ -91,6 +99,9 @@ export type KitPresenceEstimate = {
     candidateIds: readonly number[];
     tagProbabilities: Float32Array;
 };
+
+/** Fewest complete kit members for a meaningful match percentage. */
+export const KIT_MATCH_MIN_MEMBERS = 5;
 
 /** Weight on the σ-normalised hard margin (plateau 0.5–2). */
 const KIT_MARGIN_HARD_WEIGHT = 1.5;
@@ -245,7 +256,8 @@ export const trainTagLogOddsModel = (
 
 /**
  * Rank candidates by production score plus the σ-normalised hard and tag
- * margins (higher first, ties by lower id).
+ * margins (higher first, ties by lower id), with each candidate's kit match
+ * against the complete members among the training rows.
  *
  * Returns `undefined` when the training rows lack complete or partial kit
  * members, in which case the caller keeps the production order.
@@ -256,7 +268,7 @@ export const rankByKitMargins = (
     tagModels: readonly TagLogOddsModel[],
     hardWeight: number = KIT_MARGIN_HARD_WEIGHT,
     tagWeight: number = KIT_MARGIN_TAG_WEIGHT,
-): Float64Array | undefined => {
+): KitMarginsRankResult | undefined => {
     const {
         dim,
         trainingVectors,
@@ -316,7 +328,66 @@ export const rankByKitMargins = (
         (a, b) =>
             scores[b]! - scores[a]! || candidateIds[a]! - candidateIds[b]!,
     );
-    return Float64Array.from(order, (index) => candidateIds[index]!);
+
+    const memberScores: number[] = [];
+    for (let row = 0; row < rows; row += 1) {
+        if (tags.every((tag) => tag.labels[row] === 1)) {
+            memberScores.push(
+                trainingProductionScores[row]! * productionScale +
+                    trainingHard[row]! * hardScale +
+                    trainingTag[row]! * tagScale,
+            );
+        }
+    }
+    const matches = kitMatchFractions(scores, memberScores);
+    return {
+        orderIds: Float64Array.from(order, (index) => candidateIds[index]!),
+        matches: matches && Float32Array.from(order, (index) => matches[index]!),
+    };
+};
+
+/**
+ * Kit match per candidate: the fraction of complete kit members whose score is
+ * at or below the candidate's, so 0.7 reads "scores above 70% of the kit's own
+ * photos". Non-finite scores map to NaN. `undefined` when there are fewer than
+ * {@link KIT_MATCH_MIN_MEMBERS} members to compare against.
+ *
+ * [Note: Kit match is member-calibrated]
+ *
+ * Raw nearness scores have no fixed scale (cosine distances with rival
+ * penalties, or σ-normalised margins) and shift every re-rank. Ranking the
+ * candidate among the kit's own tagged photos under the same score gives a
+ * number users can set a cutoff on and that stays comparable across rounds.
+ * Members are scored in-sample, so the match is conservative. The production
+ * path leaves out members that are themselves prototypes; the learned path
+ * cannot tell them apart, so tuned medoid kits read slightly low there.
+ */
+export const kitMatchFractions = (
+    candidateScores: ArrayLike<number>,
+    memberScores: ArrayLike<number>,
+): Float32Array | undefined => {
+    const members = Float64Array.from(memberScores)
+        .filter((score) => Number.isFinite(score))
+        .sort();
+    if (members.length < KIT_MATCH_MIN_MEMBERS) {
+        return undefined;
+    }
+    return Float32Array.from(candidateScores, (score) => {
+        if (!Number.isFinite(score)) {
+            return Number.NaN;
+        }
+        let low = 0;
+        let high = members.length;
+        while (low < high) {
+            const middle = (low + high) >>> 1;
+            if (members[middle]! <= score) {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        return low / members.length;
+    });
 };
 
 /**
