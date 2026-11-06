@@ -79,20 +79,15 @@ self.onmessage = (event: MessageEvent<KitWorkerRequest>): void => {
             self.postMessage(response, [tagProbabilities.buffer]);
             return;
         }
-        const ranked = rankByKitMargins(request, whitening, models);
-        if (!ranked) {
+        const orderIds = rankByKitMargins(request, whitening, models);
+        if (!orderIds) {
             throw new Error("Kit has no complete or partial members");
         }
-        const { orderIds, matches } = ranked;
         const response: KitMarginsWorkerResponse = {
             id: request.id,
             orderIds,
-            matches,
         };
-        self.postMessage(
-            response,
-            matches ? [orderIds.buffer, matches.buffer] : [orderIds.buffer],
-        );
+        self.postMessage(response, [orderIds.buffer]);
     } catch (error: unknown) {
         const response: KitMarginsWorkerResponse = {
             id: request.id,

@@ -71,10 +71,6 @@ export interface ThumbnailGridSelection {
      * draw their draft crop box.
      */
     cropMode?: boolean;
-    /** Kit review: cells draw staged yes/no marks from the selection store. */
-    reviewMode?: boolean;
-    /** Long-press a cell while a tool is active. */
-    onLongPress?: (file: EnteFile) => void;
 }
 
 interface ThumbnailGridProps {
@@ -117,8 +113,6 @@ const cellChromeProps = (
     previewRotationDegrees: previewRotationById?.[file.id],
     observeStoreSelection: selection?.observeStoreSelection,
     cropMode: selection?.cropMode,
-    reviewMode: selection?.reviewMode,
-    onLongPress: selection?.onLongPress,
 });
 
 const GridRow = memo(function GridRow({
@@ -279,19 +273,19 @@ function SizedMasonryGrid({
         setScrollTop((prev) => (prev === next ? prev : next));
     }, [height, placedLayout.totalHeight, viewOrderKey]);
 
-    // Whole-gallery re-ranks ("Set Relative", kit review Apply) start at the top.
-    const scrollTopEpoch = useUIStore((s) => s.scrollTopEpoch);
-    const seenScrollTopEpochRef = useRef(scrollTopEpoch);
+    // "Set Relative" re-ranks the whole gallery: start at the closest images.
+    const relativeAnchorEpoch = useUIStore((s) => s.relativeAnchorEpoch);
+    const seenAnchorEpochRef = useRef(relativeAnchorEpoch);
     useEffect(() => {
-        if (seenScrollTopEpochRef.current === scrollTopEpoch) {
+        if (seenAnchorEpochRef.current === relativeAnchorEpoch) {
             return;
         }
-        seenScrollTopEpochRef.current = scrollTopEpoch;
+        seenAnchorEpochRef.current = relativeAnchorEpoch;
         if (scrollerRef.current) {
             scrollerRef.current.scrollTop = 0;
         }
         setScrollTop(0);
-    }, [scrollTopEpoch]);
+    }, [relativeAnchorEpoch]);
 
     useEffect(() => {
         scrollControllerRef.current = {

@@ -152,13 +152,6 @@ export const buildKitMarginsRanking = (
     };
 };
 
-/** Full gallery id order from the learned margins, with kit match per ranked id. */
-export type KitMarginsOrder = {
-    orderIds: number[];
-    /** Absent when the kit has too few members to calibrate against. */
-    matchById?: ReadonlyMap<number, number>;
-};
-
 /**
  * Rank in the worker and return the full gallery id order.
  *
@@ -166,7 +159,7 @@ export type KitMarginsOrder = {
  */
 export const rankByKitMarginsInWorker = async (
     ranking: KitMarginsRanking,
-): Promise<KitMarginsOrder> => {
+): Promise<number[]> => {
     const request = ranking.request;
     const response = (await kitWorker.request(request, [
         request.trainingIds.buffer,
@@ -180,13 +173,7 @@ export const rankByKitMarginsInWorker = async (
     if (response.error || !response.orderIds) {
         throw new Error(response.error ?? "Kit nearness margins failed");
     }
-    const { orderIds, matches } = response;
-    return {
-        orderIds: [...orderIds, ...ranking.trailingIds],
-        matchById: matches && new Map(
-            Array.from(orderIds, (id, index) => [id, matches[index]!]),
-        ),
-    };
+    return [...response.orderIds, ...ranking.trailingIds];
 };
 
 /**

@@ -10,6 +10,7 @@ import {
     Settings,
     Tags,
     Trash2,
+    WandSparkles,
     Wrench,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -66,7 +67,7 @@ const hubCategories = [
     {
         id: "tools",
         title: "Tools",
-        description: "Duplicates, similar photos, compress, and auto-crop.",
+        description: "Tag Helper, duplicates, similar photos, compress, and auto-crop.",
         icon: Wrench,
     },
     {
@@ -102,6 +103,12 @@ const hubCategories = [
 ] as const satisfies readonly ManageCategory[];
 
 const toolCategories = [
+    {
+        id: "tag-helper",
+        title: "Tag Helper",
+        description: "Tag untagged photos one at a time from suggested kits.",
+        icon: WandSparkles,
+    },
     {
         id: "exact",
         title: "Exact duplicates",

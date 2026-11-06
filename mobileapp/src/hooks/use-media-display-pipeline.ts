@@ -38,17 +38,14 @@ import { DEFAULT_KIT_EMBEDDING_GENOME } from "@/lib/kit-nearness-embedding-genom
 import {
     MAX_KIT_SEEDS,
     kitEmbeddingDistanceCompetitive,
-    kitEmbeddingMinDistance,
     kitEmbeddingRivalWeights,
     listKitSeedIds,
     pickKitEmbeddingMedoids,
     sortFilesByKitEmbeddingCompetitive,
 } from "@/lib/kit-nearness-sort";
-import { kitMatchFractions } from "@/lib/kit-nearness-margins";
 import {
     buildKitMarginsRanking,
     rankByKitMarginsInWorker,
-    type KitMarginsOrder,
     type KitMarginsRankingInput,
 } from "@/lib/kit-nearness-margins-job";
 import { matchNearnessFilterToKitPreset } from "@/lib/tag-presets";
@@ -101,22 +98,6 @@ const reconcileFrozenFileOrder = (
     return ordered;
 };
 
-/** Cosine distance below which a kit member is one of the kit's own prototypes. */
-const PROTOTYPE_DISTANCE_EPSILON = 1e-6;
-
-/** Kit match per scored file for the production (competitive distance) order. */
-const productionMatchById = (
-    distanceById: ReadonlyMap<number, number>,
-    memberScores: readonly number[],
-): ReadonlyMap<number, number> | undefined => {
-    const ids = [...distanceById.keys()];
-    const matches = kitMatchFractions(
-        ids.map((id) => -distanceById.get(id)!),
-        memberScores,
-    );
-    return matches && new Map(ids.map((id, index) => [id, matches[index]!]));
-};
-
 export interface MediaDisplayPipelineOptions {
     libraryFiles: EnteFile[];
     tagFilter: TagFilterSelection;
@@ -164,13 +145,6 @@ export function useMediaDisplayPipeline({
     const viewportTargetWidth = useUIStore((s) => s.viewportTargetWidth);
     const viewportTargetHeight = useUIStore((s) => s.viewportTargetHeight);
     const nearnessEpoch = useUIStore((s) => s.nearnessEpoch);
-    const kitReviewRejectedIds = useUIStore((s) => s.kitReviewRejectedIds);
-    const selectionMode = useSelectionStore((s) => s.mode);
-    const reviewKitId = useSelectionStore((s) => s.reviewKitId);
-    const presets = useTagSpeedStore((s) => s.presets);
-    const reviewKit = selectionMode === "kitReview" ?
-        presets.find((preset) => preset.id === reviewKitId) :
-        undefined;
 
     const embeddingHydrated = useEmbeddingIndexStore((s) => s.isHydrated);
     const embeddingCount = useEmbeddingIndexStore((s) => s.entries.size);
@@ -387,9 +361,6 @@ export function useMediaDisplayPipeline({
 
     const frozenNearness = useMemo((): {
         orderIds: number[];
-        matchById?: ReadonlyMap<number, number>;
-        /** Review kit this ranking was built for; its matches apply only to it. */
-        matchKitId?: string;
         marginsInput?: KitMarginsRankingInput;
     } => {
         const current = useUIStore.getState().ordering;
@@ -482,23 +453,6 @@ export function useMediaDisplayPipeline({
                 })
                 .filter((medoids) => medoids.length > 0) :
             [];
-        // [Note: Kit review rejections]
-        // Photos rejected for this kit act as a rival "not this kit" prototype,
-        // so near-misses rank lower after Apply. Always used in review, even when
-        // the rival toggle is off.
-        const selection = useSelectionStore.getState();
-        const reviewingThisKit = matchedKit !== undefined &&
-            selection.mode === "kitReview" &&
-            matchedKit.id === selection.reviewKitId;
-        const rejectedVectors = reviewingThisKit ?
-            pickKitEmbeddingMedoids(
-                [...(ui.kitReviewRejectedIds.get(matchedKit.id) ?? [])],
-                embeddings,
-            ).map((medoid) => medoid.vector) :
-            [];
-        if (rejectedVectors.length > 0) {
-            rivalMedoidSets.push(rejectedVectors);
-        }
         const scoreOptions = {
             lambda: selectedGenome.rivalLambda,
             tau: selectedGenome.rivalTau,
@@ -511,47 +465,16 @@ export function useMediaDisplayPipeline({
             scoreOptions,
         );
         const orderIds = ranking.files.map((file) => file.id);
+        if (!matchedKit || !useRivalPenalty) {
+            return { orderIds };
+        }
         const rivalWeights = kitEmbeddingRivalWeights(
             selectedMedoids,
             rivalMedoidSets,
             scoreOptions.tau,
         );
-        const memberScore = (fileId: number): number =>
-            -kitEmbeddingDistanceCompetitive(
-                fileId,
-                selectedMedoids,
-                rivalMedoidSets,
-                embeddings,
-                { ...scoreOptions, rivalWeights },
-            );
-        // Kit match for the production order (shown until the learned margins
-        // land, or for good when they decline); see [Note: Kit match is
-        // member-calibrated]. Only the review tool shows it. Seeds that are
-        // themselves a prototype (tuned medoid kits) sit at distance 0 and
-        // would cap every candidate's match, so they are left out.
-        const matchById = reviewingThisKit ?
-            productionMatchById(
-                ranking.distanceById,
-                seedIds
-                    .filter(
-                        (fileId) =>
-                            kitEmbeddingMinDistance(
-                                fileId,
-                                selectedMedoids,
-                                embeddings,
-                            ) > PROTOTYPE_DISTANCE_EPSILON,
-                    )
-                    .map(memberScore),
-            ) :
-            undefined;
-        const matchKitId = reviewingThisKit ? matchedKit.id : undefined;
-        if (!matchedKit || !useRivalPenalty) {
-            return { orderIds, matchById, matchKitId };
-        }
         return {
             orderIds,
-            matchById,
-            matchKitId,
             marginsInput: {
                 kitTags: matchedKit.tags,
                 libraryFiles: seedFiles,
@@ -580,13 +503,12 @@ export function useMediaDisplayPipeline({
         // eslint-disable-next-line react-hooks/exhaustive-deps -- snapshot only on apply
     }, [embeddingHydrated, nearnessEpoch, nearnessFilter]);
 
-    // Tagged with the frozen ranking it refines, so a stale learned order is
-    // never shown for one frame after the kit or epoch changes.
-    const [learnedNearness, setLearnedNearness] = useState<
-        { from: typeof frozenNearness; order: KitMarginsOrder } | undefined
-    >(undefined);
+    const [learnedNearnessOrderIds, setLearnedNearnessOrderIds] = useState<
+        number[]
+    >([]);
 
     useEffect(() => {
+        setLearnedNearnessOrderIds([]);
         const ranking =
             frozenNearness.marginsInput &&
             buildKitMarginsRanking(frozenNearness.marginsInput);
@@ -595,10 +517,9 @@ export function useMediaDisplayPipeline({
         }
         let cancelled = false;
         rankByKitMarginsInWorker(ranking)
-            .then((order) => {
+            .then((orderIds) => {
                 if (!cancelled) {
-                    startTransition(() =>
-                        setLearnedNearness({ from: frozenNearness, order }));
+                    startTransition(() => setLearnedNearnessOrderIds(orderIds));
                 }
             })
             .catch((error: unknown) => {
@@ -609,17 +530,9 @@ export function useMediaDisplayPipeline({
         };
     }, [frozenNearness]);
 
-    // Order and kit match always come from the same ranking, so the match
-    // shown on tiles falls monotonically down the grid.
-    const learnedOrder = learnedNearness?.from === frozenNearness ?
-        learnedNearness.order :
-        undefined;
-    const nearness = learnedOrder?.orderIds.length ?
-        learnedOrder :
-        frozenNearness;
-    const frozenNearnessOrderIds = nearness.orderIds;
-    const nearnessMatchById = nearness.matchById;
-    const nearnessMatchKitId = frozenNearness.matchKitId;
+    const frozenNearnessOrderIds = learnedNearnessOrderIds.length ?
+        learnedNearnessOrderIds :
+        frozenNearness.orderIds;
 
     const [frozenRelativeOrderIds, setFrozenRelativeOrderIds] = useState<
         number[]
@@ -1023,34 +936,7 @@ export function useMediaDisplayPipeline({
         viewerAspect,
     ]);
 
-    // Kit review hides photos that already carry every kit tag and photos
-    // rejected for this kit, so the next best candidates move up.
-    const reviewFiles = useMemo((): EnteFile[] => {
-        if (!reviewKit?.tags.length) {
-            return displayFiles;
-        }
-        const kitTagFileSets = reviewKit.tags.map((tag) => fileIdsByTag.get(tag));
-        const rejectedIds = kitReviewRejectedIds.get(reviewKit.id);
-        return displayFiles.filter(
-            (file) =>
-                !rejectedIds?.has(file.id) &&
-                !kitTagFileSets.every((fileIds) => fileIds?.has(file.id)),
-        );
-    }, [displayFiles, fileIdsByTag, kitReviewRejectedIds, reviewKit]);
-
-    // Tiles and the review cutoff read the kit match from the UI store; only
-    // a ranking built for the kit under review may supply it.
-    useEffect(() => {
-        useUIStore
-            .getState()
-            .setKitReviewMatchById(
-                reviewKit && reviewKit.id === nearnessMatchKitId ?
-                    nearnessMatchById :
-                    undefined,
-            );
-    }, [nearnessMatchById, nearnessMatchKitId, reviewKit]);
-
-    // A new filter drops active batch tools; stamp and kit review survive it.
+    // A new filter drops active batch tools; stamp mode survives it.
     const selectionFilterRef = useRef(tagFilter);
     useEffect(() => {
         if (selectionFilterRef.current === tagFilter) {
@@ -1058,14 +944,14 @@ export function useMediaDisplayPipeline({
         }
         selectionFilterRef.current = tagFilter;
         const { mode, setMode } = useSelectionStore.getState();
-        if (mode !== "none" && mode !== "stamp" && mode !== "kitReview") {
+        if (mode !== "none" && mode !== "stamp") {
             setMode("none");
         }
     }, [tagFilter]);
 
     return {
         filteredFiles,
-        displayFiles: reviewFiles,
+        displayFiles,
         matchCount: filteredFiles.length,
     };
 }

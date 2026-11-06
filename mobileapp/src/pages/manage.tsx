@@ -18,6 +18,7 @@ import { ManageUsagePanel } from "@/components/manage/ManageUsagePanel";
 import { ManageAutoCropPanel } from "@/components/manage/ManageAutoCropPanel";
 import { ManageSettingsPanel } from "@/components/manage/ManageSettingsPanel";
 import { ManageTagsPanel } from "@/components/manage/ManageTagsPanel";
+import { ManageTagHelperPanel } from "@/components/manage/ManageTagHelperPanel";
 import { PageLoader } from "@/components/PageLoader";
 import { useLibraryBootstrap } from "@/hooks/use-library-bootstrap";
 import { useLibraryLoading } from "@/hooks/use-library-loading";
@@ -83,6 +84,7 @@ export default function ManagePage(): JSX.Element {
             title={section === "hub" ? "Manage" : manageSectionTitle(section)}
             email={email}
             onBack={section === "hub" ? undefined : handleBack}
+            mainScrolls={section !== "tag-helper"}
         >
             {section === "hub" ? (
                 <ManageHub onSelect={handleSelectSection} />
@@ -119,6 +121,14 @@ export default function ManagePage(): JSX.Element {
                 )
             ) : null}
 
+            {section === "tag-helper" ? (
+                showFullPageLoader ? (
+                    <PageLoader message="Loading your library…" />
+                ) : (
+                    <ManageTagHelperPanel />
+                )
+            ) : null}
+
             {section === "exact" ? (
                 <ManageDuplicatesPanel showLoader={showFullPageLoader} />
             ) : null}
@@ -127,9 +137,11 @@ export default function ManagePage(): JSX.Element {
                 <ManageSimilarPanel showLoader={showFullPageLoader} />
             ) : null}
 
-            <p className="px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] text-center text-[11px] text-muted-foreground/70">
-                NTPhotos {APP_VERSION}
-            </p>
+            {section === "tag-helper" ? null : (
+                <p className="px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] text-center text-[11px] text-muted-foreground/70">
+                    NTPhotos {APP_VERSION}
+                </p>
+            )}
         </AppShell>
     );
 }

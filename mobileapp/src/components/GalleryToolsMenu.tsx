@@ -2,7 +2,6 @@ import { useCallback, useState, type JSX, type ReactNode } from "react";
 import {
     Check,
     Crop,
-    ListChecks,
     ListFilter,
     RotateCw,
     Stamp,
@@ -25,17 +24,9 @@ import {
 import type { ScopeCounts } from "@/hooks/use-scope-counts";
 import { useTagFilterBinding } from "@/hooks/use-tag-filter-binding";
 import { confirmDiscardPendingCrops } from "@/lib/crop-draft";
-import {
-    confirmDiscardReviewMarks,
-    exitKitReview,
-    startKitReview,
-} from "@/lib/kit-review";
 import { confirmDiscardPendingRotations } from "@/lib/rotate-draft";
 import { cn } from "@/lib/utils";
-import {
-    matchNearnessFilterToKitPreset,
-    stampTagsFromNearnessFilter,
-} from "@/lib/tag-presets";
+import { stampTagsFromNearnessFilter } from "@/lib/tag-presets";
 import { isTagFilterActive } from "@/lib/tag-filter";
 import { useSelectionStore } from "@/stores/selection-store";
 import type { TagFilterTarget } from "@/stores/tag-store";
@@ -73,13 +64,11 @@ export function GalleryToolsMenu({
     const setStampTags = useSelectionStore((s) => s.setStampTags);
     const setStampPickMode = useSelectionStore((s) => s.setStampPickMode);
     const setStampSheetOpen = useSelectionStore((s) => s.setStampSheetOpen);
-    const setReviewKitId = useSelectionStore((s) => s.setReviewKitId);
 
     const [menuOpen, setMenuOpen] = useState(false);
 
     const selectionEnabled = selectionMode === "select";
     const stampActive = selectionMode === "stamp";
-    const reviewActive = selectionMode === "kitReview";
     const rotateActive = selectionMode === "rotate";
     const cropActive = selectionMode === "crop";
     const anyToolActive = selectionMode !== "none";
@@ -107,10 +96,6 @@ export function GalleryToolsMenu({
 
     /** Exit whichever tool is active (wrench re-tap). */
     const exitActiveTool = useCallback((): void => {
-        if (reviewActive) {
-            exitKitReview();
-            return;
-        }
         if (rotateActive) {
             exitRotate();
             return;
@@ -120,7 +105,7 @@ export function GalleryToolsMenu({
             return;
         }
         setMode("none");
-    }, [cropActive, exitCrop, exitRotate, reviewActive, rotateActive, setMode]);
+    }, [cropActive, exitCrop, exitRotate, rotateActive, setMode]);
 
     const activateStamp = (): void => {
         if (stampActive) {
@@ -145,28 +130,6 @@ export function GalleryToolsMenu({
         setMode("stamp");
     };
 
-    /** Review the kit behind the active likeness ordering, else pick one. */
-    const activateKitReview = (): void => {
-        if (reviewActive) {
-            exitKitReview();
-            return;
-        }
-        const ordering = useUIStore.getState().ordering;
-        const kit =
-            ordering?.kind === "nearness" && ordering.source === "kit" ?
-                matchNearnessFilterToKitPreset(
-                    ordering.filter,
-                    useTagSpeedStore.getState().presets,
-                ) :
-                undefined;
-        if (kit) {
-            startKitReview(kit);
-            return;
-        }
-        setReviewKitId(undefined);
-        setMode("kitReview");
-    };
-
     const toggleRotate = (): void => {
         if (rotateActive) {
             exitRotate();
@@ -183,22 +146,14 @@ export function GalleryToolsMenu({
         setMode("crop");
     };
 
-    /** Switching from kit review to another tool drops its marks: ask first. */
-    const leavingReview = (run: () => void) => (): void => {
-        if (reviewActive && !confirmDiscardReviewMarks()) {
-            return;
-        }
-        run();
-    };
-
     const tools: Tool[] = [
         {
             label: "Select",
             icon: <Check />,
             active: selectionEnabled,
-            onToggle: leavingReview(() => {
+            onToggle: () => {
                 setMode(selectionEnabled ? "none" : "select");
-            }),
+            },
             activeLabel: "Exit selection mode",
             inactiveLabel: "Select media",
             activeTitle: "Exit selection mode",
@@ -208,27 +163,17 @@ export function GalleryToolsMenu({
             label: "Stamp",
             icon: <Stamp />,
             active: stampActive,
-            onToggle: leavingReview(activateStamp),
+            onToggle: activateStamp,
             activeLabel: "Exit stamp tool",
             inactiveLabel: "Stamp tags onto photos",
             activeTitle: "Exit stamp",
             inactiveTitle: "Stamp — pick tags, tap photos",
         },
         {
-            label: "Review kit",
-            icon: <ListChecks />,
-            active: reviewActive,
-            onToggle: activateKitReview,
-            activeLabel: "Exit kit review",
-            inactiveLabel: "Review kit photos",
-            activeTitle: "Exit kit review",
-            inactiveTitle: "Review — mark yes/no by kit likeness, then Apply",
-        },
-        {
             label: "Rotate",
             icon: <RotateCw />,
             active: rotateActive,
-            onToggle: leavingReview(toggleRotate),
+            onToggle: toggleRotate,
             activeLabel: "Exit rotate tool",
             inactiveLabel: "Quick rotate photos",
             activeTitle: "Exit rotate",
@@ -238,7 +183,7 @@ export function GalleryToolsMenu({
             label: "Crop",
             icon: <Crop />,
             active: cropActive,
-            onToggle: leavingReview(toggleCrop),
+            onToggle: toggleCrop,
             activeLabel: "Exit crop tool",
             inactiveLabel: "Quick crop photos",
             activeTitle: "Exit crop",
@@ -278,7 +223,7 @@ export function GalleryToolsMenu({
                                 title={
                                     anyToolActive ?
                                         "Exit tool" :
-                                        "Tools — select, stamp, review, rotate, crop, query"
+                                        "Tools — select, stamp, rotate, crop, query"
                                 }
                             >
                                 <Wrench />

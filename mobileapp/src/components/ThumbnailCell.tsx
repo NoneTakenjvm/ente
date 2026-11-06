@@ -13,11 +13,10 @@ import { useThumbnailEntry } from "@/hooks/use-thumbnail-entry";
 import { fileByteSize } from "@/lib/compress";
 import { previewTransformForRotation } from "@/lib/rotate-draft";
 import type { RotationDegrees } from "@/lib/rotate";
-import { Check, CircleCheck, Play, X } from "lucide-react";
+import { Check, CircleCheck, Play } from "lucide-react";
 import { FileType } from "ente-media/file-type";
 import type { EnteFile } from "ente-media/file";
 import { selectedIdSet, useSelectionStore } from "@/stores/selection-store";
-import { useUIStore } from "@/stores/ui-store";
 import { formatFileSize } from "@/lib/format";
 
 const LONG_PRESS_MS = 450;
@@ -47,10 +46,6 @@ interface ThumbnailCellProps {
     observeStoreSelection?: boolean;
     /** Quick-crop tool: draw this file's draft crop box over the tile. */
     cropMode?: boolean;
-    /** Kit review: draw this file's staged yes/no mark over the tile. */
-    reviewMode?: boolean;
-    /** Kit review hold: with `tapSelects`, fires instead of tap-to-open on long-press. */
-    onLongPress?: (file: EnteFile) => void;
 }
 
 /** Skip re-render when the same file is shown with the same chrome. */
@@ -75,8 +70,6 @@ const thumbnailCellPropsAreEqual = (
     prev.previewRotationDegrees === next.previewRotationDegrees &&
     prev.observeStoreSelection === next.observeStoreSelection &&
     prev.cropMode === next.cropMode &&
-    prev.reviewMode === next.reviewMode &&
-    prev.onLongPress === next.onLongPress &&
     (Boolean(prev.observeStoreSelection) || prev.isSelected === next.isSelected);
 
 export const ThumbnailCell = memo(function ThumbnailCell({
@@ -95,8 +88,6 @@ export const ThumbnailCell = memo(function ThumbnailCell({
     previewRotationDegrees,
     observeStoreSelection = false,
     cropMode = false,
-    reviewMode = false,
-    onLongPress,
 }: ThumbnailCellProps): JSX.Element {
     const cellWidth = width ?? size ?? 0;
     const cellHeight = height ?? size ?? 0;
@@ -109,10 +100,6 @@ export const ThumbnailCell = memo(function ThumbnailCell({
             false);
     const pendingCrop = useSelectionStore((s) =>
         cropMode ? s.pendingCrops[file.id] : undefined);
-    const reviewMark = useSelectionStore((s) =>
-        reviewMode ? s.reviewMarks.get(file.id) : undefined);
-    const kitMatch = useUIStore((s) =>
-        reviewMode ? s.kitReviewMatchById?.get(file.id) : undefined);
     const showSelected = observeStoreSelection ? selectedFromStore : isSelected;
     const previewTransform =
         previewRotationDegrees !== undefined ?
@@ -152,12 +139,11 @@ export const ThumbnailCell = memo(function ThumbnailCell({
         }
         longPressTriggeredRef.current = false;
         pressStartRef.current = { x: event.clientX, y: event.clientY };
-        const onHold = tapSelects ? onLongPress : onOpen;
-        if (onHold) {
+        if (!tapSelects && onOpen) {
             pressTimerRef.current = window.setTimeout(() => {
                 pressTimerRef.current = undefined;
                 longPressTriggeredRef.current = true;
-                onHold(file);
+                onOpen(file);
             }, LONG_PRESS_MS);
         }
     };
@@ -210,15 +196,13 @@ export const ThumbnailCell = memo(function ThumbnailCell({
                 onClick={handleClick}
                 disabled={disabled}
                 aria-label={
-                    reviewMode ?
-                        `Mark media ${file.id}${reviewMark ? `, marked ${reviewMark}` : ""}` :
-                        tapSelects ?
-                            previewRotationDegrees !== undefined ?
-                                `Rotate media ${file.id}, pending ${previewRotationDegrees} degrees` :
-                                showSelected ?
-                                    `Deselect media ${file.id}` :
-                                    `Select media ${file.id}` :
-                            `Open media ${file.id}`
+                    tapSelects ?
+                        previewRotationDegrees !== undefined ?
+                            `Rotate media ${file.id}, pending ${previewRotationDegrees} degrees` :
+                            showSelected ?
+                                `Deselect media ${file.id}` :
+                                `Select media ${file.id}` :
+                        `Open media ${file.id}`
                 }
                 aria-pressed={tapSelects ? showSelected : undefined}
             >
@@ -233,7 +217,6 @@ export const ThumbnailCell = memo(function ThumbnailCell({
                         className={cn(
                             "pointer-events-none size-full",
                             imageFitClass,
-                            reviewMark === "no" && "opacity-40",
                         )}
                         style={
                             previewTransform ?
@@ -291,36 +274,6 @@ export const ThumbnailCell = memo(function ThumbnailCell({
                 </span>
             ) : null}
             {tapSelects && showSelected ? <SelectedTileOverlay /> : null}
-            {reviewMark === "yes" ? (
-                <>
-                    <span
-                        className="pointer-events-none absolute inset-0 z-[1] ring-2 ring-inset ring-primary"
-                        aria-hidden
-                    />
-                    <span
-                        className="pointer-events-none absolute top-1.5 right-1.5 z-10 flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground"
-                        aria-hidden
-                    >
-                        <Check className="size-4" strokeWidth={3} />
-                    </span>
-                </>
-            ) : null}
-            {reviewMark === "no" ? (
-                <span
-                    className="pointer-events-none absolute top-1.5 right-1.5 z-10 flex size-6 items-center justify-center rounded-full bg-destructive text-white"
-                    aria-hidden
-                >
-                    <X className="size-4" strokeWidth={3} />
-                </span>
-            ) : null}
-            {kitMatch !== undefined && Number.isFinite(kitMatch) ? (
-                <span
-                    className="pointer-events-none absolute bottom-1 left-1 z-10 rounded bg-black/60 px-1 text-[10px] leading-4 font-medium text-white tabular-nums"
-                    aria-hidden
-                >
-                    {Math.round(kitMatch * 100)}%
-                </span>
-            ) : null}
         </TileFrame>
     );
 }, thumbnailCellPropsAreEqual);
