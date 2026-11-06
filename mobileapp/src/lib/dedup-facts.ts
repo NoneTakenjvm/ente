@@ -32,7 +32,7 @@ export interface DedupItemFacts {
     hasBestQuality: boolean;
 }
 
-export interface DedupTag {
+interface DedupTag {
     name: string;
     /** No other photo in the group has this tag. */
     onlyHere: boolean;

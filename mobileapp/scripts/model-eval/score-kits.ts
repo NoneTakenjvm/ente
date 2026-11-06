@@ -782,7 +782,7 @@ const marginsScores = (
         },
         whitening,
         tagModels,
-    );
+    )?.orderIds;
     if (!order) {
         return undefined;
     }

@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { TagPreset } from "@/lib/tag-presets";
 
-export interface RankedKit {
+interface RankedKit {
     preset: TagPreset;
     count: number;
 }
