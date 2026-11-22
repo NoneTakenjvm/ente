@@ -7,6 +7,7 @@ import {
     type TagFilterKitNode,
     type TagFilterNode,
     type TagFilterSelection,
+    type TagFilterTypeNode,
 } from "@/lib/tag-filter";
 
 /** A saved smart album backed by a tag query. */
@@ -32,6 +33,7 @@ export type PersistedTagFilterGroup = Persisted<Omit<TagFilterGroup, "children">
 export type PersistedTagFilterNode =
     Persisted<TagFilterClauseNode> |
     Persisted<TagFilterKitNode> |
+    Persisted<TagFilterTypeNode> |
     PersistedTagFilterGroup;
 
 export type PersistedTagFilterSelection = Omit<TagFilterSelection, "root"> & {

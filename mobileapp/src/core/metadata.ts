@@ -38,16 +38,57 @@ export const carriedPublicMagicData = (
 });
 
 /**
+ * Latest possible upload time per file id, see [Note: Upload time estimate].
+ */
+let uploadTimeBoundById: ReadonlyMap<number, number> = new Map();
+
+/**
+ * Recompute the upload time estimates from the whole library. Call whenever
+ * the library's files are replaced, before anything sorts by upload time.
+ *
+ * [Note: Upload time estimate]
+ *
+ * Remote does not tell us when a file was uploaded: `updationTime` is the
+ * only server timestamp, and every later write to the file bumps it. But file
+ * ids are handed out in upload order, and a file is never updated before it
+ * is uploaded. So a file cannot have been uploaded after the earliest
+ * `updationTime` among the files with the same or a higher id. That bound is
+ * exact for an untouched file, and puts an edited file back on the day of the
+ * next untouched upload after it.
+ */
+export const rebuildUploadTimeBounds = (files: readonly EnteFile[]): void => {
+    const bounds = new Map<number, number>();
+    let earliest = Number.POSITIVE_INFINITY;
+    for (const file of [...files].sort((a, b) => b.id - a.id)) {
+        if (file.updationTime > 0) {
+            earliest = Math.min(earliest, file.updationTime);
+        }
+        if (Number.isFinite(earliest)) {
+            bounds.set(file.id, earliest);
+        }
+    }
+    uploadTimeBoundById = bounds;
+};
+
+/**
  * Sort key by the file's first upload time, newest first.
  *
- * Prefers the `uploadedAt` recorded in public magic metadata (stamped by this
- * app on upload and preserved across derived reuploads), falls back to
- * `updationTime` for legacy files uploaded elsewhere, then to the capture date.
+ * The earlier of the `uploadedAt` recorded in public magic metadata (stamped
+ * by this app on upload and preserved across derived reuploads) and the
+ * library-wide estimate from {@link rebuildUploadTimeBounds}. A file outside
+ * the last rebuilt library falls back to its `updationTime`, then to the
+ * capture date.
  */
-export const fileUploadSortTime = (file: EnteFile): number =>
-    file.pubMagicMetadata?.data.uploadedAt ??
-    file.updationTime ??
-    fileCreationTime(file);
+export const fileUploadSortTime = (file: EnteFile): number => {
+    const uploadedAt = file.pubMagicMetadata?.data.uploadedAt;
+    const bound =
+        uploadTimeBoundById.get(file.id) ??
+        (file.updationTime > 0 ? file.updationTime : undefined);
+    if (bound === undefined) {
+        return uploadedAt ?? fileCreationTime(file);
+    }
+    return uploadedAt === undefined ? bound : Math.min(uploadedAt, bound);
+};
 
 /**
  * Stamp a fresh edit timestamp into a public-metadata update.

@@ -62,6 +62,7 @@ export function ManageTagFilterToolbar({
                     filter={filter}
                     onSetTagFilterMode={actions.setTagFilterMode}
                     onSetKitMode={actions.setKitMode}
+                    onSetTypeMode={actions.setTypeMode}
                     onSetRootOp={(op) => {
                         actions.setGroupOp(filter.root.id, op);
                     }}

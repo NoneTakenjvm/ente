@@ -10,8 +10,10 @@ import type { TagFilterActions } from "@/lib/tag-filter-mutations";
 import {
     describeTagFilterClause,
     describeTagFilterKit,
+    describeTagFilterType,
     isTagFilterClause,
     isTagFilterKit,
+    isTagFilterType,
     type TagFilterGroup,
     type TagFilterJoin,
     type TagFilterMode,
@@ -126,6 +128,23 @@ const FilterNodeRow = memo(function FilterNodeRow({
         );
     }
 
+    if (isTagFilterType(node)) {
+        return (
+            <FilterLeafRow
+                depth={depth}
+                selected={selectedIds.has(node.id)}
+                selectLabel={`Select ${describeTagFilterType(node)}`}
+                removeLabel={`Remove any ${node.type} tag`}
+                mode={node.mode}
+                onToggleSelect={() => onToggleSelect(node.id)}
+                onSetMode={(mode) => actions.setClauseMode(node.id, mode)}
+                onRemove={() => actions.removeNode(node.id)}
+            >
+                <span className="font-medium">Any {node.type} tag</span>
+            </FilterLeafRow>
+        );
+    }
+
     return (
         <li
             className="flex flex-col gap-2 rounded-md border border-dashed border-border/80 p-2"
@@ -153,6 +172,7 @@ const FilterNodeRow = memo(function FilterNodeRow({
                     targetGroupId={node.id}
                     onSetClauseInGroup={actions.setClauseInGroup}
                     onSetKitInGroup={actions.setKitInGroup}
+                    onSetTypeInGroup={actions.setTypeInGroup}
                     triggerLabel="Add tag"
                     triggerVariant="ghost"
                     triggerSize="xs"
@@ -208,6 +228,7 @@ function RootGroupSection({
                     targetGroupId={group.id}
                     onSetClauseInGroup={actions.setClauseInGroup}
                     onSetKitInGroup={actions.setKitInGroup}
+                    onSetTypeInGroup={actions.setTypeInGroup}
                     triggerLabel="Add tag"
                     triggerSize="sm"
                 />
@@ -232,6 +253,7 @@ function RootGroupSection({
                     targetGroupId={group.id}
                     onSetClauseInGroup={actions.setClauseInGroup}
                     onSetKitInGroup={actions.setKitInGroup}
+                    onSetTypeInGroup={actions.setTypeInGroup}
                     triggerLabel="Add tag"
                     triggerVariant="ghost"
                     triggerSize="xs"

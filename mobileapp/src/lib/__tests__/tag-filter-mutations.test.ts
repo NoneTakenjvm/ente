@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { TagFilterSelection } from "@/lib/tag-filter";
 import {
     findKitModeInGroup,
+    findTypeModeInGroup,
     removeTagFilterNode,
     removeTagFromTree,
     renameTagInTree,
@@ -10,6 +11,7 @@ import {
     setKitModeOnFilter,
     setTagFilterModeOnFilter,
     setTagFilterScope,
+    setTypeModeOnFilter,
 } from "@/lib/tag-filter-mutations";
 import {
     createEmptyTagFilterRoot,
@@ -254,5 +256,38 @@ describe("tag-filter-mutations", () => {
         const nested = next.children[0] as TagFilterGroup;
         expect(findClauseInGroup(nested, "z")?.tag).toBe("z");
         expect(next.children[1]).toMatchObject({ tags: ["z", "c"] });
+    });
+
+    it("setTypeModeOnFilter adds, toggles and clears a type unit", () => {
+        let filter = setTypeModeOnFilter(emptyTagFilter(), "place", "include");
+        expect(findTypeModeInGroup(filter.root, "place")).toBe("include");
+        filter = setTypeModeOnFilter(filter, "place", "exclude");
+        expect(findTypeModeInGroup(filter.root, "place")).toBe("exclude");
+        expect(filter.root.children).toHaveLength(1);
+        filter = setTypeModeOnFilter(filter, "place", null);
+        expect(findTypeModeInGroup(filter.root, "place")).toBeNull();
+        expect(filter.root.children).toHaveLength(0);
+    });
+
+    it("setTypeModeOnFilter include clears untagged scope like a tag include", () => {
+        const filter = setTypeModeOnFilter(
+            { ...emptyTagFilter(), tagScope: "untagged" as const },
+            "place",
+            "include",
+        );
+        expect(filter.tagScope).toBe("all");
+    });
+
+    it("setClauseModeOnFilter switches a type unit by id", () => {
+        let filter = setTypeModeOnFilter(emptyTagFilter(), "place", "include");
+        const typeNode = filter.root.children[0];
+        filter = setClauseModeOnFilter(filter, typeNode.id, "exclude");
+        expect(findTypeModeInGroup(filter.root, "place")).toBe("exclude");
+    });
+
+    it("renameTagInTree and removeTagFromTree leave type units unchanged", () => {
+        const filter = setTypeModeOnFilter(emptyTagFilter(), "place", "include");
+        expect(renameTagInTree(filter.root, "a", "z")).toEqual(filter.root);
+        expect(removeTagFromTree(filter.root, "a")).toEqual(filter.root);
     });
 });

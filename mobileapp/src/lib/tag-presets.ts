@@ -7,6 +7,7 @@ import {
     isTagFilterActive,
     isTagFilterClause,
     isTagFilterKit,
+    isTagFilterType,
     type TagFilterSelection,
 } from "@/lib/tag-filter";
 import { areAllTagsIncludedInKitNearness } from "@/lib/tag-types";
@@ -207,6 +208,9 @@ export const stampTagsFromNearnessFilter = (
             includes.push(child.tag);
         } else if (isTagFilterKit(child) && child.mode === "include") {
             includes.push(...child.tags);
+        } else if (isTagFilterType(child)) {
+            // A type unit has no tag list to stamp.
+            return undefined;
         }
     }
     if (!includes.length) {

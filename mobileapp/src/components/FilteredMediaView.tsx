@@ -14,6 +14,7 @@ import { StampToolFooter } from "@/components/StampToolFooter";
 import { ThumbnailGrid } from "@/components/ThumbnailGrid";
 import { useMediaGridSelection } from "@/hooks/use-media-grid-selection";
 import { SELECTION_FOOTER_INSET_PX } from "@/lib/selection";
+import type { GridSection } from "@/lib/date-sections";
 import { useSelectionStore } from "@/stores/selection-store";
 import type { EnteFile } from "ente-media/file";
 
@@ -31,6 +32,7 @@ interface FilteredMediaViewProps {
     loadingMessage?: string;
     albumCoverFileId?: number;
     onSetAlbumCover?: (fileId: number) => void;
+    sections?: readonly GridSection[];
 }
 
 /**
@@ -44,6 +46,7 @@ export function FilteredMediaView({
     loadingMessage = "Loading your library…",
     albumCoverFileId,
     onSetAlbumCover,
+    sections,
 }: FilteredMediaViewProps): JSX.Element {
     const [viewer, setViewer] = useState<
         { fileId: number; files: EnteFile[] } | undefined
@@ -96,6 +99,7 @@ export function FilteredMediaView({
                 files={files}
                 onOpenFile={toolActive ? undefined : handleOpenFile}
                 selection={gridSelection}
+                sections={sections}
                 footerInsetPx={footerInsetPx}
                 previewRotationById={
                     mode === "rotate" ? pendingRotations : undefined

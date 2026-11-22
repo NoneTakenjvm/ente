@@ -89,6 +89,7 @@ export function ManageCompressPanel({
     const includeInEffectsPresenceByName = useTagStore(
         (s) => s.typeConfig.includeInEffectsPresenceByName,
     );
+    const tagTypeByName = useTagStore((s) => s.typeConfig.tagTypeByName);
 
     const { filter, actions, setFilter } = useTagFilterDraft();
 
@@ -112,6 +113,7 @@ export function ManageCompressPanel({
             filterFilesByTags(files, filter, fileIdsByTag, {
                 favoriteFileIds,
                 includeInEffectsPresenceByName,
+                tagTypeByName,
             }),
         [
             favoriteFileIds,
@@ -119,6 +121,7 @@ export function ManageCompressPanel({
             files,
             filter,
             includeInEffectsPresenceByName,
+            tagTypeByName,
         ],
     );
 

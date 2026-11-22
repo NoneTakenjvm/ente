@@ -95,6 +95,53 @@ describe("visibleMasonryItemsFromColumns", () => {
     });
 });
 
+describe("computeMasonryLayout sections and square tiles", () => {
+    const sections = [
+        { label: "Day one", start: 0, count: 3 },
+        { label: "Day two", start: 3, count: 2 },
+    ];
+    const files = Array.from({ length: 5 }, (_, index) =>
+        fileWithDimensions(index + 1, 100, 100 + index * 50));
+
+    it("starts each section below its header and below every earlier tile", () => {
+        const layout = computeMasonryLayout(files, 320, 2, { sections });
+        const [dayOne, dayTwo] = layout.headers;
+        const dayOneItems = layout.items.slice(0, 3);
+        const dayTwoItems = layout.items.slice(3);
+
+        expect(layout.headers.map((header) => header.label)).toEqual([
+            "Day one",
+            "Day two",
+        ]);
+        for (const item of dayOneItems) {
+            expect(item.y).toBeGreaterThanOrEqual(dayOne.y + dayOne.height);
+            expect(dayTwo.y).toBeGreaterThanOrEqual(item.y + item.height);
+        }
+        for (const item of dayTwoItems) {
+            expect(item.y).toBeGreaterThanOrEqual(dayTwo.y + dayTwo.height);
+        }
+    });
+
+    it("places square tiles row-major", () => {
+        const squares = Array.from({ length: 4 }, (_, index) =>
+            fileWithDimensions(index + 1, 100, 300));
+        const [topLeft, topRight, bottomLeft, bottomRight] =
+            computeMasonryLayout(squares, 320, 2, { squareTiles: true }).items;
+
+        expect(topLeft.height).toBe(topLeft.width);
+        expect(topRight.y).toBe(topLeft.y);
+        expect(bottomLeft.x).toBe(topLeft.x);
+        expect(bottomLeft.y).toBeGreaterThan(topLeft.y);
+        expect(bottomRight.x).toBe(topRight.x);
+        expect(bottomRight.y).toBe(bottomLeft.y);
+    });
+
+    it("returns no headers without sections", () => {
+        const layout = computeMasonryLayout(files, 320, 2);
+        expect(layout.headers).toEqual([]);
+    });
+});
+
 describe("masonryViewOrderKey", () => {
     it("is stable for the same id order and changes when order changes", () => {
         const a = [fileWithDimensions(1, 1, 1), fileWithDimensions(2, 1, 1)];

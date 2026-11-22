@@ -4,6 +4,7 @@ import {
     isTagFilterClause,
     isTagFilterGroup,
     isTagFilterKit,
+    isTagFilterType,
     newTagFilterNodeId,
     type TagFilterClauseNode,
     type TagFilterGroup,
@@ -11,6 +12,7 @@ import {
     type TagFilterKitNode,
     type TagFilterMode,
     type TagFilterNode,
+    type TagFilterTypeNode,
     type ScopeKey,
     type TagFilterSelection,
     type TagScope,
@@ -85,6 +87,10 @@ const prunePresenceAffectingNodes = (
             }
             continue;
         }
+        if (isTagFilterType(child)) {
+            // Type units always count toward presence, so untagged drops them.
+            continue;
+        }
         const pruned = prunePresenceAffectingNodes(
             child,
             includeInEffectsPresenceByName,
@@ -108,6 +114,9 @@ const nodeAffectsPresence = (
         }
         if (isTagFilterKit(child) && child.id === nodeId) {
             return kitAffectsPresence(child.tags, includeInEffectsPresenceByName);
+        }
+        if (isTagFilterType(child) && child.id === nodeId) {
+            return true;
         }
         if (isTagFilterGroup(child)) {
             if (
@@ -396,7 +405,11 @@ const updateClauseModeInTree = (
 ): TagFilterGroup => ({
     ...root,
     children: root.children.map((child) => {
-        if (isTagFilterClause(child) || isTagFilterKit(child)) {
+        if (
+            isTagFilterClause(child) ||
+            isTagFilterKit(child) ||
+            isTagFilterType(child)
+        ) {
             return child.id === clauseId ? { ...child, mode } : child;
         }
         return updateClauseModeInTree(child, clauseId, mode);
@@ -445,6 +458,9 @@ export const renameTagInTree = (
                 tags: child.tags.map((tag) =>
                     tag === oldName ? newName : tag),
             };
+        }
+        if (isTagFilterType(child)) {
+            return child;
         }
         return renameTagInTree(child, oldName, newName);
     }),
@@ -638,6 +654,81 @@ export const findKitModeInGroup = (
     return null;
 };
 
+/**
+ * Add, update, or clear a type unit inside one group. [Note: type units count
+ * toward presence] Their tags are not resolved here, so a type unit always
+ * clears a conflicting tagged/untagged scope.
+ */
+const applyTypeToGroup = (
+    group: TagFilterGroup,
+    type: string,
+    mode: TagFilterMode | null,
+): TagFilterGroup => {
+    const existingIndex = group.children.findIndex(
+        (child) => isTagFilterType(child) && child.type === type,
+    );
+    if (mode === null) {
+        return {
+            ...group,
+            children: group.children.filter(
+                (child) => !(isTagFilterType(child) && child.type === type),
+            ),
+        };
+    }
+    if (existingIndex >= 0) {
+        const nextChildren = [...group.children];
+        nextChildren[existingIndex] = {
+            ...(nextChildren[existingIndex] as TagFilterTypeNode),
+            mode,
+        };
+        return { ...group, children: nextChildren };
+    }
+    const typeNode: TagFilterTypeNode = {
+        kind: "type",
+        id: newTagFilterNodeId(),
+        type,
+        mode,
+    };
+    return { ...group, children: [...group.children, typeNode] };
+};
+
+const setTypeInGroupOnFilter = (
+    filter: TagFilterSelection,
+    groupId: string,
+    type: string,
+    mode: TagFilterMode | null,
+): TagFilterSelection => ({
+    ...filter,
+    tagScope: tagScopeAfterClauseChange(filter.tagScope, mode, true),
+    root: updateGroupInTree(filter.root, groupId, (group) =>
+        applyTypeToGroup(group, type, mode)),
+});
+
+/**
+ * Add, update, or clear a type unit at the root.
+ */
+export const setTypeModeOnFilter = (
+    filter: TagFilterSelection,
+    type: string,
+    mode: TagFilterMode | null,
+): TagFilterSelection =>
+    setTypeInGroupOnFilter(filter, filter.root.id, type, mode);
+
+/**
+ * Mode of a type unit in the group, if present.
+ */
+export const findTypeModeInGroup = (
+    group: TagFilterGroup,
+    type: string,
+): TagFilterMode | null => {
+    for (const child of group.children) {
+        if (isTagFilterType(child) && child.type === type) {
+            return child.mode;
+        }
+    }
+    return null;
+};
+
 /** Every edit the tag-filter UI can make to a {@link TagFilterSelection}. */
 export interface TagFilterActions {
     /** Set one scope (`"all"` clears it). The tag scope also prunes clauses. */
@@ -653,6 +744,12 @@ export interface TagFilterActions {
     setKitInGroup: (
         groupId: string,
         kit: KitFilterInput,
+        mode: TagFilterMode | null,
+    ) => void;
+    setTypeMode: (type: string, mode: TagFilterMode | null) => void;
+    setTypeInGroup: (
+        groupId: string,
+        type: string,
         mode: TagFilterMode | null,
     ) => void;
     setGroupOp: (groupId: string, op: TagFilterJoin) => void;
@@ -723,6 +820,10 @@ export const tagFilterActions = (
                 mode,
                 includeInEffectsPresenceByName,
             )),
+    setTypeMode: (type, mode) =>
+        apply((filter) => setTypeModeOnFilter(filter, type, mode)),
+    setTypeInGroup: (groupId, type, mode) =>
+        apply((filter) => setTypeInGroupOnFilter(filter, groupId, type, mode)),
     setGroupOp: (groupId, op) =>
         apply((filter) => setTagFilterGroupOp(filter, groupId, op)),
     wrapInGroup: (nodeIds, op) =>

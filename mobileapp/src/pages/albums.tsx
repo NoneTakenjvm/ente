@@ -58,6 +58,7 @@ export default function AlbumsPage(): JSX.Element {
     const includeInEffectsPresenceByName = useTagStore(
         (s) => s.typeConfig.includeInEffectsPresenceByName,
     );
+    const tagTypeByName = useTagStore((s) => s.typeConfig.tagTypeByName);
     const initialLoadDone = useLibraryBootstrap();
 
     const [mode, setMode] = useState<AlbumsMode>("list");
@@ -88,13 +89,14 @@ export default function AlbumsPage(): JSX.Element {
             libraryFiles,
             activeAlbumQuery,
             fileIdsByTag,
-            { favoriteFileIds, includeInEffectsPresenceByName },
+            { favoriteFileIds, includeInEffectsPresenceByName, tagTypeByName },
         );
     }, [
         activeAlbumQuery,
         favoriteFileIds,
         fileIdsByTag,
         includeInEffectsPresenceByName,
+        tagTypeByName,
         libraryFiles,
     ]);
 
@@ -136,7 +138,7 @@ export default function AlbumsPage(): JSX.Element {
                 libraryFiles,
                 queryAlbumFilter(album),
                 fileIdsByTag,
-                { favoriteFileIds, includeInEffectsPresenceByName },
+                { favoriteFileIds, includeInEffectsPresenceByName, tagTypeByName },
             );
             cards.set(album.id, {
                 matchCount: matches.length,
@@ -149,6 +151,7 @@ export default function AlbumsPage(): JSX.Element {
         favoriteFileIds,
         fileIdsByTag,
         includeInEffectsPresenceByName,
+        tagTypeByName,
         libraryFiles,
         mode,
     ]);

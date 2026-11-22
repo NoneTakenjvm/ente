@@ -1,4 +1,5 @@
 import type { GalleryColumnCount } from "@/lib/app-settings";
+import type { GridSection } from "@/lib/date-sections";
 import { fileAspectRatio, filePixelSize } from "@/lib/file-aspect-ratio";
 import { thumbnailGap } from "@/lib/thumbnail-grid-layout";
 import type { EnteFile } from "ente-media/file";
@@ -15,10 +16,24 @@ interface MasonryItemLayout {
     height: number;
 }
 
+interface MasonrySectionHeader {
+    label: string;
+    y: number;
+    height: number;
+}
+
+interface MasonryLayoutOptions {
+    sections?: readonly GridSection[];
+    /** Tiles are square, so shortest-column placement fills each row left to right. */
+    squareTiles?: boolean;
+}
+
 export interface MasonryLayout {
     items: MasonryItemLayout[];
     /** Same objects as {@link items}, grouped by column (increasing y). */
     itemsByColumn: MasonryItemLayout[][];
+    /** One per section, in increasing y; empty without sections. */
+    headers: MasonrySectionHeader[];
     totalHeight: number;
     paddingInline: number;
     gap: number;
@@ -40,16 +55,21 @@ export const masonryViewOrderKey = (files: readonly EnteFile[]): string => {
     return `${files.length}:${hash}`;
 };
 
+/** Height of a section header row, in px. */
+const MASONRY_SECTION_HEADER_HEIGHT = 36;
+
 const paddingInlineForWidth = (containerWidth: number): number =>
     containerWidth > 480 ? 16 : 4;
 
 /**
- * Place files in a column masonry layout with fixed column count.
+ * Place files in a column masonry layout with fixed column count. With
+ * `sections`, each section gets a header row that levels all columns first.
  */
 export const computeMasonryLayout = (
     files: EnteFile[],
     containerWidth: number,
     columns: GalleryColumnCount,
+    { sections = [], squareTiles = false }: MasonryLayoutOptions = {},
 ): MasonryLayout => {
     const paddingInline = paddingInlineForWidth(containerWidth);
     const gap = thumbnailGap;
@@ -61,10 +81,27 @@ export const computeMasonryLayout = (
         { length: columns },
         () => [],
     );
+    const headers: MasonrySectionHeader[] = [];
+    const sectionLabelByStart = new Map(
+        sections.map((section) => [section.start, section.label] as const),
+    );
 
     for (let index = 0; index < files.length; index += 1) {
         const file = files[index]!;
-        const height = columnWidth / fileAspectRatio(file);
+        const sectionLabel = sectionLabelByStart.get(index);
+        if (sectionLabel !== undefined) {
+            // Start the section below the tallest column so no earlier tile is overlapped.
+            const top = Math.max(...columnHeights);
+            headers.push({
+                label: sectionLabel,
+                y: top,
+                height: MASONRY_SECTION_HEADER_HEIGHT,
+            });
+            columnHeights.fill(top + MASONRY_SECTION_HEADER_HEIGHT);
+        }
+        const height = squareTiles ?
+            columnWidth :
+            columnWidth / fileAspectRatio(file);
         let column = 0;
         for (let next = 1; next < columns; next += 1) {
             if (columnHeights[next]! < columnHeights[column]!) {
@@ -97,6 +134,7 @@ export const computeMasonryLayout = (
     return {
         items,
         itemsByColumn,
+        headers,
         totalHeight: Math.max(0, totalHeight),
         paddingInline,
         gap,

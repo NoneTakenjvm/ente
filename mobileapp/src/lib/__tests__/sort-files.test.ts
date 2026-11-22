@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { EnteFile } from "ente-media/file";
 import {
     fileEditSortTime,
@@ -7,11 +7,27 @@ import {
     sortFilesByScore,
     sortFilesByUpload,
 } from "@/lib/sort-files";
-import { fileUploadSortTime } from "@/core/metadata";
+import { fileUploadSortTime, rebuildUploadTimeBounds } from "@/core/metadata";
 import { stubFile } from "@/test-utils/fixtures";
 
 describe("fileUploadSortTime", () => {
-    it("prefers stored uploadedAt", () => {
+    afterEach(() => {
+        rebuildUploadTimeBounds([]);
+    });
+
+    it("uses stored uploadedAt when it is before updationTime", () => {
+        const file = stubFile({
+            pubMagicMetadata: {
+                version: 1,
+                count: 1,
+                data: { uploadedAt: 100 },
+            },
+            updationTime: 500,
+        });
+        expect(fileUploadSortTime(file)).toBe(100);
+    });
+
+    it("ignores a stored uploadedAt that is after updationTime", () => {
         const file = stubFile({
             pubMagicMetadata: {
                 version: 1,
@@ -20,7 +36,39 @@ describe("fileUploadSortTime", () => {
             },
             updationTime: 50,
         });
-        expect(fileUploadSortTime(file)).toBe(100);
+        expect(fileUploadSortTime(file)).toBe(50);
+    });
+
+    it("bounds an edited file by the later uploads around it", () => {
+        const old = stubFile({ id: 1, updationTime: 100 });
+        const edited = stubFile({ id: 2, updationTime: 900 });
+        const stampedLate = stubFile({
+            id: 3,
+            updationTime: 950,
+            pubMagicMetadata: {
+                version: 1,
+                count: 1,
+                data: { uploadedAt: 900 },
+            },
+        });
+        const untouched = stubFile({ id: 4, updationTime: 300 });
+        const newest = stubFile({ id: 5, updationTime: 800 });
+        rebuildUploadTimeBounds([untouched, old, newest, edited, stampedLate]);
+        expect(
+            [old, edited, stampedLate, untouched, newest].map(
+                fileUploadSortTime,
+            ),
+        ).toEqual([100, 300, 300, 300, 800]);
+    });
+
+    it("skips files without an updationTime when bounding", () => {
+        const older = stubFile({ id: 1, updationTime: 700 });
+        const missing = stubFile({ id: 2, updationTime: 0 });
+        const newer = stubFile({ id: 3, updationTime: 400 });
+        rebuildUploadTimeBounds([older, missing, newer]);
+        expect([older, missing, newer].map(fileUploadSortTime)).toEqual([
+            400, 400, 400,
+        ]);
     });
 
     it("falls back to updationTime when uploadedAt is missing", () => {

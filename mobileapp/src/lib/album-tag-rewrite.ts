@@ -16,6 +16,9 @@ const persistedNodeUsesTags = (
     if (node.kind === "kit") {
         return node.tags.some((tag) => tagNames.has(tag));
     }
+    if (node.kind === "type") {
+        return false;
+    }
     return node.children.some(
         (child) => persistedNodeUsesTags(child, tagNames),
     );

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { StateCreator } from "zustand";
 import type { EnteFile } from "ente-media/file";
 import { getEnteCore, type Collection } from "@/core";
+import { rebuildUploadTimeBounds } from "@/core/metadata";
 import { bindOrganizerDB } from "@/db";
 import { loadKv, saveKv } from "@/db/kv";
 import {
@@ -335,6 +336,9 @@ const commitAllFiles = (
     nextFiles: EnteFile[],
     options?: { rebuildIndex?: boolean; alsoSet?: Partial<LibraryState> },
 ): void => {
+    if (options?.rebuildIndex !== false) {
+        rebuildUploadTimeBounds(nextFiles);
+    }
     set({
         ...options?.alsoSet,
         allFiles: nextFiles,

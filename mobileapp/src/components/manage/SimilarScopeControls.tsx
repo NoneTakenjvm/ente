@@ -181,6 +181,7 @@ function PhotoPickerSheet({
     const includeInEffectsPresenceByName = useTagStore(
         (s) => s.typeConfig.includeInEffectsPresenceByName,
     );
+    const tagTypeByName = useTagStore((s) => s.typeConfig.tagTypeByName);
     const { filter, actions, setFilter } = useTagFilterDraft();
     const scopeCounts = useScopeCounts(candidates);
 
@@ -190,6 +191,7 @@ function PhotoPickerSheet({
                 filterFilesByTags(candidates, filter, fileIdsByTag, {
                     favoriteFileIds,
                     includeInEffectsPresenceByName,
+                    tagTypeByName,
                 }),
             ),
         [
@@ -198,6 +200,7 @@ function PhotoPickerSheet({
             fileIdsByTag,
             filter,
             includeInEffectsPresenceByName,
+            tagTypeByName,
         ],
     );
     const shownIds = useMemo(

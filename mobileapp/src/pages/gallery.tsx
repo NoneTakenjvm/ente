@@ -1,5 +1,6 @@
-import { useEffect, useState, type JSX } from "react";
+import { useEffect, useMemo, useState, type JSX } from "react";
 import { Upload } from "lucide-react";
+import { fileUploadSortTime } from "@/core/metadata";
 import { AppShell } from "@/components/AppShell";
 import { FilteredMediaView } from "@/components/FilteredMediaView";
 import { GallerySortToggle } from "@/components/GallerySortToggle";
@@ -10,11 +11,14 @@ import { useLibraryBootstrap } from "@/hooks/use-library-bootstrap";
 import { useLibraryFiles } from "@/hooks/use-library-files";
 import { useLibraryLoading } from "@/hooks/use-library-loading";
 import { useMediaDisplayPipeline } from "@/hooks/use-media-display-pipeline";
+import { groupFilesByDay } from "@/lib/date-sections";
+import { fileEditSortTime } from "@/lib/sort-files";
 import { useSessionStore } from "@/stores/session-store";
+import { useSettingsStore } from "@/stores/settings-store";
 import { useLibraryStore } from "@/stores/library-store";
 import { useFavoritesStore } from "@/stores/favorites-store";
 import { useTagStore } from "@/stores/tag-store";
-import { useUploadJobStore } from "@/stores/ui-store";
+import { useUIStore, useUploadJobStore } from "@/stores/ui-store";
 
 /** Stable empty set so gallery can skip favourite-store updates when unused. */
 const EMPTY_FAVORITE_FILE_IDS = new Set<number>();
@@ -111,6 +115,22 @@ function GalleryMediaBody(): JSX.Element {
         displayFiles.length,
     );
 
+    const ordering = useUIStore((s) => s.ordering);
+    const gallerySortBy = useSettingsStore((s) => s.gallerySortBy);
+    // Date headers only when the grid is in date order; other orderings stay flat.
+    const sections = useMemo(() => {
+        if (ordering?.kind === "uploadedAt") {
+            return groupFilesByDay(displayFiles, fileUploadSortTime);
+        }
+        if (ordering !== undefined) {
+            return undefined;
+        }
+        return groupFilesByDay(
+            displayFiles,
+            gallerySortBy === "edited" ? fileEditSortTime : fileUploadSortTime,
+        );
+    }, [displayFiles, gallerySortBy, ordering]);
+
     return (
         <>
             <TagFilterBar
@@ -120,6 +140,7 @@ function GalleryMediaBody(): JSX.Element {
             <FilteredMediaView
                 files={displayFiles}
                 loading={showFullPageLoader}
+                sections={sections}
             />
         </>
     );

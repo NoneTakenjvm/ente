@@ -1,6 +1,6 @@
 import type { EnteFile } from "ente-media/file";
 import { FileType } from "ente-media/file-type";
-import { isTagIncludedInEffectsPresence } from "@/lib/tag-types";
+import { isTagIncludedInEffectsPresence, typeForTag } from "@/lib/tag-types";
 import {
     extractUserTags,
     isManuallyCroppedFile,
@@ -42,6 +42,14 @@ export interface TagFilterKitNode {
     mode: TagFilterMode;
 }
 
+/** Any tag of one tag type (Has = at least one such tag; Not = none). */
+export interface TagFilterTypeNode {
+    kind: "type";
+    id: string;
+    type: string;
+    mode: TagFilterMode;
+}
+
 export interface TagFilterGroup {
     kind: "group";
     id: string;
@@ -52,6 +60,7 @@ export interface TagFilterGroup {
 export type TagFilterNode =
     TagFilterClauseNode |
     TagFilterKitNode |
+    TagFilterTypeNode |
     TagFilterGroup;
 
 export interface TagFilterSelection {
@@ -70,6 +79,8 @@ export interface TagFilterOptions {
      * omitted map) count as included — see {@link isTagIncludedInEffectsPresence}.
      */
     includeInEffectsPresenceByName?: ReadonlyMap<string, boolean>;
+    /** Tag type per tag name; tags absent from the map use the default type. */
+    tagTypeByName?: ReadonlyMap<string, string>;
 }
 
 let tagFilterNodeCounter = 0;
@@ -107,11 +118,18 @@ export const isTagFilterClause = (
 export const isTagFilterKit = (node: TagFilterNode): node is TagFilterKitNode =>
     node.kind === "kit";
 
-/** Count clause and kit leaves in the filter tree. */
+export const isTagFilterType = (node: TagFilterNode): node is TagFilterTypeNode =>
+    node.kind === "type";
+
+/** Count clause, kit and type leaves in the filter tree. */
 export const countTagFilterClauses = (root: TagFilterGroup): number => {
     let count = 0;
     const walk = (node: TagFilterNode): void => {
-        if (isTagFilterClause(node) || isTagFilterKit(node)) {
+        if (
+            isTagFilterClause(node) ||
+            isTagFilterKit(node) ||
+            isTagFilterType(node)
+        ) {
             count += 1;
             return;
         }
@@ -131,10 +149,13 @@ export const findClauseModeForTag = (
     tag: string,
 ): TagFilterMode | null => findClauseInGroup(root, tag)?.mode ?? null;
 
-/** True when every root child is a clause or kit (no nested groups). */
+/** True when every root child is a clause, kit or type (no nested groups). */
 export const isFlatTagFilterRoot = (root: TagFilterGroup): boolean =>
     root.children.every(
-        (child) => isTagFilterClause(child) || isTagFilterKit(child),
+        (child) =>
+            isTagFilterClause(child) ||
+            isTagFilterKit(child) ||
+            isTagFilterType(child),
     );
 
 /** Find a direct-child clause for a tag within one group. */
@@ -266,12 +287,20 @@ const describeClauseNode = (clause: TagFilterClauseNode): string =>
 const describeKitNode = (kit: TagFilterKitNode): string =>
     kit.mode === "exclude" ? `not kit:${kit.name}` : `kit:${kit.name}`;
 
+const describeTypeNode = (typeNode: TagFilterTypeNode): string =>
+    typeNode.mode === "exclude" ?
+        `not any ${typeNode.type}` :
+        `any ${typeNode.type}`;
+
 const describeLeafOrGroup = (node: TagFilterNode): string => {
     if (isTagFilterClause(node)) {
         return describeClauseNode(node);
     }
     if (isTagFilterKit(node)) {
         return describeKitNode(node);
+    }
+    if (isTagFilterType(node)) {
+        return describeTypeNode(node);
     }
     const inner = describeGroupNode(node);
     return inner ? `(${inner})` : "";
@@ -281,22 +310,22 @@ const describeLeafOrGroup = (node: TagFilterNode): string => {
 interface OnlyGroupParts {
     /** Tags the file's user tags must equal exactly. */
     includeTags: string[];
-    /** Exclude clauses and kits, in child order. */
-    excludes: (TagFilterClauseNode | TagFilterKitNode)[];
+    /** Exclude leaves and type units, in child order; each narrows the match. */
+    narrowing: (TagFilterClauseNode | TagFilterKitNode | TagFilterTypeNode)[];
     nestedGroups: TagFilterGroup[];
 }
 
 const splitOnlyGroup = (group: TagFilterGroup): OnlyGroupParts => {
     const parts: OnlyGroupParts = {
         includeTags: [],
-        excludes: [],
+        narrowing: [],
         nestedGroups: [],
     };
     for (const child of group.children) {
         if (isTagFilterGroup(child)) {
             parts.nestedGroups.push(child);
-        } else if (child.mode === "exclude") {
-            parts.excludes.push(child);
+        } else if (isTagFilterType(child) || child.mode === "exclude") {
+            parts.narrowing.push(child);
         } else if (isTagFilterClause(child)) {
             parts.includeTags.push(child.tag);
         } else {
@@ -311,14 +340,14 @@ const describeGroupNode = (group: TagFilterGroup): string => {
         return "";
     }
     if (group.op === "only") {
-        const { includeTags, excludes, nestedGroups } = splitOnlyGroup(group);
+        const { includeTags, narrowing, nestedGroups } = splitOnlyGroup(group);
         const onlyCore =
             includeTags.length > 0 ?
                 `only [${includeTags.join(" + ")}]` :
                 "only []";
         return [
             onlyCore,
-            ...excludes.map(describeLeafOrGroup),
+            ...narrowing.map(describeLeafOrGroup),
             ...nestedGroups
                 .map(describeLeafOrGroup)
                 .filter((part) => part.length > 0),
@@ -348,6 +377,12 @@ export const describeTagFilterClause = (clause: TagFilterClauseNode): string =>
 /** Instruction label for one kit node in the query builder. */
 export const describeTagFilterKit = (kit: TagFilterKitNode): string =>
     kit.mode === "exclude" ? `Not kit ${kit.name}` : `Has kit ${kit.name}`;
+
+/** Instruction label for one type node in the query builder. */
+export const describeTagFilterType = (typeNode: TagFilterTypeNode): string =>
+    typeNode.mode === "exclude" ?
+        `Has no ${typeNode.type} tag` :
+        `Has any ${typeNode.type} tag`;
 
 /**
  * Return true when the name is reserved and must not be assigned to files.
@@ -506,6 +541,41 @@ const evaluateKitNode = (
 };
 
 /**
+ * Files among candidates with at least one non-system tag of `type`.
+ */
+const typeMemberIdsInCandidates = (
+    type: string,
+    candidateIds: Set<number>,
+    ctx: FilterContext,
+): Set<number> => {
+    const tagTypeByName = ctx.tagTypeByName ?? new Map<string, string>();
+    const members = new Set<number>();
+    for (const [tag, ids] of ctx.fileIdsByTag) {
+        if (isSystemTag(tag) || typeForTag(tag, tagTypeByName) !== type) {
+            continue;
+        }
+        for (const id of ids) {
+            if (candidateIds.has(id)) {
+                members.add(id);
+            }
+        }
+    }
+    return members;
+};
+
+const evaluateTypeNode = (
+    typeNode: TagFilterTypeNode,
+    candidateIds: Set<number>,
+    ctx: FilterContext,
+): Set<number> => {
+    const members = typeMemberIdsInCandidates(typeNode.type, candidateIds, ctx);
+    if (typeNode.mode === "include") {
+        return members;
+    }
+    return subtractIds(candidateIds, members);
+};
+
+/**
  * True when two tag lists are the same set (order-independent).
  */
 const tagSetsEqual = (left: string[], right: string[]): boolean => {
@@ -556,12 +626,16 @@ const evaluateTagFilterNode = (
         return evaluateKitNode(node, candidateIds, ctx);
     }
 
+    if (isTagFilterType(node)) {
+        return evaluateTypeNode(node, candidateIds, ctx);
+    }
+
     if (node.children.length === 0) {
         return new Set<number>();
     }
 
     if (node.op === "only") {
-        const { includeTags, excludes, nestedGroups } = splitOnlyGroup(node);
+        const { includeTags, narrowing, nestedGroups } = splitOnlyGroup(node);
 
         let matchingIds = exactUserTagSetIds(
             candidateIds,
@@ -569,8 +643,8 @@ const evaluateTagFilterNode = (
             includeTags,
         );
 
-        for (const exclude of excludes) {
-            matchingIds = evaluateTagFilterNode(exclude, matchingIds, ctx);
+        for (const step of narrowing) {
+            matchingIds = evaluateTagFilterNode(step, matchingIds, ctx);
         }
 
         for (const group of nestedGroups) {

@@ -29,6 +29,7 @@ import type { TagFilterTarget } from "@/stores/tag-store";
 import { useUIStore } from "@/stores/ui-store";
 import type { EnteFile } from "ente-media/file";
 import { errorMessage, plural } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 interface TagFilterBarProps {
     matchCount: number;
@@ -71,6 +72,7 @@ export function TagFilterBar({
     const [pendingBulkTags, setPendingBulkTags] = useState<string[]>([]);
     const [bulkBusy, setBulkBusy] = useState<boolean>(false);
     const [bulkError, setBulkError] = useState<string | undefined>();
+    const [summaryExpanded, setSummaryExpanded] = useState<boolean>(false);
 
     const isShuffled = ordering?.kind === "shuffled";
     const filterActive = isTagFilterActive(filter);
@@ -139,6 +141,7 @@ export function TagFilterBar({
                         filter={filter}
                         onSetTagFilterMode={actions.setTagFilterMode}
                         onSetKitMode={actions.setKitMode}
+                        onSetTypeMode={actions.setTypeMode}
                         onSetRootOp={(op) => {
                             actions.setGroupOp(filter.root.id, op);
                         }}
@@ -171,13 +174,25 @@ export function TagFilterBar({
                     <GalleryToolsMenu filterTarget={filterTarget} counts={counts} />
                 </div>
                 {filterActive ? (
-                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                        <span className="text-muted-foreground">
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                        <button
+                            type="button"
+                            aria-expanded={summaryExpanded}
+                            className={cn(
+                                "min-w-0 flex-1 text-left text-muted-foreground",
+                                summaryExpanded ?
+                                    "whitespace-normal break-words" :
+                                    "truncate",
+                            )}
+                            onClick={() => {
+                                setSummaryExpanded((expanded) => !expanded);
+                            }}
+                        >
                             {plural(matchCount, "photo")}
                             {" · "}
                             {describeTagFilter(filter)}
-                        </span>
-                        <div className="flex flex-wrap items-center gap-1">
+                        </button>
+                        <div className="flex shrink-0 items-center gap-1">
                             {matchCount > 0 ? (
                                 <>
                                     <Button

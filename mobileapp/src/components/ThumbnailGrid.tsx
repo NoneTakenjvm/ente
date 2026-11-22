@@ -15,6 +15,7 @@ import {
     type ListChildComponentProps,
 } from "react-window";
 import type { GalleryColumnCount } from "@/lib/app-settings";
+import type { GridSection } from "@/lib/date-sections";
 import { noteGalleryScrollActivity } from "@/lib/gallery-scroll-activity";
 import {
     gridIndicesInContentMarquee,
@@ -83,6 +84,8 @@ interface ThumbnailGridProps {
     showFileSize?: boolean;
     /** Draft quick-rotate degrees by file id. */
     previewRotationById?: Record<number, 90 | 180 | 270>;
+    /** Date section headers; when set, the grid uses the masonry layout. */
+    sections?: readonly GridSection[];
 }
 
 /** Per-cell behaviour and chrome shared by the row grid and the masonry grid. */
@@ -225,6 +228,8 @@ interface SizedMasonryGridProps {
     layoutRef: RefObject<MasonryLayout | null>;
     /** Generation that changes when id order or pixel size changes; layout is reused otherwise. */
     viewOrderKey: string;
+    sections?: readonly GridSection[];
+    squareTiles: boolean;
 }
 
 const MASONRY_OVERSCAN_PX = 480;
@@ -239,15 +244,17 @@ function SizedMasonryGrid({
     scrollControllerRef,
     layoutRef,
     viewOrderKey,
+    sections,
+    squareTiles,
 }: SizedMasonryGridProps): JSX.Element {
     const [scrollTop, setScrollTop] = useState<number>(0);
     const scrollerRef = useRef<HTMLDivElement>(null);
 
     const placedLayout: MasonryLayout = useMemo(
-        () => computeMasonryLayout(files, width, columns),
+        () => computeMasonryLayout(files, width, columns, { sections, squareTiles }),
         // Placement depends on id order + geometry, not file object identity.
         // eslint-disable-next-line react-hooks/exhaustive-deps -- viewOrderKey
-        [columns, viewOrderKey, width],
+        [columns, squareTiles, viewOrderKey, width],
     );
     useEffect(() => {
         layoutRef.current = placedLayout;
@@ -261,6 +268,16 @@ function SizedMasonryGrid({
                 MASONRY_OVERSCAN_PX,
             ),
         [height, placedLayout.itemsByColumn, scrollTop],
+    );
+    const visibleHeaders = useMemo(
+        () =>
+            visibleMasonryItemsFromColumns(
+                [placedLayout.headers],
+                scrollTop,
+                height,
+                MASONRY_OVERSCAN_PX,
+            ),
+        [height, placedLayout.headers, scrollTop],
     );
 
     useEffect(() => {
@@ -346,12 +363,25 @@ function SizedMasonryGrid({
                                 file={file}
                                 width={item.width}
                                 height={item.height}
-                                objectFit="contain"
+                                objectFit={squareTiles ? "cover" : "contain"}
                                 {...cellChromeProps(file, chrome)}
                             />
                         </div>
                     );
                 })}
+                {visibleHeaders.map((header) => (
+                    <div
+                        key={header.y}
+                        className="pointer-events-none absolute inset-x-0 flex items-center text-sm font-medium text-foreground"
+                        style={{
+                            top: header.y,
+                            height: header.height,
+                            paddingInline: placedLayout.paddingInline,
+                        }}
+                    >
+                        {header.label}
+                    </div>
+                ))}
             </div>
         </div>
     );
@@ -364,11 +394,16 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
     footerInsetPx = 0,
     showFileSize = false,
     previewRotationById,
+    sections,
 }: ThumbnailGridProps): JSX.Element {
     const galleryColumns = useSettingsStore((s) => s.galleryColumns);
     const savedThumbnailMode = useSettingsStore((s) => s.galleryThumbnailMode);
     // Crop needs whole photos; the saved setting is never written.
     const thumbnailMode = selection?.cropMode ? "fit" : savedThumbnailMode;
+    const fitTiles = thumbnailMode === "fit";
+    const hasSections = (sections?.length ?? 0) > 0;
+    // Date sections need headers, so they always go through the masonry renderer.
+    const useMasonry = fitTiles || hasSections;
     const listRef = useRef<FixedSizeList<RowData>>(null);
     const scrollControllerRef = useRef<MarqueeScrollController | null>(null);
     const masonryLayoutRef = useRef<MasonryLayout | null>(null);
@@ -379,11 +414,15 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
         [onOpenFile, previewRotationById, selection, showFileSize],
     );
 
-    const viewOrderKey = useMemo(
-        () =>
-            thumbnailMode === "fit" ? masonryViewOrderKey(files) : "",
-        [files, thumbnailMode],
-    );
+    const viewOrderKey = useMemo(() => {
+        if (!useMasonry) {
+            return "";
+        }
+        const sectionsKey = (sections ?? [])
+            .map((section) => `${section.start}:${section.label}`)
+            .join("|");
+        return `${masonryViewOrderKey(files)}|${sectionsKey}`;
+    }, [files, sections, useMasonry]);
 
     // Block taps while order/geometry settles (ghost opens on remount / sort).
     // Stale readyToken keeps pointer-events off until two rAFs land — no sync setState.
@@ -418,7 +457,7 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
             if (rect.width < 8 && rect.height < 8) {
                 return [];
             }
-            if (thumbnailMode === "fit") {
+            if (useMasonry) {
                 const layout = masonryLayoutRef.current;
                 return layout ?
                     masonryItemsInMarquee(layout.items, rect).map((id) => Number(id)) :
@@ -436,7 +475,7 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
             );
             return indices.map((index) => files[index]!.id);
         },
-        [files, galleryColumns, thumbnailMode, gridWidth],
+        [files, galleryColumns, useMasonry, gridWidth],
     );
 
     const getBaselineIds = useCallback(
@@ -489,7 +528,7 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
                 }}
             >
                 {({ height, width }: { height: number; width: number }) =>
-                    thumbnailMode === "fit" ? (
+                    useMasonry ? (
                         <SizedMasonryGrid
                             files={files}
                             width={width}
@@ -500,6 +539,8 @@ export const ThumbnailGrid = memo(function ThumbnailGrid({
                             scrollControllerRef={scrollControllerRef}
                             layoutRef={masonryLayoutRef}
                             viewOrderKey={viewOrderKey}
+                            sections={sections}
+                            squareTiles={!fitTiles}
                         />
                     ) : (
                         <SizedGrid

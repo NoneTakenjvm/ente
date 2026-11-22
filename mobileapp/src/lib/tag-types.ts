@@ -106,7 +106,7 @@ export const configToPersisted = (
 
 export const typeForTag = (
     tagName: string,
-    tagTypeByName: Map<string, string>,
+    tagTypeByName: ReadonlyMap<string, string>,
 ): string => tagTypeByName.get(tagName) ?? DEFAULT_TAG_TYPE;
 
 /**

@@ -43,6 +43,7 @@ export function AlbumEditorPanel({
     const includeInEffectsPresenceByName = useTagStore(
         (s) => s.typeConfig.includeInEffectsPresenceByName,
     );
+    const tagTypeByName = useTagStore((s) => s.typeConfig.tagTypeByName);
 
     const initialFilter = album ? queryAlbumFilter(album) : emptyTagFilter();
     const { filter, actions } = useTagFilterDraft(initialFilter);
@@ -65,13 +66,14 @@ export function AlbumEditorPanel({
                 libraryFiles,
                 filter,
                 fileIdsByTag,
-                { favoriteFileIds, includeInEffectsPresenceByName },
+                { favoriteFileIds, includeInEffectsPresenceByName, tagTypeByName },
             ),
         [
             favoriteFileIds,
             fileIdsByTag,
             filter,
             includeInEffectsPresenceByName,
+            tagTypeByName,
             libraryFiles,
         ],
     );

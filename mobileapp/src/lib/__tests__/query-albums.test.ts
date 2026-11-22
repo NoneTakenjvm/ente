@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { setTypeModeOnFilter } from "@/lib/tag-filter-mutations";
 import {
     createQueryAlbum,
     hydrateTagFilter,
@@ -137,6 +138,16 @@ describe("serializeTagFilter / hydrateTagFilter", () => {
             expect(first.mode).toBe("exclude");
         }
     });
+
+    it("round-trips type units", () => {
+        const original = setTypeModeOnFilter(emptyTagFilter(), "place", "exclude");
+        const restored = hydrateTagFilter(serializeTagFilter(original));
+        expect(restored.root.children[0]).toMatchObject({
+            kind: "type",
+            type: "place",
+            mode: "exclude",
+        });
+    });
 });
 
 describe("createQueryAlbum", () => {
@@ -160,6 +171,9 @@ describe("createQueryAlbum", () => {
                     tags: [...node.tags],
                     mode: node.mode,
                 };
+            }
+            if (node.kind === "type") {
+                return { kind: "type", type: node.type, mode: node.mode };
             }
             return {
                 kind: "group",

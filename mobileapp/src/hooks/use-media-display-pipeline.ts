@@ -137,6 +137,7 @@ export function useMediaDisplayPipeline({
     const includeInEffectsPresenceByName = useTagStore(
         (s) => s.typeConfig.includeInEffectsPresenceByName,
     );
+    const tagTypeByName = useTagStore((s) => s.typeConfig.tagTypeByName);
     const lastTagTouchFileIds = useTagStore((s) => s.lastTagTouchFileIds);
 
     const reconcileMediaShuffle = useUIStore((s) => s.reconcileMediaShuffle);
@@ -174,8 +175,9 @@ export function useMediaDisplayPipeline({
         () => ({
             favoriteFileIds,
             includeInEffectsPresenceByName,
+            tagTypeByName,
         }),
-        [favoriteFileIds, includeInEffectsPresenceByName],
+        [favoriteFileIds, includeInEffectsPresenceByName, tagTypeByName],
     );
 
     useEffect(() => {
@@ -269,6 +271,7 @@ export function useMediaDisplayPipeline({
                         useFavoritesStore.getState().favoriteFileIds,
                     includeInEffectsPresenceByName:
                         tagState.typeConfig.includeInEffectsPresenceByName,
+                    tagTypeByName: tagState.typeConfig.tagTypeByName,
                 },
             );
             const seeds = eligibleImageFiles(seedMatches, userId)
@@ -355,6 +358,7 @@ export function useMediaDisplayPipeline({
                 favoriteFileIds,
                 includeInEffectsPresenceByName:
                     useTagStore.getState().typeConfig.includeInEffectsPresenceByName,
+                tagTypeByName: useTagStore.getState().typeConfig.tagTypeByName,
             },
         );
     }, [baseFiles, favoriteFileIds, tagFilter]);
@@ -376,6 +380,7 @@ export function useMediaDisplayPipeline({
             favoriteFileIds: favoriteIds,
             includeInEffectsPresenceByName:
                 tagState.typeConfig.includeInEffectsPresenceByName,
+            tagTypeByName: tagState.typeConfig.tagTypeByName,
         };
         const seedIds = filterFilesByTags(
             seedFiles,
@@ -713,6 +718,7 @@ export function useMediaDisplayPipeline({
         tagFilter: TagFilterSelection;
         favoriteFileIds: Set<number>;
         includeInEffectsPresenceByName: ReadonlyMap<string, boolean> | undefined;
+        tagTypeByName: ReadonlyMap<string, string> | undefined;
         baseFilesKey: string;
     } | undefined>(undefined);
     const baseFilesKey = useMemo(
@@ -727,6 +733,7 @@ export function useMediaDisplayPipeline({
                 tagFilter,
                 favoriteFileIds,
                 includeInEffectsPresenceByName,
+                tagTypeByName,
                 baseFilesKey,
             };
             return baseFiles;
@@ -737,6 +744,7 @@ export function useMediaDisplayPipeline({
             basis.favoriteFileIds === favoriteFileIds &&
             basis.includeInEffectsPresenceByName ===
                 includeInEffectsPresenceByName &&
+            basis.tagTypeByName === tagTypeByName &&
             basis.baseFilesKey === baseFilesKey;
         const touchIds = lastTagTouchFileIds;
         if (
@@ -768,6 +776,7 @@ export function useMediaDisplayPipeline({
             tagFilter,
             favoriteFileIds,
             includeInEffectsPresenceByName,
+            tagTypeByName,
             baseFilesKey,
         };
         return next;
@@ -778,6 +787,7 @@ export function useMediaDisplayPipeline({
         fileIdsByTag,
         filterOptions,
         includeInEffectsPresenceByName,
+        tagTypeByName,
         lastTagTouchFileIds,
         tagFilter,
     ]);

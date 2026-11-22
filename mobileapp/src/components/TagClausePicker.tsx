@@ -22,6 +22,7 @@ import {
 } from "@/lib/tag-presets";
 import {
     findKitModeInGroup,
+    findTypeModeInGroup,
     type KitFilterInput,
 } from "@/lib/tag-filter-mutations";
 import { tagFileCount } from "@/lib/tags";
@@ -57,6 +58,14 @@ interface TagClausePickerProps {
         kit: KitFilterInput,
         mode: TagFilterMode | null,
     ) => void;
+    /** Prefer when applying a tag type at root. */
+    onSetTypeMode?: (type: string, mode: TagFilterMode | null) => void;
+    /** Prefer when applying a tag type in a group. */
+    onSetTypeInGroup?: (
+        groupId: string,
+        type: string,
+        mode: TagFilterMode | null,
+    ) => void;
     /** When set, show an AND/OR/ONLY control for the root flat filter. */
     onSetRootOp?: (op: TagFilterJoin) => void;
     targetGroupId?: string;
@@ -80,6 +89,8 @@ export function TagClausePicker({
     onSetClauseInGroup,
     onSetKitMode,
     onSetKitInGroup,
+    onSetTypeMode,
+    onSetTypeInGroup,
     onSetRootOp,
     targetGroupId,
     disabled = false,
@@ -124,6 +135,7 @@ export function TagClausePicker({
     const showRootJoinToggle =
         isRootPicker && isFlatRoot && onSetRootOp !== undefined;
     const isOnlyMode = activeGroup.op === "only";
+    const selectedTypeMode = findTypeModeInGroup(activeGroup, selectedType);
 
     const visibleTags = useMemo((): string[] => {
         if (!open || isKitsTab) {
@@ -143,6 +155,19 @@ export function TagClausePicker({
         fileIdsByTag,
         isKitsTab,
     ]);
+
+    const typeFileCount = useMemo((): number => {
+        if (!open || isKitsTab || selectedType === ALL_TAG_TYPES_TAB) {
+            return 0;
+        }
+        const fileIds = new Set<number>();
+        for (const tag of visibleTags) {
+            for (const id of fileIdsByTag.get(tag) ?? []) {
+                fileIds.add(id);
+            }
+        }
+        return fileIds.size;
+    }, [open, isKitsTab, selectedType, visibleTags, fileIdsByTag]);
 
     const rankedPresets = useMemo((): { preset: TagPreset; count: number }[] => {
         if (!open || !presets.length) {
@@ -183,6 +208,16 @@ export function TagClausePicker({
         }
         if (!scopedGroup && onSetKitMode) {
             onSetKitMode(kit, mode);
+        }
+    };
+
+    const handleTypeModeChange = (mode: TagFilterMode | null): void => {
+        if (scopedGroup && onSetTypeInGroup) {
+            onSetTypeInGroup(scopedGroup.id, selectedType, mode);
+            return;
+        }
+        if (!scopedGroup && onSetTypeMode) {
+            onSetTypeMode(selectedType, mode);
         }
     };
 
@@ -303,6 +338,29 @@ export function TagClausePicker({
                             className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overscroll-contain"
                             onWheel={stopWheelPropagation}
                         >
+                            {selectedType === ALL_TAG_TYPES_TAB ? null : (
+                                <li className="flex shrink-0 items-center gap-2 rounded-md px-1 py-0.5">
+                                    <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                                        Any {selectedType} tag
+                                    </span>
+                                    <Badge
+                                        variant="secondary"
+                                        className="tabular-nums"
+                                    >
+                                        {typeFileCount}
+                                    </Badge>
+                                    <ModeButtons
+                                        mode={selectedTypeMode}
+                                        onChange={(pressed) => {
+                                            handleTypeModeChange(
+                                                pressed === selectedTypeMode ?
+                                                    null :
+                                                    pressed,
+                                            );
+                                        }}
+                                    />
+                                </li>
+                            )}
                             {visibleTags.map((tag) => {
                                 const mode = resolveMode(tag);
                                 const count = tagFileCount(tag, fileIdsByTag);
