@@ -37,6 +37,10 @@ jobs:
 
             - name: Install NTPhotos dependencies
               working-directory: mobileapp
+              # onnxruntime-node's postinstall downloads CUDA binaries the
+              # build never uses; the download 404s and fails the install.
+              env:
+                  ONNXRUNTIME_NODE_INSTALL_CUDA: skip
               run: npm ci
 
             - name: Lint
